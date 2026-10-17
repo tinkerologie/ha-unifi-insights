@@ -92,8 +92,11 @@ describe("layoutTiered", () => {
       [...model.visuals.keys()].sort(),
     );
     const y = (id: string) => layout.positions.get(id)!.y;
-    expect(y("dev:uuid-gw")).toBe(0);
-    expect(y("dev:uuid-core")).toBe(depth);
+    // The gateway's WANs are the top row.
+    expect(y("wan:uuid-gw:wan")).toBe(0);
+    expect(y("wan:uuid-gw:wan2")).toBe(0);
+    expect(y("dev:uuid-gw")).toBe(depth);
+    expect(y("dev:uuid-core")).toBe(2 * depth);
     // Switches uplinked to the core switch share its tier: sub-row below it.
     for (const id of [
       "dev:uuid-flex",
@@ -102,12 +105,12 @@ describe("layoutTiered", () => {
       "dev:uuid-u1",
       "dev:uuid-u2",
     ])
-      expect(y(id)).toBe(2 * depth);
-    expect(y("dev:uuid-ap")).toBe(3 * depth);
-    expect(y("group:dev:uuid-ap")).toBe(4 * depth);
-    expect(y("group:dev:uuid-u1")).toBe(4 * depth);
+      expect(y(id)).toBe(3 * depth);
+    expect(y("dev:uuid-ap")).toBe(4 * depth);
+    expect(y("group:dev:uuid-ap")).toBe(5 * depth);
+    expect(y("group:dev:uuid-u1")).toBe(5 * depth);
     expect(model.links.size).toBeGreaterThan(0);
-    for (const link of model.links.values())
+    for (const link of [...model.links.values(), ...model.uplinkLinks])
       expect(y(link.childId)).toBeGreaterThan(y(link.parentId));
   });
 
@@ -183,9 +186,9 @@ describe("layoutTiered", () => {
     const expanded = fixtureModel({ clients: "expanded" });
     const layout = layoutTiered(expanded, "comfortable", "vertical");
     const y = (id: string) => layout.positions.get(id)!.y;
-    expect(y("group:dev:uuid-ap")).toBe(4 * depth);
-    expect(y("cli:cli-phone")).toBe(5 * depth);
-    expect(y("cli:cli-tv")).toBe(5 * depth);
+    expect(y("group:dev:uuid-ap")).toBe(5 * depth);
+    expect(y("cli:cli-phone")).toBe(6 * depth);
+    expect(y("cli:cli-tv")).toBe(6 * depth);
     for (const link of expanded.links.values())
       expect(y(link.childId)).toBeGreaterThan(y(link.parentId));
   });
@@ -279,8 +282,8 @@ describe("layoutTiered", () => {
   it("tightens rows and siblings when compact", () => {
     const compact = layoutTiered(model, "compact", "vertical");
     const at = (id: string) => compact.positions.get(id)!;
-    expect(at("dev:uuid-core").y).toBe(SPACING.compact.depth);
-    expect(at("group:dev:uuid-ap").y).toBe(4 * SPACING.compact.depth);
+    expect(at("dev:uuid-core").y).toBe(2 * SPACING.compact.depth);
+    expect(at("group:dev:uuid-ap").y).toBe(5 * SPACING.compact.depth);
     expect(at("dev:uuid-lite").x - at("dev:uuid-flex").x).toBe(
       SPACING.compact.breadth,
     );
@@ -435,4 +438,82 @@ describe("plan v3 tiered layout", () => {
       ).toEqual(["bounds", "positions"]);
     },
   );
+});
+
+describe("WAN uplinks", () => {
+  const wan = (id: string, name: string): TopologyNode => ({
+    id: `wan:${id}`,
+    kind: "wan",
+    name,
+    state: "online",
+  });
+  const wanModel = modelOf(
+    [
+      wan("gw:wan", "Fiber"),
+      wan("gw:wan2", "5G"),
+      wan("gw2:wan", "Cable"),
+      device("gw", "gateway", "Gateway"),
+      device("gw2", "gateway", "Gateway 2"),
+      device("sw", "switch", "Switch"),
+    ],
+    [
+      uplink("dev:gw", "wan:gw:wan"),
+      uplink("dev:gw", "wan:gw:wan2"),
+      uplink("dev:gw2", "wan:gw2:wan"),
+      uplink("dev:sw", "dev:gw"),
+    ],
+  );
+  const { breadth, depth } = SPACING.comfortable;
+
+  it("puts each gateway's WANs one level above it in the tree, centred on it", () => {
+    const layout = layoutModel(wanModel, "comfortable", "vertical", "tree");
+    const at = (id: string) => layout.positions.get(id)!;
+    expect(at("dev:gw").y).toBe(0);
+    expect(at("wan:gw:wan").y).toBe(-depth);
+    expect(at("wan:gw:wan2").y).toBe(-depth);
+    expect(at("wan:gw:wan2").x - at("wan:gw:wan").x).toBe(breadth);
+    expect((at("wan:gw:wan").x + at("wan:gw:wan2").x) / 2).toBe(at("dev:gw").x);
+    // Neighbouring gateways never stack their WANs on one spot.
+    expect(at("wan:gw2:wan").x - at("wan:gw:wan2").x).toBeGreaterThanOrEqual(
+      breadth,
+    );
+    expect(layout.bounds.minY).toBe(-depth);
+  });
+
+  it("puts WANs left of the gateway when horizontal", () => {
+    const vertical = layoutModel(wanModel, "comfortable", "vertical", "tree");
+    const horizontal = layoutModel(
+      wanModel,
+      "comfortable",
+      "horizontal",
+      "tree",
+    );
+    for (const [id, p] of vertical.positions)
+      expect(horizontal.positions.get(id)).toEqual({ x: p.y, y: p.x });
+    expect(horizontal.positions.get("wan:gw:wan")!.x).toBe(-depth);
+  });
+
+  it("puts WANs on the top tier in gateway order, in both orientations", () => {
+    const tiered = layoutTiered(wanModel, "comfortable", "vertical");
+    const at = (id: string) => tiered.positions.get(id)!;
+    expect(
+      ["wan:gw:wan", "wan:gw:wan2", "wan:gw2:wan"].map((id) => at(id).y),
+    ).toEqual([0, 0, 0]);
+    expect(at("wan:gw:wan").x).toBeLessThan(at("wan:gw:wan2").x);
+    expect(at("wan:gw:wan2").x).toBeLessThan(at("wan:gw2:wan").x);
+    expect(at("dev:gw").y).toBe(depth);
+    expect(at("dev:sw").y).toBe(2 * depth);
+    const horizontal = layoutTiered(wanModel, "comfortable", "horizontal");
+    for (const [id, p] of tiered.positions)
+      expect(horizontal.positions.get(id)).toEqual({ x: p.y, y: p.x });
+  });
+
+  it("collapses the WAN tier when no WAN is shown", () => {
+    const hidden = modelOf(wanModel.snapshot.nodes, wanModel.snapshot.edges, {
+      kinds: new Set(NODE_KINDS.filter((k) => k !== "wan")),
+    });
+    const tiered = layoutTiered(hidden, "comfortable", "vertical");
+    expect(tiered.positions.get("dev:gw")!.y).toBe(0);
+    expect(tiered.positions.has("wan:gw:wan")).toBe(false);
+  });
 });

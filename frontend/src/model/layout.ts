@@ -94,20 +94,39 @@ function layoutTree(
     .nodeSize([breadth, depth])
     .separation((a, b) => (a.parent === b.parent ? 1 : 1.25))(root);
   const positions = new Map<string, Point>();
+  // WAN uplinks sit one level above their owner; rows are keyed by that level.
+  const uplinkRows = new Map<number, { id: string; along: number }[]>();
   for (const n of laidOut.descendants()) {
     if (n.data === SUPER_ROOT) continue;
-    positions.set(n.data, toPoint(n.x, (n.depth - 1) * depth, orientation));
+    const down = (n.depth - 1) * depth;
+    positions.set(n.data, toPoint(n.x, down, orientation));
+    const wans = model.uplinks.get(n.data) ?? [];
+    if (wans.length === 0) continue;
+    const row = uplinkRows.get(down - depth) ?? [];
+    uplinkRows.set(down - depth, row);
+    wans.forEach((id, i) =>
+      row.push({ id, along: n.x + (i - (wans.length - 1) / 2) * breadth }),
+    );
+  }
+  // Two gateways side by side must not stack their WANs on one spot.
+  for (const [down, row] of uplinkRows) {
+    row.sort((a, b) => a.along - b.along);
+    row.forEach((wan, i) => {
+      if (i > 0) wan.along = Math.max(wan.along, row[i - 1]!.along + breadth);
+      positions.set(wan.id, toPoint(wan.along, down, orientation));
+    });
   }
   return layoutOf(positions);
 }
 
 /** Tier of each node kind, top row first; client groups share the clients' tier. */
 const TIER: Record<NodeKind, number> = {
-  gateway: 0,
-  switch: 1,
-  access_point: 2,
-  other: 3,
-  client: 4,
+  wan: 0,
+  gateway: 1,
+  switch: 2,
+  access_point: 3,
+  other: 4,
+  client: 5,
 };
 const TIER_COUNT = TIER.client + 1;
 const tierOf = (visual: Visual): number =>
@@ -145,6 +164,12 @@ export function layoutTiered(
     };
     slots.set(id, slot);
     subRows[slot.tier] = Math.max(subRows[slot.tier]!, slot.sub + 1);
+    // WANs fill the top tier in the pre-order of the devices they belong to.
+    for (const wan of model.uplinks.get(id) ?? []) {
+      preorder.push(wan);
+      slots.set(wan, { tier: TIER.wan, sub: 0 });
+      subRows[TIER.wan] = 1;
+    }
     pending.push(...[...(model.children.get(id) ?? [])].reverse());
   }
 

@@ -2277,3 +2277,138 @@ async def test_node_details_group_ids_are_not_found(
     assert not msg["success"], msg
     assert msg["error"]["code"] == "node_not_found"
     assert "result" not in msg
+
+
+WAN_IP = "203.0.113.7"
+
+
+def _seed_wans(entry: MockConfigEntry) -> dict[str, Any]:
+    """Give the seeded gateway a connected fiber WAN and a down 5G backup WAN."""
+    data = _seed(entry)
+    devices = data["devices"][SITE]
+    data["devices"][SITE] = {
+        **devices,
+        "uuid-gw": {
+            **devices["uuid-gw"],
+            "wans": [
+                {"key": "wan", "name": "Fiber", "connected": True, "ip": WAN_IP},
+                {"key": "wan2", "name": "5G Backup", "connected": False, "ip": None},
+            ],
+        },
+    }
+    return data
+
+
+async def test_node_details_wan_resolves_to_gateway_and_connection_sensor(
+    hass: HomeAssistant, init_integration: MockConfigEntry, hass_ws_client
+) -> None:
+    """A WAN node returns its IP, its gateway device and its Connection sensor."""
+    _seed_wans(init_integration)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=init_integration.entry_id,
+        identifiers={(DOMAIN, f"{SITE}_uuid-gw")},
+    )
+    entity = er.async_get(hass).async_get_or_create(
+        "binary_sensor",
+        DOMAIN,
+        f"{SITE}_uuid-gw_wan_link_wan",
+        config_entry=init_integration,
+        device_id=device.id,
+    )
+    client = await hass_ws_client(hass)
+
+    up = await _node_details(client, init_integration, "wan:uuid-gw:wan")
+    down = await _node_details(client, init_integration, "wan:uuid-gw:wan2", msg_id=2)
+
+    assert up["success"], up
+    assert up["result"] == {
+        "kind": "wan",
+        "ip_address": WAN_IP,
+        "device_id": device.id,
+        "entity_id": entity.entity_id,
+    }
+    assert down["success"], down
+    assert down["result"] == {"kind": "wan", "device_id": device.id}
+
+
+async def test_node_details_resolves_snapshot_wan_ids(
+    hass: HomeAssistant, init_integration: MockConfigEntry, hass_ws_client
+) -> None:
+    """The WAN ids a snapshot hands out resolve; the snapshot never has the IP."""
+    _seed_wans(init_integration)
+    client = await hass_ws_client(hass)
+    snapshot = await _snapshot(client, init_integration)
+
+    assert WAN_IP not in json.dumps(snapshot)
+    wans = [node for node in snapshot["nodes"] if node["kind"] == "wan"]
+    assert {node["name"]: node["state"] for node in wans} == {
+        "Fiber": "online",
+        "5G Backup": "offline",
+    }
+    for index, node in enumerate(wans, start=2):
+        msg = await _node_details(client, init_integration, node["id"], msg_id=index)
+        assert msg["success"], (node, msg)
+        assert msg["result"]["kind"] == "wan"
+
+
+@pytest.mark.parametrize(
+    "node_id",
+    ["wan:uuid-gw:wan3", "wan:uuid-ap:wan", "wan:uuid-gw:", "wan:uuid-gw"],
+)
+async def test_node_details_unknown_wan_is_not_found(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    hass_ws_client,
+    node_id: str,
+) -> None:
+    """A WAN id of no gateway WAN record names no node."""
+    data = _seed_wans(init_integration)
+    devices = data["devices"][SITE]
+    data["devices"][SITE] = {
+        **devices,
+        "uuid-gw": {
+            **devices["uuid-gw"],
+            "wans": [*devices["uuid-gw"]["wans"], "wan3", {"key": ""}],
+        },
+        "uuid-ap": {**devices["uuid-ap"], "wans": [{"key": "wan"}]},
+    }
+    client = await hass_ws_client(hass)
+
+    msg = await _node_details(client, init_integration, node_id)
+
+    assert not msg["success"], msg
+    assert msg["error"]["code"] == "node_not_found"
+
+
+async def test_subscribe_pushes_when_a_wan_disconnects(
+    hass: HomeAssistant, init_integration: MockConfigEntry, hass_ws_client
+) -> None:
+    """A WAN going down on the next poll pushes a snapshot with the new state."""
+    data = _seed_wans(init_integration)
+    facade = init_integration.runtime_data.coordinator
+    facade.async_update_listeners()
+    await hass.async_block_till_done()
+    client = await hass_ws_client(hass)
+
+    initial = await _subscribe(client, init_integration)
+    states = {n["id"]: n["state"] for n in initial["nodes"] if n["kind"] == "wan"}
+    assert states["wan:uuid-gw:wan"] == "online"
+
+    devices = data["devices"][SITE]
+    gateway = devices["uuid-gw"]
+    data["devices"][SITE] = {
+        **devices,
+        "uuid-gw": {
+            **gateway,
+            "wans": [{**gateway["wans"][0], "connected": False}, gateway["wans"][1]],
+        },
+    }
+    facade.async_update_listeners()
+    pushed = await client.receive_json()
+
+    assert pushed["type"] == "event"
+    assert pushed["event"]["revision"] != initial["revision"]
+    states = {
+        n["id"]: n["state"] for n in pushed["event"]["nodes"] if n["kind"] == "wan"
+    }
+    assert states["wan:uuid-gw:wan"] == "offline"

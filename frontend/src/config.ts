@@ -34,6 +34,7 @@ export interface TopologyCardConfig {
   orientation?: Orientation;
   layout?: LayoutMode;
   show_labels?: boolean;
+  show_wan?: boolean;
   max_clients?: number;
   [key: string]: unknown;
 }
@@ -51,6 +52,8 @@ export interface ResolvedConfig {
   orientation: Orientation;
   layout: LayoutMode;
   show_labels: boolean;
+  /** false drops the `wan` kind from the graph, the list and the filter chips. */
+  show_wan: boolean;
   max_clients: number;
 }
 
@@ -98,7 +101,11 @@ export function validateConfig(raw: unknown): TopologyCardConfig {
   checkOneOf(c.density, DENSITIES, "density");
   checkOneOf(c.orientation, ORIENTATIONS, "orientation");
   checkOneOf(c.layout, LAYOUTS, "layout");
-  for (const key of ["show_site_selector", "show_labels"] as const) {
+  for (const key of [
+    "show_site_selector",
+    "show_labels",
+    "show_wan",
+  ] as const) {
     if (c[key] !== undefined && typeof c[key] !== "boolean")
       throw new Error(`${key} must be true or false`);
   }
@@ -128,6 +135,7 @@ export function validateConfig(raw: unknown): TopologyCardConfig {
 }
 
 export function resolveConfig(c: TopologyCardConfig): ResolvedConfig {
+  const showWan = c.show_wan ?? true;
   return {
     entry_id: c.entry_id,
     site_id: c.site_id,
@@ -135,11 +143,12 @@ export function resolveConfig(c: TopologyCardConfig): ResolvedConfig {
     view: c.view ?? "graph",
     show_site_selector: c.show_site_selector ?? false,
     clients: c.clients ?? "collapsed",
-    kinds: c.kinds ? [...c.kinds] : [...NODE_KINDS],
+    kinds: (c.kinds ?? NODE_KINDS).filter((k) => showWan || k !== "wan"),
     density: c.density,
     orientation: c.orientation ?? "vertical",
     layout: c.layout ?? "tree",
     show_labels: c.show_labels ?? true,
+    show_wan: showWan,
     max_clients: c.max_clients ?? MAX_CLIENTS_PER_SITE,
   };
 }

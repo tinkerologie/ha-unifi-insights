@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { NODE_KINDS } from "../src/contract";
 import { makeLocalize } from "../src/localize";
 import { listRows, type UitListView } from "../src/views/list-view";
 import { cleanup, fixtureModel, fixtureSnapshot, mount } from "./helpers";
@@ -14,8 +15,34 @@ const key = (el: UitListView, k: string) =>
     .shadowRoot!.querySelector('[role="tree"]')!
     .dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
 
+// The fixture without its WAN rows, for tests about the tree itself.
+const withoutWans = () =>
+  fixtureModel({ kinds: new Set(NODE_KINDS.filter((k) => k !== "wan")) });
+
 describe("listRows", () => {
-  const model = fixtureModel();
+  const model = withoutWans();
+
+  it("lists each WAN right before its gateway, at the gateway's level", () => {
+    const rows = listRows(fixtureModel(), new Set(), "");
+    expect(rows.slice(0, 3).map((r) => `${r.level}:${r.id}`)).toEqual([
+      "1:wan:uuid-gw:wan",
+      "1:wan:uuid-gw:wan2",
+      "1:dev:uuid-gw",
+    ]);
+    expect(rows[1]).toMatchObject({
+      posinset: 2,
+      setsize: 3,
+      hasChildren: false,
+      parentId: undefined,
+    });
+    expect(rows[2]).toMatchObject({ posinset: 3, setsize: 3 });
+  });
+
+  it("finds a WAN by name, with its gateway", () => {
+    expect(
+      listRows(fixtureModel(), new Set(), "backup").map((r) => r.id),
+    ).toEqual(["wan:uuid-gw:wan2", "dev:uuid-gw"]);
+  });
 
   it("flattens the tree depth-first with ARIA positions", () => {
     const rows = listRows(model, new Set(), "");
@@ -59,7 +86,23 @@ describe("listRows", () => {
 });
 
 describe("<uit-list-view>", () => {
-  const props = () => ({ model: fixtureModel(), localize, siteName: "Home" });
+  const props = () => ({ model: withoutWans(), localize, siteName: "Home" });
+
+  it("labels WAN rows and marks a disconnected one", async () => {
+    const el = await mount<UitListView>("uit-list-view", {
+      ...props(),
+      model: fixtureModel(),
+    });
+    const [fiber, backup] = rowsOf(el);
+    expect(fiber!.getAttribute("aria-label")).toBe(
+      "WAN Fiber, connected, internet connection of Gateway",
+    );
+    expect(fiber!.querySelector(".state-text")).toBeNull();
+    expect(backup!.classList.contains("offline")).toBe(true);
+    expect(backup!.querySelector(".state-text")!.textContent).toBe(
+      "Disconnected",
+    );
+  });
 
   it("renders an ARIA tree with one tab stop", async () => {
     const el = await mount<UitListView>("uit-list-view", props());
@@ -156,7 +199,10 @@ describe("<uit-list-view>", () => {
     snapshot.nodes.find((n) => n.id === "dev:uuid-core")!.name = long;
     const el = await mount<UitListView>("uit-list-view", {
       ...props(),
-      model: fixtureModel({}, snapshot),
+      model: fixtureModel(
+        { kinds: new Set(NODE_KINDS.filter((k) => k !== "wan")) },
+        snapshot,
+      ),
     });
     const names = [...el.shadowRoot!.querySelectorAll<HTMLElement>(".name")];
     expect(el.shadowRoot!.querySelector("img")).toBeNull();

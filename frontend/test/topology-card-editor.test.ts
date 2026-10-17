@@ -46,9 +46,28 @@ describe("form mapping", () => {
       kinds: [...NODE_KINDS],
       show_site_selector: false,
       show_labels: true,
+      show_wan: true,
       max_clients: 500,
     });
     expect(toFormData({ type: TYPE }, sites).site).toBe("");
+  });
+
+  it("writes show_wan only when WAN nodes are turned off", () => {
+    const previous = { type: TYPE, grid_options: { columns: 12 } };
+    const hidden = fromFormData(
+      { ...toFormData(previous, sites), show_wan: false },
+      previous,
+      sites,
+    );
+    expect(hidden.show_wan).toBe(false);
+    expect(toFormData(hidden, sites).show_wan).toBe(false);
+    const shown = fromFormData(
+      { ...toFormData(hidden, sites), show_wan: true },
+      hidden,
+      sites,
+    );
+    expect(shown).not.toHaveProperty("show_wan");
+    expect(fromFormData({}, hidden, sites).show_wan).toBe(false);
   });
 
   it("writes a chosen site and keeps keys the form does not own", () => {
@@ -177,8 +196,12 @@ describe("form mapping", () => {
         multiple: true,
         options: expect.arrayContaining([
           { value: "access_point", label: "Access point" },
+          { value: "wan", label: "WAN" },
         ]),
       },
+    });
+    expect(schema.find((f) => f.name === "show_wan")!.selector).toEqual({
+      boolean: {},
     });
     expect(
       schema.find((f) => f.type === "grid")!.schema!.map((f) => f.name),
@@ -238,6 +261,9 @@ describe("<unifi-insights-topology-card-editor>", () => {
     });
     expect(form.computeLabel!({ name: "max_clients" })).toBe("Maximum clients");
     expect(form.computeLabel!({ name: "layout" })).toBe("Layout");
+    expect(form.computeLabel!({ name: "show_wan" })).toBe(
+      "Show internet connections (WAN)",
+    );
   });
 
   it("fires config-changed with the merged config", async () => {

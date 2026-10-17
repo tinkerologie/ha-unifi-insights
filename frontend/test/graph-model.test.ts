@@ -12,6 +12,7 @@ import {
   createModelBuilder,
   groupContaining,
   isGroupExpanded,
+  siblingsOf,
   type UiState,
 } from "../src/model/graph-model";
 import { fixtureSnapshot } from "./helpers";
@@ -228,5 +229,90 @@ describe("helpers", () => {
     const m = buildModel(fixtureSnapshot(), ui());
     expect(groupContaining(m, "cli:cli-tv")?.id).toBe("group:dev:uuid-u1");
     expect(groupContaining(m, "dev:uuid-u1")).toBeUndefined();
+  });
+});
+
+describe("WAN uplinks", () => {
+  const wanSnap = () =>
+    snap(
+      [
+        node("wan:gw:wan", "wan", "Fiber"),
+        node("wan:gw:wan2", "wan", "5G Backup", { state: "offline" }),
+        node("dev:gw", "gateway", "Gateway"),
+        node("dev:sw", "switch", "Switch"),
+      ],
+      [
+        ["dev:gw", "wan:gw:wan"],
+        ["dev:gw", "wan:gw:wan2"],
+        ["dev:sw", "dev:gw"],
+      ],
+    );
+
+  it("keeps the gateway a root and lists its WANs as uplinks", () => {
+    const model = buildModel(wanSnap(), ui());
+    expect(model.roots).toEqual(["dev:gw"]);
+    expect(model.realParent.has("dev:gw")).toBe(false);
+    expect(model.uplinks.get("dev:gw")).toEqual(["wan:gw:wan", "wan:gw:wan2"]);
+    expect(model.uplinkOwner.get("wan:gw:wan2")).toBe("dev:gw");
+    expect(model.visuals.get("wan:gw:wan")).toMatchObject({ type: "device" });
+    expect(model.uplinkLinks).toEqual([
+      expect.objectContaining({ childId: "dev:gw", parentId: "wan:gw:wan" }),
+      expect.objectContaining({ childId: "dev:gw", parentId: "wan:gw:wan2" }),
+    ]);
+    expect(model.parentOf.has("wan:gw:wan")).toBe(false);
+    expect(siblingsOf(model, "wan:gw:wan2")).toEqual([
+      "wan:gw:wan",
+      "wan:gw:wan2",
+    ]);
+  });
+
+  it("does not count WANs as devices, or a down WAN as an offline device", () => {
+    expect(buildModel(wanSnap(), ui()).stats).toEqual({
+      devices: 2,
+      clients: 0,
+      offlineDevices: 0,
+    });
+  });
+
+  it("hides WANs with their kind or with their gateway", () => {
+    const noWan = buildModel(
+      wanSnap(),
+      ui({ kinds: new Set(NODE_KINDS.filter((k) => k !== "wan")) }),
+    );
+    const noGateway = buildModel(
+      wanSnap(),
+      ui({ kinds: new Set(NODE_KINDS.filter((k) => k !== "gateway")) }),
+    );
+    for (const model of [noWan, noGateway]) {
+      expect(model.visuals.has("wan:gw:wan")).toBe(false);
+      expect(model.uplinks.size).toBe(0);
+      expect(model.uplinkLinks).toEqual([]);
+    }
+    expect(noGateway.roots).toEqual(["dev:sw"]);
+  });
+
+  it("ignores WAN edges it cannot place", () => {
+    const model = buildModel(
+      snap(
+        [
+          node("wan:a", "wan", "A"),
+          node("wan:b", "wan", "B"),
+          node("dev:gw", "gateway", "Gateway"),
+          node("dev:gw2", "gateway", "Gateway 2"),
+        ],
+        [
+          ["dev:gw", "wan:a"],
+          ["dev:gw2", "wan:a"],
+          ["wan:b", "dev:gw"],
+          ["wan:a", "wan:b"],
+          ["dev:gone", "wan:b"],
+        ],
+      ),
+      ui(),
+    );
+    expect(model.uplinks.get("dev:gw")).toEqual(["wan:a"]);
+    expect(model.uplinks.has("dev:gw2")).toBe(false);
+    expect(model.visuals.has("wan:b")).toBe(false);
+    expect(model.roots).toEqual(["dev:gw", "dev:gw2"]);
   });
 });

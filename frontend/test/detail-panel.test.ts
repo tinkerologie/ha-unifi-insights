@@ -997,3 +997,15 @@ describe("plan v3 panel inputs", () => {
     expect(el.shadowRoot!.querySelector("uit-node-menu")).toBeNull();
   });
 });
+
+it("shows a WAN with its state wording, its gateway and the gateway device", async () => {
+  const el = await panel("wan:uuid-gw:wan2");
+  expect(el.shadowRoot!.querySelector("h3")!.textContent).toBe("5G Backup");
+  expect(rows(el)).toEqual({
+    Type: "WAN",
+    State: "Disconnected",
+    "Connected to": "Gateway",
+  });
+  el.shadowRoot!.querySelector<HTMLButtonElement>("button.action")!.click();
+  expect(location.pathname).toBe("/config/devices/device/reg-gw");
+});

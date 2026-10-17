@@ -14,9 +14,9 @@ import type { LocalizeFunc } from "../localize";
 import type { GraphModel, Visual } from "../model/graph-model";
 import { controlStyles, themeTokens } from "../styles";
 import {
-  STATE_KEYS,
   describeVisual,
   visualState,
+  visualStateKey,
   visualTitle,
 } from "./describe";
 
@@ -37,7 +37,10 @@ function matches(visual: Visual, query: string): boolean {
   return visual.node.name.toLowerCase().includes(query);
 }
 
-/** Visible rows of the ARIA tree: depth-first, filtered to search matches plus their ancestors. */
+/**
+ * Visible rows of the ARIA tree: depth-first, filtered to search matches plus
+ * their ancestors. WAN uplinks are listed just before the device they serve.
+ */
 export function listRows(
   model: GraphModel,
   collapsed: ReadonlySet<string>,
@@ -52,7 +55,7 @@ export function listRows(
       for (
         let cur: string | undefined = id;
         cur !== undefined && !keep.has(cur);
-        cur = model.parentOf.get(cur)
+        cur = model.parentOf.get(cur) ?? model.uplinkOwner.get(cur)
       )
         keep.add(cur);
     }
@@ -63,7 +66,12 @@ export function listRows(
     level: number,
     parentId: string | undefined,
   ): void => {
-    const shown = keep ? ids.filter((id) => keep.has(id)) : ids;
+    // A device's WAN rows come right before it, at its level.
+    const withUplinks = ids.flatMap((id) => [
+      ...(model.uplinks.get(id) ?? []),
+      id,
+    ]);
+    const shown = keep ? withUplinks.filter((id) => keep.has(id)) : withUplinks;
     shown.forEach((id, index) => {
       const visual = model.visuals.get(id)!;
       const kids = model.children.get(id) ?? [];
@@ -214,7 +222,7 @@ export class UitListView extends LitElement {
         : html`<span class="dot" aria-hidden="true"></span>${state === "online"
               ? nothing
               : html`<span class="state-text"
-                  >${localize(STATE_KEYS[state])}</span
+                  >${localize(visualStateKey(visual))}</span
                 >`}`}
     </div>`;
   }

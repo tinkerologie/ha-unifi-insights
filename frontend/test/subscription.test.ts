@@ -287,7 +287,7 @@ describe("TopologySubscription", () => {
     const h = handlers();
     new TopologySubscription(h).update(fake.connection, KEY);
     await vi.runAllTimersAsync();
-    fake.calls[0]!.callback({ ...fixtureSnapshot(), schema_version: 2 });
+    fake.calls[0]!.callback({ ...fixtureSnapshot(), schema_version: 1 });
     fake.calls[0]!.callback({ nope: true });
     expect(h.onIncompatible).toHaveBeenCalledOnce();
     expect(h.onError).toHaveBeenCalledWith(

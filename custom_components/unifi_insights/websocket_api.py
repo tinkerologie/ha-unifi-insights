@@ -50,6 +50,7 @@ from .topology_contract import (
     device_kind,
     opaque_node_id,
     site_display_name,
+    wan_node_id,
 )
 from .topology_keys import async_get_node_key
 
@@ -220,12 +221,13 @@ def _find_node(
     data: dict[str, Any], site_id: str, node_key: bytes, node_id: str
 ) -> tuple[NodeKind, str, dict[str, Any]]:
     """
-    Return (kind, raw id, record) of the one device or client ``node_id`` names.
+    Return (kind, raw id, record) of the one device, client or WAN ``node_id`` names.
 
     The id is never decoded: each record of the validated site is given the id
     the snapshot would give it and compared. A node id that matches no record,
     or more than one (two ids that normalise to the same MAC share a hash),
-    names no node.
+    names no node. A WAN's raw id is its gateway's device id and its record is
+    the WAN record.
     """
     matches: list[tuple[NodeKind, str, dict[str, Any]]] = []
     for prefix, section in _NODE_SECTIONS:
@@ -237,6 +239,19 @@ def _find_node(
             ):
                 kind = device_kind(record) if section == "devices" else "client"
                 matches.append((kind, raw_id, record))
+    devices = as_dict(as_dict(data.get("devices")).get(site_id))
+    for raw_id, record in devices.items():
+        if not isinstance(record, dict) or device_kind(record) != "gateway":
+            continue
+        wans = record.get("wans")
+        for wan in wans if isinstance(wans, list) else ():
+            wan_key = wan.get("key") if isinstance(wan, dict) else None
+            if (
+                isinstance(wan_key, str)
+                and wan_key
+                and wan_node_id(node_key, raw_id, wan_key) == node_id
+            ):
+                matches.append(("wan", raw_id, wan))
     if len(matches) != 1:
         msg = f"No node {node_id} in site {site_id}"
         raise _RequestError(ERR_NODE_NOT_FOUND, msg)
@@ -244,10 +259,17 @@ def _find_node(
 
 
 def _device_targets(
-    hass: HomeAssistant, entry: UnifiInsightsConfigEntry, site_id: str, device_id: str
+    hass: HomeAssistant,
+    entry: UnifiInsightsConfigEntry,
+    site_id: str,
+    device_id: str,
+    entity_key: str = "device_status",
 ) -> dict[str, str]:
     """
     Return the registry device and connectivity entity of an infrastructure node.
+
+    ``entity_key`` picks the connectivity sensor: the device status, or a WAN
+    node's ``wan_link_<key>`` connection sensor on its gateway.
 
     Each registry row must belong to this config entry: the device lookup's
     older-Home-Assistant fallbacks match on identifier alone, and an entity's
@@ -262,7 +284,7 @@ def _device_targets(
         targets["device_id"] = device.id
     registry = er.async_get(hass)
     entity_id = registry.async_get_entity_id(
-        "binary_sensor", DOMAIN, f"{site_id}_{device_id}_device_status"
+        "binary_sensor", DOMAIN, f"{site_id}_{device_id}_{entity_key}"
     )
     entity = registry.async_get(entity_id) if entity_id is not None else None
     if entity is not None and entity.config_entry_id == entry.entry_id:
@@ -334,6 +356,10 @@ def _build_node_details(
             details[key] = value.lower() if key == "mac_address" else value
     if kind == "client":
         details.update(_client_targets(hass, entry, details.get("mac_address")))
+    elif kind == "wan":
+        details.update(
+            _device_targets(hass, entry, site_id, raw_id, f"wan_link_{record['key']}")
+        )
     else:
         details.update(_device_targets(hass, entry, site_id, raw_id))
     return details

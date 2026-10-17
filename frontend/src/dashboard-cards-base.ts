@@ -193,6 +193,7 @@ export abstract class BaseDashboardCard extends LitElement {
         orientation: "vertical",
         layout: "tree",
         show_labels: true,
+        show_wan: true,
         max_clients: 500,
       },
       this.sources as TopologySource[],

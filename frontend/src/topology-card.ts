@@ -92,8 +92,9 @@ const PHASE_MESSAGES: Partial<
 };
 
 const offlineDevices = (snapshot: SiteTopology | undefined): number =>
-  snapshot?.nodes.filter((n) => n.kind !== "client" && n.state === "offline")
-    .length ?? 0;
+  snapshot?.nodes.filter(
+    (n) => n.kind !== "client" && n.kind !== "wan" && n.state === "offline",
+  ).length ?? 0;
 
 /** Lovelace card: one UniFi site's topology as an interactive graph or an accessible list. */
 export class UnifiInsightsTopologyCard extends LitElement {
@@ -555,7 +556,9 @@ export class UnifiInsightsTopologyCard extends LitElement {
       this.snapshot?.site_name ??
       localize("card.name");
     const nodes = state.render?.nodes ?? [];
-    const devCount = nodes.filter((n) => n.kind !== "client").length;
+    const devCount = nodes.filter(
+      (n) => n.kind !== "client" && n.kind !== "wan",
+    ).length;
     const cliCount = nodes.filter((n) => n.kind === "client").length;
     return html`<ha-card>
       <div
@@ -642,7 +645,9 @@ export class UnifiInsightsTopologyCard extends LitElement {
         )}
       </div>
       <div class="group" role="group" aria-label=${localize("toolbar.filters")}>
-        ${NODE_KINDS.map(
+        ${NODE_KINDS.filter(
+          (k) => this.config?.show_wan !== false || k !== "wan",
+        ).map(
           (k) =>
             html`<button
               aria-pressed=${String(this.ui.kinds.has(k))}

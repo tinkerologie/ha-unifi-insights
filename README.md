@@ -735,50 +735,52 @@ The integration installs six dashboard cards. There is no separate download and 
 
 ### Network topology card
 
-The **UniFi Topology** card draws each site's network: the gateway, switches and access points, and the clients connected to them. With a single UniFi site the card works without any configuration. With several sites, choose the site in the card editor.
+The **UniFi Topology** card draws each site's network: the gateway's internet connections (WANs), the gateway, switches and access points, and the clients connected to them. With a single UniFi site the card works without any configuration. With several sites, choose the site in the card editor.
 
 **Use it:**
 
 - **Graph** view: drag to pan, pinch or Ctrl + scroll to zoom (plain scroll zooms in panel view), and use the zoom buttons or `+` / `-` / `0` keys. Select a device to see its uplink port, link speed, PoE draw and client counts, with a link to its Home Assistant device page.
 - **List** view: the same network as an indented list with search. It is the recommended view for screen readers.
 - Clients are grouped under their switch or access point ("12 clients"). Select a group to expand it.
-- The filter buttons hide gateways, switches, access points, clients or other devices. Devices under a hidden one stay visible, linked with a dashed line.
+- Each WAN the gateway reports (the same WANs as its **Connection** sensors) is drawn above the gateway with its name and state. A disconnected WAN is dimmed, marked **Disconnected** and linked with a red dashed line. WANs follow the gateway: hiding gateways hides them too.
+- The filter buttons hide WANs, gateways, switches, access points, clients or other devices. Devices under a hidden one stay visible, linked with a dashed line.
 - Select a device or client and use the **Actions** menu in its details, or use a context-menu gesture. See **Actions menu** below.
 
 **Options** (all optional, all available in the card editor):
 
-| Option                 | Values                                                        | Default                             |
-| ---------------------- | ------------------------------------------------------------- | ----------------------------------- |
-| `entry_id` + `site_id` | the site to show                                              | the only site, if there is one      |
-| `title`                | text                                                          | the site name                       |
-| `view`                 | `graph`, `list`                                               | `graph`                             |
-| `show_site_selector`   | `true`, `false`                                               | `false`                             |
-| `clients`              | `collapsed`, `expanded`, `hidden`                             | `collapsed`                         |
-| `kinds`                | any of `gateway`, `switch`, `access_point`, `client`, `other` | all                                 |
-| `density`              | `comfortable`, `compact`                                      | automatic (compact on narrow cards) |
-| `orientation`          | `vertical`, `horizontal`                                      | `vertical`                          |
-| `layout`               | `tree`, `tiered`                                              | `tree`                              |
-| `show_labels`          | `true`, `false`                                               | `true`                              |
-| `max_clients`          | 1–500                                                         | 500                                 |
+| Option                 | Values                                                               | Default                             |
+| ---------------------- | -------------------------------------------------------------------- | ----------------------------------- |
+| `entry_id` + `site_id` | the site to show                                                     | the only site, if there is one      |
+| `title`                | text                                                                 | the site name                       |
+| `view`                 | `graph`, `list`                                                      | `graph`                             |
+| `show_site_selector`   | `true`, `false`                                                      | `false`                             |
+| `clients`              | `collapsed`, `expanded`, `hidden`                                    | `collapsed`                         |
+| `kinds`                | any of `wan`, `gateway`, `switch`, `access_point`, `client`, `other` | all                                 |
+| `density`              | `comfortable`, `compact`                                             | automatic (compact on narrow cards) |
+| `orientation`          | `vertical`, `horizontal`                                             | `vertical`                          |
+| `layout`               | `tree`, `tiered`                                                     | `tree`                              |
+| `show_labels`          | `true`, `false`                                                      | `true`                              |
+| `show_wan`             | `true`, `false`; `false` removes WAN nodes and their filter button   | `true`                              |
+| `max_clients`          | 1–500                                                                | 500                                 |
 
-**Layout:** `tree` places every device one level below the device it connects through. `tiered` gives each device role its own row: gateways at the top, then switches, access points, other devices and, at the bottom, the clients. A device whose own row is at or above its parent's row, such as a switch behind an access point, goes on a row just below the parent. Empty rows take no space. With `orientation: horizontal` the rows become columns. Only the graph view uses `layout`; the list view ignores it.
+**Layout:** `tree` places every device one level below the device it connects through, and each gateway's WANs one level above it. `tiered` gives each device role its own row: WANs at the top, then gateways, switches, access points, other devices and, at the bottom, the clients. A device whose own row is at or above its parent's row, such as a switch behind an access point, goes on a row just below the parent. Empty rows take no space. With `orientation: horizontal` the rows become columns. Only the graph view uses `layout`; the list view ignores it.
 
 ### Actions menu
 
 The **Actions** menu is for administrators and its button appears in a node's details when at least one action is available. Right-click a node, long-press it on a touch screen in browsers that send a context-menu event on a long-press, or focus it and press the ContextMenu key or Shift+F10 to select it and open the menu. Otherwise, use the **Actions** button in the node details. These gestures work in graph and list views. Client groups ("12 clients") have no menu. Non-administrators may still see the separate **Open device** link in node details when a device page is available.
 
-| Action           | Who can use it | What it does                                                                                |
-| ---------------- | -------------- | ------------------------------------------------------------------------------------------- |
-| Copy IP address  | Administrators | Copies the node's IP address to the clipboard                                               |
-| Copy MAC address | Administrators | Copies the node's MAC address to the clipboard                                              |
-| Open device      | Administrators | Opens the node's Home Assistant device page                                                 |
-| Open entity      | Administrators | Opens the more-info dialog of a device's **Status** sensor, or of a client's device tracker |
+| Action           | Who can use it | What it does                                                                                                            |
+| ---------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Copy IP address  | Administrators | Copies the node's IP address to the clipboard                                                                           |
+| Copy MAC address | Administrators | Copies the node's MAC address to the clipboard                                                                          |
+| Open device      | Administrators | Opens the node's Home Assistant device page                                                                             |
+| Open entity      | Administrators | Opens the more-info dialog of a device's **Status** sensor, a WAN's **Connection** sensor, or a client's device tracker |
 
 An action is omitted when no target is available, for example when there is no IP address or a client has no tracker (see **Track WiFi Clients** and **Track Wired Clients** in [Options](#options)).
 
 Use the Up and Down arrow keys, Home and End to move through the menu, Enter to choose an action and Escape to close it. Escape closes only the menu and restores focus to its button. The Up and Down arrow keys on the button open the menu. If copying fails, the card shows the value as selectable text for manual copying.
 
-**Privacy:** the topology data that every user receives contains names, models, states, ports and VLANs. MAC addresses, IP addresses, hostnames and firmware versions are never included. For an administrator, the card requests one selected node's details through the admin-only `unifi_insights/topology/node_details` command. The response includes IP and MAC addresses plus Home Assistant's `device_id` and `entity_id` when available. Non-administrators cannot call the command. Hostnames and firmware versions are not sent, and the card does not keep an address after the selection changes.
+**Privacy:** the topology data that every user receives contains names, models, states, ports and VLANs. MAC addresses, IP addresses, hostnames and firmware versions are never included. For an administrator, the card requests one selected node's details through the admin-only `unifi_insights/topology/node_details` command. The response includes IP and MAC addresses (for a WAN, its WAN IP address) plus Home Assistant's `device_id` and `entity_id` when available. Non-administrators cannot call the command. Hostnames and firmware versions are not sent, and the card does not keep an address after the selection changes.
 
 ## Troubleshooting
 

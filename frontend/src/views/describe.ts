@@ -4,6 +4,7 @@ import type {
   NodeKind,
   NodeState,
   TopologyEdge,
+  TopologyNode,
 } from "../contract";
 import type { LocalizeFunc, LocalizeKey } from "../localize";
 import {
@@ -14,6 +15,7 @@ import {
 } from "../model/graph-model";
 
 export const KIND_KEYS: Record<NodeKind, LocalizeKey> = {
+  wan: "kind.wan",
   gateway: "kind.gateway",
   switch: "kind.switch",
   access_point: "kind.access_point",
@@ -23,6 +25,11 @@ export const KIND_KEYS: Record<NodeKind, LocalizeKey> = {
 export const STATE_KEYS: Record<NodeState, LocalizeKey> = {
   online: "state.online",
   offline: "state.offline",
+  unknown: "state.unknown",
+};
+const WAN_STATE_KEYS: Record<NodeState, LocalizeKey> = {
+  online: "state.connected",
+  offline: "state.disconnected",
   unknown: "state.unknown",
 };
 export const VIEW_KEYS: Record<ViewMode, LocalizeKey> = {
@@ -71,6 +78,22 @@ export function visualTitle(visual: Visual, localize: LocalizeFunc): string {
     : localize("group.clients", { count: visual.counts.total });
 }
 
+/** State wording: a WAN connection is connected or disconnected, not online or offline. */
+export function stateKey(
+  node: TopologyNode | undefined,
+  state: NodeState,
+): LocalizeKey {
+  return node?.kind === "wan" ? WAN_STATE_KEYS[state] : STATE_KEYS[state];
+}
+
+/** State wording of any visual; groups have no node. */
+export function visualStateKey(visual: Visual): LocalizeKey {
+  return stateKey(
+    visual.type === "group" ? undefined : visual.node,
+    visualState(visual),
+  );
+}
+
 /** A group reads as offline only when every member is offline. */
 export function visualState(visual: Visual): NodeState {
   if (visual.type !== "group") return visual.node.state;
@@ -91,9 +114,14 @@ export function describeVisual(
     localize("node.label", {
       kind: localize(KIND_KEYS[n.kind]),
       name: n.name,
-      state: localize(STATE_KEYS[n.state]).toLocaleLowerCase(),
+      state: localize(stateKey(n, n.state)).toLocaleLowerCase(),
     }),
   ];
+  const owner = model.uplinkOwner.get(n.id);
+  if (owner !== undefined)
+    parts.push(
+      localize("node.wan_of", { device: model.nodes.get(owner)?.name ?? "" }),
+    );
   const clients = model.clientCounts.get(n.id)?.total ?? 0;
   if (clients > 0)
     parts.push(

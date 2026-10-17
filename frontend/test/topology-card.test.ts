@@ -210,7 +210,7 @@ describe("states", () => {
 
   it("reports a schema mismatch", async () => {
     const { el, fake } = await card();
-    fake.push({ ...fixtureSnapshot(), schema_version: 2 });
+    fake.push({ ...fixtureSnapshot(), schema_version: 1 });
     await settle(el);
     expect(text(el)).toContain("Card and integration versions don't match.");
   });
@@ -244,6 +244,27 @@ describe("interaction", () => {
     expect(button(single.el, "Gateway").getAttribute("aria-pressed")).toBe(
       "true",
     );
+  });
+
+  it("shows WAN nodes and their chip by default, and neither with show_wan off", async () => {
+    const { el } = await loaded();
+    expect(graphOf(el).model?.visuals.has("wan:uuid-gw:wan")).toBe(true);
+    expect(button(el, "WAN").getAttribute("aria-pressed")).toBe("true");
+    expect(text(el)).toContain("8 devices");
+    const off = await loaded({ show_wan: false });
+    expect(graphOf(off.el).model?.visuals.has("wan:uuid-gw:wan")).toBe(false);
+    expect(button(off.el, "WAN")).toBeUndefined();
+    expect(text(off.el)).toContain("8 devices");
+  });
+
+  it("never counts a disconnected WAN as an offline device", async () => {
+    const { el, fake } = await loaded();
+    const snapshot = fixtureSnapshot();
+    snapshot.revision = "wan-down";
+    snapshot.nodes.find((n) => n.id === "wan:uuid-gw:wan")!.state = "offline";
+    fake.push(snapshot);
+    await settle(el);
+    expect(q(el, '[role="status"]')!.textContent).not.toContain("offline");
   });
 
   it("opens details on activate and closes them with Escape", async () => {

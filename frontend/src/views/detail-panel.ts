@@ -33,6 +33,7 @@ import {
   MEDIUM_KEYS,
   STATE_KEYS,
   formatSpeed,
+  stateKey,
   visualTitle,
 } from "./describe";
 
@@ -397,7 +398,7 @@ export class UitDetailPanel extends LitElement {
     localize: LocalizeFunc,
     withMedium: boolean,
   ): Row[] {
-    const parentId = model.realParent.get(id);
+    const parentId = model.realParent.get(id) ?? model.uplinkOwner.get(id);
     const edge = model.edges.get(id);
     let port: string | undefined;
     if (edge?.parent_port !== undefined) {
@@ -439,7 +440,7 @@ export class UitDetailPanel extends LitElement {
     return html`${this.menu(node, localize)}${this.rows([
       ["detail.kind", localize(KIND_KEYS[node.kind])],
       ["detail.model", node.model],
-      ["detail.state", localize(STATE_KEYS[node.state])],
+      ["detail.state", localize(stateKey(node, node.state))],
       ...this.uplinkRows(model, node.id, localize, true),
       [
         "detail.clients",

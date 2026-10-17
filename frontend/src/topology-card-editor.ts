@@ -40,6 +40,7 @@ export interface EditorFormData {
   kinds: string[];
   show_site_selector: boolean;
   show_labels: boolean;
+  show_wan: boolean;
   max_clients: number;
 }
 
@@ -79,6 +80,7 @@ const LABEL_KEYS: Record<string, LocalizeKey> = {
   layout: "editor.layout",
   show_site_selector: "editor.show_site_selector",
   show_labels: "editor.show_labels",
+  show_wan: "editor.show_wan",
   max_clients: "editor.max_clients",
 };
 
@@ -198,6 +200,7 @@ export function buildSchema(
     },
     { name: "show_site_selector", selector: { boolean: {} } },
     { name: "show_labels", selector: { boolean: {} } },
+    { name: "show_wan", selector: { boolean: {} } },
     {
       name: "max_clients",
       selector: {
@@ -222,6 +225,7 @@ export function toFormData(
     kinds: config.kinds ? [...config.kinds] : [...NODE_KINDS],
     show_site_selector: config.show_site_selector ?? false,
     show_labels: config.show_labels ?? true,
+    show_wan: config.show_wan ?? true,
     max_clients: config.max_clients ?? MAX_CLIENTS_PER_SITE,
   };
 }
@@ -264,6 +268,9 @@ export function fromFormData(
     next.show_site_selector = data.show_site_selector;
   if (typeof data.show_labels === "boolean")
     next.show_labels = data.show_labels;
+  // Shown by default: only an opt-out is written to the YAML.
+  if (data.show_wan === true) delete next.show_wan;
+  else if (data.show_wan === false) next.show_wan = false;
   const max = data.max_clients;
   // Absent means "the server cap"; pinning today's cap would outlive a change to it.
   if (max === MAX_CLIENTS_PER_SITE) delete next.max_clients;

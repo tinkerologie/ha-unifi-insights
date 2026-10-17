@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Ruaan Deysel
 
 """
-Frontend contract for the network topology snapshot (schema version 1).
+Frontend contract for the network topology snapshot (schema version 2).
 
 The TypedDicts here are the payload the topology WebSocket commands send, and
 the helpers are the per-field normalisers the graph builder runs every device,
@@ -22,11 +22,13 @@ from typing import TYPE_CHECKING, Any, Final, Literal, NotRequired, TypedDict
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-TOPOLOGY_SCHEMA_VERSION: Final = 1
+TOPOLOGY_SCHEMA_VERSION: Final = 2
 # Hard server-side cap on client nodes per site; requests may ask for fewer.
 MAX_CLIENTS_PER_SITE: Final = 500
 
-NodeKind = Literal["gateway", "switch", "access_point", "client", "other"]
+# A "wan" node is one internet connection of a gateway. It is the gateway's
+# uplink: its edge has the gateway as source and the WAN as target.
+NodeKind = Literal["wan", "gateway", "switch", "access_point", "client", "other"]
 NodeState = Literal["online", "offline", "unknown"]
 LinkMedium = Literal["wired", "wireless", "unknown"]
 ClientConnection = Literal["wired", "wireless"]
@@ -50,7 +52,11 @@ class TopologyNode(TypedDict):
 
 
 class TopologyEdge(TypedDict):
-    """A child -> parent link. A ``gateway`` node is never a ``source``."""
+    """
+    A child -> parent link.
+
+    A ``gateway`` node is a ``source`` only of the edges to its own WANs.
+    """
 
     source: str
     target: str
@@ -84,7 +90,7 @@ class TopologyTruncation(TypedDict):
 
 class SiteTopology(TypedDict):
     """
-    One site's topology snapshot (contract version 1).
+    One site's topology snapshot (contract version 2).
 
     ``status: "unavailable"`` comes in two shapes. With the
     ``devices_unavailable`` issue the nodes and edges are the last-known data
@@ -145,6 +151,27 @@ def opaque_node_id(prefix: str, key: bytes, raw_id: str) -> str:
         return f"{prefix}:{raw_id}"
     digest = hmac.new(key, mac.encode(), hashlib.sha256).hexdigest()[:16]
     return f"{prefix}:h{digest}"
+
+
+def wan_node_id(key: bytes, device_id: str, wan_key: str) -> str:
+    """
+    Return the node id of one WAN connection of a gateway.
+
+    The gateway part is opaque exactly like a device node id, so a WAN node
+    never exposes the gateway's MAC; the WAN key ("wan", "wan2") is not
+    sensitive and keeps the id stable between polls.
+    """
+    return f"{opaque_node_id('wan', key, device_id)}:{wan_key.lower()}"
+
+
+def wan_state(wan: Mapping[str, Any]) -> NodeState:
+    """Map a WAN record's ``connected`` flag onto online/offline/unknown."""
+    connected = wan.get("connected")
+    if connected is True:
+        return "online"
+    if connected is False:
+        return "offline"
+    return "unknown"
 
 
 def device_kind(device: Mapping[str, Any]) -> NodeKind:

@@ -18,6 +18,8 @@ const en = {
   "state.online": "Online",
   "state.offline": "Offline",
   "state.unknown": "Unknown",
+  "state.connected": "Connected",
+  "state.disconnected": "Disconnected",
   "issue.site_unavailable":
     "Site data temporarily unavailable; will recover automatically.",
   "issue.devices_unavailable":
@@ -49,6 +51,7 @@ const en = {
   "zoom.out": "Zoom out",
   "zoom.fit": "Fit to view",
   "zoom.hint": "Use Ctrl + scroll to zoom",
+  "kind.wan": "WAN",
   "kind.gateway": "Gateway",
   "kind.switch": "Switch",
   "kind.access_point": "Access point",
@@ -69,6 +72,7 @@ const en = {
   "node.client_one": "1 client",
   "node.uplink": "uplink port {port}",
   "node.uplink_speed": "uplink port {port} at {speed}",
+  "node.wan_of": "internet connection of {device}",
   "list.label": "{site} devices and clients",
   "list.search": "Search",
   "list.no_matches": "No matches",
@@ -110,6 +114,7 @@ const en = {
   "editor.layout": "Layout",
   "editor.show_site_selector": "Show site selector",
   "editor.show_labels": "Show labels",
+  "editor.show_wan": "Show internet connections (WAN)",
   "editor.max_clients": "Maximum clients",
   "clients.collapsed": "Grouped",
   "clients.expanded": "Expanded",

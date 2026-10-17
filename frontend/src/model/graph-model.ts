@@ -70,15 +70,23 @@ export interface GraphModel {
   edges: Map<string, TopologyEdge>;
   /** Raw device id → its direct clients, regardless of filters. */
   clientCounts: Map<string, ClientCounts>;
+  /** Visible device id → its visible WAN ids, drawn above it but outside the tree. */
+  uplinks: Map<string, string[]>;
+  /** Visible WAN id → the device it is an uplink of. */
+  uplinkOwner: Map<string, string>;
+  /** One link per visible WAN, from its owner (child) to the WAN (parent). */
+  uplinkLinks: VisualLink[];
+  /** WAN nodes are connections, not devices, so they are not counted here. */
   stats: { devices: number; clients: number; offlineDevices: number };
 }
 
 const KIND_ORDER: Record<NodeKind, number> = {
-  gateway: 0,
-  switch: 1,
-  access_point: 2,
-  other: 3,
-  client: 4,
+  wan: 0,
+  gateway: 1,
+  switch: 2,
+  access_point: 3,
+  other: 4,
+  client: 5,
 };
 const byName = (a: TopologyNode, b: TopologyNode): number =>
   a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
@@ -133,9 +141,17 @@ export function buildModel(snapshot: SiteTopology, ui: UiState): GraphModel {
   const nodes = new Map(snapshot.nodes.map((n) => [n.id, n]));
   const realParent = new Map<string, string>();
   const edges = new Map<string, TopologyEdge>();
+  // A WAN is its gateway's uplink, kept out of the tree so the gateway stays a root.
+  const wanOwner = new Map<string, { owner: string; edge: TopologyEdge }>();
   for (const edge of snapshot.edges) {
     const child = nodes.get(edge.source);
     const parent = nodes.get(edge.target);
+    if (parent?.kind === "wan") {
+      if (child && child.kind !== "wan" && !wanOwner.has(parent.id))
+        wanOwner.set(parent.id, { owner: child.id, edge });
+      continue;
+    }
+    if (child?.kind === "wan") continue;
     // Unknown ids, self-edges, client parents and second edges for one child cannot be placed.
     if (
       !child ||
@@ -151,7 +167,7 @@ export function buildModel(snapshot: SiteTopology, ui: UiState): GraphModel {
   cutCycles(snapshot.nodes, realParent, edges);
 
   const devices = snapshot.nodes
-    .filter((n) => n.kind !== "client")
+    .filter((n) => n.kind !== "client" && n.kind !== "wan")
     .sort(byKindThenName);
   const clients = snapshot.nodes
     .filter((n) => n.kind === "client")
@@ -211,6 +227,25 @@ export function buildModel(snapshot: SiteTopology, ui: UiState): GraphModel {
     visuals.set(device.id, { type: "device", id: device.id, node: device });
     const ancestor = nearestVisibleAncestor(device.id);
     attach(device.id, ancestor.id, edges.get(device.id), ancestor.skipped);
+  }
+
+  const uplinks = new Map<string, string[]>();
+  const uplinkOwner = new Map<string, string>();
+  const uplinkLinks: VisualLink[] = [];
+  for (const wan of snapshot.nodes) {
+    const link = wanOwner.get(wan.id);
+    if (!link || !visible(wan) || !visuals.has(link.owner)) continue;
+    visuals.set(wan.id, { type: "device", id: wan.id, node: wan });
+    const list = uplinks.get(link.owner);
+    if (list) list.push(wan.id);
+    else uplinks.set(link.owner, [wan.id]);
+    uplinkOwner.set(wan.id, link.owner);
+    uplinkLinks.push({
+      childId: link.owner,
+      parentId: wan.id,
+      edge: link.edge,
+      viaHidden: [],
+    });
   }
 
   if (ui.clients !== "hidden" && ui.kinds.has("client")) {
@@ -285,6 +320,9 @@ export function buildModel(snapshot: SiteTopology, ui: UiState): GraphModel {
     realParent,
     edges,
     clientCounts,
+    uplinks,
+    uplinkOwner,
+    uplinkLinks,
     stats: {
       devices: devices.length,
       clients: clients.length,
@@ -311,6 +349,8 @@ export function createModelBuilder(): (
 }
 
 export function siblingsOf(model: GraphModel, id: string): string[] {
+  const owner = model.uplinkOwner.get(id);
+  if (owner !== undefined) return model.uplinks.get(owner) ?? [];
   const parent = model.parentOf.get(id);
   return parent === undefined
     ? model.roots

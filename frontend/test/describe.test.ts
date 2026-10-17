@@ -6,6 +6,7 @@ import {
   formatSpeedLong,
   linkLabel,
   truncate,
+  visualStateKey,
   visualTitle,
 } from "../src/views/describe";
 import { fixtureModel } from "./helpers";
@@ -56,5 +57,18 @@ it("describes nodes and groups for screen readers", () => {
   ).toBe("1 client: 1 wireless, 0 offline");
   expect(visualTitle(model.visuals.get("group:dev:uuid-ap")!, localize)).toBe(
     "1 client",
+  );
+});
+
+it("describes a WAN as a connection of its gateway", () => {
+  const model = fixtureModel();
+  expect(
+    describeVisual(model, model.visuals.get("wan:uuid-gw:wan2")!, localize),
+  ).toBe("WAN 5G Backup, disconnected, internet connection of Gateway");
+  expect(visualStateKey(model.visuals.get("wan:uuid-gw:wan")!)).toBe(
+    "state.connected",
+  );
+  expect(visualStateKey(model.visuals.get("group:dev:uuid-ap")!)).toBe(
+    "state.online",
   );
 });

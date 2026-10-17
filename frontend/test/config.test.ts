@@ -50,6 +50,7 @@ describe("validateConfig", () => {
     [{ type: TYPE, kinds: [] }, /kinds must be a non-empty list/],
     [{ type: TYPE, kinds: ["router"] }, /kinds must be a non-empty list/],
     [{ type: TYPE, show_labels: "yes" }, /show_labels must be true or false/],
+    [{ type: TYPE, show_wan: "no" }, /show_wan must be true or false/],
     [
       { type: TYPE, max_clients: 0 },
       /max_clients must be a whole number from 1 to 500/,
@@ -75,6 +76,7 @@ describe("resolveConfig", () => {
       orientation: "vertical",
       layout: "tree",
       show_labels: true,
+      show_wan: true,
       max_clients: 500,
     });
   });
@@ -139,5 +141,18 @@ describe("site binding", () => {
     ).toBe(false);
     expect(sameBinding(undefined, undefined)).toBe(true);
     expect(sameBinding({ entry_id: "a", site_id: "b" }, undefined)).toBe(false);
+  });
+});
+
+describe("show_wan", () => {
+  it("drops the wan kind when off and keeps it by default", () => {
+    expect(resolveConfig({ type: TYPE }).kinds).toContain("wan");
+    const off = resolveConfig({ type: TYPE, show_wan: false });
+    expect(off.show_wan).toBe(false);
+    expect(off.kinds).toEqual(NODE_KINDS.filter((k) => k !== "wan"));
+    expect(
+      resolveConfig({ type: TYPE, show_wan: false, kinds: ["wan", "gateway"] })
+        .kinds,
+    ).toEqual(["gateway"]);
   });
 });

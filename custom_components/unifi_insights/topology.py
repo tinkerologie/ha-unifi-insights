@@ -15,6 +15,8 @@ Relationship sources, verified against real hardware:
   ``device["topology"]``. The v1 API leaves ``uplink`` and ``type`` null on
   current firmware, so they are only fallbacks.
 * Client -> device comes from the v1 client ``uplinkDeviceId``.
+* Gateway -> WAN comes from the gateway's merged legacy ``wans`` list (the
+  same records the "<WAN name> Connection" binary sensors read).
 
 The coordinator only holds clients the controller currently reports, so
 offline clients never appear in the graph.
@@ -52,6 +54,8 @@ from .topology_contract import (
     port_poe_watts,
     site_display_name,
     uplink_port_index,
+    wan_node_id,
+    wan_state,
 )
 
 if TYPE_CHECKING:
@@ -69,11 +73,12 @@ if TYPE_CHECKING:
     )
 
 _KIND_ORDER: Final[dict[str, int]] = {
-    "gateway": 0,
-    "switch": 1,
-    "access_point": 2,
-    "other": 3,
-    "client": 4,
+    "wan": 0,
+    "gateway": 1,
+    "switch": 2,
+    "access_point": 3,
+    "other": 4,
+    "client": 5,
 }
 
 
@@ -105,6 +110,47 @@ def _device_node(
     if ha_device_id:
         node["ha_device_id"] = ha_device_id
     return node
+
+
+def _wan_links(
+    device: Mapping[str, Any],
+    device_id: str,
+    gateway_node_id: str,
+    node_key: bytes,
+    ha_device_ids: Mapping[str, str],
+) -> tuple[list[TopologyNode], list[TopologyEdge]]:
+    """
+    Return one gateway's WAN nodes and their gateway -> WAN edges.
+
+    Only the name and connected state are emitted: the WAN IP, the raw
+    controller status and the reachability probe stay out of the snapshot.
+    """
+    wans = device.get("wans")
+    nodes: list[TopologyNode] = []
+    edges: list[TopologyEdge] = []
+    seen: set[str] = set()
+    for wan in wans if isinstance(wans, list) else ():
+        wan_key = wan.get("key") if isinstance(wan, dict) else None
+        if not isinstance(wan_key, str) or not wan_key:
+            continue
+        node_id = wan_node_id(node_key, device_id, wan_key)
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        node: TopologyNode = {
+            "id": node_id,
+            "kind": "wan",
+            "name": display_name(wan.get("name"), wan_key.upper()),
+            "state": wan_state(wan),
+        }
+        ha_device_id = ha_device_ids.get(device_id)
+        if ha_device_id:
+            node["ha_device_id"] = ha_device_id
+        nodes.append(node)
+        edges.append(
+            {"source": gateway_node_id, "target": node_id, "medium": "unknown"}
+        )
+    return nodes, edges
 
 
 def _client_node(
@@ -319,6 +365,16 @@ def build_site_topology(
         ) or normalize_mac(device_id)
         if mac is not None:
             mac_index[mac] = node_id
+
+    for device_id, node_id in device_node_ids.items():
+        device = devices_by_node[node_id]
+        if device_kind(device) != "gateway":
+            continue
+        wan_nodes, wan_edges = _wan_links(
+            device, device_id, node_id, node_key, ha_device_ids
+        )
+        nodes.extend(wan_nodes)
+        edges.extend(wan_edges)
 
     for node_id, device in devices_by_node.items():
         link = _device_edge(device, node_id, mac_index, devices_by_node)

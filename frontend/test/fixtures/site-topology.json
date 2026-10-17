@@ -37,6 +37,16 @@
       "target": "dev:uuid-core"
     },
     {
+      "medium": "unknown",
+      "source": "dev:uuid-gw",
+      "target": "wan:uuid-gw:wan"
+    },
+    {
+      "medium": "unknown",
+      "source": "dev:uuid-gw",
+      "target": "wan:uuid-gw:wan2"
+    },
+    {
       "child_port": 1,
       "medium": "wired",
       "parent_port": 12,
@@ -72,6 +82,20 @@
   "entry_id": "entry-1",
   "issues": [],
   "nodes": [
+    {
+      "ha_device_id": "reg-gw",
+      "id": "wan:uuid-gw:wan",
+      "kind": "wan",
+      "name": "Fiber",
+      "state": "online"
+    },
+    {
+      "ha_device_id": "reg-gw",
+      "id": "wan:uuid-gw:wan2",
+      "kind": "wan",
+      "name": "5G Backup",
+      "state": "offline"
+    },
     {
       "ha_device_id": "reg-gw",
       "id": "dev:uuid-gw",
@@ -148,8 +172,8 @@
       "vlan_id": 3
     }
   ],
-  "revision": "5d5bb54054874193",
-  "schema_version": 1,
+  "revision": "f1227b1dc7154ee1",
+  "schema_version": 2,
   "site_id": "site-1",
   "site_name": "Home",
   "status": "ok",

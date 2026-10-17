@@ -1,5 +1,5 @@
 /**
- * Wire contract of the `unifi_insights/topology/*` WebSocket commands, schema 1.
+ * Wire contract of the `unifi_insights/topology/*` WebSocket commands, schema 2.
  *
  * Mirrors custom_components/unifi_insights/topology_contract.py. This is the
  * only frontend module that knows the payload shape; everything else imports
@@ -8,11 +8,12 @@
  * test/contract.test.ts, so a contract change fails CI on both sides.
  */
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 /** Server-side hard cap on client nodes per site; `max_clients` may ask for fewer. */
 export const MAX_CLIENTS_PER_SITE = 500;
 
 export const NODE_KINDS = [
+  "wan",
   "gateway",
   "switch",
   "access_point",
@@ -37,8 +38,9 @@ export const UNRESOLVED_REASONS = [
 export type UnresolvedReason = (typeof UNRESOLVED_REASONS)[number];
 
 /**
- * A device or client. `id` is opaque: `dev:`/`cli:` plus the v1 UUID, or an
- * HMAC for records keyed only by MAC. Names are never MACs.
+ * A device, client or gateway WAN connection. `id` is opaque: `dev:`/`cli:`
+ * plus the v1 UUID, or an HMAC for records keyed only by MAC; a WAN is
+ * `wan:<gateway part>:<wan key>`. Names are never MACs.
  */
 export interface TopologyNode {
   id: string;
@@ -46,7 +48,7 @@ export interface TopologyNode {
   name: string;
   state: NodeState;
   model?: string;
-  /** Home Assistant device registry id; infrastructure nodes only. */
+  /** Home Assistant device registry id; infrastructure and WAN (its gateway) nodes only. */
   ha_device_id?: string;
   /** Clients only. */
   connection?: ClientConnection;
@@ -55,7 +57,10 @@ export interface TopologyNode {
   network_name?: string;
 }
 
-/** One uplink. NOTE: `source` is the CHILD, `target` is the PARENT. */
+/**
+ * One uplink. NOTE: `source` is the CHILD, `target` is the PARENT. A WAN is
+ * always a `target`, with its gateway as `source`.
+ */
 export interface TopologyEdge {
   source: string;
   target: string;

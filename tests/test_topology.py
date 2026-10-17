@@ -23,6 +23,8 @@ from custom_components.unifi_insights.topology_contract import (
     normalize_mac,
     opaque_node_id,
     site_display_name,
+    wan_node_id,
+    wan_state,
 )
 
 ENTRY = "entry-1"
@@ -274,6 +276,34 @@ def _live_layout() -> dict:
     return _data(devices, clients)
 
 
+WAN_IP = "203.0.113.7"
+
+
+def _wan(key: str, *, connected: bool | None, name: str | None = None) -> dict:
+    """Return a WAN record as normalize_legacy_wans() emits it."""
+    wan: dict = {
+        "key": key,
+        "name": name if name is not None else key.upper(),
+        "status": "online" if connected else "offline",
+        "alive": connected,
+        "ip": WAN_IP if connected else None,
+    }
+    if connected is not None:
+        wan["connected"] = connected
+    return wan
+
+
+def _with_wans(data: dict, wans: list | None = None) -> dict:
+    """Give the live layout's gateway its WAN records (Fiber up, 5G backup down)."""
+    if wans is None:
+        wans = [
+            _wan("wan", connected=True, name="Fiber"),
+            _wan("wan2", connected=False, name="5G Backup"),
+        ]
+    data["devices"][SITE]["uuid-gw"]["wans"] = wans
+    return data
+
+
 def _build(data: dict, **kwargs):
     kwargs.setdefault("ha_device_ids", {})
     kwargs.setdefault("node_key", KEY)
@@ -289,7 +319,7 @@ def test_live_layout_builds_the_tree() -> None:
     """Every switch/AP hangs off the core; the core hangs off the gateway."""
     snapshot = _build(_live_layout())
 
-    assert snapshot["schema_version"] == 1
+    assert snapshot["schema_version"] == 2
     assert snapshot["status"] == "ok"
     assert snapshot["issues"] == []
     assert snapshot["unresolved"] == []
@@ -712,11 +742,20 @@ def test_client_name_mac_shaped_is_replaced() -> None:
 
 
 def test_allowlist_never_emits_sensitive_values() -> None:
-    """No MAC, IP, hostname or firmware reaches the payload."""
-    snapshot = _build(_live_layout())
+    """No MAC, IP, hostname, firmware or WAN detail reaches the payload."""
+    snapshot = _build(_with_wans(_live_layout()))
     payload = json.dumps(snapshot)
 
-    for forbidden in ("02:00:00", "12:00:00", "10.1.0.", "10.2.0.", "-host", "7.4.2"):
+    for forbidden in (
+        "02:00:00",
+        "12:00:00",
+        "10.1.0.",
+        "10.2.0.",
+        "-host",
+        "7.4.2",
+        WAN_IP,
+        "alive",
+    ):
         assert forbidden not in payload
     node_keys = {key for node in snapshot["nodes"] for key in node}
     assert node_keys <= {
@@ -997,9 +1036,153 @@ def test_frontend_contract_fixture_is_current() -> None:
         },
     )
     ha_device_ids = {"uuid-gw": "reg-gw", "uuid-core": "reg-core"}
-    snapshot = _build(data, ha_device_ids=ha_device_ids)
+    snapshot = _build(_with_wans(data), ha_device_ids=ha_device_ids)
     rendered = json.dumps(snapshot, indent=2, sort_keys=True) + chr(10)
     if os.environ.get("UPDATE_TOPOLOGY_FIXTURE"):
         FRONTEND_FIXTURE.parent.mkdir(parents=True, exist_ok=True)
         FRONTEND_FIXTURE.write_text(rendered, encoding="utf-8")
     assert FRONTEND_FIXTURE.read_text(encoding="utf-8") == rendered
+
+
+@pytest.mark.parametrize(
+    ("wan", "expected"),
+    [
+        ({"connected": True}, "online"),
+        ({"connected": False}, "offline"),
+        ({"connected": None}, "unknown"),
+        ({"connected": "yes"}, "unknown"),
+        ({}, "unknown"),
+    ],
+)
+def test_wan_state(wan, expected) -> None:
+    """Only a real boolean ``connected`` decides a WAN's state."""
+    assert wan_state(wan) == expected
+
+
+def test_wan_node_id_is_opaque_and_stable() -> None:
+    """A MAC-keyed gateway's WAN id is hashed; the WAN key is normalised."""
+    assert wan_node_id(KEY, "uuid-gw", "wan2") == "wan:uuid-gw:wan2"
+    hashed = wan_node_id(KEY, "AA:BB:CC:DD:EE:FF", "WAN")
+    assert hashed == f"{opaque_node_id('wan', KEY, 'aabbccddeeff')}:wan"
+    assert "aa:bb" not in hashed.lower()
+    assert hashed == wan_node_id(KEY, "aabbccddeeff", "wan")
+    assert hashed != wan_node_id(bytes(32), "aabbccddeeff", "wan")
+
+
+def test_dual_wan_nodes_sit_above_the_gateway() -> None:
+    """Each WAN is a node whose edge runs gateway -> WAN; WANs sort first."""
+    snapshot = _build(_with_wans(_live_layout()), ha_device_ids={"uuid-gw": "reg-gw"})
+
+    assert snapshot["schema_version"] == 2
+    assert snapshot["status"] == "ok"
+    assert snapshot["unresolved"] == []
+    wans = [node for node in snapshot["nodes"] if node["kind"] == "wan"]
+    assert wans == [
+        {
+            "id": "wan:uuid-gw:wan",
+            "kind": "wan",
+            "name": "Fiber",
+            "state": "online",
+            "ha_device_id": "reg-gw",
+        },
+        {
+            "id": "wan:uuid-gw:wan2",
+            "kind": "wan",
+            "name": "5G Backup",
+            "state": "offline",
+            "ha_device_id": "reg-gw",
+        },
+    ]
+    assert [node["kind"] for node in snapshot["nodes"][:3]] == [
+        "wan",
+        "wan",
+        "gateway",
+    ]
+    wan_edges = [e for e in snapshot["edges"] if e["target"].startswith("wan:")]
+    assert wan_edges == [
+        {"source": "dev:uuid-gw", "target": "wan:uuid-gw:wan", "medium": "unknown"},
+        {"source": "dev:uuid-gw", "target": "wan:uuid-gw:wan2", "medium": "unknown"},
+    ]
+    # The rest of the tree is untouched.
+    assert _edge(snapshot, "dev:uuid-core")["target"] == "dev:uuid-gw"
+
+
+def test_single_wan_and_one_down() -> None:
+    """One WAN gives one node; its state follows ``connected`` across polls."""
+    up = _build(_with_wans(_live_layout(), [_wan("wan", connected=True)]))
+    down = _build(_with_wans(_live_layout(), [_wan("wan", connected=False)]))
+
+    (up_node,) = [n for n in up["nodes"] if n["kind"] == "wan"]
+    (down_node,) = [n for n in down["nodes"] if n["kind"] == "wan"]
+    assert up_node == {
+        "id": "wan:uuid-gw:wan",
+        "kind": "wan",
+        "name": "WAN",
+        "state": "online",
+    }
+    assert down_node["id"] == up_node["id"]
+    assert down_node["state"] == "offline"
+    assert up["revision"] != down["revision"]
+
+
+def test_no_wan_data_leaves_snapshot_unchanged() -> None:
+    """A gateway without ``wans`` (or with an empty list) adds nothing."""
+    plain = _build(_live_layout())
+    empty = _build(_with_wans(_live_layout(), []))
+    malformed = _live_layout()
+    malformed["devices"][SITE]["uuid-gw"]["wans"] = "wan"
+
+    assert not [n for n in plain["nodes"] if n["kind"] == "wan"]
+    assert empty == plain
+    assert _build(malformed) == plain
+
+
+def test_unusable_wan_records_are_skipped() -> None:
+    """Records without a key, non-dicts and repeated keys produce no extra node."""
+    snapshot = _build(
+        _with_wans(
+            _live_layout(),
+            [
+                "wan",
+                {"key": "", "connected": True},
+                {"name": "No key", "connected": True},
+                _wan("wan", connected=None, name=""),
+                _wan("WAN", connected=True),
+            ],
+        )
+    )
+
+    wans = [node for node in snapshot["nodes"] if node["kind"] == "wan"]
+    assert wans == [
+        {"id": "wan:uuid-gw:wan", "kind": "wan", "name": "WAN", "state": "unknown"}
+    ]
+    assert len([e for e in snapshot["edges"] if e["target"].startswith("wan:")]) == 1
+
+
+def test_wans_only_on_gateways() -> None:
+    """A non-gateway reporting ``wans`` (e.g. a 5G backup) gets no WAN nodes."""
+    data = _live_layout()
+    data["devices"][SITE]["uuid-core"]["wans"] = [_wan("wan", connected=True)]
+    snapshot = _build(data)
+
+    assert not [node for node in snapshot["nodes"] if node["kind"] == "wan"]
+
+
+def test_each_gateway_gets_its_own_wan_nodes() -> None:
+    """Two gateways with the same WAN key get distinct WAN node ids and edges."""
+    data = _with_wans(_live_layout(), [_wan("wan", connected=True)])
+    data["devices"][SITE]["uuid-gw2"] = _device(
+        "uuid-gw2", "Gateway 2", mac="02:00:00:00:00:09", legacy_type="uxg"
+    )
+    data["devices"][SITE]["uuid-gw2"]["wans"] = [_wan("wan", connected=False)]
+    snapshot = _build(data)
+
+    wan_edges = {
+        edge["target"]: edge["source"]
+        for edge in snapshot["edges"]
+        if edge["target"].startswith("wan:")
+    }
+    assert wan_edges == {
+        "wan:uuid-gw:wan": "dev:uuid-gw",
+        "wan:uuid-gw2:wan": "dev:uuid-gw2",
+    }

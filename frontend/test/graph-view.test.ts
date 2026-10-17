@@ -40,7 +40,7 @@ describe("<uit-graph-view> rendering", () => {
     const model = fixtureModel();
     expect(nodes(el)).toHaveLength(model.visuals.size);
     expect(el.shadowRoot!.querySelectorAll("g.links path.link")).toHaveLength(
-      model.links.size,
+      model.links.size + model.uplinkLinks.length,
     );
     const svg = svgOf(el);
     expect(svg.getAttribute("role")).toBe("application");
@@ -377,8 +377,8 @@ describe("<uit-graph-view> layout mode", () => {
       expect(translate(tree, id)).toBe(at(treeLayout.positions.get(id)!));
       expect(translate(tiered, id)).toBe(at(tieredLayout.positions.get(id)!));
     }
-    // The tree puts the AP two levels down, the tiers put it on row three.
-    expect(tieredLayout.positions.get("dev:uuid-ap")!.y).toBe(3 * depth);
+    // The tree puts the AP two levels down, the tiers (WANs first) on row four.
+    expect(tieredLayout.positions.get("dev:uuid-ap")!.y).toBe(4 * depth);
     expect(treeLayout.positions.get("dev:uuid-ap")!.y).toBe(2 * depth);
   });
 
@@ -390,7 +390,7 @@ describe("<uit-graph-view> layout mode", () => {
     const after = translate(el, "dev:uuid-ap");
     expect(after).not.toBe(before);
     expect(after).toBe(
-      `transform: translate(0px, ${3 * SPACING.comfortable.depth}px)`,
+      `transform: translate(0px, ${4 * SPACING.comfortable.depth}px)`,
     );
     el.layoutMode = "tree";
     await el.updateComplete;
@@ -462,5 +462,55 @@ describe("plan v3 layout refit", () => {
       expect(el.focusId).toBe(id);
       expect(el.shadowRoot!.activeElement?.getAttribute("data-id")).toBe(id);
     }
+  });
+});
+
+describe("<uit-graph-view> WAN uplinks", () => {
+  it("draws WANs above the gateway, marking a disconnected one", async () => {
+    const el = await graph();
+    const fiber = byId(el, "wan:uuid-gw:wan");
+    const backup = byId(el, "wan:uuid-gw:wan2");
+    expect(fiber.getAttribute("aria-label")).toBe(
+      "WAN Fiber, connected, internet connection of Gateway",
+    );
+    expect(fiber.querySelector(".state-text")).toBeNull();
+    expect(backup.classList.contains("offline")).toBe(true);
+    expect(backup.querySelector(".state-text")!.textContent).toBe(
+      "Disconnected",
+    );
+    const y = (id: string) =>
+      Number(
+        /translate\([^,]+, ([-\d.]+)px\)/.exec(
+          byId(el, id).getAttribute("style")!,
+        )![1],
+      );
+    expect(y("wan:uuid-gw:wan")).toBeLessThan(y("dev:uuid-gw"));
+    const links = el.shadowRoot!.querySelectorAll("g.links path.link");
+    expect([...links].filter((l) => l.classList.contains("down"))).toHaveLength(
+      1,
+    );
+  });
+
+  it("highlights the WAN link and the gateway path when a WAN is selected", async () => {
+    const el = await graph({ selectedId: "wan:uuid-gw:wan" });
+    expect(byId(el, "dev:uuid-gw").classList.contains("on-path")).toBe(true);
+    const onPath = el.shadowRoot!.querySelectorAll("g.links path.on-path");
+    expect(onPath).toHaveLength(1);
+  });
+
+  it("culls WAN links with their nodes on big graphs", async () => {
+    const snapshot = fixtureSnapshot();
+    for (let i = 0; i < 320; i++)
+      snapshot.nodes.push({
+        id: `dev:extra-${i}`,
+        kind: "switch",
+        name: `Extra ${i}`,
+        state: "online",
+      });
+    const el = await graph({ model: fixtureModel({}, snapshot) });
+    const links = [...el.shadowRoot!.querySelectorAll("g.links path.link")];
+    expect(links.length).toBeLessThan(
+      el.model!.links.size + el.model!.uplinkLinks.length,
+    );
   });
 });
