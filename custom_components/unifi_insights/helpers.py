@@ -41,6 +41,17 @@ _SUPPORTS_BY_IDENTIFIER = hasattr(dr.DeviceRegistry, "async_get_device_by_identi
 _SUPPORTS_GET_DEVICES = hasattr(dr.DeviceRegistry, "async_get_devices")
 
 
+def get_port_label(port: dict[str, Any], port_idx: int) -> str:
+    """Return user-friendly port label based on port type."""
+    name = port.get("name")
+    if name and name != f"Port {port_idx}":
+        return str(name)
+    media = port.get("media")
+    if isinstance(media, str) and media.startswith("SFP"):
+        return f"{media} {port_idx}"
+    return f"Port {port_idx}"
+
+
 def owned_site_entity_unique_id(
     registry: er.EntityRegistry,
     entry_id: str,

@@ -367,9 +367,6 @@
       "humidity": {
         "name": "Humidity"
       },
-      "light_level": {
-        "name": "Light Level"
-      },
       "battery": {
         "name": "Battery"
       },
@@ -443,37 +440,37 @@
         "name": "WAN Uptime"
       },
       "site_total_clients": {
-        "name": "Total Clients"
+        "name": "Total clients"
       },
       "site_wired_clients": {
-        "name": "Wired Clients"
+        "name": "Wired clients"
       },
       "site_wireless_clients": {
-        "name": "Wireless Clients"
+        "name": "Wireless clients"
       },
       "internet_download_1h": {
-        "name": "Internet Download (Last Hour)"
+        "name": "Internet download (last hour)"
       },
       "internet_upload_1h": {
-        "name": "Internet Upload (Last Hour)"
+        "name": "Internet upload (last hour)"
       },
       "internet_download_1d": {
-        "name": "Internet Download (Last 24 Hours)"
+        "name": "Internet download (last 24 hours)"
       },
       "internet_upload_1d": {
-        "name": "Internet Upload (Last 24 Hours)"
+        "name": "Internet upload (last 24 hours)"
       },
       "internet_download_1w": {
-        "name": "Internet Download (Last 7 Days)"
+        "name": "Internet download (last 7 days)"
       },
       "internet_upload_1w": {
-        "name": "Internet Upload (Last 7 Days)"
+        "name": "Internet upload (last 7 days)"
       },
       "internet_download_1m": {
-        "name": "Internet Download (Last 30 Days)"
+        "name": "Internet download (last 30 days)"
       },
       "internet_upload_1m": {
-        "name": "Internet Upload (Last 30 Days)"
+        "name": "Internet upload (last 30 days)"
       },
       "ac_power_consumption": {
         "name": "AC Power Consumption"
@@ -661,6 +658,12 @@
       },
       "active_vouchers": {
         "name": "Active vouchers"
+      },
+      "wifi_client_count": {
+        "name": "Connected clients"
+      },
+      "light": {
+        "name": "Light"
       }
     },
     "binary_sensor": {
@@ -713,21 +716,6 @@
       "sensor_leak_external": {
         "name": "External Leak Detection"
       },
-      "motion": {
-        "name": "Motion"
-      },
-      "door": {
-        "name": "Door"
-      },
-      "is_recording": {
-        "name": "Recording"
-      },
-      "is_dark": {
-        "name": "Dark"
-      },
-      "doorbell": {
-        "name": "Doorbell"
-      },
       "alarm_hub_device_tamper": {
         "name": "Tamper Detection"
       },
@@ -742,14 +730,17 @@
       },
       "storage_degraded": {
         "name": "Storage degraded"
+      },
+      "port_sfp_present": {
+        "name": "{port_label} SFP module"
+      },
+      "wan_status": {
+        "name": "WAN status"
       }
     },
     "button": {
       "device_restart": {
-        "name": "Restart"
-      },
-      "reboot": {
-        "name": "Reboot"
+        "name": "Device restart"
       },
       "poe_power_cycle": {
         "name": "{port_label} PoE Power Cycle"
@@ -762,24 +753,23 @@
       },
       "access_door_unlock": {
         "name": "Unlock"
-      }
-    },
-    "camera": {
-      "camera": {
-        "name": "Camera"
-      }
-    },
-    "light": {
-      "floodlight": {
-        "name": "Floodlight"
+      },
+      "client_reconnect": {
+        "name": "{client_name} reconnect"
+      },
+      "play": {
+        "name": "Play"
+      },
+      "ptz_patrol_start": {
+        "name": "Start PTZ patrol"
+      },
+      "ptz_patrol_stop": {
+        "name": "Stop PTZ patrol"
       }
     },
     "switch": {
       "status_light": {
         "name": "Status Light"
-      },
-      "hdr_mode": {
-        "name": "HDR Mode"
       },
       "high_fps_mode": {
         "name": "High FPS Mode"
@@ -857,9 +847,6 @@
       },
       "liveview": {
         "name": "Liveview"
-      },
-      "infrared_mode": {
-        "name": "Infrared Mode"
       }
     },
     "number": {
@@ -868,9 +855,6 @@
       },
       "brightness_level": {
         "name": "Brightness Level"
-      },
-      "speaker_volume": {
-        "name": "Speaker Volume"
       },
       "chime_volume": {
         "name": "Chime Volume"
@@ -947,6 +931,9 @@
       },
       "voucher_qr_code": {
         "name": "Latest voucher QR code"
+      },
+      "wifi_qr_code": {
+        "name": "WiFi QR code"
       }
     },
     "lock": {

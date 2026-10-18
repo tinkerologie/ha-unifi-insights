@@ -136,7 +136,6 @@ class UnifiBaseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _handle_timeout_error(self, err: UniFiTimeoutError) -> None:
         """Handle timeout error."""
         self._available = False
-        _LOGGER.warning("Timeout during update: %s", err)
         msg = f"Timeout: {err}"
         raise UpdateFailed(msg) from err
 
@@ -144,19 +143,17 @@ class UnifiBaseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Handle API response error."""
         self._available = False
         status_code = getattr(err, "status_code", None)
-        if (
+        if not (
             isinstance(status_code, int)
             and status_code >= HTTPStatus.INTERNAL_SERVER_ERROR
         ):
-            _LOGGER.warning("Server error during update: %s", err)
-        else:
-            _LOGGER.error("API error during update", exc_info=err)
-        msg = f"API error: {err}"
+            _LOGGER.debug("API error during update", exc_info=err)
+        msg = f"API error ({status_code}): {err}"
         raise UpdateFailed(msg) from err
 
     def _handle_generic_error(self, err: Exception) -> None:
         """Handle generic error."""
         self._available = False
-        _LOGGER.error("Unexpected error updating data", exc_info=err)
-        msg = f"Error updating data: {err}"
+        _LOGGER.debug("Unexpected error updating data", exc_info=err)
+        msg = f"Error updating data: {type(err).__name__}: {err}"
         raise UpdateFailed(msg) from err

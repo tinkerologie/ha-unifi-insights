@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.components.diagnostics import REDACTED
@@ -29,6 +29,7 @@ from custom_components.unifi_insights.diagnostics import (
 )
 from custom_components.unifi_insights.innerspace_entity import (
     INNERSPACE_PLACEMENT_DESCRIPTION,
+    UnifiInnerSpaceEntity,
     UnifiInsightsInnerSpacePlacementSensor,
     _discover_innerspace_sensors,
 )
@@ -302,6 +303,32 @@ async def test_innerspace_placement_sensor_discovery_and_device_correlation(
     reverted_entry = ent_reg.async_get(reg_entry.entity_id)
     assert reverted_entry is not None
     assert reverted_entry.device_id == initial_dev.id
+
+
+async def test_innerspace_coordinator_update_uses_live_availability(
+    hass: HomeAssistant, mock_coordinator: MagicMock
+) -> None:
+    """Updates write state once and never shadow coordinator availability."""
+    mock_coordinator.hass = hass
+    mock_coordinator.data["innerspace"]["devices"]["rec-1"] = {
+        "id": "rec-1",
+        "placement_state": "placed",
+    }
+    entity = UnifiInnerSpaceEntity(
+        mock_coordinator, INNERSPACE_PLACEMENT_DESCRIPTION, "rec-1"
+    )
+    entity.hass = hass
+
+    for available in (True, False, True):
+        mock_coordinator.innerspace_available = available
+        assert entity.available is available
+        with patch.object(entity, "async_write_ha_state") as write_state:
+            entity._handle_coordinator_update()
+        write_state.assert_called_once_with()
+        assert entity.available is available
+        assert "_attr_available" not in vars(entity)
+        # Home Assistant's descriptor stores _attr_available under this name.
+        assert "__attr_available" not in vars(entity)
 
 
 def test_innerspace_entity_and_discovery_edge_cases(

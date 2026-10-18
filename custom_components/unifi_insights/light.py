@@ -136,9 +136,6 @@ class UnifiProtectLight(UnifiProtectEntity, LightEntity):
         """Update entity from data."""
         light_data = self.coordinator.data["protect"]["lights"].get(self._device_id, {})
 
-        # Set availability
-        self._attr_available = light_data.get("state") == "CONNECTED"
-
         # Set state
         light_mode = light_data.get("lightModeSettings", {}).get("mode", LIGHT_MODE_OFF)
         self._attr_is_on = light_mode != LIGHT_MODE_OFF

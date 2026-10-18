@@ -153,6 +153,8 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
         # /api/s/{site} endpoints. Populated on each update and reused for
         # classic-API client actions (block/unblock/reconnect/forget).
         self._legacy_site_names: dict[str, str] = {}
+        # Successful legacy fallback does not fail the coordinator refresh.
+        self._legacy_fallback_sites: set[str] = set()
         # Track previous device IDs for stale device cleanup (Gold requirement)
         self._previous_network_device_ids: set[str] = set()
         # Track previous port byte counts for rate computation
@@ -904,7 +906,7 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
                 and devices_result.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR
                 and legacy_site_name is not None
             ):
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "Device coordinator: v1 devices endpoint returned %s for "
                     "site %s; falling back to legacy /stat/device",
                     devices_result.status_code,
@@ -971,7 +973,13 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
                 if isinstance(legacy_device, dict)
             ]
             legacy_as_primary = True
-            _LOGGER.info(
+            log = (
+                _LOGGER.debug
+                if site_id in self._legacy_fallback_sites
+                else _LOGGER.info
+            )
+            self._legacy_fallback_sites.add(site_id)
+            log(
                 "Device coordinator: Using %d legacy devices as primary "
                 "source for site %s (v1 endpoint unavailable)",
                 len(devices),
@@ -980,6 +988,12 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
         else:
             # Convert model objects to dictionaries
             devices = [self._model_to_dict(d) for d in devices_models]
+            if site_id in self._legacy_fallback_sites:
+                self._legacy_fallback_sites.remove(site_id)
+                _LOGGER.info(
+                    "Device coordinator: v1 devices endpoint recovered for site %s",
+                    site_id,
+                )
 
         clients = [self._model_to_dict(c) for c in clients_models]
 

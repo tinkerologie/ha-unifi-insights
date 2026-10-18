@@ -12,6 +12,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util.hass_dict import HassKey
 
 from custom_components.unifi_insights.api import ApiKeyAuth, UniFiRateLimitError
 from custom_components.unifi_insights.api.const import DEFAULT_RATE_LIMIT_RETRY_AFTER
@@ -28,7 +29,9 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
-_ACCOUNT_REGISTRY = "site_manager_accounts"
+_ACCOUNT_REGISTRY: HassKey[dict[str, UnifiInsightsSiteManagerAccount]] = HassKey(
+    f"{DOMAIN}_site_manager_accounts"
+)
 
 
 def _empty_snapshot() -> dict[str, Any]:
@@ -222,8 +225,8 @@ async def async_acquire_site_manager(
         b"unifi_insights_account_registry", api_key.encode(), sha256
     ).hexdigest()
     registry: dict[str, UnifiInsightsSiteManagerAccount] = hass.data.setdefault(
-        DOMAIN, {}
-    ).setdefault(_ACCOUNT_REGISTRY, {})
+        _ACCOUNT_REGISTRY, {}
+    )
     account = registry.get(fingerprint)
     if account is None:
         client = UniFiSiteManagerClient(
@@ -249,8 +252,8 @@ async def async_release_site_manager(
 ) -> None:
     """Stop shared polling after the last remote entry unloads."""
     registry: dict[str, UnifiInsightsSiteManagerAccount] = hass.data.get(
-        DOMAIN, {}
-    ).get(_ACCOUNT_REGISTRY, {})
+        _ACCOUNT_REGISTRY, {}
+    )
     account = registry.get(fingerprint)
     if account is None:
         return

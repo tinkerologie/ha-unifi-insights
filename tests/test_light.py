@@ -238,7 +238,7 @@ class TestUnifiProtectLight:
             light_id="light1",
         )
 
-        assert light._attr_available is True
+        assert light.available is True
         assert light._attr_is_on is True  # mode is "motion", not OFF
         assert light._attr_brightness == 255
 
@@ -277,7 +277,7 @@ class TestUnifiProtectLight:
             light_id="light1",
         )
 
-        assert light._attr_available is False
+        assert light.available is False
 
     def test_extra_state_attributes(self, mock_coordinator) -> None:
         """Test extra state attributes."""
@@ -472,7 +472,7 @@ class TestUnifiProtectLight:
         )
 
         # Should use defaults
-        assert light._attr_available is False
+        assert light.available is False
         assert light._attr_is_on is False
         assert light._attr_brightness is None
 

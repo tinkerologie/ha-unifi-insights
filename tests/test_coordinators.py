@@ -540,52 +540,42 @@ class TestUnifiBaseCoordinator:
             coordinator._handle_response_error(err)
         assert coordinator._available is False
 
-    def test_handle_response_error_server_error_logs_warning(
-        self, coordinator: UnifiBaseCoordinator, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize(
+        ("handler", "err", "detail"),
+        [
+            ("_handle_timeout_error", UniFiTimeoutError("timed out"), "timed out"),
+            (
+                "_handle_response_error",
+                UniFiResponseError("gateway", status_code=502),
+                "502",
+            ),
+            (
+                "_handle_response_error",
+                UniFiResponseError("bad request", status_code=400),
+                "400",
+            ),
+            (
+                "_handle_generic_error",
+                ValueError("unexpected"),
+                "ValueError: unexpected",
+            ),
+        ],
+    )
+    def test_handlers_leave_outage_logging_to_coordinator(
+        self,
+        coordinator: UnifiBaseCoordinator,
+        caplog: pytest.LogCaptureFixture,
+        handler: str,
+        err: Exception,
+        detail: str,
     ) -> None:
-        """Test 5xx API response errors are logged as warnings."""
-        err = UniFiResponseError("Bad gateway", status_code=502)
-        caplog.set_level(
-            logging.WARNING, logger="custom_components.unifi_insights.coordinators.base"
-        )
-
-        with pytest.raises(UpdateFailed, match="API error"):
-            coordinator._handle_response_error(err)
-
-        assert coordinator._available is False
-        assert any(
-            record.levelno == logging.WARNING
-            and "Server error during update" in record.message
-            for record in caplog.records
-        )
-        assert not any(record.levelno >= logging.ERROR for record in caplog.records)
-
-    def test_handle_response_error_client_error_logs_exception(
-        self, coordinator: UnifiBaseCoordinator, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Test 4xx API response errors retain exception logging."""
-        err = UniFiResponseError("Bad response", status_code=400)
-        caplog.set_level(
-            logging.ERROR, logger="custom_components.unifi_insights.coordinators.base"
-        )
-
-        with pytest.raises(UpdateFailed, match="API error"):
-            coordinator._handle_response_error(err)
-
-        assert coordinator._available is False
-        assert any(
-            record.levelno == logging.ERROR
-            and "API error during update" in record.message
-            and record.exc_info is not None
-            for record in caplog.records
-        )
-
-    def test_handle_generic_error(self, coordinator: UnifiBaseCoordinator):
-        """Test handling generic error."""
-        err = Exception("Something went wrong")
-        with pytest.raises(UpdateFailed, match="Error updating data"):
-            coordinator._handle_generic_error(err)
-        assert coordinator._available is False
+        """Failures preserve diagnostics without emitting per-poll warnings."""
+        caplog.set_level(logging.DEBUG)
+        with pytest.raises(UpdateFailed, match=detail) as raised:
+            getattr(coordinator, handler)(err)
+        assert raised.value.__cause__ is err
+        assert coordinator.available is False
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
 # ============================================================================
@@ -1886,6 +1876,102 @@ class TestUnifiDeviceCoordinator:
             protect_client=protect_client,
             entry=mock_config_entry,
             config_coordinator=config_coordinator,
+        )
+
+    @pytest.mark.parametrize(
+        ("error", "detail"),
+        [
+            (UniFiTimeoutError("offline"), "Timeout: offline"),
+            (
+                UniFiResponseError("offline", status_code=502),
+                "API error (502): UniFiResponseError(status=502)",
+            ),
+            (
+                UniFiResponseError("offline", status_code=400),
+                "API error (400): UniFiResponseError(status=400)",
+            ),
+            (ValueError("offline"), "Error updating data: ValueError: offline"),
+        ],
+    )
+    async def test_poll_outage_logs_only_transitions(
+        self,
+        coordinator: UnifiDeviceCoordinator,
+        caplog: pytest.LogCaptureFixture,
+        error: Exception,
+        detail: str,
+    ) -> None:
+        """Real refreshes log one outage, one recovery, then re-arm."""
+        caplog.set_level(logging.INFO)
+        coordinator.network_client.devices.get_all.side_effect = error
+        for _ in range(4):
+            await coordinator.async_refresh()
+            assert not coordinator.last_update_success
+        outage = f"Error fetching {DOMAIN}_device data: {detail}"
+        assert [
+            r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+        ] == [outage]
+        coordinator.network_client.devices.get_all.side_effect = None
+        await coordinator.async_refresh()
+        assert coordinator.last_update_success
+        recovery = f"Fetching {DOMAIN}_device data recovered"
+        assert caplog.messages.count(recovery) == 1
+        coordinator.network_client.devices.get_all.side_effect = error
+        await coordinator.async_refresh()
+        assert [
+            r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+        ] == [outage, outage]
+
+    async def test_legacy_fallback_logs_only_site_transitions(
+        self,
+        coordinator: UnifiDeviceCoordinator,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Each site reports fallback once, recovery once, and a new outage."""
+        caplog.set_level(logging.DEBUG)
+        endpoint = coordinator.network_client.devices
+        endpoint.get_all.side_effect = UniFiResponseError("offline", status_code=502)
+        endpoint.get_legacy_site_devices = AsyncMock(
+            return_value=[{"_id": "legacy1", "mac": "AA:BB:CC:DD:EE:FF"}]
+        )
+        fallback = (
+            "Device coordinator: Using 1 legacy devices as primary source "
+            "for site default (v1 endpoint unavailable)"
+        )
+        recovery = "Device coordinator: v1 devices endpoint recovered for site default"
+        for _ in range(4):
+            await coordinator._process_site("default", legacy_site_name="default")
+        assert [r.levelno for r in caplog.records if r.getMessage() == fallback] == [
+            logging.INFO,
+            logging.DEBUG,
+            logging.DEBUG,
+            logging.DEBUG,
+        ]
+
+        # A second site's transition is independent of the first site's streak.
+        await coordinator._process_site("site2", legacy_site_name="site2")
+        assert any(
+            r.levelno == logging.INFO
+            and "for site site2 (v1 endpoint unavailable)" in r.getMessage()
+            for r in caplog.records
+        )
+        endpoint.get_all.side_effect = None
+        for _ in range(2):
+            await coordinator._process_site("default", legacy_site_name="default")
+        assert caplog.messages.count(recovery) == 1
+        assert (
+            next(r.levelno for r in caplog.records if r.getMessage() == recovery)
+            == logging.INFO
+        )
+
+        endpoint.get_all.side_effect = UniFiResponseError("offline", status_code=502)
+        for _ in range(2):
+            await coordinator._process_site("default", legacy_site_name="default")
+        assert (
+            sum(
+                r.levelno == logging.INFO and r.getMessage() == fallback
+                for r in caplog.records
+            )
+            == 2
         )
 
     def test_initialization(self, coordinator: UnifiDeviceCoordinator):
@@ -3818,6 +3904,71 @@ class TestUnifiDeviceCoordinator:
 class TestUnifiProtectCoordinator:
     """Tests for UnifiProtectCoordinator."""
 
+    @pytest.mark.parametrize(
+        "family", ["chimes", "fobs", "link_stations", "alarm_hubs", "sirens"]
+    )
+    @pytest.mark.parametrize(
+        "error",
+        [UniFiTimeoutError("offline"), UniFiResponseError("offline", status_code=502)],
+    )
+    async def test_family_poll_outage_logs_only_transitions(
+        self,
+        coordinator: UnifiProtectCoordinator,
+        caplog: pytest.LogCaptureFixture,
+        family: str,
+        error: Exception,
+    ) -> None:
+        """Swallowed family failures log once per streak while polls succeed."""
+        caplog.set_level(logging.DEBUG)
+        endpoint = getattr(coordinator.protect_client, family)
+        endpoint.get_all.side_effect = error
+        failure = f"Protect coordinator: Error fetching {family}: {error}"
+        recovery = f"Protect coordinator: Fetching {family} recovered"
+        for _ in range(4):
+            await coordinator.async_refresh()
+            assert coordinator.last_update_success
+        assert [r.levelno for r in caplog.records if r.getMessage() == failure] == [
+            logging.WARNING,
+            logging.DEBUG,
+            logging.DEBUG,
+            logging.DEBUG,
+        ]
+
+        # Recovery of this family must not reset another family's outage guard.
+        other = "fobs" if family == "chimes" else "chimes"
+        other_endpoint = getattr(coordinator.protect_client, other)
+        other_endpoint.get_all.side_effect = error
+        await coordinator.async_refresh()
+        endpoint.get_all.side_effect = None
+        for _ in range(2):
+            await coordinator.async_refresh()
+            assert coordinator.last_update_success
+        assert caplog.messages.count(recovery) == 1
+        assert (
+            next(r.levelno for r in caplog.records if r.getMessage() == recovery)
+            == logging.INFO
+        )
+        assert (
+            sum(
+                r.levelno == logging.WARNING
+                and r.getMessage()
+                == f"Protect coordinator: Error fetching {other}: {error}"
+                for r in caplog.records
+            )
+            == 1
+        )
+
+        endpoint.get_all.side_effect = error
+        for _ in range(2):
+            await coordinator.async_refresh()
+        assert (
+            sum(
+                r.levelno == logging.WARNING and r.getMessage() == failure
+                for r in caplog.records
+            )
+            == 2
+        )
+
     @pytest.fixture
     async def coordinator(
         self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
@@ -3852,6 +4003,32 @@ class TestUnifiProtectCoordinator:
         )
         yield coord
         await coord.async_shutdown()
+
+    async def test_protect_poll_outage_logs_only_transitions(
+        self,
+        coordinator: UnifiProtectCoordinator,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Absorption and escalation do not add warnings before UpdateFailed."""
+        caplog.set_level(logging.INFO)
+        coordinator.protect_client.cameras.get_all.side_effect = UniFiTimeoutError(
+            "offline"
+        )
+        for poll in range(MAX_CONSECUTIVE_EMPTY_FETCHES + 4):
+            await coordinator.async_refresh()
+            assert sum(r.levelno >= logging.WARNING for r in caplog.records) == int(
+                poll >= MAX_CONSECUTIVE_EMPTY_FETCHES
+            )
+        coordinator.protect_client.cameras.get_all.side_effect = None
+        await coordinator.async_refresh()
+        assert coordinator.last_update_success
+        assert sum("recovered" in r.getMessage().lower() for r in caplog.records) == 1
+        coordinator.protect_client.cameras.get_all.side_effect = UniFiTimeoutError(
+            "offline"
+        )
+        for _ in range(MAX_CONSECUTIVE_EMPTY_FETCHES + 1):
+            await coordinator.async_refresh()
+        assert sum(r.levelno >= logging.WARNING for r in caplog.records) == 2
 
     @pytest.fixture
     async def coordinator_no_protect(

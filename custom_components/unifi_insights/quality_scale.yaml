@@ -1,0 +1,185 @@
+---
+# Evidence inventory, not a tier claim. Rules reviewed against:
+# https://developers.home-assistant.io/docs/core/integration-quality-scale/rules
+# The five entity metadata rules include the coordinated sibling change #335.
+rules:
+  # Bronze
+  action-setup:
+    status: done
+    comment: __init__.py async_setup registers services before entry setup.
+  appropriate-polling:
+    status: done
+    comment: const.py separates configuration, device and optional cloud intervals.
+  brands:
+    status: todo
+    comment: Verify current published assets in the Home Assistant brands repository.
+  common-modules:
+    status: done
+    comment: entity.py holds entity bases; coordinators/ holds polling and facade logic.
+  config-flow:
+    status: done
+    comment: config_flow.py provides UI setup; strings.json provides data_description.
+  config-flow-test-coverage:
+    status: done
+    comment: Full pytest coverage.xml reports 100% line and branch coverage for config_flow.py.
+  dependency-transparency:
+    status: todo
+    comment: Vendored api/ awaits PyPI extraction per docs/development/DECISIONS.md.
+  docs-actions:
+    status: done
+    comment: README.md documents Network, Protect, Access and Carrier Fabric actions.
+  docs-conditions:
+    status: exempt
+    comment: No custom condition platform is provided.
+  docs-high-level-description:
+    status: done
+    comment: README.md Overview describes the integration and UniFi products.
+  docs-installation-instructions:
+    status: done
+    comment: README.md Installation and Configuration describe HACS and manual setup.
+  docs-removal-instructions:
+    status: todo
+    comment: README.md lacks complete integration removal instructions.
+  docs-triggers:
+    status: exempt
+    comment: No device trigger platform is provided; event entities are documented separately.
+  entity-event-setup:
+    status: done
+    comment: Entity bases use CoordinatorEntity lifecycle subscriptions and cleanup.
+  entity-unique-id:
+    status: done
+    comment: Entity bases and standalone client buttons assign stable unique IDs.
+  has-entity-name:
+    status: done
+    comment: "Entity naming audited and corrected by sibling issue #335."
+  runtime-data:
+    status: done
+    comment: >-
+      __init__.py uses typed runtime_data; setup probe budgets, Site Manager
+      accounts and Mobility owners use component-wide module HassKeys.
+  test-before-configure:
+    status: done
+    comment: config_flow.py validates local, remote and Carrier Fabric connections.
+  test-before-setup:
+    status: done
+    comment: __init__.py probes applications and performs coordinator first refreshes.
+  unique-config-entry:
+    status: done
+    comment: config_flow.py checks stable console or Carrier Fabric unique IDs.
+  # Silver
+  action-exceptions:
+    status: done
+    comment: services.py validates inputs and raises HomeAssistantError on API failure.
+  config-entry-unloading:
+    status: done
+    comment: __init__.py async_unload_entry stops platforms, clients and coordinators.
+  docs-configuration-parameters:
+    status: todo
+    comment: Audit README.md Options against every optional application setting.
+  docs-installation-parameters:
+    status: todo
+    comment: Audit README.md setup instructions against all three connection modes.
+  entity-unavailable:
+    status: todo
+    comment: >-
+      Device trackers deliberately remain available when the device refresh fails;
+      other entity properties gate coordinator health and client buttons are tested.
+  integration-owner:
+    status: done
+    comment: manifest.json declares codeowners.
+  log-when-unavailable:
+    status: todo
+    comment: >-
+      Base and Protect escalation polling use DataUpdateCoordinator transition logs;
+      Protect partial family fetches and the device legacy fallback log once per
+      outage and once on recovery. Protect and Access WebSocket reconnect warnings
+      still repeat and are tracked as a follow-up.
+  parallel-updates:
+    status: done
+    comment: All 17 platform modules declare PARALLEL_UPDATES.
+  reauthentication-flow:
+    status: done
+    comment: config_flow.py supports reauth for console and Carrier Fabric credentials.
+  test-coverage:
+    status: done
+    comment: pytest branch coverage and script/check_coverage_per_file.py enforce 95%.
+  # Gold
+  devices:
+    status: done
+    comment: Entity bases provide DeviceInfo with device identifiers and metadata.
+  diagnostics:
+    status: done
+    comment: diagnostics.py uses three-pass redaction, including MAC anonymization.
+  discovery:
+    status: todo
+    comment: No discovery handler or manifest discovery matchers are implemented.
+  discovery-update-info:
+    status: todo
+    comment: Implement discovery address updates using stable console identity.
+  docs-data-update:
+    status: todo
+    comment: README.md describes some intervals; audit completeness for all coordinators.
+  docs-examples:
+    status: done
+    comment: README.md Automation blueprints provides installable automation examples.
+  docs-known-limitations:
+    status: done
+    comment: README.md documents API, device-field and blueprint limitations.
+  docs-supported-devices:
+    status: done
+    comment: README.md Supported UniFi products and product sections list support.
+  docs-supported-functions:
+    status: done
+    comment: README.md product sections enumerate entities and actions.
+  docs-troubleshooting:
+    status: done
+    comment: README.md Troubleshooting covers logging, refresh, problems and diagnostics.
+  docs-use-cases:
+    status: done
+    comment: README.md Automation blueprints describes monitoring and alert use cases.
+  dynamic-devices:
+    status: done
+    comment: Platform discovery callbacks add newly observed coordinator devices.
+  entity-category:
+    status: done
+    comment: "Entity categories audited and corrected by sibling issue #335."
+  entity-device-class:
+    status: done
+    comment: "Entity device classes audited and corrected by sibling issue #335."
+  entity-disabled-by-default:
+    status: done
+    comment: Advanced port diagnostics and client Wake buttons start disabled.
+  entity-translations:
+    status: done
+    comment: "Entity translation metadata corrected by sibling issue #335."
+  exception-translations:
+    status: todo
+    comment: Some entity action helpers still raise untranslated HomeAssistantError text.
+  icon-translations:
+    status: done
+    comment: "Icon translation metadata corrected by sibling issue #335."
+  reconfiguration-flow:
+    status: done
+    comment: config_flow.py supports reconfiguration of existing entries.
+  repair-issues:
+    status: todo
+    comment: >-
+      The integration creates no repair issues; the unused RepairsFlow scaffold was
+      removed in #334. Authentication failures use standard reauthentication.
+  stale-devices:
+    status: done
+    comment: Device and Protect coordinators reconcile stale device registry entries.
+  # Platinum
+  async-dependency:
+    status: done
+    comment: >-
+      Vendored api/ clients use asyncio and aiohttp for network I/O; segno renders
+      QR codes into in-memory BytesIO buffers in image.py without external I/O.
+  inject-websession:
+    status: done
+    comment: __init__.py injects async_get_clientsession into application clients.
+  strict-typing:
+    status: todo
+    comment: >-
+      py.typed and typed ConfigEntry aliases exist, but mypy excludes api/,
+      ignores missing imports and does not enable the complete strict option set.

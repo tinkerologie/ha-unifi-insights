@@ -13,6 +13,7 @@ from homeassistant.const import (
     CONF_HOST,
     CONF_VERIFY_SSL,
     PERCENTAGE,
+    UnitOfDataRate,
     UnitOfInformation,
     UnitOfTemperature,
 )
@@ -20,6 +21,7 @@ from homeassistant.helpers.entity_registry import (
     RegistryEntryDisabler,
     RegistryEntryHider,
 )
+from homeassistant.helpers.typing import UNDEFINED
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 if TYPE_CHECKING:
@@ -751,6 +753,10 @@ class TestUnifiPortSensor:
     async def test_port_speed(self, hass: HomeAssistant, mock_coordinator):
         """Test port speed sensor."""
         description = next(s for s in PORT_SENSOR_TYPES if s.key == "port_speed")
+        assert description.device_class == SensorDeviceClass.DATA_RATE
+        assert (
+            description.native_unit_of_measurement == UnitOfDataRate.MEGABITS_PER_SECOND
+        )
 
         sensor = UnifiPortSensor(
             coordinator=mock_coordinator,
@@ -852,6 +858,12 @@ class TestGetPortLabel:
         """Test _get_port_label returns generic label when no media info."""
         port = {"idx": 5}
         assert _get_port_label(port, 5) == "Port 5"
+
+    @pytest.mark.parametrize("media", [None, 1])
+    def test_port_label_non_string_media(self, media):
+        """Test _get_port_label falls back to the generic label for non-string media."""
+        port = {"name": "Port 7", "media": media, "idx": 7}
+        assert _get_port_label(port, 7) == "Port 7"
 
     def test_port_label_ignores_generic_name(self):
         """Test _get_port_label ignores default 'Port N' name and uses media."""
@@ -4017,6 +4029,9 @@ class TestUnifiWifiClientCountSensor:
             coordinator=coordinator, site_id="site1", wifi_id="wifi1"
         )
         assert sensor.available is True
+        assert sensor.translation_key == "wifi_client_count"
+        assert sensor.has_entity_name is True
+        assert getattr(sensor, "_attr_name", None) is None
 
         coordinator.wifi_available.return_value = False
         assert sensor.available is False
@@ -4071,9 +4086,10 @@ class TestUnifiSiteInternetActivitySensor:
                 unique_id="console_site1_" + desc.key,
             )
             assert "_attr_name" not in sensor.__dict__
-            assert sensor.entity_description.name == desc.name
-            assert isinstance(desc.name, str)
-            assert desc.name.startswith("Internet ")
+
+            assert sensor.entity_description.name in (None, UNDEFINED)
+            assert desc.name in (None, UNDEFINED)
+            assert desc.key.startswith("internet_")
             assert sensor.unique_id == f"console_site1_{desc.key}"
             assert sensor.available is True
             assert sensor.native_value == expected_keys[desc.key]
@@ -4904,3 +4920,14 @@ class TestStalePortCleanupNativeRegistry:
         )
         await async_setup_entry(hass, mock_config_entry, MagicMock())
         assert entity_registry.async_get(row.entity_id) == row
+
+
+def test_port_speed_statistics_metadata(hass: HomeAssistant, mock_coordinator):
+    """Port speed exposes data-rate measurements in Mbit/s for statistics."""
+    mock_coordinator.hass = hass
+    mock_coordinator.data["devices"] = {"site1": {"device1": {"name": "Switch"}}}
+    description = next(desc for desc in PORT_SENSOR_TYPES if desc.key == "port_speed")
+    sensor = UnifiPortSensor(mock_coordinator, description, "site1", "device1", 25)
+    assert sensor.state_class == SensorStateClass.MEASUREMENT
+    assert sensor.device_class == SensorDeviceClass.DATA_RATE
+    assert sensor.native_unit_of_measurement == UnitOfDataRate.MEGABITS_PER_SECOND

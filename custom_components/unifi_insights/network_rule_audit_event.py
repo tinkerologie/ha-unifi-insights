@@ -76,6 +76,7 @@ class UnifiInsightsNetworkRuleChangeEvent(
         """Initialize the rule change event entity."""
         super().__init__(coordinator)
         self._site_id = site_id
+        self._last_available = self.available
         self._attr_unique_id = unique_id
         # Changes detected before this entity existed are history, not news.
         self._last_sequence = max(
@@ -108,6 +109,7 @@ class UnifiInsightsNetworkRuleChangeEvent(
     @callback
     def _handle_coordinator_update(self) -> None:
         """Fire one event for every change not reported yet."""
+        wrote_event = False
         for change in self._site_changes():
             if change["sequence"] <= self._last_sequence:
                 continue
@@ -117,7 +119,11 @@ class UnifiInsightsNetworkRuleChangeEvent(
                 _event_data(change),
             )
             self.async_write_ha_state()
-        self.async_write_ha_state()
+            wrote_event = True
+        available = self.available
+        if not wrote_event and available != self._last_available:
+            self.async_write_ha_state()
+        self._last_available = available
 
 
 def discover_network_rule_change_events(

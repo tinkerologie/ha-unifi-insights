@@ -380,7 +380,6 @@ class UnifiProtectChimeVolumeNumber(UnifiProtectEntity, NumberEntity):
     _attr_native_max_value = 100
     _attr_native_step = 1
     _attr_mode = NumberMode.SLIDER
-    _attr_icon = "mdi:volume-high"
 
     def __init__(
         self,
@@ -446,7 +445,6 @@ class UnifiProtectChimeRepeatTimesNumber(UnifiProtectEntity, NumberEntity):
     _attr_native_max_value = 10
     _attr_native_step = 1
     _attr_mode = NumberMode.BOX
-    _attr_icon = "mdi:repeat"
 
     def __init__(
         self,

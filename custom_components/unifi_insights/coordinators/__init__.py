@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from .access import UnifiInsightsAccessCoordinator
 from .base import UnifiBaseCoordinator
 from .carrier_fabric import UnifiCarrierFabricCoordinator
 from .config import UnifiConfigCoordinator
@@ -19,6 +20,7 @@ __all__ = [
     "UnifiConfigCoordinator",
     "UnifiDeviceCoordinator",
     "UnifiFacadeCoordinator",
+    "UnifiInsightsAccessCoordinator",
     "UnifiInsightsInnerSpaceCoordinator",
     "UnifiInsightsMobilityCoordinator",
     "UnifiInsightsSiteManagerCoordinator",

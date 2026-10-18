@@ -16,7 +16,6 @@ from .const import (
     ATTR_CAMERA_TYPE,
     ATTR_IS_PACKAGE_CAMERA,
     ATTR_PARENT_CAMERA_ID,
-    CAMERA_STATE_CONNECTED,
     DEVICE_TYPE_CAMERA,
 )
 from .entity import UnifiProtectEntity
@@ -120,9 +119,6 @@ class UnifiProtectCamera(UnifiProtectEntity, Camera):
         camera_data = self.coordinator.data["protect"]["cameras"].get(
             self._device_id, {}
         )
-
-        # Set availability
-        self._attr_available = camera_data.get("state") == CAMERA_STATE_CONNECTED
 
         # Set attributes
         self._attr_extra_state_attributes = {

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.const import EntityCategory
+from homeassistant.helpers.typing import UNDEFINED
 
 from custom_components.unifi_insights.binary_sensor import (
     BINARY_SENSOR_TYPES,
@@ -144,6 +145,14 @@ class TestBinarySensorTypes:
         assert leak.device_class == BinarySensorDeviceClass.MOISTURE
         assert leak.device_type == DEVICE_TYPE_SENSOR
 
+    def test_device_status_category(self):
+        """Test device_status binary sensor has diagnostic category."""
+        status = next(
+            (s for s in BINARY_SENSOR_TYPES if s.key == "device_status"), None
+        )
+        assert status is not None
+        assert status.entity_category == EntityCategory.DIAGNOSTIC
+
 
 class TestUnifiInsightsBinarySensor:
     """Tests for UnifiInsightsBinarySensor."""
@@ -277,7 +286,6 @@ class TestUnifiInsightsBinarySensor:
         """Test is_on returns None when entity_description value_fn is None."""
         description = UnifiInsightsBinarySensorEntityDescription(
             key="test_no_fn",
-            name="Test Sensor",
             value_fn=None,
         )
         sensor = UnifiInsightsBinarySensor(
@@ -287,6 +295,34 @@ class TestUnifiInsightsBinarySensor:
             device_id="device1",
         )
         assert sensor.is_on is None
+
+    async def test_entity_category_inherited_from_description(
+        self, hass: HomeAssistant, mock_coordinator
+    ) -> None:
+        """Test entity_category is inherited from entity_description and not forced."""
+        desc_diag = UnifiInsightsBinarySensorEntityDescription(
+            key="test_diag",
+            entity_category=EntityCategory.DIAGNOSTIC,
+        )
+        sensor_diag = UnifiInsightsBinarySensor(
+            coordinator=mock_coordinator,
+            description=desc_diag,
+            site_id="site1",
+            device_id="device1",
+        )
+        assert sensor_diag.entity_category == EntityCategory.DIAGNOSTIC
+
+        desc_none = UnifiInsightsBinarySensorEntityDescription(
+            key="test_none",
+            entity_category=None,
+        )
+        sensor_none = UnifiInsightsBinarySensor(
+            coordinator=mock_coordinator,
+            description=desc_none,
+            site_id="site1",
+            device_id="device1",
+        )
+        assert sensor_none.entity_category is None
 
 
 class TestUnifiProtectBinarySensor:
@@ -1707,7 +1743,20 @@ class TestUnifiPortBinarySensor:
             port_idx=25,
             port_label="SFP+ 1",
         )
-        assert sensor.name == "SFP+ 1 SFP Module"
+        assert sensor.translation_key == "port_sfp_present"
+        assert sensor.translation_placeholders == {"port_label": "SFP+ 1"}
+        assert getattr(sensor, "_attr_name", None) is None
+
+        assert sensor.entity_description.name in (None, UNDEFINED)
+
+        sensor_fallback = UnifiPortBinarySensor(
+            coordinator=mock_coordinator,
+            site_id="site1",
+            device_id="device1",
+            port_idx=25,
+            port_label="",
+        )
+        assert sensor_fallback.translation_placeholders == {"port_label": "Port 25"}
 
     async def test_sfp_no_port_data(self, hass: HomeAssistant, mock_coordinator):
         """Test SFP binary sensor with missing port data."""
@@ -1968,3 +2017,48 @@ class TestProtectBinarySensorCapabilityFiltering:
         entity_keys = {e.entity_description.key for e in leak_sensor_entities}
         assert "sensor_door" not in entity_keys
         assert "sensor_motion" not in entity_keys
+
+
+@pytest.mark.parametrize("description", BINARY_SENSOR_TYPES, ids=lambda desc: desc.key)
+def test_every_binary_sensor_description_preserves_effective_category(
+    hass: HomeAssistant, mock_coordinator, description
+):
+    """Description categories replace the old forced category without overrides."""
+    mock_coordinator.hass = hass
+    mock_coordinator.data["devices"] = {"site1": {"device1": {"name": "Switch"}}}
+    sensor = UnifiInsightsBinarySensor(
+        mock_coordinator, description, "site1", "device1"
+    )
+    expected = (
+        EntityCategory.DIAGNOSTIC
+        if description.key
+        in {
+            "storage_degraded",
+            "storage_nearly_full",
+            "device_status",
+            "wan_status",
+            "camera_microphone",
+        }
+        else None
+    )
+    assert description.entity_category == expected
+    assert sensor.entity_category == expected
+
+
+@pytest.mark.parametrize(
+    ("sensor_class", "args", "expected"),
+    [
+        (UnifiPortBinarySensor, (25, "SFP+ 25"), EntityCategory.DIAGNOSTIC),
+        (UnifiInsightsWanLinkBinarySensor, ("wan1", "WAN 1"), None),
+        (UnifiInsightsSiteToSiteVpnBinarySensor, ("tunnel1", "Office"), None),
+    ],
+)
+def test_dynamic_binary_sensor_description_categories(
+    hass: HomeAssistant, mock_coordinator, sensor_class, args, expected
+):
+    """Also lock categories for descriptions constructed per port/WAN/tunnel."""
+    mock_coordinator.hass = hass
+    mock_coordinator.data["devices"] = {"site1": {"device1": {"name": "Switch"}}}
+    sensor = sensor_class(mock_coordinator, "site1", "device1", *args)
+    assert sensor.entity_description.entity_category == expected
+    assert sensor.entity_category == expected

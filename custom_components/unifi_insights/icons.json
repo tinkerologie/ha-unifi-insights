@@ -190,6 +190,81 @@
       },
       "storage_mount_total": {
         "default": "mdi:harddisk"
+      },
+      "innerspace_placement": {
+        "default": "mdi:floor-plan"
+      },
+      "wifi_client_count": {
+        "default": "mdi:wifi"
+      },
+      "storage_used": {
+        "default": "mdi:harddisk"
+      },
+      "storage_total": {
+        "default": "mdi:harddisk"
+      },
+      "storage_available": {
+        "default": "mdi:harddisk"
+      },
+      "storage_used_percent": {
+        "default": "mdi:harddisk"
+      },
+      "poe_total_power": {
+        "default": "mdi:flash"
+      },
+      "general_temperature": {
+        "default": "mdi:thermometer"
+      },
+      "port_tx_rate": {
+        "default": "mdi:upload-network"
+      },
+      "port_rx_rate": {
+        "default": "mdi:download-network"
+      },
+      "port_sfp_module": {
+        "default": "mdi:expansion-card"
+      },
+      "port_sfp_vendor": {
+        "default": "mdi:factory"
+      },
+      "port_sfp_compliance": {
+        "default": "mdi:tag"
+      },
+      "port_sfp_serial": {
+        "default": "mdi:barcode"
+      },
+      "site_total_clients": {
+        "default": "mdi:account-group"
+      },
+      "site_wired_clients": {
+        "default": "mdi:ethernet"
+      },
+      "site_wireless_clients": {
+        "default": "mdi:wifi"
+      },
+      "internet_download_1h": {
+        "default": "mdi:download-network"
+      },
+      "internet_upload_1h": {
+        "default": "mdi:upload-network"
+      },
+      "internet_download_1d": {
+        "default": "mdi:download-network"
+      },
+      "internet_upload_1d": {
+        "default": "mdi:upload-network"
+      },
+      "internet_download_1w": {
+        "default": "mdi:download-network"
+      },
+      "internet_upload_1w": {
+        "default": "mdi:upload-network"
+      },
+      "internet_download_1m": {
+        "default": "mdi:download-network"
+      },
+      "internet_upload_1m": {
+        "default": "mdi:upload-network"
       }
     },
     "binary_sensor": {
@@ -285,15 +360,12 @@
       },
       "storage_degraded": {
         "default": "mdi:harddisk"
+      },
+      "site_to_site_vpn": {
+        "default": "mdi:vpn"
       }
     },
     "button": {
-      "restart": {
-        "default": "mdi:restart"
-      },
-      "play_chime": {
-        "default": "mdi:bell-ring"
-      },
       "poe_power_cycle": {
         "default": "mdi:power-cycle"
       },
@@ -302,6 +374,21 @@
       },
       "client_wake": {
         "default": "mdi:power"
+      },
+      "device_restart": {
+        "default": "mdi:restart"
+      },
+      "play": {
+        "default": "mdi:bell-ring-outline"
+      },
+      "client_reconnect": {
+        "default": "mdi:refresh"
+      },
+      "ptz_patrol_start": {
+        "default": "mdi:cctv"
+      },
+      "ptz_patrol_stop": {
+        "default": "mdi:stop-circle-outline"
       }
     },
     "switch": {
@@ -355,6 +442,21 @@
         "state": {
           "off": "mdi:sign-direction-remove"
         }
+      },
+      "status_light": {
+        "default": "mdi:led-on"
+      },
+      "high_fps_mode": {
+        "default": "mdi:fast-forward"
+      },
+      "client_allow": {
+        "default": "mdi:account-lock"
+      },
+      "wifi": {
+        "default": "mdi:wifi"
+      },
+      "outlet_cycle_enabled": {
+        "default": "mdi:restart"
       }
     },
     "event": {
@@ -369,19 +471,19 @@
       "video_mode": {
         "default": "mdi:video"
       },
-      "light_mode": {
-        "default": "mdi:lightbulb"
+      "ringtone": {
+        "default": "mdi:bell-ring"
+      },
+      "ptz_preset": {
+        "default": "mdi:camera-control"
+      },
+      "liveview": {
+        "default": "mdi:monitor-multiple"
       }
     },
     "number": {
-      "microphone_volume": {
-        "default": "mdi:microphone"
-      },
       "brightness_level": {
         "default": "mdi:brightness-6"
-      },
-      "volume": {
-        "default": "mdi:volume-high"
       },
       "repeat_times": {
         "default": "mdi:repeat"
@@ -400,6 +502,12 @@
       },
       "voucher_data_limit": {
         "default": "mdi:database"
+      },
+      "mic_volume": {
+        "default": "mdi:microphone"
+      },
+      "chime_volume": {
+        "default": "mdi:volume-high"
       }
     },
     "device_tracker": {

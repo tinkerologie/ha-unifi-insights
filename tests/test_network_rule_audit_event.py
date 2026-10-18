@@ -111,7 +111,7 @@ def test_existing_changes_are_not_replayed(
     entity.async_write_ha_state = MagicMock()
     entity._handle_coordinator_update()
     entity._trigger_event.assert_not_called()
-    entity.async_write_ha_state.assert_called_once()
+    entity.async_write_ha_state.assert_not_called()
 
 
 def test_each_new_change_fires_once_in_order(
@@ -139,11 +139,12 @@ def test_each_new_change_fires_once_in_order(
     second_payload = calls[1][0][1]
     assert tuple(second_payload) == EVENT_ATTRIBUTE_KEYS
     assert "leaked" not in second_payload
-    assert entity.async_write_ha_state.call_count == 3
+    assert entity.async_write_ha_state.call_count == 2
 
     # Subsequent update does not refire already triggered events
     entity._handle_coordinator_update()
     assert entity._trigger_event.call_count == 2
+    assert entity.async_write_ha_state.call_count == 2
 
 
 @pytest.mark.parametrize(

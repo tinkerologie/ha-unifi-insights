@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Component-wide setup retry, Site Manager account and Mobility ownership registries now use typed Home Assistant keys. Added an evidence-based Quality Scale rule inventory without claiming a tier, and exported the Access coordinator. [#336](https://github.com/tinkerologie/ha-unifi-insights/issues/336)
+- Standardized entity names and translation keys, synchronized English entity translations, and moved static icons to `icons.json`. Names such as "Device restart", "WiFi QR code", "{port_label} SFP module" and the client reconnect button (named with a `{client_name}` placeholder) now use translations, so some friendly names may change. Displayed icons stay the same. Existing entity IDs and unique IDs are preserved. [#335](https://github.com/tinkerologie/ha-unifi-insights/issues/335)
+- Binary sensors use their description categories, and outlet switches use the outlet device class. Port speed now has a data rate device class and the `Mbit/s` unit, which may affect its long-term statistics. [#335](https://github.com/tinkerologie/ha-unifi-insights/issues/335)
 - Revised the proposed ADR-007 (flat module layout). It adds a size budget of about 2,000 lines per module: an oversized module is deepened rather than split, and the file moves land after the deepening issues. It records removing the vendored `api/` package as the end state (201 to 48 Python files), and it folds feature-named test files into one test module per code module. [#343](https://github.com/tinkerologie/ha-unifi-insights/issues/343)
 - Updated `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md`, `.github/instructions/*.instructions.md`, and `.github/prompts/*.prompt.md` to reflect Home Assistant 2026.10+ developer best practices, the Integration Quality Scale (Bronze through Platinum), HA 2026.8–2026.11 device registry and entity lifecycle rules (`via_device_id`, `DeviceEntry.config_entry_id`, `async_prepare_to_add_to_hass`, `async_entity_id_changed`), `probatio` schema typing, HA 2026 Web Awesome `--ha-*` frontend custom card standards, current UniFi Developer Portal OpenAPI versions, and all 17 platforms and 15 coordinator modules. [#331](https://github.com/tinkerologie/ha-unifi-insights/issues/331)
 
@@ -26,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Console polling failures now rely on Home Assistant's unavailable/recovered transition logs instead of repeated per-poll warnings. Protect per-family failures and device legacy fallback now log once per outage and once on recovery. Client reconnect, Wake-on-LAN and network restart buttons follow device coordinator availability; offline clients remain wakeable while the console is reachable. Removed shadowed availability assignments and redundant rule-audit state writes while preserving every event and availability transition. [#336](https://github.com/tinkerologie/ha-unifi-insights/issues/336)
 - The topology card always roots the tree at the gateway. A gateway whose reported uplink is a switch on the same site (for example a mutual uplink over one 10G link between a UCG Fiber and its core switch) no longer makes that switch its parent, in both the tree and tiered layouts. [#346](https://github.com/tinkerologie/ha-unifi-insights/issues/346)
 
 ## [2026.10.2] - 2026-10-16

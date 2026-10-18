@@ -140,7 +140,6 @@ VOUCHER_SENSOR_TYPES: tuple[UnifiVoucherSensorEntityDescription, ...] = (
     UnifiVoucherSensorEntityDescription(
         key="latest_voucher_code",
         translation_key="latest_voucher_code",
-        icon="mdi:ticket",
         value_fn=_latest_code_value,
         attrs_fn=_latest_attributes,
     ),

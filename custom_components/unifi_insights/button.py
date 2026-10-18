@@ -178,8 +178,6 @@ BUTTON_TYPES: tuple[UnifiInsightsButtonEntityDescription, ...] = (
     UnifiInsightsButtonEntityDescription(
         key="device_restart",
         translation_key="device_restart",
-        name="Device Restart",
-        icon="mdi:restart",
     ),
 )
 
@@ -590,21 +588,6 @@ class UnifiInsightsButton(UnifiInsightsEntity, ButtonEntity):
             self._site_id,
         )
 
-    @property
-    def available(self) -> bool:
-        """Return if the device is available."""
-        devices = self.coordinator.data.get("devices", {})
-        if not isinstance(devices, dict):
-            return False
-        site_devices = devices.get(self._site_id, {})
-        if not isinstance(site_devices, dict):
-            return False
-        device_data = site_devices.get(self._device_id)
-        if not device_data or not isinstance(device_data, dict):
-            return False
-        state = device_data.get("state")
-        return isinstance(state, str) and state == "ONLINE"
-
 
 class UnifiInsightsPoePowerCycleButton(UnifiInsightsEntity, ButtonEntity):
     """Representation of a UniFi Insights PoE port power-cycle button."""
@@ -685,7 +668,6 @@ class UnifiProtectChimePlayButton(UnifiProtectEntity, ButtonEntity):
 
     _attr_has_entity_name = True
     _attr_translation_key = "play"
-    _attr_icon = "mdi:bell-ring-outline"
 
     def __init__(
         self,
@@ -731,11 +713,13 @@ class UnifiProtectChimePlayButton(UnifiProtectEntity, ButtonEntity):
         )
 
 
-class UnifiClientReconnectButton(ButtonEntity):
+class UnifiClientReconnectButton(
+    CoordinatorEntity[UnifiFacadeCoordinator], ButtonEntity
+):
     """Button to force a client to reconnect."""
 
     _attr_has_entity_name = True
-    _attr_icon = "mdi:refresh"
+    _attr_translation_key = "client_reconnect"
 
     def __init__(
         self,
@@ -744,7 +728,7 @@ class UnifiClientReconnectButton(ButtonEntity):
         client_id: str,
     ) -> None:
         """Initialize the button."""
-        self.coordinator = coordinator
+        super().__init__(coordinator)
         self._site_id = site_id
         self._client_id = client_id
 
@@ -753,11 +737,12 @@ class UnifiClientReconnectButton(ButtonEntity):
         client_name = (
             client_data.get("name")
             or client_data.get("hostname")
-            or client_data.get("mac", client_id)
+            or client_data.get("mac")
+            or client_id
         )
 
         self._attr_unique_id = f"{site_id}_{client_id}_reconnect"
-        self._attr_name = f"{client_name} Reconnect"
+        self._attr_translation_placeholders = {"client_name": client_name}
 
         # Device info - associate with the connected network device (switch/AP)
         uplink_device_id = client_data.get("uplinkDeviceId") or client_data.get(
@@ -814,7 +799,7 @@ class UnifiClientReconnectButton(ButtonEntity):
         )
 
 
-class UnifiClientWakeButton(ButtonEntity):
+class UnifiClientWakeButton(CoordinatorEntity[UnifiFacadeCoordinator], ButtonEntity):
     """Button that wakes a wired client with a Wake-on-LAN magic packet."""
 
     _attr_has_entity_name = True
@@ -837,7 +822,7 @@ class UnifiClientWakeButton(ButtonEntity):
         console's client history holds, used only while the client is not connected.
         site_id is the client's site. Registry restoration preserves its device.
         """
-        self.coordinator = coordinator
+        super().__init__(coordinator)
         self._mac = mac
         self._attr_unique_id = wake_unique_id(mac)
 
@@ -867,6 +852,11 @@ class UnifiClientWakeButton(ButtonEntity):
         if self.hass is not None:
             self.async_write_ha_state()
 
+    @property
+    def available(self) -> bool:
+        """Return True while the console can send a Wake-on-LAN packet."""
+        return self.coordinator.device_available
+
     async def async_press(self) -> None:
         """Send the Wake-on-LAN magic packet."""
         _LOGGER.debug("Sending Wake-on-LAN packet from a Wake button")
@@ -884,7 +874,6 @@ class UnifiProtectPTZPatrolStartButton(UnifiProtectEntity, ButtonEntity):
 
     _attr_has_entity_name = True
     _attr_translation_key = "ptz_patrol_start"
-    _attr_icon = "mdi:cctv"
 
     def __init__(
         self,
@@ -917,7 +906,6 @@ class UnifiProtectPTZPatrolStopButton(UnifiProtectEntity, ButtonEntity):
 
     _attr_has_entity_name = True
     _attr_translation_key = "ptz_patrol_stop"
-    _attr_icon = "mdi:stop-circle-outline"
 
     def __init__(
         self,

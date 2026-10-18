@@ -25,7 +25,7 @@ Adopt a flat Home Assistant layout with exactly two subpackages, `coordinators/`
 custom_components/unifi_insights/
 ├── __init__.py                 # setup/unload/migrate; UnifiInsightsData, CarrierFabricData, typed ConfigEntry aliases
 ├── manifest.json
-├── quality_scale.yaml          # NEW: Quality Scale rule tracking (no tier claim in manifest.json)
+├── quality_scale.yaml          # Quality Scale rule tracking, added by #336 (no tier claim in manifest.json)
 ├── py.typed
 │
 │   # Setup and identity

@@ -332,30 +332,20 @@ class UnifiInsightsEntity(CoordinatorEntity[UnifiFacadeCoordinator]):
         # on the device coordinator's last_update_success.
         if not self.coordinator.device_available:
             return False
-        device_data = (
-            self.coordinator.data["devices"].get(self._site_id, {}).get(self._device_id)
-        )
-        if not device_data:
+        devices = self.coordinator.data.get("devices", {})
+        if not isinstance(devices, dict):
+            return False
+        site_devices = devices.get(self._site_id, {})
+        if not isinstance(site_devices, dict):
+            return False
+        device_data = site_devices.get(self._device_id)
+        if not isinstance(device_data, dict) or not device_data:
             return False
         return is_device_online(device_data)
 
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        if not self.coordinator.device_available:
-            self._attr_available = False
-            self.async_write_ha_state()
-            return
-
-        device_data = (
-            self.coordinator.data["devices"].get(self._site_id, {}).get(self._device_id)
-        )
-        if not device_data:
-            self._attr_available = False
-            self.async_write_ha_state()
-            return
-
-        self._attr_available = is_device_online(device_data)
         self.async_write_ha_state()
 
     @property
@@ -560,18 +550,14 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiFacadeCoordinator]):
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         if not self.coordinator.protect_available:
-            self._attr_available = False
             self.async_write_ha_state()
             return
 
         device_data = self.device_data
         if not device_data:
-            self._attr_available = False
             self.async_write_ha_state()
             return
 
-        state = device_data.get("state")
-        self._attr_available = isinstance(state, str) and state == "CONNECTED"
         self._update_from_data()
         self.async_write_ha_state()
 

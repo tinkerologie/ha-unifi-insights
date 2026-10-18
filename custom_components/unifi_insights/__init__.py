@@ -13,6 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL, Platform
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.util.hass_dict import HassKey
 
 from .access_webhook import (
     async_remove_access_webhook,
@@ -190,7 +191,9 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:  # noqa: ARG00
 # ~35 s from the first incomplete answer, longer if earlier retries while the
 # console was unreachable have already raised the backoff.
 SETUP_PROBE_RETRIES = 3
-_SETUP_PROBE_ATTEMPTS = "setup_probe_attempts"
+_SETUP_PROBE_ATTEMPTS: HassKey[dict[str, dict[str, int]]] = HassKey(
+    f"{DOMAIN}_setup_probe_attempts"
+)
 # One application usable while the other is temporarily unreachable.
 _PARTIAL = "partial"
 # Nothing usable and nothing more specific than "absent" or "empty".
@@ -199,7 +202,7 @@ _INCONCLUSIVE = "inconclusive"
 
 def _clear_setup_probe_attempts(hass: HomeAssistant, entry_id: str) -> None:
     """Forget an entry's setup retry budget."""
-    hass.data.get(DOMAIN, {}).get(_SETUP_PROBE_ATTEMPTS, {}).pop(entry_id, None)
+    hass.data.get(_SETUP_PROBE_ATTEMPTS, {}).pop(entry_id, None)
 
 
 def _raise_for_setup_probes(
@@ -231,11 +234,9 @@ def _raise_for_setup_probes(
     rejecting the key), InnerSpace-only consoles, and camera-free NVRs load
     immediately.
     """
-    budgets: dict[str, int] = (
-        hass.data.setdefault(DOMAIN, {})
-        .setdefault(_SETUP_PROBE_ATTEMPTS, {})
-        .setdefault(entry_id, {})
-    )
+    budgets: dict[str, int] = hass.data.setdefault(
+        _SETUP_PROBE_ATTEMPTS, {}
+    ).setdefault(entry_id, {})
     probes: dict[str, ProbeResult] = {
         "Network": network_probe,
         "Protect": protect_probe,

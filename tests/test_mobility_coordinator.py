@@ -25,6 +25,7 @@ from custom_components.unifi_insights.const import (
     SCAN_INTERVAL_MOBILITY_IDLE,
 )
 from custom_components.unifi_insights.coordinators.mobility import (
+    _OWNERS,
     UnifiInsightsMobilityCoordinator,
     _key_fingerprint,
     _owners,
@@ -44,6 +45,21 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 _LOGGER_NAME = "custom_components.unifi_insights.coordinators.mobility"
+
+
+async def test_owners_registry_uses_hass_key(hass: HomeAssistant) -> None:
+    """Ownership persists under the typed key without a domain data container."""
+    assert _OWNERS not in hass.data
+    assert DOMAIN not in hass.data
+
+    owners = _owners(hass)
+
+    assert owners == {}
+    assert hass.data[_OWNERS] is owners
+    owners["account-fingerprint"] = "entry-1"
+    assert _owners(hass) is owners
+    assert _owners(hass) == {"account-fingerprint": "entry-1"}
+    assert DOMAIN not in hass.data
 
 
 def _remote_entry(

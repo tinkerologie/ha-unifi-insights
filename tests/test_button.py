@@ -11,9 +11,14 @@ from homeassistant.const import EntityCategory
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.typing import UNDEFINED
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.unifi_insights.api import ApiKeyAuth, ConnectionType
+from custom_components.unifi_insights.api import (
+    ApiKeyAuth,
+    ConnectionType,
+    UniFiConnectionError,
+)
 from custom_components.unifi_insights.api.network import UniFiNetworkClient
 from custom_components.unifi_insights.button import (
     BUTTON_TYPES,
@@ -60,8 +65,10 @@ class TestButtonTypes:
         """Test device restart button is defined."""
         restart = next((b for b in BUTTON_TYPES if b.key == "device_restart"), None)
         assert restart is not None
-        assert restart.name == "Device Restart"
-        assert restart.icon == "mdi:restart"
+
+        assert restart.name in (None, UNDEFINED)
+        assert restart.translation_key == "device_restart"
+        assert restart.icon in (None, UNDEFINED)
 
 
 class TestUnifiInsightsButton:
@@ -290,8 +297,24 @@ class TestUnifiClientReconnectButton:
         )
 
         assert button._client_id == "client1"
-        assert "My Laptop" in button._attr_name
-        assert "Reconnect" in button._attr_name
+        assert button.translation_key == "client_reconnect"
+        assert button.translation_placeholders == {"client_name": "My Laptop"}
+        assert button.has_entity_name is True
+        assert getattr(button, "_attr_name", None) is None
+
+    @pytest.mark.parametrize("mac", [None, ""])
+    async def test_reconnect_placeholder_falls_back_with_empty_mac(
+        self, hass: HomeAssistant, mock_coordinator, mac
+    ):
+        """A present but empty MAC still falls back to the stable client ID."""
+        mock_coordinator.data["clients"]["site1"]["client1"] = {
+            "name": None,
+            "hostname": None,
+            "mac": mac,
+        }
+        button = UnifiClientReconnectButton(mock_coordinator, "site1", "client1")
+        assert button.translation_placeholders == {"client_name": "client1"}
+        assert button.unique_id == "site1_client1_reconnect"
 
     async def test_reconnect_button_available(
         self, hass: HomeAssistant, mock_coordinator
@@ -977,7 +1000,8 @@ class TestClientReconnectButtonEdgeCases:
         )
 
         # Name should include MAC address
-        assert "11:22:33:44:55:66" in button._attr_name
+        assert button.translation_key == "client_reconnect"
+        assert button.translation_placeholders == {"client_name": "11:22:33:44:55:66"}
 
 
 class TestChimePlayButtonEdgeCases:
@@ -1173,6 +1197,10 @@ class TestAsyncSetupEntryWithClients:
             (b for b in reconnect_buttons if b._client_id == "client2"), None
         )
         assert client2_button is not None
+        assert client2_button.translation_key == "client_reconnect"
+        assert client2_button.translation_placeholders == {
+            "client_name": "laptop-hostname"
+        }
 
     async def test_setup_entry_client_button_uses_mac_fallback(
         self, hass: HomeAssistant, mock_coordinator, mock_config_entry
@@ -1193,6 +1221,10 @@ class TestAsyncSetupEntryWithClients:
             (b for b in reconnect_buttons if b._client_id == "client3"), None
         )
         assert client3_button is not None
+        assert client3_button.translation_key == "client_reconnect"
+        assert client3_button.translation_placeholders == {
+            "client_name": "CC:DD:EE:FF:00:11"
+        }
 
 
 class TestUnifiInsightsButtonAvailableEdgeCases:
@@ -2126,17 +2158,20 @@ class TestUnifiClientWakeButton:
         button = UnifiClientWakeButton(coordinator, mac, site_id="site1")
         assert button.translation_placeholders == {"client_name": mac}
 
-    def test_wake_button_is_always_available(self, hass: HomeAssistant) -> None:
-        """Wake button remains available regardless of coordinator or client state."""
+    @pytest.mark.parametrize("device_available", [True, False])
+    def test_wake_button_availability_follows_console(
+        self, hass: HomeAssistant, *, device_available: bool
+    ) -> None:
+        """Offline clients remain wakeable only while their console is reachable."""
         coordinator = MagicMock()
         coordinator.hass = hass
         coordinator.data = {"clients": {}}
-        coordinator.last_update_success = False
+        coordinator.device_available = device_available
 
         button = UnifiClientWakeButton(
             coordinator, "00:11:22:33:44:55", site_id="site1"
         )
-        assert button.available is True
+        assert button.available is device_available
 
     async def test_wake_button_press_calls_facade_with_mac(
         self, hass: HomeAssistant
@@ -2191,6 +2226,69 @@ class TestUnifiClientWakeButton:
 
         assert exc_info.value is err
         assert exc_info.value.translation_key == "wake_failed"
+
+
+@pytest.mark.parametrize("button_kind", ["reconnect", "wake", "restart"])
+async def test_buttons_publish_device_coordinator_availability(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    *,
+    mock_network_client: MagicMock,
+    mock_protect_client: MagicMock,
+    mock_local_auth: MagicMock,
+    enable_custom_integrations,
+    button_kind: str,
+) -> None:
+    """Real platform subscriptions publish outage/recovery and unload cleanly."""
+    mac = "00:11:22:33:44:55"
+    mock_network_client.sites.get_all.return_value = [
+        {"id": "site1", "name": "Home", "internalReference": "default"}
+    ]
+    mock_network_client.clients.get_all.return_value = [
+        {"id": "c1", "macAddress": mac, "name": "Gaming PC", "type": "WIRED"}
+    ]
+    mock_network_client.clients.get_historical_legacy = AsyncMock(return_value=[])
+    mock_network_client.devices.get_all.return_value = [
+        {
+            "id": "gateway",
+            "name": "Gateway",
+            "model": "UniFi Dream Machine Pro",
+            "state": "ONLINE",
+            "features": ["gateway"],
+        }
+    ]
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry, options={CONF_CLIENT_CONTROL: True}
+    )
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    registry = er.async_get(hass)
+    unique_id = {
+        "reconnect": "site1_c1_reconnect",
+        "wake": f"{DOMAIN}_{mac}_wake",
+        "restart": "site1_gateway_device_restart",
+    }[button_kind]
+    entity_id = registry.async_get_entity_id("button", DOMAIN, unique_id)
+    assert entity_id is not None
+    registry.async_update_entity(entity_id, disabled_by=None)
+    await hass.config_entries.async_reload(mock_config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    # Enabling a disabled entity reloads the entry; read its live facade.
+    facade = mock_config_entry.runtime_data.coordinator
+    device = facade._device_coordinator
+    assert hass.states.get(entity_id).state != "unavailable"
+    mock_network_client.devices.get_all.side_effect = UniFiConnectionError("offline")
+    await device.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state == "unavailable"
+    mock_network_client.devices.get_all.side_effect = None
+    await device.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state != "unavailable"
+    assert await hass.config_entries.async_unload(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert not facade._listeners
 
 
 class TestWakeButtonSetup:

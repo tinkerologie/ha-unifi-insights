@@ -133,11 +133,13 @@ class TestUnifiWifiQrCodeImage:
         )
 
     def test_initialization(self, hass: HomeAssistant, mock_coordinator) -> None:
-        """Test unique ID, name, and device info."""
+        """Test unique ID, translation key, and device info."""
         entity = self._make_entity(hass, mock_coordinator)
 
         assert entity.unique_id == "site1_wifi1_qr_code"
-        assert entity._attr_name == "WiFi QR code"
+        assert entity.translation_key == "wifi_qr_code"
+        assert entity.has_entity_name is True
+        assert getattr(entity, "_attr_name", None) is None
         assert entity._attr_content_type == "image/png"
         assert entity._attr_device_info["name"] == "WiFi: TestNet"
 

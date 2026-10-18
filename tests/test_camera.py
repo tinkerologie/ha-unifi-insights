@@ -186,7 +186,7 @@ class TestUnifiProtectCamera:
             camera_id="camera1",
         )
 
-        assert camera._attr_available is True
+        assert camera.available is True
 
     def test_update_from_data_disconnected(self, mock_coordinator) -> None:
         """Test _update_from_data with disconnected camera."""
@@ -197,7 +197,7 @@ class TestUnifiProtectCamera:
             camera_id="camera1",
         )
 
-        assert camera._attr_available is False
+        assert camera.available is False
 
     def test_extra_state_attributes(self, mock_coordinator) -> None:
         """Test extra state attributes."""
@@ -450,7 +450,7 @@ class TestUnifiProtectCamera:
             camera_id="camera1",
         )
 
-        assert camera._attr_available is False
+        assert camera.available is False
         attrs = camera._attr_extra_state_attributes
         assert attrs[ATTR_CAMERA_TYPE] == "regular"  # Default
         assert attrs[ATTR_IS_PACKAGE_CAMERA] is False  # Default
@@ -464,4 +464,4 @@ class TestUnifiProtectCamera:
             camera_id="camera1",
         )
 
-        assert camera._attr_available is False
+        assert camera.available is False

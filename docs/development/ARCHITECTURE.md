@@ -208,4 +208,4 @@ See [DECISIONS.md](./DECISIONS.md) for the log and [`adr/`](./adr/) for the full
 
 ## Quality scale
 
-The integration follows the Home Assistant Integration Quality Scale rules through Platinum as mandatory requirements. A `quality_scale.yaml` tracking file is added by #330; no tier is claimed in `manifest.json`, which is correct for a custom integration.
+The integration follows the Home Assistant Integration Quality Scale rules through Platinum as mandatory requirements. `custom_components/unifi_insights/quality_scale.yaml` records an evidence-based status for every rule, including the open `todo` items ([#336](https://github.com/tinkerologie/ha-unifi-insights/issues/336)); no tier is claimed in `manifest.json`, which is correct for a custom integration.

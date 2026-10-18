@@ -18,7 +18,9 @@ from custom_components.unifi_insights.api import (
     UniFiResponseError,
 )
 from custom_components.unifi_insights.api.const import DEFAULT_RATE_LIMIT_RETRY_AFTER
+from custom_components.unifi_insights.const import DOMAIN
 from custom_components.unifi_insights.coordinators.site_manager import (
+    _ACCOUNT_REGISTRY,
     UnifiInsightsSiteManagerCoordinator,
     _async_initial_refresh,
     _latest_isp_metrics,
@@ -287,6 +289,8 @@ async def test_same_key_shares_coordinator_until_last_unload(
     coordinator = MagicMock()
     coordinator.async_refresh = AsyncMock()
     coordinator.async_shutdown = AsyncMock()
+    assert _ACCOUNT_REGISTRY not in hass.data
+    assert DOMAIN not in hass.data
     with (
         patch(
             "custom_components.unifi_insights.coordinators.site_manager."
@@ -302,19 +306,34 @@ async def test_same_key_shares_coordinator_until_last_unload(
         key1, account1 = await async_acquire_site_manager(
             hass, "same-key", "entry-1", MagicMock()
         )
+        registry = hass.data[_ACCOUNT_REGISTRY]
+        assert registry == {key1: account1}
+        assert account1.users == {"entry-1"}
+        assert DOMAIN not in hass.data
         key2, account2 = await async_acquire_site_manager(
             hass, "same-key", "entry-2", MagicMock()
         )
         assert key1 == key2
         assert account1 is account2
+        assert hass.data[_ACCOUNT_REGISTRY] is registry
+        assert registry == {key1: account1}
+        assert account1.users == {"entry-1", "entry-2"}
+        assert DOMAIN not in hass.data
         client_class.assert_called_once()
         assert account1.initial_refresh is not None
         await account1.initial_refresh
         coordinator.async_refresh.assert_awaited_once()
 
         await async_release_site_manager(hass, key1, "entry-1")
+        assert account1.users == {"entry-2"}
+        assert registry == {key1: account1}
         coordinator.async_shutdown.assert_not_awaited()
+        client.close.assert_not_awaited()
         await async_release_site_manager(hass, key2, "entry-2")
+        assert account1.users == set()
+        assert hass.data[_ACCOUNT_REGISTRY] is registry
+        assert registry == {}
+        assert DOMAIN not in hass.data
         coordinator.async_shutdown.assert_awaited_once()
         client.close.assert_awaited_once()
         await async_release_site_manager(hass, key2, "entry-2")

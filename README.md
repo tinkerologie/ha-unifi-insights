@@ -260,6 +260,7 @@ UniFi has no Wake-on-LAN function, so the **Wake** buttons send the packet from 
 - **Same network:** Home Assistant must be on the same network (VLAN) as the device. UniFi gateways usually don't forward wake packets between VLANs. The packet goes to the broadcast address of the client's network when the console reports it, and to 255.255.255.255 otherwise.
 - **The device:** it needs Wake-on-LAN enabled in its BIOS/UEFI and in its operating system or network adapter settings. The button can't tell whether the device woke up.
 - **Home Assistant:** it must use host networking (Home Assistant OS does). In a Docker bridge network the packet doesn't reach your network.
+- **Availability:** Wake and reconnect buttons are unavailable while the console is unreachable and return when it recovers. A Wake button stays available for an offline client while the console is reachable.
 - **Debug logging:** turn on debug logging for `homeassistant.components.wake_on_lan` to see each packet.
 - Remote (cloud) entries work the same way: the packet is sent from Home Assistant, not through the console.
 

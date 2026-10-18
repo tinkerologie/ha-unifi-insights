@@ -153,6 +153,7 @@ class UnifiWifiQrCodeImage(CoordinatorEntity[UnifiFacadeCoordinator], ImageEntit
     """A QR code image that joins a device to a WiFi network."""
 
     _attr_has_entity_name = True
+    _attr_translation_key = "wifi_qr_code"
     _attr_content_type = "image/png"
 
     def __init__(
@@ -173,7 +174,6 @@ class UnifiWifiQrCodeImage(CoordinatorEntity[UnifiFacadeCoordinator], ImageEntit
         wifi_name = wifi_data.get("name") or wifi_data.get("ssid", wifi_id)
 
         self._attr_unique_id = f"{site_id}_{wifi_id}_qr_code"
-        self._attr_name = "WiFi QR code"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"wifi_{wifi_id}")},
             name=f"WiFi: {wifi_name}",

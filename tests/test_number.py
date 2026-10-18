@@ -643,7 +643,7 @@ class TestUnifiProtectChimeVolumeNumber:
         assert number._attr_translation_key == "chime_volume"
         assert number._attr_entity_category == EntityCategory.CONFIG
         assert number._attr_mode == NumberMode.SLIDER
-        assert number._attr_icon == "mdi:volume-high"
+        assert getattr(number, "_attr_icon", None) is None
 
     def test_update_from_data(self, mock_coordinator) -> None:
         """Test _update_from_data."""
@@ -770,7 +770,7 @@ class TestUnifiProtectChimeRepeatTimesNumber:
         assert number._attr_native_max_value == 10
         assert number._attr_native_step == 1
         assert number._attr_mode == NumberMode.BOX
-        assert number._attr_icon == "mdi:repeat"
+        assert getattr(number, "_attr_icon", None) is None
 
     def test_update_from_data(self, mock_coordinator) -> None:
         """Test _update_from_data."""

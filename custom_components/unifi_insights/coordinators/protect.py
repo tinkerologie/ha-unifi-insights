@@ -504,6 +504,8 @@ class UnifiProtectCoordinator(UnifiBaseCoordinator):
         # once. A 404 from one of these is a transient/removed-device signal
         # for `_update_device_collection`, not "this Protect is too old".
         self._answered_families: set[str] = set()
+        # These failures are swallowed, so DataUpdateCoordinator cannot coalesce them.
+        self._failed_families: set[str] = set()
         # family -> monotonic time before which it is not polled again,
         # after a 404 from a Protect version that predates the endpoint.
         # See UNSUPPORTED_RESOURCE_RETRY.
@@ -2110,7 +2112,7 @@ class UnifiProtectCoordinator(UnifiBaseCoordinator):
         count = self._consecutive_fetch_errors.get(collection_key, 0) + 1
         self._consecutive_fetch_errors[collection_key] = count
         if count > MAX_CONSECUTIVE_EMPTY_FETCHES:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "Protect coordinator: %s fetch failed for %d consecutive polls "
                 "(%s); failing the update",
                 collection_key,
@@ -2118,7 +2120,7 @@ class UnifiProtectCoordinator(UnifiBaseCoordinator):
                 err,
             )
             return False
-        _LOGGER.warning(
+        _LOGGER.debug(
             "Protect coordinator: Error fetching %s (poll %d/%d): %s; "
             "preserving cached devices",
             collection_key,
@@ -2691,6 +2693,7 @@ class UnifiProtectCoordinator(UnifiBaseCoordinator):
                 chimes,
                 is_partial=not self.protect_client.chimes.last_result_complete,
             )
+            self._log_family_fetch_recovery("chimes")
             _LOGGER.debug(
                 "Protect coordinator: Successfully fetched %d chimes",
                 len(chimes_models),
@@ -2698,7 +2701,7 @@ class UnifiProtectCoordinator(UnifiBaseCoordinator):
         except UniFiNotFoundError:
             self._update_device_collection("chimes", {}, is_404=True)
         except Exception as err:
-            _LOGGER.warning("Protect coordinator: Error fetching chimes: %s", err)
+            self._log_family_fetch_error("chimes", err)
 
     async def _fetch_viewers(self) -> None:
         """Fetch viewer data."""
@@ -2776,6 +2779,18 @@ class UnifiProtectCoordinator(UnifiBaseCoordinator):
         await self._fetch_device_family("sirens")
         self._apply_siren_stop_guards()
 
+    def _log_family_fetch_error(self, collection: str, err: Exception) -> None:
+        """Report a family outage once while retaining details on later polls."""
+        log = _LOGGER.debug if collection in self._failed_families else _LOGGER.warning
+        self._failed_families.add(collection)
+        log("Protect coordinator: Error fetching %s: %s", collection, err)
+
+    def _log_family_fetch_recovery(self, collection: str) -> None:
+        """Re-arm a family's outage warning after a successful fetch."""
+        if collection in self._failed_families:
+            self._failed_families.remove(collection)
+            _LOGGER.info("Protect coordinator: Fetching %s recovered", collection)
+
     async def _fetch_device_family(self, collection: str) -> None:
         """
         Fetch one simple device family into ``self.data[collection]``.
@@ -2813,18 +2828,15 @@ class UnifiProtectCoordinator(UnifiBaseCoordinator):
             return
         except UniFiResponseError as err:
             if answered or err.status_code >= HTTPStatus.MULTIPLE_CHOICES:
-                _LOGGER.warning(
-                    "Protect coordinator: Error fetching %s: %s", collection, err
-                )
+                self._log_family_fetch_error(collection, err)
                 return
             self._mark_family_unsupported(collection, "non-JSON response")
             return
         except Exception as err:
-            _LOGGER.warning(
-                "Protect coordinator: Error fetching %s: %s", collection, err
-            )
+            self._log_family_fetch_error(collection, err)
             return
 
+        self._log_family_fetch_recovery(collection)
         self._unsupported_until.pop(collection, None)
         self._answered_families.add(collection)
         if self._ws_generation.get(collection) != generation:

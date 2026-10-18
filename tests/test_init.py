@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from pytest_homeassistant_custom_component.typing import WebSocketGenerator
 
 from custom_components.unifi_insights import (
+    _SETUP_PROBE_ATTEMPTS,
     PLATFORMS,
     SETUP_PROBE_RETRIES,
     UnifiInsightsData,
@@ -365,7 +366,7 @@ async def test_setup_entry_no_sites_found(
     # first; once the retries are used up it asks for reauth as before.
     assert mock_config_entry.state == ConfigEntryState.SETUP_RETRY
 
-    hass.data[DOMAIN]["setup_probe_attempts"][mock_config_entry.entry_id] = {
+    hass.data[_SETUP_PROBE_ATTEMPTS][mock_config_entry.entry_id] = {
         "inconclusive": SETUP_PROBE_RETRIES
     }
     await hass.config_entries.async_reload(mock_config_entry.entry_id)
@@ -1144,7 +1145,7 @@ async def test_setup_probe_retries_then_loads_available_application(
             _raise_for_setup_probes(hass, "entry", network, protect)
 
     _raise_for_setup_probes(hass, "entry", network, protect)
-    assert "entry" not in hass.data[DOMAIN]["setup_probe_attempts"]
+    assert "entry" not in hass.data[_SETUP_PROBE_ATTEMPTS]
 
 
 async def test_setup_probe_unreachable_console_always_retries(
@@ -1181,9 +1182,7 @@ async def test_setup_probe_rejected_key_reauths_immediately(
     hass: HomeAssistant,
 ) -> None:
     """A 401 with nothing usable goes straight to reauth and clears the count."""
-    hass.data.setdefault(DOMAIN, {})["setup_probe_attempts"] = {
-        "entry": {"inconclusive": 2, "partial": 1}
-    }
+    hass.data[_SETUP_PROBE_ATTEMPTS] = {"entry": {"inconclusive": 2, "partial": 1}}
     network = _probe(
         ProbeStatus.AUTH_FAILED, UniFiAuthenticationError("x", status_code=401)
     )
@@ -1191,7 +1190,7 @@ async def test_setup_probe_rejected_key_reauths_immediately(
     with pytest.raises(ConfigEntryAuthFailed):
         _raise_for_setup_probes(hass, "entry", network, _probe(ProbeStatus.UNSUPPORTED))
 
-    assert "entry" not in hass.data[DOMAIN]["setup_probe_attempts"]
+    assert "entry" not in hass.data[_SETUP_PROBE_ATTEMPTS]
 
 
 @pytest.mark.parametrize(
@@ -1244,7 +1243,7 @@ async def test_unload_and_remove_clear_retry_budget(
     hass: HomeAssistant, init_integration: MockConfigEntry
 ) -> None:
     """Unloading or deleting an entry forgets its setup retry budget."""
-    attempts = hass.data.setdefault(DOMAIN, {}).setdefault("setup_probe_attempts", {})
+    attempts = hass.data.setdefault(_SETUP_PROBE_ATTEMPTS, {})
     entry_id = init_integration.entry_id
 
     attempts[entry_id] = {"inconclusive": 2}

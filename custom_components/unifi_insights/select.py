@@ -304,7 +304,6 @@ class UnifiProtectChimeRingtoneSelect(UnifiProtectEntity, SelectEntity):
 
     _attr_has_entity_name = True
     _attr_translation_key = "ringtone"
-    _attr_icon = "mdi:bell-ring"
 
     def __init__(
         self,
@@ -389,7 +388,6 @@ class UnifiProtectPTZPresetSelect(UnifiProtectEntity, SelectEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "ptz_preset"
     _attr_options: ClassVar[list[str]] = ["0", "1", "2", "3", "4"]  # type: ignore[misc]
-    _attr_icon = "mdi:camera-control"
 
     def __init__(
         self,
@@ -447,7 +445,6 @@ class UnifiProtectViewerLiveviewSelect(UnifiProtectEntity, SelectEntity):
 
     _attr_has_entity_name = True
     _attr_translation_key = "liveview"
-    _attr_icon = "mdi:monitor-multiple"
 
     def __init__(
         self,

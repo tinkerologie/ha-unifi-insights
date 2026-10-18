@@ -14,7 +14,9 @@ import ast
 import json
 from pathlib import Path
 from string import Formatter
+from typing import Final
 
+import pytest
 import yaml
 
 from custom_components.unifi_insights.binary_sensor import BINARY_SENSOR_TYPES
@@ -88,33 +90,251 @@ def test_en_json_camera_and_sensor_names_match_strings_json() -> None:
             assert en_binary_sensor[key] == value
 
 
+_PLATFORMS: Final = {
+    "alarm_control_panel",
+    "binary_sensor",
+    "button",
+    "camera",
+    "cover",
+    "device_tracker",
+    "event",
+    "image",
+    "light",
+    "lock",
+    "media_player",
+    "number",
+    "select",
+    "sensor",
+    "siren",
+    "switch",
+    "update",
+}
+
+_DESC_CLASS_TO_PLATFORM: Final = {
+    "BinarySensorEntityDescription": "binary_sensor",
+    "UnifiInsightsBinarySensorEntityDescription": "binary_sensor",
+    "UnifiProtectSecurityBinarySensorEntityDescription": "binary_sensor",
+    "SensorEntityDescription": "sensor",
+    "UnifiInsightsSensorEntityDescription": "sensor",
+    "UnifiProtectSensorEntityDescription": "sensor",
+    "UnifiProtectSecuritySensorEntityDescription": "sensor",
+    "UnifiSiteInternetActivitySensorEntityDescription": "sensor",
+    "UnifiStorageSensorEntityDescription": "sensor",
+    "UnifiVoucherSensorEntityDescription": "sensor",
+    "CarrierFabricAggregateSensorDescription": "sensor",
+    "UnifiMobilitySensorEntityDescription": "sensor",
+    "UnifiMobilityWorkspaceSensorEntityDescription": "sensor",
+    "ButtonEntityDescription": "button",
+    "UnifiInsightsButtonEntityDescription": "button",
+    "SwitchEntityDescription": "switch",
+    "UnifiInsightsSwitchEntityDescription": "switch",
+    "UnifiNetworkRuleSwitchEntityDescription": "switch",
+    "SelectEntityDescription": "select",
+    "NumberEntityDescription": "number",
+    "UnifiInsightsNumberEntityDescription": "number",
+    "EventEntityDescription": "event",
+    "UpdateEntityDescription": "update",
+    "CoverEntityDescription": "cover",
+    "LockEntityDescription": "lock",
+    "ImageEntityDescription": "image",
+    "UnifiInsightsImageEntityDescription": "image",
+}
+
+_MODULE_DEFAULT_PLATFORM: Final = {
+    "carrier_fabric_sensor": "sensor",
+    "mobility_entity": "sensor",
+    "network_rule_switch": "switch",
+    "network_rule_audit_event": "event",
+    "site_internet_activity_sensor": "sensor",
+    "storage_entity": "sensor",
+    "voucher_sensor": "sensor",
+    "innerspace_entity": "sensor",
+}
+
+# Explicit allow-list for finite f-string keys.
+# In switch.py (UnifiAccessEmergencySwitch.__init__):
+#   (constructs access_emergency_lockdown and access_emergency_evacuation)
+# where mode is either "lockdown" or "evacuation".
+_ALLOW_LISTED_DYNAMIC_ENTITY_KEYS: Final = {
+    ("switch", "access_emergency_lockdown"),
+    ("switch", "access_emergency_evacuation"),
+}
+
+
+def _collect_live_entity_translation_keys() -> tuple[
+    set[tuple[str, str]], list[tuple[str, int, str]]
+]:
+    """Integration-wide AST collector of (platform, translation_key)."""
+    constants: dict[str, str] = {}
+    for py_file in _INTEGRATION_DIR.glob("*.py"):
+        tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if (
+                        isinstance(target, ast.Name)
+                        and isinstance(node.value, ast.Constant)
+                        and isinstance(node.value.value, str)
+                    ):
+                        constants[target.id] = node.value.value
+
+    inventory: set[tuple[str, str]] = set()
+    dynamic_unresolved: list[tuple[str, int, str]] = []
+
+    entity_modules = [
+        f
+        for f in _INTEGRATION_DIR.glob("*.py")
+        if f.stem in _PLATFORMS
+        or f.stem in _MODULE_DEFAULT_PLATFORM
+        or f.stem == "protect_security_entity"
+    ]
+
+    for py_file in entity_modules:
+        module_name = py_file.stem
+        default_platform = (
+            module_name
+            if module_name in _PLATFORMS
+            else _MODULE_DEFAULT_PLATFORM.get(module_name)
+        )
+        tree = ast.parse(py_file.read_text(encoding="utf-8"))
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                call_func = getattr(node.func, "id", None) or getattr(
+                    node.func, "attr", None
+                )
+                if call_func in _DESC_CLASS_TO_PLATFORM or (
+                    isinstance(call_func, str)
+                    and call_func.endswith("EntityDescription")
+                ):
+                    call_platform = _DESC_CLASS_TO_PLATFORM.get(
+                        call_func, default_platform
+                    )
+                    if (
+                        call_func == "EntityDescription"
+                        and module_name == "mobility_entity"
+                    ):
+                        call_platform = "device_tracker"
+                    for kw in node.keywords:
+                        if kw.arg in ("translation_key", "unnamed_translation_key"):
+                            if (
+                                isinstance(kw.value, ast.Constant)
+                                and isinstance(kw.value.value, str)
+                                and call_platform
+                            ):
+                                inventory.add((call_platform, kw.value.value))
+                            elif (
+                                isinstance(kw.value, ast.Name)
+                                and kw.value.id in constants
+                                and call_platform
+                            ):
+                                inventory.add((call_platform, constants[kw.value.id]))
+                            elif not (
+                                isinstance(kw.value, ast.Constant)
+                                and kw.value.value is None
+                            ):
+                                dynamic_unresolved.append(
+                                    (py_file.name, node.lineno, ast.unparse(kw.value))
+                                )
+
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    attr_name = None
+                    if (
+                        isinstance(target, ast.Name)
+                        and target.id == "_attr_translation_key"
+                    ):
+                        attr_name = target.id
+                    elif (
+                        isinstance(target, ast.Attribute)
+                        and target.attr == "_attr_translation_key"
+                    ):
+                        attr_name = target.attr
+                    if attr_name:
+                        plat = default_platform
+                        if isinstance(node.value, ast.Constant) and isinstance(
+                            node.value.value, str
+                        ):
+                            if plat:
+                                inventory.add((plat, node.value.value))
+                        elif (
+                            isinstance(node.value, ast.Name)
+                            and node.value.id in constants
+                        ):
+                            if plat:
+                                inventory.add((plat, constants[node.value.id]))
+                        elif (
+                            module_name == "switch"
+                            and isinstance(node.value, ast.JoinedStr)
+                            and ast.unparse(node.value) == "f'access_emergency_{mode}'"
+                        ):
+                            inventory |= _ALLOW_LISTED_DYNAMIC_ENTITY_KEYS
+                        elif isinstance(
+                            node.value, ast.Attribute
+                        ) and node.value.attr in (
+                            "translation_key",
+                            "unnamed_translation_key",
+                        ):
+                            pass
+                        else:
+                            dynamic_unresolved.append(
+                                (py_file.name, node.lineno, ast.unparse(node.value))
+                            )
+
+    return inventory, dynamic_unresolved
+
+
 def _switch_translation_keys() -> set[str]:
-    """Collect every `_attr_translation_key` string literal in switch.py."""
-    tree = ast.parse((_INTEGRATION_DIR / "switch.py").read_text())
-    return {
-        node.value.value
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Assign)
-        and isinstance(node.value, ast.Constant)
-        and isinstance(node.value.value, str)
-        for target in node.targets
-        if isinstance(target, ast.Attribute) and target.attr == "_attr_translation_key"
-    }
+    """Collect every live translation key for switch entities."""
+    inventory, unresolved = _collect_live_entity_translation_keys()
+    assert not unresolved, f"Unresolved dynamic translation keys: {unresolved}"
+    return {key for plat, key in inventory if plat == "switch"}
 
 
 def _switch_supplied_placeholders() -> set[str]:
-    """Collect every key passed to `_attr_translation_placeholders` in switch.py."""
-    tree = ast.parse((_INTEGRATION_DIR / "switch.py").read_text())
-    return {
-        key.value
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict)
-        for target in node.targets
-        if isinstance(target, ast.Attribute)
-        and target.attr == "_attr_translation_placeholders"
-        for key in node.value.keys
-        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    """Collect every key passed to placeholders in switch modules."""
+    placeholders: set[str] = set()
+    for fname in ("switch.py", "network_rule_switch.py"):
+        tree = ast.parse((_INTEGRATION_DIR / fname).read_text(encoding="utf-8"))
+        placeholders |= {
+            key.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict)
+            for target in node.targets
+            if isinstance(target, ast.Attribute)
+            and target.attr == "_attr_translation_placeholders"
+            for key in node.value.keys
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        }
+    return placeholders
+
+
+def test_english_translation_entity_sections_match() -> None:
+    """strings.json and translations/en.json entity sections must be identical."""
+    en_entity = json.loads(_EN_JSON.read_text())["entity"]
+    strings_entity = json.loads(_STRINGS_JSON.read_text())["entity"]
+    assert en_entity == strings_entity
+
+
+def test_translation_key_inventory_coverage_and_no_dead_keys() -> None:
+    """Every live entity key must have a translation and no dead keys exist."""
+    strings_entity = json.loads(_STRINGS_JSON.read_text())["entity"]
+    strings_keys = {
+        (plat, key) for plat, entries in strings_entity.items() for key in entries
     }
+
+    live_inventory, unresolved = _collect_live_entity_translation_keys()
+    assert not unresolved, f"Unresolved dynamic translation keys: {unresolved}"
+
+    dead_keys = strings_keys - live_inventory
+    assert not dead_keys, (
+        f"Found dead translation keys in strings.json: {sorted(dead_keys)}"
+    )
+
+    untranslated_keys = live_inventory - strings_keys
+    assert not untranslated_keys, (
+        f"Missing translations for live keys: {sorted(untranslated_keys)}"
+    )
 
 
 def test_switch_translation_keys_resolve_in_both_files() -> None:
@@ -176,7 +396,6 @@ def test_site_internet_activity_sensor_translations_resolve_in_both_files() -> N
         assert en_sensor[key] == strings_sensor[key], (
             f"{key} differs between strings.json and translations/en.json"
         )
-        assert desc.name == strings_sensor[key]["name"]
 
 
 def test_mobility_translations_and_icons_resolve_in_every_file() -> None:
@@ -480,3 +699,210 @@ def test_media_player_speaker_translations_and_icon() -> None:
         assert exc_key in en_data["exceptions"]
         assert strings_data["exceptions"][exc_key] == en_data["exceptions"][exc_key]
         assert strings_data["exceptions"][exc_key]["message"]
+
+
+def test_all_icons_json_entity_keys_match_live_inventory() -> None:
+    """Every entity key in icons.json must correspond to a live translation key."""
+    icons_entity = json.loads(_ICONS_JSON.read_text())["entity"]
+    icon_keys = {
+        (plat, key) for plat, entries in icons_entity.items() for key in entries
+    }
+    live_inventory, unresolved = _collect_live_entity_translation_keys()
+    assert not unresolved, f"Unresolved dynamic translation keys: {unresolved}"
+    dead_icon_keys = icon_keys - live_inventory
+    assert not dead_icon_keys, (
+        f"Found dead icon keys in icons.json: {sorted(dead_icon_keys)}"
+    )
+
+
+# Four state-dependent icon choices: firewall, VPN route, ordinary route, VPN
+# client. The two route choices share one property in the current implementation.
+_DYNAMIC_ICON_PROPERTIES: Final = {
+    ("switch.py", "UnifiFirewallRuleSwitch"),
+    ("switch.py", "UnifiInsightsPolicyBasedRouteSwitch"),
+    ("switch.py", "UnifiInsightsVpnClientSwitch"),
+}
+
+
+def _static_icon_violations(source: str, filename: str) -> list[str]:
+    """Reject icon overrides, including nonliteral values, outside reviewed icons."""
+    tree = ast.parse(source, filename=filename)
+    allowed_nodes: set[ast.AST] = set()
+    for cls in ast.walk(tree):
+        if not isinstance(cls, ast.ClassDef):
+            continue
+        for method in cls.body:
+            if (
+                isinstance(method, ast.FunctionDef)
+                and method.name == "icon"
+                and (filename, cls.name) in _DYNAMIC_ICON_PROPERTIES
+                and any(
+                    isinstance(decorator, ast.Name) and decorator.id == "property"
+                    for decorator in method.decorator_list
+                )
+                and any(
+                    isinstance(node, ast.Attribute)
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id == "self"
+                    and node.attr == "is_on"
+                    for node in ast.walk(method)
+                )
+            ):
+                for node in ast.walk(method):
+                    if isinstance(node, ast.Return):
+                        allowed_nodes.update(ast.walk(node))
+
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            violations.extend(
+                f"{filename}:{node.lineno}: icon override"
+                for keyword in node.keywords
+                if keyword.arg == "icon"
+            )
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(
+                (isinstance(target, ast.Name) and target.id == "_attr_icon")
+                or (isinstance(target, ast.Attribute) and target.attr == "_attr_icon")
+                for target in targets
+            ):
+                violations.append(f"{filename}:{node.lineno}: _attr_icon override")
+        elif (
+            node not in allowed_nodes
+            and isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.startswith("mdi:")
+        ):
+            violations.append(f"{filename}:{node.lineno}: static {node.value}")
+    return violations
+
+
+def test_no_static_mdi_strings_in_python_code() -> None:
+    """Static icons belong in icons.json; only reviewed state icons may remain."""
+    violations = [
+        violation
+        for py_file in _INTEGRATION_DIR.glob("**/*.py")
+        for violation in _static_icon_violations(
+            py_file.read_text(encoding="utf-8"), py_file.name
+        )
+    ]
+    assert not violations, f"Found static icon overrides in Python: {violations}"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        '_attr_icon = "mdi:power"',
+        "self._attr_icon = ICON",
+        '_attr_icon = f"mdi:{kind}"',
+        "_attr_icon: str = ICON",
+        "SensorEntityDescription(key='test', icon=ICON)",
+        "SensorEntityDescription(key='test', icon=f'mdi:{kind}')",
+        'class NewSwitch:\n @property\n def icon(self):\n  return "mdi:power"',
+        (
+            "class UnifiFirewallRuleSwitch:\n @property\n"
+            ' def icon(self):\n  return "mdi:power"'
+        ),
+    ],
+)
+def test_static_icon_guard_rejects_overrides(source: str) -> None:
+    """Aliases, computed overrides and unreviewed properties cannot bypass guard."""
+    assert _static_icon_violations(source, "switch.py")
+
+
+@pytest.mark.parametrize(
+    "override", ["self._attr_icon = ICON", "SensorEntityDescription(icon=ICON)"]
+)
+def test_static_icon_guard_rejects_overrides_inside_reviewed_properties(
+    override: str,
+) -> None:
+    """Only returned state icons are exempt; overrides cannot hide in properties."""
+    source = (
+        "class UnifiFirewallRuleSwitch:\n @property\n def icon(self):\n"
+        f"  {override}\n"
+        '  return "mdi:power" if self.is_on else "mdi:power-off"'
+    )
+    assert _static_icon_violations(source, "switch.py")
+
+
+@pytest.mark.parametrize(("filename", "class_name"), sorted(_DYNAMIC_ICON_PROPERTIES))
+def test_static_icon_guard_allows_reviewed_state_properties(
+    filename: str, class_name: str
+) -> None:
+    """Keep the reviewed switches' state-dependent Python icons."""
+    source = (
+        f"class {class_name}:\n @property\n def icon(self):\n"
+        '  return "mdi:power" if self.is_on else "mdi:power-off"'
+    )
+    assert not _static_icon_violations(source, filename)
+
+
+@pytest.mark.parametrize(
+    ("module", "expression", "expected"),
+    [
+        ("switch", 'f"access_emergency_{mode}"', True),
+        ("sensor", 'f"access_emergency_{mode}"', False),
+        ("switch", 'f"unreviewed_{mode}"', False),
+        ("sensor", 'f"sensor_{kind}"', False),
+        ("event", "RULE_CHANGE_EVENT_KEY", True),
+    ],
+)
+def test_translation_inventory_rejects_unreviewed_dynamic_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    module: str,
+    expression: str,
+    *,
+    expected: bool,
+) -> None:
+    """Resolve reviewed emergency keys and constants; reject other dynamic keys."""
+    (tmp_path / f"{module}.py").write_text(
+        'RULE_CHANGE_EVENT_KEY = "network_rule_changes"\n'
+        f"class Example:\n _attr_translation_key = {expression}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(__name__ + "._INTEGRATION_DIR", tmp_path)
+    inventory, unresolved = _collect_live_entity_translation_keys()
+    assert bool(unresolved) is not expected
+    if expected:
+        assert inventory == (
+            _ALLOW_LISTED_DYNAMIC_ENTITY_KEYS
+            if module == "switch"
+            else {("event", "network_rule_changes")}
+        )
+
+
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        ('"device_status"', True),
+        ("RULE_CHANGE_EVENT_KEY", True),
+        ("None", True),
+        ('f"port_{idx}"', False),
+        ("make_key()", False),
+    ],
+)
+def test_translation_inventory_rejects_unresolved_description_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    expression: str,
+    *,
+    expected: bool,
+) -> None:
+    """Description translation keys must resolve to a literal or constant."""
+    (tmp_path / "sensor.py").write_text(
+        'RULE_CHANGE_EVENT_KEY = "network_rule_changes"\n'
+        f'DESC = SensorEntityDescription(key="k", translation_key={expression})\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(__name__ + "._INTEGRATION_DIR", tmp_path)
+    _, unresolved = _collect_live_entity_translation_keys()
+    assert bool(unresolved) is not expected
+
+
+def test_outlet_icon_resource() -> None:
+    """Outlet switches retain their effective icon through icon translations."""
+    assert json.loads(_ICONS_JSON.read_text())["entity"]["switch"]["outlet"] == {
+        "default": "mdi:power-socket-us"
+    }

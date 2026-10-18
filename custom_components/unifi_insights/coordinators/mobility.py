@@ -15,6 +15,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util.hass_dict import HassKey
 
 from custom_components.unifi_insights.api import (
     ApiKeyAuth,
@@ -45,7 +46,7 @@ _LOGGER = logging.getLogger(__name__)
 # leaving the rest for anything else that uses the same key.
 _REQUESTS_PER_MINUTE_BUDGET = 50
 # Entry id that currently polls Mobility, per API key fingerprint.
-_OWNERS = "mobility_owners"
+_OWNERS: HassKey[dict[str, str]] = HassKey(f"{DOMAIN}_mobility_owners")
 ACCESS_UNKNOWN = "unknown"
 ACCESS_GRANTED = "granted"
 ACCESS_DENIED = "denied"
@@ -212,7 +213,7 @@ def _key_fingerprint(api_key: str) -> str:
 
 def _owners(hass: HomeAssistant) -> dict[str, str]:
     """Return the registry of entries currently polling Mobility."""
-    owners: dict[str, str] = hass.data.setdefault(DOMAIN, {}).setdefault(_OWNERS, {})
+    owners: dict[str, str] = hass.data.setdefault(_OWNERS, {})
     return owners
 
 
