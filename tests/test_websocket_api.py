@@ -2412,3 +2412,30 @@ async def test_subscribe_pushes_when_a_wan_disconnects(
         n["id"]: n["state"] for n in pushed["event"]["nodes"] if n["kind"] == "wan"
     }
     assert states["wan:uuid-gw:wan"] == "offline"
+
+
+async def test_node_details_wan_with_repeated_key_matches_the_snapshot(
+    hass: HomeAssistant, init_integration: MockConfigEntry, hass_ws_client
+) -> None:
+    """Keys differing only in case resolve to the first WAN, as in the snapshot."""
+    data = _seed_wans(init_integration)
+    devices = data["devices"][SITE]
+    data["devices"][SITE] = {
+        **devices,
+        "uuid-gw": {
+            **devices["uuid-gw"],
+            "wans": [
+                {"key": "wan", "name": "Fiber", "connected": True, "ip": WAN_IP},
+                {"key": "WAN", "name": "Other", "connected": True, "ip": "203.0.113.9"},
+            ],
+        },
+    }
+    client = await hass_ws_client(hass)
+    snapshot = await _snapshot(client, init_integration)
+    (wan,) = [node for node in snapshot["nodes"] if node["kind"] == "wan"]
+
+    msg = await _node_details(client, init_integration, wan["id"], msg_id=2)
+
+    assert wan["name"] == "Fiber"
+    assert msg["success"], msg
+    assert msg["result"] == {"kind": "wan", "ip_address": WAN_IP}

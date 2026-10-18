@@ -251,7 +251,9 @@ def _find_node(
                 and wan_key
                 and wan_node_id(node_key, raw_id, wan_key) == node_id
             ):
+                # The snapshot keeps the first record per WAN node id.
                 matches.append(("wan", raw_id, wan))
+                break
     if len(matches) != 1:
         msg = f"No node {node_id} in site {site_id}"
         raise _RequestError(ERR_NODE_NOT_FOUND, msg)
