@@ -392,6 +392,7 @@ export class UitDetailPanel extends LitElement {
     </dl>`;
   }
 
+  /** Parent (a WAN's gateway), port, speed, medium and PoE rows of a node's uplink. */
   private uplinkRows(
     model: GraphModel,
     id: string,
@@ -430,6 +431,7 @@ export class UitDetailPanel extends LitElement {
     ];
   }
 
+  /** Details of an infrastructure or WAN node, with its Open device link. */
   private deviceBody(
     model: GraphModel,
     node: TopologyNode,

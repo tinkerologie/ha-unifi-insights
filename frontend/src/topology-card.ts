@@ -91,6 +91,7 @@ const PHASE_MESSAGES: Partial<
   reloading: { key: "state.reconnecting" },
 };
 
+/** Offline infrastructure devices; clients and WAN connections are not counted. */
 const offlineDevices = (snapshot: SiteTopology | undefined): number =>
   snapshot?.nodes.filter(
     (n) => n.kind !== "client" && n.kind !== "wan" && n.state === "offline",
@@ -544,6 +545,7 @@ export class UnifiInsightsTopologyCard extends LitElement {
     );
   }
 
+  /** Header, toolbar, notices and the graph or list view of the current site. */
   protected override render(): TemplateResult | typeof nothing {
     const config = this.config;
     if (!config) return nothing;
@@ -629,6 +631,7 @@ export class UnifiInsightsTopologyCard extends LitElement {
     </label>`;
   }
 
+  /** View switch, kind filter chips (no WAN chip with `show_wan: false`) and zoom. */
   private renderToolbar(localize: LocalizeFunc): TemplateResult {
     const controls = html`
       <div class="group" role="group" aria-label=${localize("toolbar.view")}>

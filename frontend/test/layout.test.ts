@@ -441,6 +441,7 @@ describe("plan v3 tiered layout", () => {
 });
 
 describe("WAN uplinks", () => {
+  /** An online WAN node. */
   const wan = (id: string, name: string): TopologyNode => ({
     id: `wan:${id}`,
     kind: "wan",

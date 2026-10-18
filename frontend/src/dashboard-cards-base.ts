@@ -173,6 +173,7 @@ export abstract class BaseDashboardCard extends LitElement {
     return { columns: 6, rows: 4, min_columns: 3, min_rows: 3 };
   }
 
+  /** The configured site, or the only site when exactly one exists. */
   protected getBinding(): SiteBinding | undefined {
     if (this.config.entry_id && this.config.site_id) {
       return {

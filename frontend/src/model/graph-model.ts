@@ -348,6 +348,7 @@ export function createModelBuilder(): (
   };
 }
 
+/** Nodes beside `id`: its parent's children, the roots, or its owner's WANs. */
 export function siblingsOf(model: GraphModel, id: string): string[] {
   const owner = model.uplinkOwner.get(id);
   if (owner !== undefined) return model.uplinks.get(owner) ?? [];

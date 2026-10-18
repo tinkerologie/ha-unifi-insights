@@ -134,6 +134,7 @@ export function validateConfig(raw: unknown): TopologyCardConfig {
   return c as TopologyCardConfig;
 }
 
+/** Fill every option the YAML leaves out; `show_wan: false` also drops the `wan` kind. */
 export function resolveConfig(c: TopologyCardConfig): ResolvedConfig {
   const showWan = c.show_wan ?? true;
   return {

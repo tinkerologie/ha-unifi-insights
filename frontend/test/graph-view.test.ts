@@ -478,6 +478,7 @@ describe("<uit-graph-view> WAN uplinks", () => {
     expect(backup.querySelector(".state-text")!.textContent).toBe(
       "Disconnected",
     );
+    /** A node's drawn y position, read from its transform. */
     const y = (id: string) =>
       Number(
         /translate\([^,]+, ([-\d.]+)px\)/.exec(

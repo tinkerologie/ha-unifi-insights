@@ -31,6 +31,7 @@ export {
 
 export const GROUP_ICON = mdiDevices;
 
+/** MDI icon path for a node: by kind, and by connection for clients. */
 export function iconFor(node: TopologyNode): string {
   switch (node.kind) {
     case "wan":

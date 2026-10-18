@@ -233,6 +233,7 @@ describe("helpers", () => {
 });
 
 describe("WAN uplinks", () => {
+  /** A gateway with two WANs (one down) and a switch below it. */
   const wanSnap = () =>
     snap(
       [

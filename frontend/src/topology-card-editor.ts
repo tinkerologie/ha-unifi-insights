@@ -110,6 +110,7 @@ export function siteValue(
   return index >= 0 ? String(index) : STALE_SITE;
 }
 
+/** The ha-form schema for every card option, with localized option labels. */
 export function buildSchema(
   config: TopologyCardConfig,
   sites: SiteOption[],
@@ -210,6 +211,7 @@ export function buildSchema(
   ];
 }
 
+/** Config to form values, filling each option's default. */
 export function toFormData(
   config: TopologyCardConfig,
   sites: SiteOption[],

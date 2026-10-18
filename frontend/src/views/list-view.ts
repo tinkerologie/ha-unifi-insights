@@ -168,6 +168,7 @@ export class UitListView extends LitElement {
     `;
   }
 
+  /** One treeitem row with its chevron, icon, name and state. */
   private renderRow(
     model: GraphModel,
     row: ListRow,

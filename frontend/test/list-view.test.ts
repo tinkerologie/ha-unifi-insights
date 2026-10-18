@@ -15,7 +15,7 @@ const key = (el: UitListView, k: string) =>
     .shadowRoot!.querySelector('[role="tree"]')!
     .dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
 
-// The fixture without its WAN rows, for tests about the tree itself.
+/** The fixture without its WAN rows, for tests about the tree itself. */
 const withoutWans = () =>
   fixtureModel({ kinds: new Set(NODE_KINDS.filter((k) => k !== "wan")) });
 

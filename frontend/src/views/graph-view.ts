@@ -332,6 +332,7 @@ export class UitGraphView extends LitElement {
     }, EXIT_MS);
   }
 
+  /** The selected node and everything above it, through a WAN's gateway too. */
   private highlightedPath(): Set<string> {
     const path = new Set<string>();
     const model = this.model;
@@ -398,6 +399,7 @@ export class UitGraphView extends LitElement {
     if (this.gesture.allowsMenu) fireEvent(this, "uit-context", { id });
   }
 
+  /** The pannable SVG: tree links, WAN uplinks, nodes and fading exits. */
   protected override render(): TemplateResult | typeof nothing {
     const { model, layout, localize } = this;
     if (!model || !layout || !localize) return nothing;
@@ -410,6 +412,7 @@ export class UitGraphView extends LitElement {
       if (this.focusId !== undefined) shown.add(this.focusId);
       if (this.selectedId !== undefined) shown.add(this.selectedId);
       ids = ids.filter((id) => shown.has(id));
+      /** Keep a link when either end is drawn. */
       const near = (l: VisualLink): boolean =>
         shown.has(l.childId) || shown.has(l.parentId);
       links = links.filter(near);
@@ -508,6 +511,7 @@ export class UitGraphView extends LitElement {
     }`;
   }
 
+  /** One node: disc, glyph, status dot, label and state text. */
   private renderNode(
     model: GraphModel,
     visual: Visual,
