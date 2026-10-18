@@ -351,7 +351,8 @@ export function createModelBuilder(): (
 /** Nodes beside `id`: its parent's children, the roots, or its owner's WANs. */
 export function siblingsOf(model: GraphModel, id: string): string[] {
   const owner = model.uplinkOwner.get(id);
-  if (owner !== undefined) return model.uplinks.get(owner) ?? [];
+  // buildModel lists every WAN under its owner, so the owner has uplinks.
+  if (owner !== undefined) return model.uplinks.get(owner)!;
   const parent = model.parentOf.get(id);
   return parent === undefined
     ? model.roots

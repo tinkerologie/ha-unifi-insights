@@ -118,9 +118,10 @@ export function describeVisual(
     }),
   ];
   const owner = model.uplinkOwner.get(n.id);
+  // buildModel only records an owner it has drawn, so its node exists.
   if (owner !== undefined)
     parts.push(
-      localize("node.wan_of", { device: model.nodes.get(owner)?.name ?? "" }),
+      localize("node.wan_of", { device: model.nodes.get(owner)!.name }),
     );
   const clients = model.clientCounts.get(n.id)?.total ?? 0;
   if (clients > 0)

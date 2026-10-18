@@ -257,6 +257,18 @@ describe("interaction", () => {
     expect(text(off.el)).toContain("8 devices");
   });
 
+  it("announces offline devices in the first snapshot, without down WANs", async () => {
+    const { el, fake } = await card();
+    const snapshot = fixtureSnapshot();
+    for (const id of ["dev:uuid-pdu", "wan:uuid-gw:wan"])
+      snapshot.nodes.find((n) => n.id === id)!.state = "offline";
+    fake.push(snapshot);
+    await settle(el);
+    expect(q(el, '[role="status"]')!.textContent?.trim()).toBe(
+      "1 devices offline.",
+    );
+  });
+
   it("never counts a disconnected WAN as an offline device", async () => {
     const { el, fake } = await loaded();
     const snapshot = fixtureSnapshot();

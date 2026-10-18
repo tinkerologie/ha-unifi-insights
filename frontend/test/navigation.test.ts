@@ -46,6 +46,20 @@ it("moves between a gateway and its WANs", () => {
   );
 });
 
+it("stays on a root without WANs when moving up", () => {
+  const noWans = buildModel(fixtureSnapshot(), {
+    kinds: new Set(NODE_KINDS.filter((k) => k !== "wan")),
+    clients: "collapsed",
+    toggledGroups: new Set(),
+  });
+  expect(nextGraphFocus(noWans, "dev:uuid-gw", "ArrowUp", "vertical")).toBe(
+    "dev:uuid-gw",
+  );
+  expect(nextGraphFocus(noWans, "dev:uuid-gw", "ArrowDown", "vertical")).toBe(
+    "dev:uuid-core",
+  );
+});
+
 it("rotates the arrow keys when horizontal", () => {
   expect(
     nextGraphFocus(model, "dev:uuid-core", "ArrowLeft", "horizontal"),
