@@ -60,8 +60,7 @@ from custom_components.unifi_insights.sensor import (
     UnifiInsightsSensor,
     UnifiOutletSensor,
     UnifiPortSensor,
-    UnifiProtectNVRSensor,
-    UnifiProtectSecuritySensor,
+    UnifiProtectSecuritySensorEntityDescription,
     UnifiProtectSensor,
     UnifiProtectSensorEntityDescription,
     UnifiSiteClientSensor,
@@ -1268,7 +1267,12 @@ class TestAsyncSetupEntry:
         keys = {
             e.entity_description.key
             for e in added_entities
-            if isinstance(e, UnifiProtectSecuritySensor)
+            if (
+                isinstance(e, UnifiProtectSensor)
+                and isinstance(
+                    e.entity_description, UnifiProtectSecuritySensorEntityDescription
+                )
+            )
         }
         assert keys == {
             "thread_role",
@@ -2042,7 +2046,7 @@ class TestUnifiProtectNVRSensor:
         """Test NVR storage used sensor."""
         description = next(s for s in NVR_SENSOR_TYPES if s.key == "storage_used")
 
-        sensor = UnifiProtectNVRSensor(
+        sensor = UnifiProtectSensor(
             coordinator=mock_coordinator,
             description=description,
             device_id="nvr1",
@@ -2057,7 +2061,7 @@ class TestUnifiProtectNVRSensor:
         """Test NVR storage total sensor."""
         description = next(s for s in NVR_SENSOR_TYPES if s.key == "storage_total")
 
-        sensor = UnifiProtectNVRSensor(
+        sensor = UnifiProtectSensor(
             coordinator=mock_coordinator,
             description=description,
             device_id="nvr1",
@@ -2074,7 +2078,7 @@ class TestUnifiProtectNVRSensor:
         """Test NVR storage available sensor."""
         description = next(s for s in NVR_SENSOR_TYPES if s.key == "storage_available")
 
-        sensor = UnifiProtectNVRSensor(
+        sensor = UnifiProtectSensor(
             coordinator=mock_coordinator,
             description=description,
             device_id="nvr1",
@@ -2091,7 +2095,7 @@ class TestUnifiProtectNVRSensor:
             s for s in NVR_SENSOR_TYPES if s.key == "storage_used_percent"
         )
 
-        sensor = UnifiProtectNVRSensor(
+        sensor = UnifiProtectSensor(
             coordinator=mock_coordinator,
             description=description,
             device_id="nvr1",
@@ -2105,7 +2109,7 @@ class TestUnifiProtectNVRSensor:
         """Test NVR sensor with missing data."""
         description = next(s for s in NVR_SENSOR_TYPES if s.key == "storage_used")
 
-        sensor = UnifiProtectNVRSensor(
+        sensor = UnifiProtectSensor(
             coordinator=mock_coordinator,
             description=description,
             device_id="nonexistent_nvr",
@@ -2117,7 +2121,7 @@ class TestUnifiProtectNVRSensor:
         """Test NVR sensor unique ID format."""
         description = next(s for s in NVR_SENSOR_TYPES if s.key == "storage_used")
 
-        sensor = UnifiProtectNVRSensor(
+        sensor = UnifiProtectSensor(
             coordinator=mock_coordinator,
             description=description,
             device_id="nvr1",
@@ -2129,7 +2133,7 @@ class TestUnifiProtectNVRSensor:
         """Test NVR sensor uses translation_key."""
         description = next(s for s in NVR_SENSOR_TYPES if s.key == "storage_used")
 
-        sensor = UnifiProtectNVRSensor(
+        sensor = UnifiProtectSensor(
             coordinator=mock_coordinator,
             description=description,
             device_id="nvr1",
@@ -2145,7 +2149,7 @@ class TestUnifiProtectNVRSensorAttributes:
         """Test NVR sensor extra state attributes."""
         description = next(s for s in NVR_SENSOR_TYPES if s.key == "storage_used")
 
-        sensor = UnifiProtectNVRSensor(
+        sensor = UnifiProtectSensor(
             coordinator=mock_coordinator,
             description=description,
             device_id="nvr1",
@@ -2178,7 +2182,11 @@ class TestAsyncSetupEntryWithNVRSensors:
         await async_setup_entry(hass, mock_config_entry, mock_add_entities)
 
         # Should have NVR sensors (4 sensors per NVR)
-        nvr_sensors = [e for e in entities if isinstance(e, UnifiProtectNVRSensor)]
+        nvr_sensors = [
+            e
+            for e in entities
+            if (isinstance(e, UnifiProtectSensor) and e._device_type == "nvr")
+        ]
         assert len(nvr_sensors) == 4
 
         # Check sensor keys
@@ -2204,7 +2212,11 @@ class TestAsyncSetupEntryWithNVRSensors:
         await async_setup_entry(hass, mock_config_entry, mock_add_entities)
 
         # Should have no NVR sensors
-        nvr_sensors = [e for e in entities if isinstance(e, UnifiProtectNVRSensor)]
+        nvr_sensors = [
+            e
+            for e in entities
+            if (isinstance(e, UnifiProtectSensor) and e._device_type == "nvr")
+        ]
         assert len(nvr_sensors) == 0
 
     async def test_setup_entry_nvr_without_storage_info(
@@ -2232,7 +2244,11 @@ class TestAsyncSetupEntryWithNVRSensors:
 
         # Should have 0 NVR sensors since storage info is not available
         # (all NVR sensor types start with "storage_")
-        nvr_sensors = [e for e in entities if isinstance(e, UnifiProtectNVRSensor)]
+        nvr_sensors = [
+            e
+            for e in entities
+            if (isinstance(e, UnifiProtectSensor) and e._device_type == "nvr")
+        ]
         assert len(nvr_sensors) == 0
 
     async def test_setup_entry_nvrs_not_a_dict_is_skipped(
@@ -2249,7 +2265,11 @@ class TestAsyncSetupEntryWithNVRSensors:
 
         await async_setup_entry(hass, mock_config_entry, mock_add_entities)
 
-        nvr_sensors = [e for e in entities if isinstance(e, UnifiProtectNVRSensor)]
+        nvr_sensors = [
+            e
+            for e in entities
+            if (isinstance(e, UnifiProtectSensor) and e._device_type == "nvr")
+        ]
         assert len(nvr_sensors) == 0
 
     async def test_setup_entry_malformed_nvr_record_is_skipped(
@@ -2267,7 +2287,11 @@ class TestAsyncSetupEntryWithNVRSensors:
 
         await async_setup_entry(hass, mock_config_entry, mock_add_entities)
 
-        nvr_sensors = [e for e in entities if isinstance(e, UnifiProtectNVRSensor)]
+        nvr_sensors = [
+            e
+            for e in entities
+            if (isinstance(e, UnifiProtectSensor) and e._device_type == "nvr")
+        ]
         # The original well-formed "nvr1" still produces its 4 sensors.
         assert len(nvr_sensors) == 4
         assert all(s._device_id != "nvr_bad" for s in nvr_sensors)
@@ -2995,7 +3019,7 @@ class TestUnifiProtectNVRSensorEdgeCases:
     async def test_available_no_nvr_data(self, hass: HomeAssistant, mock_coordinator):
         """Test available returns False when NVR data missing."""
         storage_desc = next(d for d in NVR_SENSOR_TYPES if d.key == "storage_used")
-        sensor = UnifiProtectNVRSensor(
+        sensor = UnifiProtectSensor(
             coordinator=mock_coordinator,
             description=storage_desc,
             device_id="nvr1",
@@ -3011,7 +3035,7 @@ class TestUnifiProtectNVRSensorEdgeCases:
     ):
         """Test available returns False when Protect coordinator fails."""
         storage_desc = next(d for d in NVR_SENSOR_TYPES if d.key == "storage_used")
-        sensor = UnifiProtectNVRSensor(
+        sensor = UnifiProtectSensor(
             coordinator=mock_coordinator,
             description=storage_desc,
             device_id="nvr1",
@@ -3024,7 +3048,7 @@ class TestUnifiProtectNVRSensorEdgeCases:
     ):
         """Test available for storage sensor with nested storageInfo."""
         storage_desc = next(d for d in NVR_SENSOR_TYPES if d.key == "storage_used")
-        sensor = UnifiProtectNVRSensor(
+        sensor = UnifiProtectSensor(
             coordinator=mock_coordinator,
             description=storage_desc,
             device_id="nvr1",
@@ -3051,7 +3075,7 @@ class TestUnifiProtectNVRSensorEdgeCases:
             device_type="nvr",
         )
 
-        sensor = UnifiProtectNVRSensor(
+        sensor = UnifiProtectSensor(
             coordinator=mock_coordinator,
             description=custom_desc,
             device_id="nvr1",
@@ -3070,7 +3094,7 @@ class TestUnifiProtectNVRSensorEdgeCases:
     ):
         """Test _update_from_data sets attributes correctly."""
         storage_desc = next(d for d in NVR_SENSOR_TYPES if d.key == "storage_used")
-        sensor = UnifiProtectNVRSensor(
+        sensor = UnifiProtectSensor(
             coordinator=mock_coordinator,
             description=storage_desc,
             device_id="nvr1",

@@ -16,7 +16,7 @@ from unifi_official_api.protect.models.nvr import NVR, StorageInfo
 
 from custom_components.unifi_insights.binary_sensor import (
     BINARY_SENSOR_TYPES,
-    UnifiInsightsNVRStorageBinarySensor,
+    UnifiProtectBinarySensor,
 )
 from custom_components.unifi_insights.binary_sensor import (
     async_setup_entry as setup_binary_sensors,
@@ -29,9 +29,7 @@ from custom_components.unifi_insights.data_transforms import (
     normalize_legacy_storage,
     normalize_nvr_storage,
 )
-from custom_components.unifi_insights.sensor import (
-    UnifiProtectNVRSensor,
-)
+from custom_components.unifi_insights.sensor import UnifiProtectSensor
 from custom_components.unifi_insights.sensor import (
     async_setup_entry as setup_sensors,
 )
@@ -338,7 +336,7 @@ def _assert_entity_snapshot_parity(
         description = next(
             d for d in BINARY_SENSOR_TYPES if d.key == key and d.device_type == "nvr"
         )
-        entity = UnifiInsightsNVRStorageBinarySensor(coordinator, description, "nvr1")
+        entity = UnifiProtectBinarySensor(coordinator, description, "nvr1")
         assert entity.is_on is expected
         assert entity.available is (expected is not None)
         assert entity.unique_id == f"unifi_insights_nvr_nvr1_{key}"
@@ -376,7 +374,9 @@ async def test_conditional_discovery_and_availability(
         hass,
         mock_config_entry,
         lambda entities: capacities.extend(
-            e for e in entities if isinstance(e, UnifiProtectNVRSensor)
+            e
+            for e in entities
+            if (isinstance(e, UnifiProtectSensor) and e._device_type == "nvr")
         ),
     )
     sensor_listener = mock_coordinator.async_add_listener.call_args[0][0]
@@ -402,7 +402,8 @@ async def test_conditional_discovery_and_availability(
         for entity in capacities
         if entity.entity_description.key == "storage_used"
     )
-    assert isinstance(used, UnifiProtectNVRSensor)
+    assert isinstance(used, UnifiProtectSensor)
+    assert used._device_type == "nvr"
     assert used.unique_id == "unifi_insights_nvr_nvr1_storage_used"
     assert used.native_value == 0
     assert used.native_unit_of_measurement == UnitOfInformation.GIGABYTES
@@ -498,13 +499,17 @@ async def test_malformed_protect_data_waits_for_valid_discovery(
     discover = mock_coordinator.async_add_listener.call_args[0][0]
     discover()
     assert not [
-        e for e in binaries if isinstance(e, UnifiInsightsNVRStorageBinarySensor)
+        e
+        for e in binaries
+        if (isinstance(e, UnifiProtectBinarySensor) and e._device_type == "nvr")
     ]
 
     mock_coordinator.data["protect"] = valid_protect
     discover()
     nvr_binaries = [
-        e for e in binaries if isinstance(e, UnifiInsightsNVRStorageBinarySensor)
+        e
+        for e in binaries
+        if (isinstance(e, UnifiProtectBinarySensor) and e._device_type == "nvr")
     ]
     assert len(nvr_binaries) == 2
     assert all(entity.available and entity.is_on for entity in nvr_binaries)

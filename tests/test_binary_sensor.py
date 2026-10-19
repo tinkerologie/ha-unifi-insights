@@ -17,7 +17,7 @@ from custom_components.unifi_insights.binary_sensor import (
     UnifiInsightsWanLinkBinarySensor,
     UnifiPortBinarySensor,
     UnifiProtectBinarySensor,
-    UnifiProtectSecurityBinarySensor,
+    UnifiProtectSecurityBinarySensorEntityDescription,
     _get_supported_smart_detect_types,
     _is_doorbell_camera,
     _is_smart_detect_active,
@@ -793,7 +793,13 @@ class TestAsyncSetupEntry:
         keys = {
             (e._device_type, e.entity_description.key)
             for e in added_entities
-            if isinstance(e, UnifiProtectSecurityBinarySensor)
+            if (
+                isinstance(e, UnifiProtectBinarySensor)
+                and isinstance(
+                    e.entity_description,
+                    UnifiProtectSecurityBinarySensorEntityDescription,
+                )
+            )
         }
         assert keys == {
             ("alarm_hub", "alarm_hub_device_tamper"),

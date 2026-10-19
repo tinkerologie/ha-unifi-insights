@@ -153,6 +153,8 @@ class UnifiProtectSensorEntityDescription(SensorEntityDescription):  # type: ign
     value_fn: Callable[[dict[str, Any]], StateType] | None = None
     device_type: str | None = None
     capability_fn: Callable[[dict[str, Any]], bool] | None = None
+    # Attributes from the device record; None uses the built-in attributes.
+    attributes_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
 
 def format_uptime(seconds: int | None) -> str | None:
@@ -1250,7 +1252,7 @@ def _discover_protect_sensors(
                 if nvr_key not in known_sensor_keys:
                     known_sensor_keys.add(nvr_key)
                     entities.append(
-                        UnifiProtectNVRSensor(
+                        UnifiProtectSensor(
                             coordinator=coordinator,
                             description=nvr_desc,
                             device_id=nvr_id,
@@ -1932,7 +1934,7 @@ class UnifiOutletSensor(UnifiInsightsEntity, SensorEntity):
 
 
 class UnifiProtectSensor(UnifiProtectEntity, SensorEntity):
-    """Representation of a UniFi Protect Sensor."""
+    """Sensor of a UniFi Protect camera, sensor, NVR or security device."""
 
     entity_description: UnifiProtectSensorEntityDescription
 
@@ -1941,10 +1943,15 @@ class UnifiProtectSensor(UnifiProtectEntity, SensorEntity):
         coordinator: UnifiInsightsFacadeCoordinator,
         description: UnifiProtectSensorEntityDescription,
         device_id: str,
+        *,
+        device_type: str | None = None,
     ) -> None:
-        """Initialize the sensor."""
+        """Initialize the sensor; security devices pass their own device type."""
         super().__init__(
-            coordinator, description.device_type or "", device_id, description.key
+            coordinator,
+            device_type or description.device_type or "",
+            device_id,
+            description.key,
         )
         self.entity_description = description
 
@@ -1952,46 +1959,63 @@ class UnifiProtectSensor(UnifiProtectEntity, SensorEntity):
         if description.key == "battery":
             self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
-        # Update initial state
         self._update_from_data()
 
-        _LOGGER.debug(
-            "Initializing %s sensor for %s device %s",
-            description.key,
-            description.device_type,
-            device_id,
+    @property
+    def available(self) -> bool:
+        """
+        Return True if entity is available.
+
+        An NVR has no 'state' field like cameras, so its sensors check for
+        valid NVR data, and storage sensors also for storage info.
+        """
+        if self._device_type != DEVICE_TYPE_NVR:
+            return super().available
+        if not self.coordinator.protect_available:
+            return False
+
+        nvr_data = self.device_data
+        if not nvr_data:
+            return False
+
+        if not self.entity_description.key.startswith("storage_"):
+            return True
+        value_fn = self.entity_description.value_fn
+        return (
+            nvr_data.get("state") not in ("DISCONNECTED", "DISCONNECTING")
+            and value_fn is not None
+            and value_fn(nvr_data) is not None
         )
 
     @property
     def native_value(self) -> StateType:
         """Return the state of the sensor."""
-        device_data = self.coordinator.data["protect"][
-            f"{self.entity_description.device_type}s"
-        ].get(self._device_id)
-        if not device_data:
+        device_data = self.device_data
+        value_fn = self.entity_description.value_fn
+        if not device_data or value_fn is None:
             return None
-
-        value = self.entity_description.value_fn(device_data)  # type: ignore[misc]
-
-        _LOGGER.debug(
-            "Sensor %s for %s device %s updated to %s %s",
-            self.entity_description.key,
-            self.entity_description.device_type,
-            self._device_id,
-            value,
-            self.native_unit_of_measurement or "",
-        )
-
-        return value
+        return value_fn(device_data)
 
     def _update_from_data(self) -> None:
-        """Update entity from data."""
-        device_data = self.coordinator.data["protect"][
-            f"{self.entity_description.device_type}s"
-        ].get(self._device_id, {})
-
-        # Set attributes based on sensor type
-        if self.entity_description.key == "temperature":
+        """Update the attributes from the device record."""
+        device_data = self.device_data or {}
+        attributes_fn = self.entity_description.attributes_fn
+        if attributes_fn is not None:
+            self._attr_extra_state_attributes = (
+                attributes_fn(device_data) if device_data else {}
+            )
+        elif self._device_type == DEVICE_TYPE_NVR:
+            storage = normalize_nvr_storage(device_data)
+            self._attr_extra_state_attributes = {
+                ATTR_NVR_ID: self._device_id,
+                ATTR_NVR_NAME: device_data.get("name"),
+                ATTR_NVR_VERSION: device_data.get("version"),
+                ATTR_NVR_STORAGE_USED: _bytes_to_gb(storage.used_bytes),
+                ATTR_NVR_STORAGE_TOTAL: _bytes_to_gb(storage.total_bytes),
+                ATTR_NVR_STORAGE_AVAILABLE: _calculate_storage_available(device_data),
+                ATTR_NVR_STORAGE_USED_PERCENT: _calculate_storage_percent(device_data),
+            }
+        elif self.entity_description.key == "temperature":
             self._attr_extra_state_attributes = {
                 ATTR_SENSOR_ID: self._device_id,
                 ATTR_SENSOR_NAME: device_data.get("name"),
@@ -2026,95 +2050,6 @@ class UnifiProtectSensor(UnifiProtectEntity, SensorEntity):
                     "isLow", False
                 ),
             }
-
-
-class UnifiProtectNVRSensor(UnifiProtectEntity, SensorEntity):
-    """Representation of a UniFi Protect NVR Sensor."""
-
-    entity_description: UnifiProtectSensorEntityDescription
-
-    def __init__(
-        self,
-        coordinator: UnifiInsightsFacadeCoordinator,
-        description: UnifiProtectSensorEntityDescription,
-        device_id: str,
-    ) -> None:
-        """Initialize the sensor."""
-        super().__init__(
-            coordinator, description.device_type or "", device_id, description.key
-        )
-        self.entity_description = description
-
-        # Update initial state
-        self._update_from_data()
-
-        _LOGGER.debug(
-            "Initializing %s sensor for NVR %s",
-            description.key,
-            device_id,
-        )
-
-    @property
-    def available(self) -> bool:
-        """
-        Return True if entity is available.
-
-        NVR doesn't have a 'state' field like cameras, so we check if we have
-        valid NVR data and if storage info is available for storage sensors.
-        """
-        if not self.coordinator.protect_available:
-            return False
-
-        nvr_data = self.coordinator.data["protect"]["nvrs"].get(self._device_id)
-        if not nvr_data or not isinstance(nvr_data, dict):
-            return False
-
-        if not self.entity_description.key.startswith("storage_"):
-            return True
-        value_fn = self.entity_description.value_fn
-        return (
-            nvr_data.get("state") not in ("DISCONNECTED", "DISCONNECTING")
-            and value_fn is not None
-            and value_fn(nvr_data) is not None
-        )
-
-    @property
-    def native_value(self) -> StateType:
-        """Return the state of the sensor."""
-        nvr_data = self.coordinator.data["protect"]["nvrs"].get(self._device_id)
-        if not nvr_data:
-            return None
-
-        value = self.entity_description.value_fn(nvr_data)  # type: ignore[misc]
-
-        _LOGGER.debug(
-            "NVR sensor %s for device %s updated to %s %s",
-            self.entity_description.key,
-            self._device_id,
-            value,
-            self.native_unit_of_measurement or "",
-        )
-
-        return value
-
-    def _update_from_data(self) -> None:
-        """Update entity from data."""
-        nvr_data = self.coordinator.data["protect"]["nvrs"].get(self._device_id, {})
-
-        storage = normalize_nvr_storage(nvr_data)
-        storage_used = storage.used_bytes
-        storage_total = storage.total_bytes
-
-        # Set attributes
-        self._attr_extra_state_attributes = {
-            ATTR_NVR_ID: self._device_id,
-            ATTR_NVR_NAME: nvr_data.get("name"),
-            ATTR_NVR_VERSION: nvr_data.get("version"),
-            ATTR_NVR_STORAGE_USED: _bytes_to_gb(storage_used),
-            ATTR_NVR_STORAGE_TOTAL: _bytes_to_gb(storage_total),
-            ATTR_NVR_STORAGE_AVAILABLE: _calculate_storage_available(nvr_data),
-            ATTR_NVR_STORAGE_USED_PERCENT: _calculate_storage_percent(nvr_data),
-        }
 
 
 class UnifiSiteClientSensor(UnifiSiteEntity, SensorEntity):
@@ -2783,14 +2718,14 @@ def _arm_control_attributes(data: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-@dataclass(frozen=True, kw_only=True)
-class UnifiProtectSecuritySensorEntityDescription(SensorEntityDescription):
+@dataclass(kw_only=True)
+class UnifiProtectSecuritySensorEntityDescription(  # type: ignore[misc]
+    UnifiProtectSensorEntityDescription
+):
     """Describes a sensor of a Protect security device."""
 
     device_types: tuple[str, ...]
-    value_fn: Callable[[dict[str, Any]], StateType]
     supported_fn: Callable[[dict[str, Any]], bool] = always_true
-    attributes_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
 
 SECURITY_SENSOR_TYPES: tuple[UnifiProtectSecuritySensorEntityDescription, ...] = (
@@ -2839,37 +2774,6 @@ SECURITY_SENSOR_TYPES: tuple[UnifiProtectSecuritySensorEntityDescription, ...] =
 )
 
 
-class UnifiProtectSecuritySensor(UnifiProtectEntity, SensorEntity):
-    """Sensor of an alarm hub, link station or fob."""
-
-    entity_description: UnifiProtectSecuritySensorEntityDescription
-
-    def __init__(
-        self,
-        coordinator: UnifiInsightsFacadeCoordinator,
-        description: UnifiProtectSecuritySensorEntityDescription,
-        device_type: str,
-        device_id: str,
-    ) -> None:
-        """Initialize the sensor."""
-        super().__init__(coordinator, device_type, device_id, description.key)
-        self.entity_description = description
-
-    @property
-    def native_value(self) -> StateType:
-        """Return the state, or None when it is unknown."""
-        data = self.device_data
-        return self.entity_description.value_fn(data) if data else None
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return attributes that have a value."""
-        data = self.device_data
-        if not data or self.entity_description.attributes_fn is None:
-            return {}
-        return self.entity_description.attributes_fn(data)
-
-
 def discover_protect_security_sensors(
     coordinator: UnifiInsightsFacadeCoordinator,
     known_keys: set[tuple[Any, ...]],
@@ -2887,8 +2791,8 @@ def discover_protect_security_sensors(
                 continue
             known_keys.add(key)
             entities.append(
-                UnifiProtectSecuritySensor(
-                    coordinator, description, device_type, device_id
+                UnifiProtectSensor(
+                    coordinator, description, device_id, device_type=device_type
                 )
             )
     return entities

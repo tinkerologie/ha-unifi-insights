@@ -253,6 +253,8 @@ class UnifiInsightsBinarySensorEntityDescription(BinarySensorEntityDescription):
     device_type: str | None = None
     entity_type: str = "device"  # "device" or "protect"
     capability_fn: Callable[[dict[str, Any]], bool] | None = None
+    # Protect only: attributes from the device record; None uses the built-in ones.
+    attributes_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
 
 BINARY_SENSOR_TYPES: tuple[UnifiInsightsBinarySensorEntityDescription, ...] = (
@@ -708,9 +710,7 @@ async def async_setup_entry(
                             continue
                         known_sensor_keys.add(nvr_key)
                         entities.append(
-                            UnifiInsightsNVRStorageBinarySensor(
-                                coordinator, description, nvr_id
-                            )
+                            UnifiProtectBinarySensor(coordinator, description, nvr_id)
                         )
 
         # Add Protect alarm hub, link station and fob binary sensors
@@ -790,22 +790,39 @@ class UnifiProtectBinarySensor(UnifiProtectEntity, BinarySensorEntity):
         coordinator: UnifiInsightsFacadeCoordinator,
         description: UnifiInsightsBinarySensorEntityDescription,
         device_id: str,
+        *,
+        device_type: str | None = None,
     ) -> None:
-        """Initialize the binary sensor."""
+        """Initialize the binary sensor; security devices pass their device type."""
         super().__init__(
-            coordinator, description.device_type or "", device_id, description.key
+            coordinator,
+            device_type or description.device_type or "",
+            device_id,
+            description.key,
         )
         self.entity_description = description
 
-        _LOGGER.debug(
-            "Initializing %s binary sensor %s for device %s",
-            description.device_type,
-            description.key,
-            device_id,
-        )
-
         # Update initial state
         self._update_from_data()
+
+    @property
+    def available(self) -> bool:
+        """
+        Return True if entity is available.
+
+        An NVR has no required state field, so its problems are gated on each
+        explicit signal; missing telemetry stays unavailable.
+        """
+        if self._device_type != DEVICE_TYPE_NVR:
+            return super().available
+        data = self.device_data
+        return (
+            self.coordinator.protect_available
+            and data is not None
+            and bool(data)
+            and data.get("state") not in ("DISCONNECTED", "DISCONNECTING")
+            and self.is_on is not None
+        )
 
     @property
     def is_on(self) -> bool | None:
@@ -824,24 +841,26 @@ class UnifiProtectBinarySensor(UnifiProtectEntity, BinarySensorEntity):
         if not device_data:
             return
 
+        if self.entity_description.attributes_fn is not None:
+            self._attr_extra_state_attributes = self.entity_description.attributes_fn(
+                device_data
+            )
+            return
+
         # Get device name for attributes
         device_name = device_data.get(
-            "name",
-            (
-                f"UniFi {self.entity_description.device_type.capitalize()} "  # type: ignore[union-attr]
-                f"{self._device_id}"
-            ),
+            "name", f"UniFi {self._device_type.capitalize()} {self._device_id}"
         )
 
         if self.entity_description.key == "camera_microphone":
             self._attr_extra_state_attributes = {}
-        elif self.entity_description.device_type == DEVICE_TYPE_CAMERA:
+        elif self._device_type == DEVICE_TYPE_CAMERA:
             self._attr_extra_state_attributes = {
                 ATTR_CAMERA_ID: self._device_id,
                 ATTR_CAMERA_NAME: device_name,
                 ATTR_LAST_MOTION: device_data.get("lastMotion", 0),
             }
-        elif self.entity_description.device_type == DEVICE_TYPE_SENSOR:
+        elif self._device_type == DEVICE_TYPE_SENSOR:
             self._attr_extra_state_attributes = {
                 ATTR_SENSOR_ID: self._device_id,
                 ATTR_SENSOR_NAME: device_name,
@@ -866,22 +885,6 @@ class UnifiProtectBinarySensor(UnifiProtectEntity, BinarySensorEntity):
                     "externalLeakDetectedAt", 0
                 ),
             }
-
-
-class UnifiInsightsNVRStorageBinarySensor(UnifiProtectBinarySensor):
-    """Conditional NVR problems; missing telemetry stays unavailable."""
-
-    @property
-    def available(self) -> bool:
-        """NVRs have no required state field; gate on each explicit signal."""
-        data = self.device_data
-        return (
-            self.coordinator.protect_available
-            and data is not None
-            and bool(data)
-            and data.get("state") not in ("DISCONNECTED", "DISCONNECTING")
-            and self.is_on is not None
-        )
 
 
 def _sfp_port_index(port: NetworkPortFacts) -> Any:
@@ -1237,14 +1240,14 @@ def _thread_problem_attributes(data: dict[str, Any]) -> dict[str, Any]:
     return present_attributes(**{ATTR_THREAD_ERROR_REASON: network.get("errorReason")})
 
 
-@dataclass(frozen=True, kw_only=True)
-class UnifiProtectSecurityBinarySensorEntityDescription(BinarySensorEntityDescription):
+@dataclass(kw_only=True)
+class UnifiProtectSecurityBinarySensorEntityDescription(  # type: ignore[misc]
+    UnifiInsightsBinarySensorEntityDescription
+):
     """Describes a binary sensor of a Protect security device."""
 
     device_types: tuple[str, ...]
-    value_fn: Callable[[dict[str, Any]], bool | None]
     supported_fn: Callable[[dict[str, Any]], bool] = always_true
-    attributes_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
 
 SECURITY_BINARY_SENSOR_TYPES: tuple[
@@ -1280,37 +1283,6 @@ SECURITY_BINARY_SENSOR_TYPES: tuple[
 )
 
 
-class UnifiProtectSecurityBinarySensor(UnifiProtectEntity, BinarySensorEntity):
-    """Binary sensor of an alarm hub, link station or fob."""
-
-    entity_description: UnifiProtectSecurityBinarySensorEntityDescription
-
-    def __init__(
-        self,
-        coordinator: UnifiInsightsFacadeCoordinator,
-        description: UnifiProtectSecurityBinarySensorEntityDescription,
-        device_type: str,
-        device_id: str,
-    ) -> None:
-        """Initialize the binary sensor."""
-        super().__init__(coordinator, device_type, device_id, description.key)
-        self.entity_description = description
-
-    @property
-    def is_on(self) -> bool | None:
-        """Return the state, or None when it is unknown."""
-        data = self.device_data
-        return self.entity_description.value_fn(data) if data else None
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return attributes that have a value."""
-        data = self.device_data
-        if not data or self.entity_description.attributes_fn is None:
-            return {}
-        return self.entity_description.attributes_fn(data)
-
-
 def discover_protect_security_binary_sensors(
     coordinator: UnifiInsightsFacadeCoordinator,
     known_keys: set[tuple[Any, ...]],
@@ -1333,8 +1305,8 @@ def discover_protect_security_binary_sensors(
                 continue
             known_keys.add(key)
             entities.append(
-                UnifiProtectSecurityBinarySensor(
-                    coordinator, description, device_type, device_id
+                UnifiProtectBinarySensor(
+                    coordinator, description, device_id, device_type=device_type
                 )
             )
     return entities
