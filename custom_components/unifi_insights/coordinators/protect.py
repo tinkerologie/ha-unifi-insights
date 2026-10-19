@@ -15,10 +15,11 @@ from typing import TYPE_CHECKING, Any, Final, NamedTuple, override
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import callback
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import async_track_time_interval
+from pydantic import ValidationError
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
@@ -28,6 +29,14 @@ from unifi_official_api import (
     UniFiTimeoutError,
 )
 from unifi_official_api.const import PROTECT_RATE_LIMIT_WINDOW
+from unifi_official_api.exceptions import UniFiUnsupportedError
+from unifi_official_api.protect.talkback import (
+    TalkbackCodecError,
+    TalkbackSamplingRateError,
+    TalkbackSchemeError,
+    TalkbackStream,
+)
+from unifi_official_api.validation import sanitized_validation_fields
 
 from custom_components.unifi_insights.const import (
     DEVICE_TYPE_CAMERA,
@@ -48,10 +57,10 @@ from custom_components.unifi_insights.const import (
 from custom_components.unifi_insights.data_transforms import get_field
 from custom_components.unifi_insights.helpers import async_get_device_entry
 
-from .base import UnifiBaseCoordinator
+from .base import CommandFailure, UnifiBaseCoordinator, async_execute_command
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine
+    from collections.abc import Awaitable, Callable, Coroutine, Mapping
 
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
@@ -284,7 +293,9 @@ def _pick_field(containers: list[dict[str, Any]], *keys: str) -> Any:
     return None
 
 
-def _deep_merge(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
+def _deep_merge(
+    old: dict[str, Any], new: Mapping[str, Any], *, into_lists: bool = False
+) -> dict[str, Any]:
     """
     Merge ``new`` over ``old``, recursing where both sides hold a dict.
 
@@ -298,12 +309,24 @@ def _deep_merge(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
     ``{"alarmHub": {"deviceTamperStatus": "tampered"}}`` would otherwise
     wipe the hub's armed/battery state until the next poll, and an NVR frame
     of ``{"armMode": {"status": "armed"}}`` its armProfileId.
+
+    ``into_lists`` is for command overlays (ADR-010): a dict over a list is
+    then merged into every dict entry, in a new list, keeping each entry's
+    other fields. A chime keeps its volume, repeat count and ringtone in one
+    ``ringSettings`` entry per paired doorbell, and the console sets them all.
     """
     merged = dict(old)
     for key, value in new.items():
         existing = merged.get(key)
         if isinstance(value, dict) and isinstance(existing, dict):
-            merged[key] = _deep_merge(existing, value)
+            merged[key] = _deep_merge(existing, value, into_lists=into_lists)
+        elif into_lists and isinstance(value, dict) and isinstance(existing, list):
+            merged[key] = [
+                _deep_merge(entry, value, into_lists=True)
+                if isinstance(entry, dict)
+                else entry
+                for entry in existing
+            ]
         else:
             merged[key] = value
     return merged
@@ -3077,3 +3100,399 @@ class UnifiProtectCoordinator(UnifiBaseCoordinator):
                 )
             else:
                 del self._siren_stopped_at[siren_id]
+
+    # Commands (ADR-010): settings writes publish an overlay and are
+    # reconciled by WebSocket frames and the next poll.
+
+    @property
+    def _client(self) -> UniFiProtectClient:
+        """Return the Protect client, or raise if Protect is not configured."""
+        if self.protect_client is None:
+            msg = "Protect is not available for this config"
+            raise HomeAssistantError(
+                msg,
+                translation_domain=DOMAIN,
+                translation_key="no_protect_coordinator",
+            )
+        return self.protect_client
+
+    @staticmethod
+    async def _async_command[**P, T](
+        message: str,
+        action: Callable[P, Awaitable[T]],
+        /,
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> T:
+        """Run one Protect write, raising ``command_failed`` with ``message``."""
+        return await async_execute_command(
+            CommandFailure(translation_key="command_failed", message=message),
+            action,
+            *args,
+            **kwargs,
+        )
+
+    @callback
+    def _publish_overlay(
+        self, collection: str, device_id: str, changes: Mapping[str, Any]
+    ) -> None:
+        """
+        Publish a successful write's fields as a copy-on-write overlay.
+
+        The root, the collection map and the record (and any list on the
+        changed path) are replaced, never mutated, and listeners are notified
+        without ``async_set_updated_data()``. No rollback (the overlay follows
+        success) and no generation tracking: a poll that started before the
+        write may restore the old value until the next frame or poll.
+        """
+        records = self.data.get(collection)
+        record = records.get(device_id) if isinstance(records, dict) else None
+        if not isinstance(records, dict) or not isinstance(record, dict):
+            return
+        self.data = {
+            **self.data,
+            collection: {
+                **records,
+                device_id: _deep_merge(record, changes, into_lists=True),
+            },
+        }
+        self.async_update_listeners()
+
+    async def _async_reconcile(self) -> None:
+        """Request a targeted refresh after a write; a failure is only logged."""
+        await self.async_request_refresh()
+        if not self.last_update_success:
+            _LOGGER.debug(
+                "Protect coordinator: refresh after a write failed: %s",
+                self.last_exception,
+            )
+
+    async def async_update_camera(self, camera_id: str, **kwargs: Any) -> None:
+        """Update camera settings and publish the written fields."""
+        await self._async_command(
+            f"Unable to update camera {camera_id}",
+            self._client.cameras.update,
+            camera_id,
+            **kwargs,
+        )
+        self._publish_overlay("cameras", camera_id, kwargs)
+
+    async def async_update_camera_settings(self, camera_id: str, **kwargs: Any) -> None:
+        """Update camera settings (alias for async_update_camera)."""
+        await self.async_update_camera(camera_id, **kwargs)
+
+    async def async_set_hdr_mode(self, camera_id: str, mode: str) -> None:
+        """Set a camera's HDR mode."""
+        await self._async_command(
+            f"Unable to set HDR mode for camera {camera_id}",
+            self._client.cameras.set_hdr_mode,
+            camera_id,
+            mode,
+        )
+        self._publish_overlay("cameras", camera_id, {"hdrType": mode})
+
+    async def async_set_video_mode(self, camera_id: str, mode: str) -> None:
+        """Set a camera's video mode."""
+        await self._async_command(
+            f"Unable to set video mode for camera {camera_id}",
+            self._client.cameras.set_video_mode,
+            camera_id,
+            mode,
+        )
+        self._publish_overlay("cameras", camera_id, {"videoMode": mode})
+
+    async def async_set_microphone_volume(self, camera_id: str, volume: int) -> None:
+        """Set a camera's microphone volume."""
+        await self._async_command(
+            f"Unable to set microphone volume for camera {camera_id}",
+            self._client.cameras.set_microphone_volume,
+            camera_id,
+            volume,
+        )
+        self._publish_overlay("cameras", camera_id, {"micVolume": volume})
+
+    async def async_move_ptz_to_preset(self, camera_id: str, preset: int) -> None:
+        """Move a PTZ camera to a preset slot."""
+        await self._async_command(
+            f"Unable to move camera {camera_id} to PTZ preset {preset}",
+            self._client.cameras.ptz_goto_preset,
+            camera_id,
+            str(preset),
+        )
+
+    async def async_start_ptz_patrol(self, camera_id: str, slot: int) -> None:
+        """Start a PTZ camera's patrol."""
+        await self._async_command(
+            f"Unable to start PTZ patrol for camera {camera_id}",
+            self._client.cameras.ptz_patrol_start,
+            camera_id,
+            slot,
+        )
+
+    async def async_stop_ptz_patrol(self, camera_id: str) -> None:
+        """Stop a PTZ camera's patrol."""
+        await self._async_command(
+            f"Unable to stop PTZ patrol for camera {camera_id}",
+            self._client.cameras.ptz_patrol_stop,
+            camera_id,
+        )
+
+    async def async_set_light_mode(self, light_id: str, mode: str) -> None:
+        """Set a light's mode."""
+        await self._async_command(
+            f"Unable to set mode for light {light_id}",
+            self._client.lights.update,
+            light_id,
+            lightModeSettings={"mode": mode},
+        )
+        self._publish_overlay("lights", light_id, {"lightModeSettings": {"mode": mode}})
+
+    async def async_set_light_brightness(self, light_id: str, led_level: int) -> None:
+        """Set a light's LED level (1-6)."""
+        await self._async_command(
+            f"Unable to set brightness for light {light_id}",
+            self._client.lights.set_brightness,
+            light_id,
+            led_level,
+        )
+        self._publish_overlay(
+            "lights", light_id, {"lightDeviceSettings": {"ledLevel": led_level}}
+        )
+
+    async def async_set_chime_volume(self, chime_id: str, volume: int) -> None:
+        """Set a chime's volume for every paired doorbell."""
+        await self._async_command(
+            f"Unable to set volume for chime {chime_id}",
+            self._client.chimes.set_volume,
+            chime_id,
+            volume,
+        )
+        self._publish_overlay("chimes", chime_id, {"ringSettings": {"volume": volume}})
+
+    async def async_set_chime_repeat(self, chime_id: str, repeat_times: int) -> None:
+        """Set a chime's repeat count for every paired doorbell."""
+        await self._async_command(
+            f"Unable to set repeat count for chime {chime_id}",
+            self._client.chimes.set_repeat_times,
+            chime_id,
+            repeat_times,
+        )
+        self._publish_overlay(
+            "chimes", chime_id, {"ringSettings": {"repeatTimes": repeat_times}}
+        )
+
+    async def async_set_chime_ringtone(self, chime_id: str, ringtone_id: str) -> None:
+        """Set a chime's ringtone (an opaque ID) for every doorbell, then refresh."""
+        await self._async_command(
+            f"Unable to set ringtone for chime {chime_id}",
+            self._client.chimes.set_ringtone,
+            chime_id,
+            ringtone_id,
+        )
+        self._publish_overlay(
+            "chimes", chime_id, {"ringSettings": {"ringtoneId": ringtone_id}}
+        )
+        await self._async_reconcile()
+
+    async def async_set_chime_paired_cameras(
+        self, chime_id: str, camera_ids: list[str]
+    ) -> None:
+        """
+        Replace the doorbell cameras paired to a chime, then refresh.
+
+        An empty list unpairs every doorbell. The body is exactly
+        {"cameraIds": [...]}: the chime PATCH forbids additional properties.
+        """
+        paired = list(camera_ids)
+        await self._async_command(
+            f"Unable to set the paired doorbells of chime {chime_id}",
+            self._client.chimes.update,
+            chime_id,
+            cameraIds=paired,
+        )
+        self._publish_overlay("chimes", chime_id, {"cameraIds": paired})
+        await self._async_reconcile()
+
+    async def async_play_chime(self, chime_id: str) -> None:
+        """Report the official API's chime playback limitation."""
+        chimes = self._client.chimes
+
+        async def _play() -> None:
+            try:
+                await chimes.play(chime_id)
+            except UniFiUnsupportedError as err:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="chime_playback_unsupported",
+                ) from err
+
+        await self._async_command(f"Unable to play chime {chime_id}", _play)
+
+    async def async_update_viewer(self, viewer_id: str, **kwargs: Any) -> None:
+        """Update a viewer (for example its ``liveview``) and publish it."""
+        await self._async_command(
+            f"Unable to update viewer {viewer_id}",
+            self._client.viewers.update,
+            viewer_id,
+            **kwargs,
+        )
+        self._publish_overlay("viewers", viewer_id, kwargs)
+
+    async def async_create_liveview(
+        self, *, name: str, layout: int, is_default: bool = False
+    ) -> None:
+        """Create a liveview."""
+        await self._async_command(
+            f"Unable to create liveview {name}",
+            self._client.liveviews.create,
+            name=name,
+            layout=layout,
+            isDefault=is_default,
+        )
+
+    async def async_trigger_alarm(self, alarm_id: str) -> None:
+        """Trigger an alarm manager webhook."""
+        await self._async_command(
+            f"Unable to trigger alarm {alarm_id}",
+            self._client.application.trigger_alarm_webhook,
+            alarm_id,
+        )
+
+    async def async_arm_alarm(self) -> None:
+        """Arm the console's alarm with its currently selected arm profile."""
+        await self._async_send_arm_command(enable=True)
+
+    async def async_disarm_alarm(self) -> None:
+        """Disarm the console's alarm."""
+        await self._async_send_arm_command(enable=False)
+
+    async def _async_send_arm_command(self, *, enable: bool) -> None:
+        """
+        Send an arm or disarm request, then ask Protect for fresh state.
+
+        While the global alarm manager owns the alarm, Protect refuses both
+        with a 400, raised as ``global_alarm_manager``. No overlay: the NVR's
+        WebSocket frame normally arrives first and the refresh is the fallback.
+        """
+        profiles = self._client.arm_profiles
+        command = profiles.enable if enable else profiles.disable
+
+        async def _send() -> bool:
+            try:
+                return await command()
+            except UniFiGlobalAlarmManagerError as err:
+                # The refusal is also the answer to whether the manager is on,
+                # e.g. when it was switched on since it was last asked.
+                self.mark_global_alarm_manager_enabled()
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="global_alarm_manager",
+                ) from err
+
+        await self._async_command(
+            f"Unable to {'arm' if enable else 'disarm'} the UniFi Protect alarm",
+            _send,
+        )
+        await self._async_reconcile()
+
+    async def async_play_siren(
+        self, siren_id: str, *, duration: int | None = None
+    ) -> None:
+        """Sound a siren, optionally for 5, 10, 20 or 30 seconds."""
+        await self._async_command(
+            f"Unable to sound siren {siren_id}",
+            self._client.sirens.play,
+            siren_id,
+            duration=duration,
+        )
+
+    async def async_set_siren_volume(self, siren_id: str, volume: int) -> None:
+        """Set a siren's volume (1-100)."""
+        await self._async_command(
+            f"Unable to set volume for siren {siren_id}",
+            self._client.sirens.set_volume,
+            siren_id,
+            volume,
+        )
+
+    async def async_stop_siren(self, siren_id: str) -> None:
+        """Stop a siren and show it off at once (Protect sends no frame)."""
+        await self._async_command(
+            f"Unable to stop siren {siren_id}",
+            self._client.sirens.stop,
+            siren_id,
+        )
+        self.mark_siren_stopped(siren_id)
+
+    async def async_start_camera_talkback(
+        self, camera_id: str, media_url: str
+    ) -> TalkbackStream:
+        """Start talkback to a camera; every failure is a translated error."""
+        if self.protect_client is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="protect_not_available_for_talkback",
+            )
+        try:
+            session = await self.protect_client.cameras.create_talkback_session(
+                camera_id
+            )
+        except Exception as err:
+            detail = (
+                f"invalid fields: {sanitized_validation_fields(err)}"
+                if isinstance(err, ValidationError)
+                else type(err).__name__
+            )
+            _LOGGER.warning("Talkback session failed for %s: %s", camera_id, detail)
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="talkback_session_invalid",
+            ) from err
+
+        try:
+            stream = TalkbackStream(session, media_url, loop=self.hass.loop)
+            await stream.start()
+        except (
+            TalkbackSchemeError,
+            TalkbackCodecError,
+            TalkbackSamplingRateError,
+        ) as err:
+            _LOGGER.warning(
+                "Unsupported talkback parameters for %s: %s", camera_id, err
+            )
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="talkback_unsupported_codec_or_scheme",
+            ) from err
+        except Exception as err:
+            _LOGGER.warning(
+                "Failed to start talkback for camera %s: %s", camera_id, err
+            )
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="talkback_stream_failure",
+            ) from err
+        return stream
+
+    async def async_get_camera_snapshot(self, camera_id: str) -> bytes | None:
+        """Return a camera's snapshot, or None (width/height cause an HTTP 500)."""
+        try:
+            snapshot = await self._client.cameras.get_snapshot(camera_id)
+        except Exception:
+            _LOGGER.debug("Error getting camera snapshot", exc_info=True)
+            return None
+        return snapshot if isinstance(snapshot, bytes) else None
+
+    async def async_create_camera_stream_url(self, camera_id: str) -> str | None:
+        """Return a new high-quality RTSPS stream URL, or None on failure."""
+        try:
+            stream = await self._client.cameras.create_rtsps_stream(
+                camera_id, qualities=["high"]
+            )
+        except Exception:
+            _LOGGER.debug(
+                "Failed to create dynamic stream, falling back to static URL",
+                exc_info=True,
+            )
+            return None
+        return stream.high if stream and stream.high else None
