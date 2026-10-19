@@ -11,9 +11,6 @@ from homeassistant.helpers.entity import EntityDescription
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
-from unittest.mock import AsyncMock
-
-from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.unifi_insights.const import (
     DEVICE_TYPE_CAMERA,
@@ -25,7 +22,6 @@ from custom_components.unifi_insights.const import (
 from custom_components.unifi_insights.entity import (
     UnifiInsightsEntity,
     UnifiProtectEntity,
-    async_call_coordinator_action,
     camera_supports_ptz,
     camera_supports_speaker,
     device_has_feature,
@@ -319,82 +315,6 @@ class TestCameraSupportsSpeaker:
             camera_supports_speaker({"featureFlags": {"hasRemovableSpeaker": 1}})
             is False
         )
-
-
-class TestAsyncCallCoordinatorAction:
-    """Tests for async_call_coordinator_action helper."""
-
-    async def test_action_handler_success(self) -> None:
-        """Test calling action on coordinator directly succeeds."""
-        coordinator = MagicMock()
-        coordinator.custom_action = AsyncMock(return_value={"status": "ok"})
-        result = await async_call_coordinator_action(
-            coordinator, "custom_action", "Error message", "arg1", key="val"
-        )
-        assert result == {"status": "ok"}
-        coordinator.custom_action.assert_awaited_once_with("arg1", key="val")
-
-    async def test_action_handler_reraises_ha_error(self) -> None:
-        """Test calling action reraises HomeAssistantError."""
-        coordinator = MagicMock()
-        coordinator.custom_action = AsyncMock(
-            side_effect=HomeAssistantError("Action failed")
-        )
-        with pytest.raises(HomeAssistantError, match="Action failed"):
-            await async_call_coordinator_action(
-                coordinator, "custom_action", "Error message"
-            )
-
-    async def test_action_handler_wraps_generic_exception(self) -> None:
-        """Test calling action wraps generic exception in HomeAssistantError."""
-        coordinator = MagicMock()
-        coordinator.custom_action = AsyncMock(side_effect=ValueError("boom"))
-        with pytest.raises(HomeAssistantError, match="Custom error message"):
-            await async_call_coordinator_action(
-                coordinator, "custom_action", "Custom error message"
-            )
-
-    async def test_missing_handler_no_fallback_raises(self) -> None:
-        """Test missing handler without fallback raises HomeAssistantError."""
-        coordinator = MagicMock(spec=[])
-        with pytest.raises(HomeAssistantError, match="No fallback available"):
-            await async_call_coordinator_action(
-                coordinator, "missing_action", "No fallback available"
-            )
-
-    async def test_missing_handler_fallback_success(self) -> None:
-        """Test missing handler with fallback executes fallback."""
-        coordinator = MagicMock(spec=[])
-        fallback = AsyncMock(return_value="fallback_ok")
-        result = await async_call_coordinator_action(
-            coordinator, "missing_action", "Error message", fallback_factory=fallback
-        )
-        assert result == "fallback_ok"
-        fallback.assert_awaited_once()
-
-    async def test_missing_handler_fallback_reraises_ha_error(self) -> None:
-        """Test fallback reraises HomeAssistantError."""
-        coordinator = MagicMock(spec=[])
-        fallback = AsyncMock(side_effect=HomeAssistantError("Fallback HA error"))
-        with pytest.raises(HomeAssistantError, match="Fallback HA error"):
-            await async_call_coordinator_action(
-                coordinator,
-                "missing_action",
-                "Error message",
-                fallback_factory=fallback,
-            )
-
-    async def test_missing_handler_fallback_wraps_generic_exception(self) -> None:
-        """Test fallback wraps generic exception in HomeAssistantError."""
-        coordinator = MagicMock(spec=[])
-        fallback = AsyncMock(side_effect=RuntimeError("Fallback generic error"))
-        with pytest.raises(HomeAssistantError, match="Fallback failure message"):
-            await async_call_coordinator_action(
-                coordinator,
-                "missing_action",
-                "Fallback failure message",
-                fallback_factory=fallback,
-            )
 
 
 class TestUnifiInsightsEntity:

@@ -11,6 +11,7 @@ from unifi_official_api import UniFiConnectionError
 
 from custom_components.unifi_insights.const import DOMAIN
 from custom_components.unifi_insights.coordinators import UnifiFacadeCoordinator
+from tests.fixtures.command_owners import SITE_ID
 
 if TYPE_CHECKING:
     from tests.fixtures.command_owners import SeededOwners
@@ -33,20 +34,22 @@ async def test_refresh_or_raise_names_the_failed_coordinators(
     assert str(caught.value).startswith("Error refreshing UniFi Insights data: ")
 
 
-async def test_pass_through_failure_carries_command_failed(
+async def test_voucher_failure_carries_command_failed(
     seeded_owners: SeededOwners,
 ) -> None:
-    """A facade pass-through keeps its message and gains the generic key."""
-    update = seeded_owners.protect_client.cameras.update
+    """A facade voucher command keeps its message and gains the generic key."""
+    delete = seeded_owners.network_client.vouchers.delete
     cause = UniFiConnectionError("down")
-    update.side_effect = cause
+    delete.side_effect = cause
 
-    with pytest.raises(HomeAssistantError, match=r"^Unable to update camera") as caught:
-        await seeded_owners.facade.async_update_camera("cam1", hdrMode="on")
+    with pytest.raises(
+        HomeAssistantError, match=r"^Unable to delete voucher"
+    ) as caught:
+        await seeded_owners.facade.async_delete_voucher(SITE_ID, "v1")
 
     assert caught.value.translation_key == "command_failed"
     assert caught.value.__cause__ is cause
-    update.assert_awaited_once_with("cam1", hdrMode="on")
+    delete.assert_awaited_once_with(SITE_ID, "v1")
 
 
 async def test_accessors_return_the_command_owners(

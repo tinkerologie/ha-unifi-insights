@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import string
@@ -200,3 +201,42 @@ def test_command_exception_keys_match_in_both_files(key: str) -> None:
     message = strings["exceptions"][key]["message"]
     assert english["exceptions"][key] == strings["exceptions"][key]
     assert _placeholders(message) == _COMMAND_KEYS[key]
+
+
+# Modules that run write commands or call their owners (ADR-010).
+_COMMAND_MODULES = (
+    "coordinators/base.py",
+    "coordinators/config.py",
+    "coordinators/device.py",
+    "coordinators/facade.py",
+    "coordinators/protect.py",
+    "alarm_control_panel.py",
+    "button.py",
+    "camera.py",
+    "cover.py",
+    "light.py",
+    "lock.py",
+    "media_player.py",
+    "network_rule_switch.py",
+    "number.py",
+    "select.py",
+    "siren.py",
+    "switch.py",
+)
+
+
+@pytest.mark.parametrize("module", _COMMAND_MODULES)
+def test_command_modules_raise_only_translated_errors(module: str) -> None:
+    """Every HomeAssistantError or ServiceValidationError raised names a key."""
+    tree = ast.parse((_INTEGRATION_DIR / module).read_text())
+    untranslated = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Raise)
+        and isinstance(node.exc, ast.Call)
+        and getattr(node.exc.func, "id", None)
+        in {"HomeAssistantError", "ServiceValidationError"}
+        and "translation_key" not in {kw.arg for kw in node.exc.keywords}
+    ]
+
+    assert untranslated == []

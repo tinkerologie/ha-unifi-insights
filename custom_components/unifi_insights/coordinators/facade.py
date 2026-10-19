@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Callable
 
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
@@ -29,20 +29,10 @@ from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
-from pydantic import ValidationError
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiError,
-    UniFiGlobalAlarmManagerError,
 )
-from unifi_official_api.exceptions import UniFiUnsupportedError
-from unifi_official_api.protect.talkback import (
-    TalkbackCodecError,
-    TalkbackSamplingRateError,
-    TalkbackSchemeError,
-    TalkbackStream,
-)
-from unifi_official_api.validation import sanitized_validation_fields
 
 from custom_components.unifi_insights.client_wake import select_wake_history
 from custom_components.unifi_insights.const import CONF_CONSOLE_ID, DOMAIN
@@ -536,10 +526,11 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         Force a genuine refresh of all underlying coordinators and notify listeners.
 
-        Entity action handlers (see switch.py) call this right after a
-        mutating API call and expect the coordinator to reflect the change
-        by the time the await returns. Two deliberate departures from the
-        obvious implementation make that true:
+        Home Assistant's ``homeassistant.update_entity`` action reaches this
+        through ``CoordinatorEntity.async_update`` and expects fresh data by
+        the time the await returns (writes reconcile through their owner
+        instead, ADR-010). Two deliberate departures from the obvious
+        implementation make that true:
 
         1. Each sub-coordinator's own ``async_refresh()`` is used instead
            of its ``async_request_refresh()``. The latter goes through
@@ -554,8 +545,8 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
            once per explicit, user-triggered action, not on a hot loop.
         2. The three refreshes run concurrently via ``asyncio.gather``
            rather than sequentially - three real HTTP round trips awaited
-           one after another would make every action handler noticeably
-           slower for no benefit, since the coordinators are independent.
+           one after another would make every caller noticeably slower for
+           no benefit, since the coordinators are independent.
 
         Each sub-coordinator's own refresh already calls
         ``async_update_listeners()`` when its data changes, which cascades
@@ -637,39 +628,6 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 translation_placeholders={"targets": targets},
             )
 
-    def _require_protect_client(self) -> UniFiProtectClient:
-        """Return the Protect client or raise a user-facing error."""
-        if self.protect_client is None:
-            msg = "Protect is not available for this config"
-            raise HomeAssistantError(
-                msg,
-                translation_domain=DOMAIN,
-                translation_key="no_protect_coordinator",
-            )
-        return self.protect_client
-
-    async def _async_execute_api_action[ActionResult](
-        self,
-        error_message: str,
-        action: Callable[..., Awaitable[ActionResult]],
-        *args: Any,
-        **kwargs: Any,
-    ) -> ActionResult:
-        """
-        Execute an API action and convert failures to Home Assistant errors.
-
-        Delegates to the shared ``async_execute_command`` (ADR-010) until the
-        last facade pass-through moves to its owner. ``error_message`` stays
-        the English message so existing callers keep their wording, and the
-        error now carries the generic ``command_failed`` translation.
-        """
-        return await async_execute_command(
-            CommandFailure(translation_key="command_failed", message=error_message),
-            action,
-            *args,
-            **kwargs,
-        )
-
     async def async_export_network_rules(
         self,
         site_ids: list[str] | None = None,
@@ -689,31 +647,16 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             is_unsupported=self._config_coordinator._is_unsupported_response,
         )
 
-    async def async_update_camera(self, camera_id: str, **kwargs: Any) -> None:
-        """Update a camera via the Protect cameras endpoint."""
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to update camera {camera_id}",
-            protect_client.cameras.update,
-            camera_id,
-            **kwargs,
-        )
-
-    async def async_update_camera_settings(
-        self,
-        camera_id: str,
-        **kwargs: Any,
-    ) -> None:
-        """Update camera settings (alias for async_update_camera)."""
-        await self.async_update_camera(camera_id, **kwargs)
-
     async def async_get_historical_clients(self, site_id: str) -> list[dict[str, Any]]:
         """Read historical client records for a site from the classic API."""
         site_name = self._config_coordinator.resolve_legacy_site_name(
             site_id, verified_only=True
         )
-        result = await self._async_execute_api_action(
-            f"Unable to read historical clients for site {site_id}",
+        result = await async_execute_command(
+            CommandFailure(
+                translation_key="command_failed",
+                message=f"Unable to read historical clients for site {site_id}",
+            ),
             self.network_client.clients.get_historical_legacy,
             site_name,
         )
@@ -752,252 +695,6 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 history.setdefault(mac, (name, str(site_id)))
         return history
 
-    async def async_play_chime(self, chime_id: str) -> None:
-        """Report the official API's chime playback limitation."""
-        protect_client = self._require_protect_client()
-
-        async def play() -> None:
-            try:
-                await protect_client.chimes.play(chime_id)
-            except UniFiUnsupportedError as err:
-                raise HomeAssistantError(
-                    translation_domain=DOMAIN,
-                    translation_key="chime_playback_unsupported",
-                ) from err
-
-        await self._async_execute_api_action(
-            f"Unable to play chime {chime_id}",
-            play,
-        )
-
-    async def async_start_ptz_patrol(self, camera_id: str, slot: int) -> None:
-        """Start PTZ patrol for a camera."""
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to start PTZ patrol for camera {camera_id}",
-            protect_client.cameras.ptz_patrol_start,
-            camera_id,
-            slot,
-        )
-
-    async def async_stop_ptz_patrol(self, camera_id: str) -> None:
-        """Stop PTZ patrol for a camera."""
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to stop PTZ patrol for camera {camera_id}",
-            protect_client.cameras.ptz_patrol_stop,
-            camera_id,
-        )
-
-    async def async_set_hdr_mode(self, camera_id: str, mode: str) -> None:
-        """Set HDR mode for a camera."""
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to set HDR mode for camera {camera_id}",
-            protect_client.cameras.set_hdr_mode,
-            camera_id,
-            mode,
-        )
-
-    async def async_set_video_mode(self, camera_id: str, mode: str) -> None:
-        """Set video mode for a camera."""
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to set video mode for camera {camera_id}",
-            protect_client.cameras.set_video_mode,
-            camera_id,
-            mode,
-        )
-
-    async def async_set_chime_ringtone(self, chime_id: str, ringtone_id: str) -> None:
-        """Set ringtone for a chime."""
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to set ringtone for chime {chime_id}",
-            protect_client.chimes.set_ringtone,
-            chime_id,
-            ringtone_id,
-        )
-        if self._protect_coordinator is not None:
-            try:
-                await self._protect_coordinator.async_request_refresh()
-            except Exception:
-                _LOGGER.exception(
-                    "Chime ringtone was updated, but the Protect refresh failed"
-                )
-
-    async def async_move_ptz_to_preset(self, camera_id: str, preset: int) -> None:
-        """Move a PTZ camera to a preset."""
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to move camera {camera_id} to PTZ preset {preset}",
-            protect_client.cameras.ptz_goto_preset,
-            camera_id,
-            str(preset),
-        )
-
-    async def async_update_viewer(self, viewer_id: str, **kwargs: Any) -> None:
-        """Update viewer settings."""
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to update viewer {viewer_id}",
-            protect_client.viewers.update,
-            viewer_id,
-            **kwargs,
-        )
-
-    async def async_set_microphone_volume(self, camera_id: str, volume: int) -> None:
-        """Set microphone volume for a camera."""
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to set microphone volume for camera {camera_id}",
-            protect_client.cameras.set_microphone_volume,
-            camera_id,
-            volume,
-        )
-
-    async def async_start_camera_talkback(
-        self, camera_id: str, media_url: str
-    ) -> TalkbackStream:
-        """
-        Start talkback audio streaming to a camera.
-
-        Args:
-            camera_id: Camera identifier.
-            media_url: Resolved media URL or local path.
-
-        Returns:
-            Running TalkbackStream instance.
-
-        Raises:
-            HomeAssistantError: If Protect is unavailable, session creation fails,
-                or parameters/streaming fail.
-
-        """
-        if self.protect_client is None:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="protect_not_available_for_talkback",
-            )
-
-        try:
-            session = await self.protect_client.cameras.create_talkback_session(
-                camera_id
-            )
-        except Exception as err:
-            detail = (
-                f"invalid fields: {sanitized_validation_fields(err)}"
-                if isinstance(err, ValidationError)
-                else type(err).__name__
-            )
-            _LOGGER.warning(
-                "Failed to create talkback session for camera %s: %s",
-                camera_id,
-                detail,
-            )
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="talkback_session_invalid",
-            ) from err
-
-        try:
-            stream = TalkbackStream(session, media_url, loop=self.hass.loop)
-            await stream.start()
-            return stream
-        except (
-            TalkbackSchemeError,
-            TalkbackCodecError,
-            TalkbackSamplingRateError,
-        ) as err:
-            _LOGGER.warning(
-                "Unsupported talkback parameters for camera %s: %s",
-                camera_id,
-                err,
-            )
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="talkback_unsupported_codec_or_scheme",
-            ) from err
-        except Exception as err:
-            _LOGGER.warning(
-                "Failed to start talkback stream for camera %s: %s",
-                camera_id,
-                err,
-            )
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="talkback_stream_failure",
-            ) from err
-
-    async def async_set_light_brightness(self, light_id: str, led_level: int) -> None:
-        """Set light brightness for a Protect light."""
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to set brightness for light {light_id}",
-            protect_client.lights.set_brightness,
-            light_id,
-            led_level,
-        )
-
-    async def async_set_light_mode(self, light_id: str, mode: str) -> None:
-        """Set mode for a Protect light."""
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to set mode for light {light_id}",
-            protect_client.lights.update,
-            light_id,
-            lightModeSettings={"mode": mode},
-        )
-
-    async def async_set_chime_volume(self, chime_id: str, volume: int) -> None:
-        """Set volume for a chime."""
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to set volume for chime {chime_id}",
-            protect_client.chimes.set_volume,
-            chime_id,
-            volume,
-        )
-
-    async def async_set_chime_repeat(
-        self,
-        chime_id: str,
-        repeat_times: int,
-    ) -> None:
-        """Set repeat count for a chime."""
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to set repeat count for chime {chime_id}",
-            protect_client.chimes.set_repeat_times,
-            chime_id,
-            repeat_times,
-        )
-
-    async def async_set_chime_paired_cameras(
-        self,
-        chime_id: str,
-        camera_ids: list[str],
-    ) -> None:
-        """
-        Replace the doorbell cameras paired to a chime.
-
-        An empty list unpairs every doorbell. The request body is exactly
-        {"cameraIds": [...]}: the spec's chime PATCH sets
-        additionalProperties to false, so nothing else may ride along. The
-        refresh afterwards keeps the cached chimes current. A refresh that
-        fails does not fail the action: the coordinator records the failure
-        itself instead of raising it, and the pairing has been made.
-        """
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to set the paired doorbells of chime {chime_id}",
-            protect_client.chimes.update,
-            chime_id,
-            cameraIds=list(camera_ids),
-        )
-        if self._protect_coordinator is not None:
-            await self._protect_coordinator.async_request_refresh()
-
     async def async_generate_voucher(
         self,
         site_id: str,
@@ -1024,8 +721,11 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             kwargs["data_usage_limit_mbytes"] = data_usage_limit_mbytes
         if authorized_guest_limit is not None:
             kwargs["authorized_guest_limit"] = authorized_guest_limit
-        created = await self._async_execute_api_action(
-            f"Unable to generate voucher in site {site_id}",
+        created = await async_execute_command(
+            CommandFailure(
+                translation_key="command_failed",
+                message=f"Unable to generate voucher in site {site_id}",
+            ),
             self.network_client.vouchers.create,
             site_id,
             **kwargs,
@@ -1039,8 +739,11 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_delete_voucher(self, site_id: str, voucher_id: str) -> None:
         """Delete a voucher."""
-        await self._async_execute_api_action(
-            f"Unable to delete voucher {voucher_id}",
+        await async_execute_command(
+            CommandFailure(
+                translation_key="command_failed",
+                message=f"Unable to delete voucher {voucher_id}",
+            ),
             self.network_client.vouchers.delete,
             site_id,
             voucher_id,
@@ -1065,60 +768,6 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._aggregate_data()
         self.async_update_listeners()
 
-    async def async_trigger_alarm(self, alarm_id: str) -> None:
-        """Trigger an alarm."""
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to trigger alarm {alarm_id}",
-            protect_client.application.trigger_alarm_webhook,
-            alarm_id,
-        )
-
-    async def async_arm_alarm(self) -> None:
-        """Arm the console's alarm with its currently selected arm profile."""
-        await self._async_send_arm_command(enable=True)
-
-    async def async_disarm_alarm(self) -> None:
-        """Disarm the console's alarm."""
-        await self._async_send_arm_command(enable=False)
-
-    async def _async_send_arm_command(self, *, enable: bool) -> None:
-        """
-        Send an arm or disarm request, then ask Protect for fresh state.
-
-        While the UniFi global alarm manager owns the alarm, Protect refuses
-        both commands with a 400. That is reported as a translated error
-        rather than the generic "Unable to ..." message. There is no
-        optimistic state: the NVR's WebSocket frame normally arrives first,
-        and the debounced refresh is the fallback.
-        """
-        protect_client = self._require_protect_client()
-        command = (
-            protect_client.arm_profiles.enable
-            if enable
-            else protect_client.arm_profiles.disable
-        )
-
-        async def _send() -> bool:
-            try:
-                return await command()
-            except UniFiGlobalAlarmManagerError as err:
-                # The refusal is also the answer to whether the manager is on,
-                # e.g. when it was switched on since it was last asked.
-                if self._protect_coordinator is not None:
-                    self._protect_coordinator.mark_global_alarm_manager_enabled()
-                raise HomeAssistantError(
-                    translation_domain=DOMAIN,
-                    translation_key="global_alarm_manager",
-                ) from err
-
-        await self._async_execute_api_action(
-            f"Unable to {'arm' if enable else 'disarm'} the UniFi Protect alarm",
-            _send,
-        )
-        if self._protect_coordinator is not None:
-            await self._protect_coordinator.async_request_refresh()
-
     async def async_get_floor_plan_image(
         self,
         plan_id: str,
@@ -1131,58 +780,3 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             plan_id,
             filename,
         )
-
-    async def async_create_liveview(
-        self,
-        *,
-        name: str,
-        layout: int,
-        is_default: bool = False,
-    ) -> None:
-        """Create a liveview."""
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to create liveview {name}",
-            protect_client.liveviews.create,
-            name=name,
-            layout=layout,
-            isDefault=is_default,
-        )
-
-    async def async_play_siren(
-        self, siren_id: str, *, duration: int | None = None
-    ) -> None:
-        """Sound a siren, optionally for 5, 10, 20 or 30 seconds."""
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to sound siren {siren_id}",
-            protect_client.sirens.play,
-            siren_id,
-            duration=duration,
-        )
-
-    async def async_set_siren_volume(self, siren_id: str, volume: int) -> None:
-        """Set a siren's volume (1-100)."""
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to set volume for siren {siren_id}",
-            protect_client.sirens.set_volume,
-            siren_id,
-            volume,
-        )
-
-    async def async_stop_siren(self, siren_id: str) -> None:
-        """
-        Stop a siren and show it off right away.
-
-        Protect sends no WebSocket frame after a manual stop, so the Protect
-        coordinator's cache is updated here instead of waiting for the poll.
-        """
-        protect_client = self._require_protect_client()
-        await self._async_execute_api_action(
-            f"Unable to stop siren {siren_id}",
-            protect_client.sirens.stop,
-            siren_id,
-        )
-        if self._protect_coordinator is not None:
-            self._protect_coordinator.mark_siren_stopped(siren_id)

@@ -602,9 +602,10 @@ async def test_root_validation_error_does_not_log_credential_sanitizers(
                 await config._fetch_optional_section("vouchers", "site1", fetch) is None
             )
         else:
+            facade.network_client.vouchers.create = fetch
             with pytest.raises(HomeAssistantError) as caught:
-                await facade._async_execute_api_action(
-                    "Unable to generate voucher", fetch
+                await facade.async_generate_voucher(
+                    "site1", name="Guest", time_limit_minutes=60
                 )
             assert caught.value.__cause__ is None
             assert caught.value.__suppress_context__ is True

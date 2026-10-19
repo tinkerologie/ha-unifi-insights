@@ -3,15 +3,10 @@
 
 from __future__ import annotations
 
-import inspect
 import logging
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+from typing import Any
 
 from homeassistant.core import callback
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
 from homeassistant.helpers.entity import DeviceInfo, EntityDescription
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -162,36 +157,6 @@ def camera_supports_speaker(camera_data: Any) -> bool:
             return True
 
     return False
-
-
-async def async_call_coordinator_action[ActionResult](
-    coordinator: Any,
-    method_name: str,
-    error_message: str,
-    *action_args: Any,
-    fallback_factory: Callable[[], Awaitable[ActionResult]] | None = None,
-    **action_kwargs: Any,
-) -> ActionResult:
-    """Execute a coordinator action and convert unexpected failures to HA errors."""
-    handler = getattr(coordinator, method_name, None)
-    if handler is not None and inspect.iscoroutinefunction(handler):
-        try:
-            result: ActionResult = await handler(*action_args, **action_kwargs)
-            return result
-        except HomeAssistantError:
-            raise
-        except Exception as err:
-            raise HomeAssistantError(error_message) from err
-
-    if fallback_factory is None:
-        raise HomeAssistantError(error_message)
-
-    try:
-        return await fallback_factory()
-    except HomeAssistantError:
-        raise
-    except Exception as err:
-        raise HomeAssistantError(error_message) from err
 
 
 class UnifiInsightsEntity(CoordinatorEntity[UnifiFacadeCoordinator]):
