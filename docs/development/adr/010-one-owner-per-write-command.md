@@ -42,6 +42,8 @@ The facade keeps aggregation, listeners, typed read accessors and the commands t
 
 Moved commands keep their parameter names, keyword-only markers and return annotations (`bool` for restart, PoE, outlet and batch forget; `list[Voucher]`; `TalkbackStream`; `**kwargs: Any` on the camera and viewer updates). Owner commands take native or opaque IDs and work without an entity; an entity translates a display name or an observed option into that ID before it calls the owner. `network_rule_switch.py`'s `action_method: str` becomes a typed callable that returns the bound owner command.
 
+No entity calls an API client: the Protect owner also serves the camera snapshot and stream reads (`async_get_camera_snapshot`, `async_create_camera_stream_url`), which return `None` on failure so the camera keeps its static stream fallback. Service actions reach the Protect owner through `require_protect_coordinator()` after the usual console routing.
+
 ### Shared executor
 
 `coordinators/base.py` has one stateless module-level function, `async_execute_command`, that the facade and the domain owners call directly. It returns the call's result, passes a `HomeAssistantError` through unchanged and wraps any other exception in a translated `HomeAssistantError` raised `from err`, so the immediate cause stays the API error. A pydantic `ValidationError` is logged with sanitised field names only and raised as `invalid_api_response` with the chain suppressed. An optional rejection key turns a falsy result into a translated error. Access keeps `_command_error` and Carrier Fabric keeps its retry and typed errors; they do not use the executor.
@@ -76,7 +78,7 @@ Each command is tested once, in the test file of its owner (`tests/coordinators/
 
 ### Protect module size
 
-Moving the 24 Protect actions and `_async_send_arm_command` adds about 370 facade lines to `coordinators/protect.py` (3,079 lines today), about 3,450 before deduplication. That is inside the 3,500-line cap that [ADR-009](./009-amend-flat-module-layout.md) already records until #340 splits the module; this ADR adds no new exception. Duplicated logic is removed during the move and no satellite file is created.
+Moving the 24 Protect actions and `_async_send_arm_command` adds about 370 facade lines to `coordinators/protect.py` (3,079 lines today), about 3,450 before deduplication. That is inside the 3,500-line cap that [ADR-009](./009-amend-flat-module-layout.md) already records until #340 splits the module; this ADR adds no new exception. Duplicated logic is removed during the move and no satellite file is created. After the move the module is 3,498 lines: the overlay reuses `_deep_merge` (with `into_lists`) instead of a second merge helper, and the ringtone and liveview name checks stay with the select entities that translate them.
 
 ## Alternatives considered
 

@@ -246,7 +246,7 @@ The integration uses a multi-coordinator pattern stored in `entry.runtime_data`:
 - **Config Coordinator** (`coordinators/config.py` & `config_sections.py`) — Site, WiFi, network, firewall, ACL, DNS, voucher, and VPN configuration data (slow polling, 5 min)
 - **Device Coordinator** (`coordinators/device.py`) — Network device and client metrics (30s polling)
 - **Protect Coordinator** (`coordinators/protect.py`) — Camera, light, sensor, NVR, chime, viewer, doorlock, speaker, alarm hub, link station, fob, and liveview data (WebSocket + polling)
-- **Facade Coordinator** (`coordinators/facade.py`) — Unified view combining Config, Device, Protect, InnerSpace, and Site Manager coordinators for entities and services
+- **Facade Coordinator** (`coordinators/facade.py`) — Unified view combining Config, Device, Protect, InnerSpace, and Site Manager coordinators for entities and services; it holds only the voucher commands and `async_refresh_or_raise`
 - **Feature Coordinators:**
   - `coordinators/access.py` — UniFi Access doors, users, emergency status, and webhook events
   - `coordinators/innerspace.py` — UniFi InnerSpace floor plans and device placements
@@ -330,6 +330,7 @@ See `.github/instructions/service_actions.instructions.md` for service patterns.
 **Coordinator (`coordinators/`):**
 
 - Entities → Coordinator → API Client (never skip layers)
+- One owner per write command (ADR-010): the coordinator that owns the data runs the call through `async_execute_command`, raises translated errors, publishes a copy-on-write overlay and reconciles. Entities and service actions call it directly (`coordinator.config_coordinator`, `coordinator.device_coordinator`, `coordinator.require_protect_coordinator()`, or the Access and Carrier Fabric coordinators); never look a command up by name, fall back to an API client, mutate cached data, or refresh from an entity
 - Raise `ConfigEntryAuthFailed` (triggers reauth) or `UpdateFailed` (retry; `DataUpdateCoordinator` automatically logs once when unavailable and once when restored, satisfying `log-when-unavailable`)
 - Use `async_config_entry_first_refresh()` for first update
 

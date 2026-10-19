@@ -22,7 +22,16 @@ This integration uses a multi-coordinator architecture under `custom_components/
 - **Internet Activity Coordinator** (`coordinators/internet_activity.py`) — Per-site WAN/internet activity and latency telemetry
 - **Rule Audit & Export Coordinators** (`coordinators/rule_audit.py`, `coordinators/rule_export.py`) — Network rule change auditing and snapshot export
 - **Voucher State Helper** (`coordinators/voucher_state.py`) — Guest hotspot voucher tracking
-- **Facade Coordinator** (`coordinators/facade.py`) — Unified view combining sub-coordinators for entity platforms
+- **Facade Coordinator** (`coordinators/facade.py`) — Unified view combining sub-coordinators for entity platforms; it holds only the voucher commands and `async_refresh_or_raise`
+
+## Write Commands (ADR-010)
+
+- Put each write command on the coordinator that owns the data it changes (`config.py`, `device.py`, `protect.py`, `access.py`, `carrier_fabric.py`), never on the facade. Keep its parameter names and return type stable for entities and service actions.
+- Run the API call through `async_execute_command(CommandFailure(...), action, *args)` from `coordinators/base.py` so every failure is a translated `HomeAssistantError`. Pass placeholders that are safe identifiers only.
+- After success, publish the written fields as a copy-on-write overlay: replace the data root and every container on the changed path (lists included), then call `async_update_listeners()`. Never mutate a shared record and never call `async_set_updated_data()` for an overlay.
+- Apply the reconciliation policy in ADR-010's ownership table. A failed refresh after a successful write is logged (check `last_update_success`) and never fails the write.
+- Resolve classic site names only through `UnifiConfigCoordinator.resolve_legacy_site_name` / `async_resolve_legacy_site_name`; never guess `"default"`.
+- Test each command once in `tests/coordinators/test_<owner>.py` against `seeded_owners` (`tests/fixtures/command_owners.py`), which autospecs the real `unifi_official_api` client.
 
 ## Runtime Data (`entry.runtime_data`)
 

@@ -23,7 +23,7 @@ All device communication goes through the [`unifi-official-api`](https://pypi.or
 - NEVER create ad-hoc `aiohttp` calls in the integration — reuse the library's client methods
 - NEVER vendor library code or add local shims or monkey patches over library behaviour
 - **Contract fixes go upstream first:** when an endpoint, model, exception, or client behaviour is wrong or missing, fix it in [tinkerologie/unifi-official-api](https://github.com/tinkerologie/unifi-official-api), release a new version, then raise the pin in all three files and run the full test suite against it
-- Patch library symbols in tests where the integration looks them up (for example `custom_components.unifi_insights.coordinators.facade.TalkbackStream`), not inside `unifi_official_api`
+- Patch library symbols in tests where the integration looks them up (for example `custom_components.unifi_insights.coordinators.protect.TalkbackStream`), not inside `unifi_official_api`
 - Inject Home Assistant's shared `aiohttp.ClientSession` via `async_get_clientsession(hass, verify_ssl=...)` (Platinum `inject-websession`)
 - All client operations must be async (Platinum `async-dependency`)
 - Always consult the [UniFi Developer Portal](https://developer.ui.com/) machine-readable specs before adding or modifying API endpoints or models:

@@ -64,7 +64,9 @@ async def async_setup_entry(
 
 ## Data Access & Availability
 
-- ALWAYS read from `coordinator.data` — never call API clients directly from entity state properties.
+- ALWAYS read from `coordinator.data` — never call API clients from an entity, in state properties or in actions.
+- **Write commands (ADR-010):** call the owning coordinator directly with a typed call — `self.coordinator.config_coordinator`, `self.coordinator.device_coordinator`, `self.coordinator.require_protect_coordinator()`, or the Access coordinator for Access entities. Never look a command up by name, never fall back to an API client, and never refresh or patch cached data from the entity. The owner publishes the written fields, so derive state from `coordinator.data` instead of setting `_attr_*` after the call.
+- Translate a display name or an observed option into the native ID before calling the owner, and raise a translated `ServiceValidationError` when it is unknown.
 - Use `get_field(data, "camelCase", "snake_case")` and `first_not_none(...)` so falsy values (`0`, `False`, `0.0`) are preserved instead of falling back via `or`.
 - Never raise exceptions inside `@property` methods; return `None` when a value is unknown/unavailable.
 

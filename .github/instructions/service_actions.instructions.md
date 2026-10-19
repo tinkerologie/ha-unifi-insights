@@ -24,7 +24,9 @@ Service actions must run against the console that owns the target resource, neve
 - `_get_coordinator_for_network_resource(hass, *, site_id=, device_id=, client_id=)` — resolves the coordinator owning a Network site, device, or client
 - `_get_coordinator_for_protect_resource(hass, *, resource_type=, resource_id=, secondary_resource_type=, secondary_resource_id=, console_id=)` — resolves the coordinator owning a Protect camera, light, chime, or viewer
 
-Both raise `ServiceValidationError` when the target is unknown or ambiguous across multiple configured consoles. Actions without a routable target (`trigger_alarm`, `create_liveview`) accept an optional `console_id` parameter (entry title or entry ID), required only when multiple consoles are configured.
+Both raise `ServiceValidationError` when the target is unknown or ambiguous across multiple configured consoles. `_get_protect_owner(hass, call, resource_type, ...)` reads the target from the call, routes it the same way and returns the console's Protect command owner with the native ID.
+
+After routing, call the same owner command that entities use (ADR-010): `coordinator.config_coordinator`, `coordinator.device_coordinator` or the Protect owner, never a facade pass-through or an API client. The owner raises the translated API errors; the handler only validates input and routes. Actions without a routable target (`trigger_alarm`, `create_liveview`) accept an optional `console_id` parameter (entry title or entry ID), required only when multiple consoles are configured.
 
 ## Error Handling & Exception Translations (IQS `action-exceptions` & `exception-translations`)
 
