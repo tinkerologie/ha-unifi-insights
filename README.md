@@ -1,6 +1,6 @@
 # UniFi Insights integration for Home Assistant
 
-[![HACS Integration](https://img.shields.io/badge/HACS-Default-orange.svg)](https://github.com/custom-components/hacs)
+[![Marketplace and HACS](https://img.shields.io/badge/Marketplace%20%7C%20HACS-Default-orange.svg)](https://www.hacs.xyz/docs/marketplace/)
 [![GitHub Last Commit](https://img.shields.io/github/last-commit/tinkerologie/ha-unifi-insights)](https://github.com/tinkerologie/ha-unifi-insights/commits/main)
 [![GitHub Release](https://img.shields.io/github/v/release/tinkerologie/ha-unifi-insights)](https://github.com/tinkerologie/ha-unifi-insights/releases)
 [![GitHub Issues](https://img.shields.io/github/issues/tinkerologie/ha-unifi-insights)](https://github.com/tinkerologie/ha-unifi-insights/issues)
@@ -26,7 +26,7 @@ Monitor and control your UniFi system from Home Assistant: UniFi Network, UniFi 
 
 ## Overview
 
-UniFi Insights is a custom integration that you install from HACS. It connects with an API key, not a user name and password. It mainly uses the official UniFi APIs that Ubiquiti publishes at [developer.ui.com](https://developer.ui.com/). For some UniFi Network features that the official API doesn't cover yet, such as Wi-Fi QR codes, VPN, route, port forward, traffic rule, NAT rule and static route switches, and internet traffic history, it uses the console's classic Network endpoints with the same API key.
+UniFi Insights is a custom integration that you install from the Home Assistant Marketplace (Home Assistant 2026.11 and newer) or from HACS (Home Assistant 2026.9 and 2026.10). It connects with an API key, not a user name and password. It mainly uses the official UniFi APIs that Ubiquiti publishes at [developer.ui.com](https://developer.ui.com/). For some UniFi Network features that the official API doesn't cover yet, such as Wi-Fi QR codes, VPN, route, port forward, traffic rule, NAT rule and static route switches, and internet traffic history, it uses the console's classic Network endpoints with the same API key.
 
 - **One integration for your UniFi system.** One console entry covers that console's Network, Protect and InnerSpace applications. Local entries can also connect to Access using its separate token. A cloud API key adds Mobility and Site Manager data. ISPs can add a Carrier Fabric entry.
 - **API key setup, local or remote.** Connect to a console on your network, or choose any console on your UniFi account through UniFi Cloud. You don't need a local user account.
@@ -59,7 +59,18 @@ The integration only creates entities for the applications your console runs. A 
 
 ## Installation
 
-### HACS (recommended)
+### Marketplace (Home Assistant 2026.11 and newer, recommended)
+
+Starting with Home Assistant 2026.11, HACS is built into Home Assistant as the Marketplace, so there is nothing else to install first.
+
+[![Open your Home Assistant instance and open a repository in the Marketplace.](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=tinkerologie&repository=ha-unifi-insights&category=integration)
+
+1. Select the button above, or go to **Settings** → **Marketplace** and search for "UniFi Insights".
+2. Install it. The integration loads right away. If Home Assistant shows a repair that asks for a restart, restart Home Assistant.
+
+If you installed UniFi Insights with HACS before you upgraded to Home Assistant 2026.11, you don't need to do anything. The Marketplace takes over HACS installs, and UniFi Insights keeps getting updates.
+
+### HACS (Home Assistant 2026.9 and 2026.10)
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=tinkerologie&repository=ha-unifi-insights&category=integration)
 
@@ -686,7 +697,7 @@ This repository includes three automation blueprints for network health alerts. 
 
 ### Install the blueprints
 
-HACS installs the integration only. It does not install blueprints, so add them yourself in one of two ways:
+The Marketplace and HACS install the integration only. They don't install blueprints, so add them yourself in one of two ways:
 
 - **Import from GitHub.** Select an **Import Blueprint** badge below, or go to **Settings** → **Automations & scenes** → **Blueprints**, select **Import blueprint** and paste the URL.
 - **Copy the files.** Download the YAML files from [`blueprints/automation/unifi_insights`](https://github.com/tinkerologie/ha-unifi-insights/tree/main/blueprints/automation/unifi_insights) and put them in `<config>/blueprints/automation/unifi_insights/`. `<config>` is your Home Assistant configuration folder, the one that contains `configuration.yaml`.

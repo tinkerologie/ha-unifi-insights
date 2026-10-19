@@ -19,7 +19,7 @@ applyTo: "**/*.json"
 - `manifest.json` — Integration metadata (domain, version, requirements, etc.)
 - `strings.json` — Translatable UI strings
 - `icons.json` — Custom entity icons (MDI icon references)
-- `hacs.json` — HACS store metadata
+- `hacs.json` — Repository metadata for the Home Assistant Marketplace (2026.11+) and HACS. The Marketplace checks `homeassistant` for each release.
 
 ## Validation
 

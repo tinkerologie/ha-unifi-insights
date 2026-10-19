@@ -1,7 +1,8 @@
 import { defineConfig } from "vitest/config";
 
 // One self-contained ES module, written straight into the integration so
-// HACS ships it. CI rebuilds and fails if the committed file differs.
+// the Marketplace and HACS ship it. CI rebuilds and fails if the committed
+// file differs.
 export default defineConfig({
   build: {
     modulePreload: false,

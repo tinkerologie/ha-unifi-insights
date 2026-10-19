@@ -38,7 +38,7 @@ rules:
     comment: README.md Overview describes the integration and UniFi products.
   docs-installation-instructions:
     status: done
-    comment: README.md Installation and Configuration describe HACS and manual setup.
+    comment: README.md Installation and Configuration describe the Marketplace, HACS and manual setup.
   docs-removal-instructions:
     status: todo
     comment: README.md lacks complete integration removal instructions.

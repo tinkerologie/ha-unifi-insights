@@ -199,5 +199,5 @@ def test_manifest_loads_after_web_components() -> None:
 
 
 def test_bundle_is_shipped() -> None:
-    """HACS installs the repository tree, so the built bundle must be committed."""
+    """The Marketplace and HACS install the repository tree, so commit the bundle."""
     assert CARD_PATH.is_file()
