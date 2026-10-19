@@ -1100,6 +1100,30 @@
     "network_rule_update_failed": {
       "message": "Unable to update {rule_type} {rule_name}."
     },
+    "command_failed": {
+      "message": "Unable to complete the request on your UniFi console."
+    },
+    "invalid_api_response": {
+      "message": "Your UniFi console returned data that UniFi Insights could not read."
+    },
+    "refresh_failed": {
+      "message": "Unable to refresh UniFi Insights data from {targets}."
+    },
+    "client_not_resolvable": {
+      "message": "Unable to find the MAC address of client {client_id}."
+    },
+    "restart_rejected": {
+      "message": "Your UniFi console did not accept the restart of device {device_id}."
+    },
+    "voucher_not_created": {
+      "message": "Your UniFi console did not create a guest voucher for site {site_id}."
+    },
+    "ringtone_not_found": {
+      "message": "Ringtone {ringtone_id} is not available on chime {chime_id}."
+    },
+    "liveview_not_found": {
+      "message": "No UniFi Protect liveview is named {liveview}."
+    },
     "access_auth_failed": {
       "message": "The UniFi Access token was rejected. Replace it in the integration's reconfigure settings."
     },

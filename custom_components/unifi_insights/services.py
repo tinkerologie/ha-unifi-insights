@@ -2210,6 +2210,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
         refreshed = 0
         failures: list[str] = []
+        failed_titles: list[str] = []
 
         for title, coordinator in _get_titled_coordinators(hass):
             # If site_id is specified, only refresh the console owning it.
@@ -2232,6 +2233,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 # already logs - an error line here would just duplicate it.
                 _LOGGER.debug("Error refreshing %s: %s", title, err)
                 failures.append(f"{title}: {err}")
+                failed_titles.append(title)
             else:
                 _LOGGER.info("Successfully refreshed coordinator data")
 
@@ -2242,7 +2244,12 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         if failures:
             # Each failure already carries its own "Error refreshing ..."
             # sentence from the facade, so do not prefix a second one.
-            raise HomeAssistantError("; ".join(failures))
+            raise HomeAssistantError(
+                "; ".join(failures),
+                translation_domain=DOMAIN,
+                translation_key="refresh_failed",
+                translation_placeholders={"targets": ", ".join(failed_titles)},
+            )
 
     async def async_handle_restart_device(call: ServiceCall) -> None:
         """Handle the restart device service call."""

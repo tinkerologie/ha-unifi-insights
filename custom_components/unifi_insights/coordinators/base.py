@@ -4,15 +4,17 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from datetime import timedelta  # noqa: TC003
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
 )
+from pydantic import ValidationError
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
@@ -20,16 +22,123 @@ from unifi_official_api import (
     UniFiResponseError,
     UniFiTimeoutError,
 )
+from unifi_official_api.validation import sanitized_validation_fields
 
 from custom_components.unifi_insights.const import DOMAIN
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Mapping
+
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
     from unifi_official_api.network import UniFiNetworkClient
     from unifi_official_api.protect import UniFiProtectClient
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class CommandFailure:
+    """
+    How a failed write command is reported to the user.
+
+    ``translation_key`` and ``translation_placeholders`` name the
+    ``exceptions`` entry raised when the call fails. Placeholders must be safe
+    identifiers (site, device or rule IDs), never raw exception text, response
+    bodies or MAC addresses.
+
+    ``message`` is an optional fixed English message. Translated errors
+    normally generate their text from the key; callers that predate the
+    translation keep their established wording through it.
+
+    ``rejected_translation_key``, when set, turns a falsy result (``False``,
+    ``None`` or an empty collection) into that translated error, for API
+    calls whose result is the only sign that the console refused the write.
+    """
+
+    translation_key: str
+    translation_placeholders: Mapping[str, str] = field(default_factory=dict)
+    message: str | None = None
+    rejected_translation_key: str | None = None
+
+
+def _command_error(
+    *,
+    translation_key: str,
+    translation_placeholders: Mapping[str, str],
+    message: str | None,
+) -> HomeAssistantError:
+    """Build a translated command error, keeping a fixed message if given."""
+    args = (message,) if message else ()
+    return HomeAssistantError(
+        *args,
+        translation_domain=DOMAIN,
+        translation_key=translation_key,
+        translation_placeholders=dict(translation_placeholders),
+    )
+
+
+async def async_execute_command[**P, T](
+    failure: CommandFailure,
+    action: Callable[P, Awaitable[T]],
+    /,
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> T:
+    """
+    Run one write command and translate its failure.
+
+    The single error boundary for command owners (ADR-010). It holds no
+    state: it registers no listener, schedules no refresh and looks nothing
+    up by name, so the facade (which does not inherit this module's base
+    class) and every domain coordinator can call it directly.
+
+    A ``HomeAssistantError`` from the call passes through unchanged, so an
+    owner's own translated validation survives. Any other exception is
+    wrapped in the translated ``failure`` error raised ``from`` it, keeping
+    the API error as the immediate cause for callers that inspect it. A
+    pydantic ``ValidationError`` is the exception: its text can echo
+    credentials from the response (a voucher code, for example), so only the
+    sanitised field paths are logged and the chain is suppressed.
+
+    The failure is bundled into one object so that ``action``'s own
+    arguments (``state=``, ``enabled=`` ...) can never collide with the
+    executor's options, and mypy checks them against ``action``.
+    """
+    try:
+        result = await action(*args, **kwargs)
+    except HomeAssistantError:
+        raise
+    except ValidationError as err:
+        fields = sanitized_validation_fields(err)
+        context = failure.message or failure.translation_key
+        _LOGGER.error(  # noqa: TRY400
+            "%s: Invalid API response data (fields: %s)", context, fields
+        )
+        message = (
+            f"{failure.message}: Invalid API response data (fields: {fields})"
+            if failure.message
+            else None
+        )
+        raise _command_error(
+            translation_key="invalid_api_response",
+            translation_placeholders={},
+            message=message,
+        ) from None
+    except Exception as err:
+        _LOGGER.exception("%s", failure.message or failure.translation_key)
+        raise _command_error(
+            translation_key=failure.translation_key,
+            translation_placeholders=failure.translation_placeholders,
+            message=failure.message,
+        ) from err
+    if failure.rejected_translation_key is not None and not result:
+        raise _command_error(
+            translation_key=failure.rejected_translation_key,
+            translation_placeholders=failure.translation_placeholders,
+            message=None,
+        )
+    return result
 
 
 class UnifiBaseCoordinator(DataUpdateCoordinator[dict[str, Any]]):

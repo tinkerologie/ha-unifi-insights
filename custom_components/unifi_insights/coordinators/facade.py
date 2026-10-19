@@ -69,6 +69,7 @@ from custom_components.unifi_insights.topology_contract import (
     normalize_mac,
 )
 
+from .base import CommandFailure, async_execute_command
 from .config_sections import rule_display_name, verified_legacy_site_name
 from .rule_export import async_build_rule_export
 from .voucher_state import VoucherSettings, refresh_latest_voucher, voucher_to_record
@@ -624,13 +625,25 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if failures:
             joined = ", ".join(failures)
             msg = f"Error refreshing UniFi Insights data: {joined}"
-            raise HomeAssistantError(msg)
+            # The placeholder names the coordinators only; the raw errors stay
+            # in the English message and the log.
+            targets = ", ".join(failure.split(":", 1)[0] for failure in failures)
+            raise HomeAssistantError(
+                msg,
+                translation_domain=DOMAIN,
+                translation_key="refresh_failed",
+                translation_placeholders={"targets": targets},
+            )
 
     def _require_protect_client(self) -> UniFiProtectClient:
         """Return the Protect client or raise a user-facing error."""
         if self.protect_client is None:
             msg = "Protect is not available for this config"
-            raise HomeAssistantError(msg)
+            raise HomeAssistantError(
+                msg,
+                translation_domain=DOMAIN,
+                translation_key="no_protect_coordinator",
+            )
         return self.protect_client
 
     async def _async_execute_api_action[ActionResult](
@@ -640,21 +653,20 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         *args: Any,
         **kwargs: Any,
     ) -> ActionResult:
-        """Execute an API action and convert failures to Home Assistant errors."""
-        try:
-            return await action(*args, **kwargs)
-        except HomeAssistantError:
-            raise
-        except Exception as err:
-            if isinstance(err, ValidationError):
-                msg = (
-                    f"{error_message}: Invalid API response data "
-                    f"(fields: {sanitized_validation_fields(err)})"
-                )
-                _LOGGER.error("%s", msg)  # noqa: TRY400
-                raise HomeAssistantError(msg) from None
-            _LOGGER.exception("%s", error_message)
-            raise HomeAssistantError(error_message) from err
+        """
+        Execute an API action and convert failures to Home Assistant errors.
+
+        Delegates to the shared ``async_execute_command`` (ADR-010) until the
+        last facade pass-through moves to its owner. ``error_message`` stays
+        the English message so existing callers keep their wording, and the
+        error now carries the generic ``command_failed`` translation.
+        """
+        return await async_execute_command(
+            CommandFailure(translation_key="command_failed", message=error_message),
+            action,
+            *args,
+            **kwargs,
+        )
 
     async def async_restart_device(self, site_id: str, device_id: str) -> bool:
         """Restart a network device."""
@@ -784,13 +796,29 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             await self.async_request_refresh()
             msg = f"Unable to update port forward {display_name}"
-            raise HomeAssistantError(msg) from err
+            raise HomeAssistantError(
+                msg,
+                translation_domain=DOMAIN,
+                translation_key="network_rule_not_found",
+                translation_placeholders={
+                    "rule_type": "port forward",
+                    "rule_name": display_name,
+                },
+            ) from err
         except HomeAssistantError:
             raise
         except Exception as err:
             _LOGGER.exception("Unable to update port forward %s", display_name)
             msg = f"Unable to update port forward {display_name}"
-            raise HomeAssistantError(msg) from err
+            raise HomeAssistantError(
+                msg,
+                translation_domain=DOMAIN,
+                translation_key="network_rule_update_failed",
+                translation_placeholders={
+                    "rule_type": "port forward",
+                    "rule_name": display_name,
+                },
+            ) from err
 
     async def async_set_traffic_rule_enabled(
         self, site_id: str, rule_id: str, *, enabled: bool
@@ -814,13 +842,29 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             await self.async_request_refresh()
             msg = f"Unable to update traffic rule {display_name}"
-            raise HomeAssistantError(msg) from err
+            raise HomeAssistantError(
+                msg,
+                translation_domain=DOMAIN,
+                translation_key="network_rule_not_found",
+                translation_placeholders={
+                    "rule_type": "traffic rule",
+                    "rule_name": display_name,
+                },
+            ) from err
         except HomeAssistantError:
             raise
         except Exception as err:
             _LOGGER.exception("Unable to update traffic rule %s", display_name)
             msg = f"Unable to update traffic rule {display_name}"
-            raise HomeAssistantError(msg) from err
+            raise HomeAssistantError(
+                msg,
+                translation_domain=DOMAIN,
+                translation_key="network_rule_update_failed",
+                translation_placeholders={
+                    "rule_type": "traffic rule",
+                    "rule_name": display_name,
+                },
+            ) from err
 
     async def async_set_nat_rule_enabled(
         self, site_id: str, rule_id: str, *, enabled: bool
@@ -984,7 +1028,12 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         if not mac:
             msg = f"Unable to determine MAC address for client {client_id}"
-            raise HomeAssistantError(msg)
+            raise HomeAssistantError(
+                msg,
+                translation_domain=DOMAIN,
+                translation_key="client_not_resolvable",
+                translation_placeholders={"client_id": client_id},
+            )
 
         # Fall back to "default" (the standard single-site name) when the
         # legacy site mapping has not been resolved yet.

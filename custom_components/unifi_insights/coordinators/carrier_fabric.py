@@ -227,14 +227,25 @@ class UnifiCarrierFabricCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @staticmethod
     def _validate_subscriber_uuid(subscriber_id: Any) -> None:
         """Validate that subscriber_id is a valid UUID."""
+        placeholders = {"target": str(subscriber_id)}
         if not isinstance(subscriber_id, str):
             msg = f"Invalid subscriber ID (UUID string required): {subscriber_id}"
-            raise InvalidSubscriberIdError(msg)
+            raise InvalidSubscriberIdError(
+                msg,
+                translation_domain=DOMAIN,
+                translation_key="carrier_invalid_subscriber_id",
+                translation_placeholders=placeholders,
+            )
         try:
             uuid.UUID(subscriber_id)
         except (ValueError, TypeError, AttributeError) as err:
             msg = f"Invalid subscriber ID format (valid UUID required): {subscriber_id}"
-            raise InvalidSubscriberIdError(msg) from err
+            raise InvalidSubscriberIdError(
+                msg,
+                translation_domain=DOMAIN,
+                translation_key="carrier_invalid_subscriber_id",
+                translation_placeholders=placeholders,
+            ) from err
 
     async def async_suspend_subscriber(
         self, subscriber_id: str, reason: str | None = None
