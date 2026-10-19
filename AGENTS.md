@@ -235,7 +235,7 @@ This integration uses the following identifiers consistently:
 
 **Code organization principles:**
 
-- Keep files focused (200-400 lines per file where practical)
+- Platform modules hold one section per data source; non-platform modules stay under about 2,000 lines (ADR-011)
 - Add a new feature on an existing platform as a new `EntityDescription` table and class in that platform module, not as a new module (ADR-007)
 
 ### Multi-Coordinator Architecture
