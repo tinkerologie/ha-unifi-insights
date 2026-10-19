@@ -1125,7 +1125,12 @@ def _get_protect_owner(
     raw_id = _extract_target_id(call, f"{resource_type}_id")
     if not raw_id:
         msg = f"{resource_type.capitalize()} ID or target is required"
-        raise ServiceValidationError(msg)
+        raise ServiceValidationError(
+            msg,
+            translation_domain=DOMAIN,
+            translation_key="protect_target_required",
+            translation_placeholders={"resource_type": resource_type},
+        )
     coordinator, resource_id = _get_coordinator_for_protect_resource(
         hass, resource_type=resource_type, resource_id=raw_id, **routing
     )

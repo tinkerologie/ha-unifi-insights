@@ -1049,6 +1049,9 @@
     "client_target_required": {
       "message": "Client ID or target is required."
     },
+    "protect_target_required": {
+      "message": "A {resource_type} ID or target is required."
+    },
     "client_not_connected": {
       "message": "Client is not currently connected."
     },

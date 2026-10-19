@@ -4933,13 +4933,17 @@ class TestServiceComprehensiveFullCoverage:
                 DOMAIN, SERVICE_POWER_CYCLE_PORT, {"port_idx": 1}, blocking=True
             )
 
-        # 3. set_hdr_mode missing camera_id
+        # 3. set_hdr_mode missing camera_id (translated, like every Protect
+        # action that routes through _get_protect_owner)
         with pytest.raises(
             ServiceValidationError, match="Camera ID or target is required"
-        ):
+        ) as caught:
             await hass.services.async_call(
                 DOMAIN, SERVICE_SET_HDR_MODE, {"mode": "auto"}, blocking=True
             )
+        assert caught.value.translation_domain == DOMAIN
+        assert caught.value.translation_key == "protect_target_required"
+        assert caught.value.translation_placeholders == {"resource_type": "camera"}
 
         # 4. set_video_mode missing camera_id
         with pytest.raises(
@@ -5311,7 +5315,7 @@ class TestServiceComprehensiveFullCoverage:
             "camera",
             "unifi_insights_camera_cam",
             {"mode": "auto"},
-            "async_set_hdr_mode",
+            "require_protect_coordinator.return_value.async_set_hdr_mode",
         ),
         (
             "authorize_guest",
