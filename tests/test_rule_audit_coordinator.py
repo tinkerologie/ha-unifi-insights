@@ -8,15 +8,14 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiConnectionError,
     UniFiNotFoundError,
 )
-from custom_components.unifi_insights.api.network.endpoints.port_forwards import (
+from unifi_official_api.network.endpoints.port_forwards import (
     PortForwardsEndpoint,
 )
-from custom_components.unifi_insights.api.network.models import (
+from unifi_official_api.network.models import (
     FirewallRule,
     NatRule,
     PolicyBasedRoute,
@@ -24,6 +23,7 @@ from custom_components.unifi_insights.api.network.models import (
     StaticRoute,
     TrafficRule,
 )
+
 from custom_components.unifi_insights.coordinators.config import (
     UnifiConfigCoordinator,
 )

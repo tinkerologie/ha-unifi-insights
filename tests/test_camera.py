@@ -303,7 +303,7 @@ class TestUnifiProtectCamera:
     async def test_stream_source_success(self, mock_coordinator) -> None:
         """Test getting stream source successfully using the API.
 
-        The vendored API package returns a dynamic stream URL from
+        The `unifi-official-api` package returns a dynamic stream URL from
         create_rtsps_stream.
         """
         # Mock the create_rtsps_stream to return a proper stream object

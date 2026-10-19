@@ -9,7 +9,7 @@ applyTo: "tests/**/*.py"
 ## Framework & Coverage Requirements
 
 - **Framework:** `pytest` with `pytest-homeassistant-custom-component` and `pytest-asyncio`
-- **Per-file coverage (≥95%):** Every module in `custom_components/unifi_insights/` (including the vendored `api/` package) must maintain **≥95% branch coverage**, enforced in CI via:
+- **Per-file coverage (≥95%):** Every module in `custom_components/unifi_insights/` must maintain **≥95% branch coverage**, enforced in CI via:
   ```bash
   pytest --cov-report=xml
   python script/check_coverage_per_file.py coverage.xml --fail-under 95

@@ -15,9 +15,9 @@ from homeassistant.components.number import (
 from homeassistant.const import UnitOfDataRate, UnitOfInformation, UnitOfTime
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
+from unifi_official_api import ApiKeyAuth, ConnectionType
+from unifi_official_api.protect import UniFiProtectClient
 
-from custom_components.unifi_insights.api import ApiKeyAuth, ConnectionType
-from custom_components.unifi_insights.api.protect import UniFiProtectClient
 from custom_components.unifi_insights.const import (
     ATTR_CAMERA_ID,
     ATTR_CAMERA_NAME,

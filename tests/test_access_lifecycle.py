@@ -19,6 +19,14 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
+from unifi_official_api import (
+    UniFiAuthenticationError,
+    UniFiConnectionError,
+    UniFiNotFoundError,
+    UniFiResponseError,
+    UniFiValidationError,
+)
+from unifi_official_api.access.models import AccessWebhookEndpoint
 
 from custom_components.unifi_insights import (
     _async_setup_access,
@@ -26,14 +34,6 @@ from custom_components.unifi_insights import (
     async_unload_entry,
 )
 from custom_components.unifi_insights.access_entity import access_unique_id
-from custom_components.unifi_insights.api import (
-    UniFiAuthenticationError,
-    UniFiConnectionError,
-    UniFiNotFoundError,
-    UniFiResponseError,
-    UniFiValidationError,
-)
-from custom_components.unifi_insights.api.access.models import AccessWebhookEndpoint
 from custom_components.unifi_insights.const import (
     CONF_ACCESS_TOKEN,
     CONF_ACCESS_WEBHOOK,
@@ -607,7 +607,7 @@ async def test_malformed_webhook_response_is_sanitized_and_isolated(
 
     with (
         patch(
-            "custom_components.unifi_insights.api.access.client.UniFiAccessClient._get",
+            "unifi_official_api.access.client.UniFiAccessClient._get",
             side_effect=_get_response,
         ),
         patch(

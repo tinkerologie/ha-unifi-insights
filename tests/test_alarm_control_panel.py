@@ -3,7 +3,7 @@
 
 Most of these set the integration up through the real config entry and call the
 real ``alarm_control_panel`` services, so a service call travels through the
-entity, the real facade and the real vendored endpoint or its mock, and only the
+entity, the real facade and the real library endpoint or its mock, and only the
 Protect API client is mocked. A MagicMock coordinator would make
 ``async_call_coordinator_action`` quietly take its fallback path and hide a
 facade that never calls the API.
@@ -27,6 +27,15 @@ from homeassistant.const import ATTR_ENTITY_ID, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from unifi_official_api import (
+    UniFiGlobalAlarmManagerError,
+    UniFiNotFoundError,
+    UniFiResponseError,
+)
+from unifi_official_api.protect.endpoints.arm_profiles import (
+    ArmProfilesEndpoint,
+)
+from unifi_official_api.protect.models import NVR
 
 from custom_components.unifi_insights import alarm_control_panel as panel_platform
 from custom_components.unifi_insights.alarm_control_panel import (
@@ -37,15 +46,6 @@ from custom_components.unifi_insights.alarm_control_panel import (
     _epoch_ms_to_iso,
     async_setup_entry,
 )
-from custom_components.unifi_insights.api import (
-    UniFiGlobalAlarmManagerError,
-    UniFiNotFoundError,
-    UniFiResponseError,
-)
-from custom_components.unifi_insights.api.protect.endpoints.arm_profiles import (
-    ArmProfilesEndpoint,
-)
-from custom_components.unifi_insights.api.protect.models import NVR
 from custom_components.unifi_insights.const import DOMAIN
 from tests.fixtures.library_responses import SAMPLE_NVR, SAMPLE_NVR_WITH_ARM_MODE
 
@@ -190,7 +190,7 @@ def test_parallel_updates_value() -> None:
 
 
 def test_nvr_model_keeps_arm_mode() -> None:
-    """The vendored NVR model types armMode and round-trips it by alias."""
+    """The `unifi-official-api` NVR model types armMode and round-trips it by alias."""
     nvr = NVR.model_validate(SAMPLE_NVR_WITH_ARM_MODE)
 
     assert nvr.arm_mode is not None
@@ -598,7 +598,7 @@ async def test_real_endpoint_turns_the_400_into_the_translated_error(
     service: str,
     action: str,
 ) -> None:
-    """The live 400 body, through the real vendored endpoint and the facade."""
+    """The live 400 body, through the real library endpoint and the facade."""
     await _setup(hass, mock_config_entry, protect_client, nvr=_nvr())
     http = MagicMock()
     http.build_api_path = lambda path, site_id=None: f"/proxy/protect/v1{path}"

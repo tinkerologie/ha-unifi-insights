@@ -7,11 +7,12 @@ require a running Home Assistant instance.
 
 from __future__ import annotations
 
-from custom_components.unifi_insights.api.protect.models import Camera, CameraState
-from custom_components.unifi_insights.api.protect.models.viewer import (
+from unifi_official_api.protect.models import Camera, CameraState
+from unifi_official_api.protect.models.viewer import (
     Viewer,
     ViewerState,
 )
+
 from custom_components.unifi_insights.coordinators.config import UnifiConfigCoordinator
 
 

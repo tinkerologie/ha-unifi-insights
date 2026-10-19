@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, TypeAlias
 from homeassistant.config_entries import ConfigEntry
 
 if TYPE_CHECKING:
-    from .api.carrier_fabric.client import UniFiCarrierFabricClient
+    from unifi_official_api.carrier_fabric.client import UniFiCarrierFabricClient
+
     from .coordinators.carrier_fabric import UnifiCarrierFabricCoordinator
 
 

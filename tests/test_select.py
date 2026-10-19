@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.exceptions import HomeAssistantError
+from unifi_official_api import ApiKeyAuth, ConnectionType
+from unifi_official_api.protect import UniFiProtectClient
 
-from custom_components.unifi_insights.api import ApiKeyAuth, ConnectionType
-from custom_components.unifi_insights.api.protect import UniFiProtectClient
 from custom_components.unifi_insights.const import (
     DEVICE_TYPE_CAMERA,
     DEVICE_TYPE_CHIME,
@@ -752,7 +752,7 @@ class TestUnifiProtectChimeRingtoneSelect:
     async def test_async_select_option_legacy_fallback(
         self, ringtone_coordinator: MagicMock
     ) -> None:
-        """The fallback uses the real vendored ringtone endpoint."""
+        """The fallback uses the real `unifi-official-api` ringtone endpoint."""
         del ringtone_coordinator.async_set_chime_ringtone
         ringtone_coordinator.protect_client.chimes.set_ringtone = AsyncMock()
         entity = UnifiProtectChimeRingtoneSelect(

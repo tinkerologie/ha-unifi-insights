@@ -19,8 +19,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import async_track_time_interval
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiGlobalAlarmManagerError,
@@ -28,7 +27,8 @@ from custom_components.unifi_insights.api import (
     UniFiResponseError,
     UniFiTimeoutError,
 )
-from custom_components.unifi_insights.api.const import PROTECT_RATE_LIMIT_WINDOW
+from unifi_official_api.const import PROTECT_RATE_LIMIT_WINDOW
+
 from custom_components.unifi_insights.const import (
     DEVICE_TYPE_CAMERA,
     DEVICE_TYPE_CHIME,
@@ -54,9 +54,8 @@ if TYPE_CHECKING:
 
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
-
-    from custom_components.unifi_insights.api.network import UniFiNetworkClient
-    from custom_components.unifi_insights.api.protect import UniFiProtectClient
+    from unifi_official_api.network import UniFiNetworkClient
+    from unifi_official_api.protect import UniFiProtectClient
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1711,7 +1710,7 @@ class UnifiProtectCoordinator(UnifiBaseCoordinator):
 
         self.data["events"][event_type][event_id] = event_data
 
-        # UNVALIDATED (see class docstring): api/protect/models/event.py's
+        # UNVALIDATED (see class docstring): the library's Protect
         # `Event` model has no generic "device" field - only camera/
         # cameraId or sensor/sensorId. "device" is checked first to keep
         # existing direct-call tests/behavior unchanged; the rest are
@@ -2286,7 +2285,7 @@ class UnifiProtectCoordinator(UnifiBaseCoordinator):
         ~30s from REST models that carry no `lastMotionStart`/`lastRingStart`
         field at all - those are only ever written by a paired WebSocket
         "start" event (see `_apply_motion_event`/`_apply_ring_event`), never
-        by the REST API (confirmed: api/protect/models/camera.py declares
+        by the REST API (confirmed: unifi_official_api/protect/models/camera.py declares
         neither field). Without this, a still-armed tracker survives the
         rebuild pointing at a camera dict that now has no "start" (or "end")
         field either, and ~5 minutes later `_reconcile_stale_events` treats

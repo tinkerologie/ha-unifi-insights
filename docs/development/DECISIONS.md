@@ -19,23 +19,24 @@ An accepted ADR is never edited to change its meaning. A new ADR supersedes it i
 
 ## Decision log
 
-| ADR                                                                  | Title                                                      | Status   | Date       |
-| -------------------------------------------------------------------- | ---------------------------------------------------------- | -------- | ---------- |
-| [001](./adr/001-record-architecture-decisions.md)                    | Record architecture decisions                              | Accepted | 2026-10-16 |
-| [002](./adr/002-multi-coordinator-architecture-behind-a-facade.md)   | Multi-coordinator architecture behind a facade             | Accepted | 2026-10-16 |
-| [003](./adr/003-vendor-the-unifi-api-client.md)                      | Vendor the UniFi API client inside the integration         | Accepted | 2026-10-16 |
-| [004](./adr/004-stable-console-identity-for-unique-ids.md)           | Stable console identity for config entry unique IDs        | Accepted | 2026-10-16 |
-| [005](./adr/005-bundled-dashboard-cards-with-versioned-contracts.md) | Bundled dashboard cards with versioned WebSocket contracts | Accepted | 2026-10-16 |
-| [006](./adr/006-three-layer-diagnostics-redaction.md)                | Three-layer diagnostics redaction                          | Accepted | 2026-10-16 |
-| [007](./adr/007-flat-home-assistant-module-layout.md)                | Flat Home Assistant module layout                          | Proposed | 2026-10-16 |
+| ADR                                                                  | Title                                                      | Status                | Date       |
+| -------------------------------------------------------------------- | ---------------------------------------------------------- | --------------------- | ---------- |
+| [001](./adr/001-record-architecture-decisions.md)                    | Record architecture decisions                              | Accepted              | 2026-10-16 |
+| [002](./adr/002-multi-coordinator-architecture-behind-a-facade.md)   | Multi-coordinator architecture behind a facade             | Accepted              | 2026-10-16 |
+| [003](./adr/003-vendor-the-unifi-api-client.md)                      | Vendor the UniFi API client inside the integration         | Superseded by ADR-008 | 2026-10-16 |
+| [004](./adr/004-stable-console-identity-for-unique-ids.md)           | Stable console identity for config entry unique IDs        | Accepted              | 2026-10-16 |
+| [005](./adr/005-bundled-dashboard-cards-with-versioned-contracts.md) | Bundled dashboard cards with versioned WebSocket contracts | Accepted              | 2026-10-16 |
+| [006](./adr/006-three-layer-diagnostics-redaction.md)                | Three-layer diagnostics redaction                          | Accepted              | 2026-10-16 |
+| [007](./adr/007-flat-home-assistant-module-layout.md)                | Flat Home Assistant module layout                          | Proposed              | 2026-10-16 |
+| [008](./adr/008-depend-on-unifi-official-api-from-pypi.md)           | Depend on `unifi-official-api` from PyPI                   | Accepted              | 2026-10-19 |
 
 ### Multi-coordinator architecture behind a facade
 
 One `DataUpdateCoordinator` per data domain (Config 5 min, Device 30 s, Protect 30 s plus WebSocket, Access 30 s plus webhook, InnerSpace 5 min, Site Manager 10 min, Mobility 5 min, Carrier Fabric 5 min), aggregated by a push-only facade coordinator that entities and services read from. Keeps expensive configuration polls off the 30 s path and gives every data source its own error and recovery handling. [ADR-002](./adr/002-multi-coordinator-architecture-behind-a-facade.md)
 
-### Vendor the UniFi API client inside the integration
+### Vendor the UniFi API client inside the integration (superseded)
 
-The upstream `unifi-official-api` package is copied into `custom_components/unifi_insights/api/` and held to the same typing and 95% per-file coverage rules as the integration. Contract fixes against the official OpenAPI specs ship with the integration instead of waiting for a PyPI release. [ADR-003](./adr/003-vendor-the-unifi-api-client.md)
+From release 2026.3.0 the upstream `unifi-official-api` package was copied into `custom_components/unifi_insights/api/` so contract fixes could ship without waiting for a PyPI release. Superseded by ADR-008. [ADR-003](./adr/003-vendor-the-unifi-api-client.md)
 
 ### Stable console identity for config entry unique IDs
 
@@ -51,7 +52,11 @@ Diagnostics pass through `TO_REDACT`, then `CLIENT_TO_REDACT` / `WIFI_TO_REDACT`
 
 ### Flat Home Assistant module layout (proposed)
 
-Consolidate 57 root modules into 33 by moving every base entity into `entity.py`, every platform entity into its standard platform module, pure helpers into `data_transforms.py`, dashboard builders into `dashboard_snapshots.py`, and topology helpers into `topology.py`. Keep exactly two subpackages, `coordinators/` and the vendored `api/`, until `api/` moves back upstream; then `coordinators/` is the only one (201 to 48 Python files). No module goes over about 2,000 lines: when one grows past that, deepen it rather than split it, and land the file moves after #337 to #339. Tracked in [#341](https://github.com/tinkerologie/ha-unifi-insights/issues/341), part of [#343](https://github.com/tinkerologie/ha-unifi-insights/issues/343). [ADR-007](./adr/007-flat-home-assistant-module-layout.md)
+Consolidate 57 root modules into 33 by moving every base entity into `entity.py`, every platform entity into its standard platform module, pure helpers into `data_transforms.py`, dashboard builders into `dashboard_snapshots.py`, and topology helpers into `topology.py`. `coordinators/` is the only subpackage now that #345 removed the vendored `api/` (199 to 71 Python files, and 48 after #341). No module goes over about 2,000 lines: when one grows past that, deepen it rather than split it, and land the file moves after #337 to #339. Tracked in [#341](https://github.com/tinkerologie/ha-unifi-insights/issues/341), part of [#343](https://github.com/tinkerologie/ha-unifi-insights/issues/343). [ADR-007](./adr/007-flat-home-assistant-module-layout.md)
+
+### Depend on `unifi-official-api` from PyPI
+
+`manifest.json` pins `unifi-official-api[talkback]==2.0.0`, published to PyPI by the upstream release workflow at a tagged release, and the vendored `api/` package (128 files, about 17,400 lines) is deleted. This meets the `dependency-transparency` rule. API contract fixes now go to `tinkerologie/unifi-official-api` first and reach the integration through a pin bump; no local shims. Implemented in [#345](https://github.com/tinkerologie/ha-unifi-insights/issues/345). [ADR-008](./adr/008-depend-on-unifi-official-api-from-pypi.md)
 
 ---
 
@@ -74,12 +79,6 @@ The integration does not create repair issues, and the unused repair-flow scaffo
 **Status:** not implemented
 
 Consoles are added manually through the user step. Zeroconf, DHCP, and SSDP matchers in `manifest.json` are empty; add them (and a `discovery-update-info` path) only if UniFi consoles can be matched reliably without false positives.
-
-### Move the API client back to `unifi-official-api`
-
-**Status:** planned ([tinkerologie/unifi-official-api#41](https://github.com/tinkerologie/unifi-official-api/issues/41), sequenced after #330)
-
-[ADR-003](./adr/003-vendor-the-unifi-api-client.md) vendored the client so spec fixes could ship without a second release train. Since then the two copies have diverged in both directions: about 6,900 differing lines across shared files, plus an Access client and nine Network endpoint families that exist only in the vendored copy, and a cleaner `endpoints/` + `models/` layout that exists only upstream. Home Assistant's `dependency-transparency` rule and development checklist want device communication in a PyPI library published from CI at a tagged release. The plan is to port the vendored tree (the tested, spec-aligned copy) into the upstream repository, remove the `HomeAssistant` dependency in `protect/talkback.py`, release 2.0.0, then switch `manifest.json` to the requirement and delete `api/` (128 files, about 17,000 lines). That change will be recorded as ADR-008 superseding ADR-003. It is sequenced after #330, which already excludes `api/`; nobody should optimize the vendored tree during the consolidation.
 
 ---
 

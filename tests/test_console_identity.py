@@ -22,6 +22,7 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from unifi_official_api import UniFiResponseError
 
 from custom_components.unifi_insights import (
     _first_site_id,
@@ -29,7 +30,6 @@ from custom_components.unifi_insights import (
     async_migrate_entry,
     async_setup_entry,
 )
-from custom_components.unifi_insights.api import UniFiResponseError
 from custom_components.unifi_insights.config_flow import UnifiInsightsConfigFlow
 from custom_components.unifi_insights.console_identity import first_non_default_site_id
 from custom_components.unifi_insights.const import (

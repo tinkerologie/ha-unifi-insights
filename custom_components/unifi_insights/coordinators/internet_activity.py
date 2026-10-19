@@ -8,7 +8,7 @@ import logging
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from custom_components.unifi_insights.api.network.models.report import SiteReportBucket
+from unifi_official_api.network.models.report import SiteReportBucket
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence

@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.diagnostics import REDACTED, async_redact_data
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
+from unifi_official_api import __version__ as api_version
+from unifi_official_api.const import SENSITIVE_CREDENTIAL_KEYS
 
-from .api import __version__ as api_version
-from .api.const import SENSITIVE_CREDENTIAL_KEYS
 from .carrier_fabric_data import CarrierFabricData
 from .const import (
     CONF_ACCESS_WEBHOOK_ENDPOINT_ID,

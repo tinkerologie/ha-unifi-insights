@@ -13,17 +13,17 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import UpdateFailed
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiResponseError,
     UniFiTimeoutError,
 )
-from custom_components.unifi_insights.api.network.models import (
+from unifi_official_api.network.models import (
     device_id_is_mac,
     parse_outlet_metrics,
 )
+
 from custom_components.unifi_insights.const import DOMAIN, SCAN_INTERVAL_DEVICE
 from custom_components.unifi_insights.data_transforms import (
     normalize_legacy_storage,
@@ -38,9 +38,8 @@ if TYPE_CHECKING:
 
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
-
-    from custom_components.unifi_insights.api.network import UniFiNetworkClient
-    from custom_components.unifi_insights.api.protect import UniFiProtectClient
+    from unifi_official_api.network import UniFiNetworkClient
+    from unifi_official_api.protect import UniFiProtectClient
 
     from .config import UnifiConfigCoordinator
 
@@ -732,7 +731,7 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
                 )
                 stats = self._model_to_dict(stats_model) if stats_model else {}
 
-            # Use vendored API for legacy per-port PoE/byte metrics & system stats
+            # Use the library client for legacy per-port PoE/byte metrics & system stats
             try:
                 device_mac = (
                     device_dict.get("mac")

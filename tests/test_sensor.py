@@ -36,9 +36,10 @@ if TYPE_CHECKING:
         UnifiStorageSensorEntityDescription,
     )
 
-from custom_components.unifi_insights.api.protect.models.sensor import (
+from unifi_official_api.protect.models.sensor import (
     Sensor as ProtectSensorModel,
 )
+
 from custom_components.unifi_insights.const import (
     CONF_CONNECTION_TYPE,
     CONF_CONSOLE_ID,

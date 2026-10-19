@@ -35,7 +35,7 @@ Consult the relevant instruction file when working on specific file types:
 - `entities.instructions.md` — Entity platform patterns, MRO, HA 2026.10+ lifecycle hooks & device registry rules
 - `config_flow.instructions.md` — Config/options flows, `probatio` schemas, selectors, reauth/reconfigure
 - `coordinator.instructions.md` — Multi-coordinator architecture and `DataUpdateCoordinator` patterns
-- `api.instructions.md` — Vendored API client, `inject-websession`, exception hierarchy
+- `api.instructions.md` — `unifi-official-api` library, `inject-websession`, exception hierarchy
 - `service_actions.instructions.md` — Service action registration (`async_setup`), console routing, translated exceptions
 - `services_yaml.instructions.md` — Service action YAML schemas and selector rules
 - `diagnostics.instructions.md` — Three-layer redaction (`TO_REDACT`, client/WiFi redaction, `_anonymize_macs`)

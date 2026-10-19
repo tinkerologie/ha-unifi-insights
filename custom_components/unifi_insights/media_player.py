@@ -26,9 +26,9 @@ from .entity import UnifiProtectEntity, camera_supports_speaker
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
+    from unifi_official_api.protect.talkback import TalkbackStream
 
     from . import UnifiInsightsConfigEntry
-    from .api.protect.talkback import TalkbackStream
     from .coordinators import UnifiFacadeCoordinator
 
 _LOGGER = logging.getLogger(__name__)

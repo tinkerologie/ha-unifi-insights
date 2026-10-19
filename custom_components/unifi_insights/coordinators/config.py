@@ -10,15 +10,15 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiNotFoundError,
     UniFiResponseError,
     UniFiTimeoutError,
 )
-from custom_components.unifi_insights.api.validation import sanitized_validation_fields
+from unifi_official_api.validation import sanitized_validation_fields
+
 from custom_components.unifi_insights.const import CONF_SITE_IDS, SCAN_INTERVAL_CONFIG
 
 from .base import UnifiBaseCoordinator
@@ -65,9 +65,8 @@ if TYPE_CHECKING:
 
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
-
-    from custom_components.unifi_insights.api.network import UniFiNetworkClient
-    from custom_components.unifi_insights.api.protect import UniFiProtectClient
+    from unifi_official_api.network import UniFiNetworkClient
+    from unifi_official_api.protect import UniFiProtectClient
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -27,14 +27,14 @@ from homeassistant.helpers.target import (
     TargetSelection,
     async_extract_referenced_entity_ids,
 )
-
-from .api import (
+from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiError,
     UniFiNotFoundError,
     UniFiResponseError,
 )
-from .api.network.models.client import ClientType
+from unifi_official_api.network.models.client import ClientType
+
 from .button import get_device_port, port_can_be_power_cycled
 from .carrier_fabric_data import CarrierFabricData
 from .const import (

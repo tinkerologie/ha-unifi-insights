@@ -12,14 +12,15 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
 )
-from custom_components.unifi_insights.api.network.endpoints.vouchers import (
+from unifi_official_api.network.endpoints.vouchers import (
     VouchersEndpoint,
 )
-from custom_components.unifi_insights.api.network.models.voucher import Voucher
+from unifi_official_api.network.models.voucher import Voucher
+
 from custom_components.unifi_insights.coordinators.facade import (
     UnifiFacadeCoordinator,
 )

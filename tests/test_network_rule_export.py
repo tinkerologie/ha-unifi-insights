@@ -21,16 +21,15 @@ from homeassistant.exceptions import (
     ServiceValidationError,
     Unauthorized,
 )
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     ApiKeyAuth,
     ConnectionType,
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiNotFoundError,
 )
-from custom_components.unifi_insights.api.network.client import UniFiNetworkClient
-from custom_components.unifi_insights.api.network.models import (
+from unifi_official_api.network.client import UniFiNetworkClient
+from unifi_official_api.network.models import (
     FirewallRule,
     NatRule,
     PolicyBasedRoute,
@@ -38,6 +37,7 @@ from custom_components.unifi_insights.api.network.models import (
     StaticRoute,
     TrafficRule,
 )
+
 from custom_components.unifi_insights.const import (
     DOMAIN,
     SERVICE_EXPORT_NETWORK_RULES,
@@ -57,13 +57,13 @@ from custom_components.unifi_insights.services import (
     async_setup_services,
     async_unload_services,
 )
+from tests.fixtures.http_fakes import FakeJsonResponse
 from tests.fixtures.network_rule_responses import (
     nat_rule_record,
     port_forward_record,
     static_route_record,
     traffic_rule_record,
 )
-from tests.test_api_network_rule_endpoints import _Response
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -546,13 +546,17 @@ class _RoutedSession:
         self._bodies = {**_EMPTY_ANSWER, **bodies}
         self.requests: list[str] = []
 
-    def request(self, method: str, url: object, **kwargs: Any) -> _Response:
+    def request(self, method: str, url: object, **kwargs: Any) -> FakeJsonResponse:
         path = str(url)
         self.requests.append(path)
         for rule_type, end in _PATH_ENDS.items():
             if path.endswith(end):
                 body = self._bodies[rule_type]
-                return body if isinstance(body, _Response) else _Response(body)
+                return (
+                    body
+                    if isinstance(body, FakeJsonResponse)
+                    else FakeJsonResponse(body)
+                )
         msg = f"unexpected request {method} {path}"
         raise AssertionError(msg)
 
@@ -689,7 +693,7 @@ async def test_export_non_json_answer_is_failed(
     """A 2xx answer that is not JSON is a failed read, not an absent list."""
     caplog.set_level(logging.DEBUG)
 
-    document = await _export_real({rule_type: _Response(body, is_json=False)})
+    document = await _export_real({rule_type: FakeJsonResponse(body, is_json=False)})
 
     types = document["sites"]["site1"]["rule_types"]
     assert types[rule_type] == {"status": "failed", "count": 0, "rules": []}
@@ -703,7 +707,7 @@ async def test_export_non_json_answer_is_failed(
 async def test_export_all_non_json_raises_export_failed() -> None:
     """When every list answers a login page, the action fails."""
     bodies = {
-        rule_type: _Response("<html>Sign in</html>", is_json=False)
+        rule_type: FakeJsonResponse("<html>Sign in</html>", is_json=False)
         for rule_type in RULE_TYPES
     }
 
@@ -719,7 +723,7 @@ async def test_export_refused_request_is_unsupported(
     rule_type: str, status: int
 ) -> None:
     """A console that refuses a list (403, 404, other 4xx) does not offer it."""
-    document = await _export_real({rule_type: _Response(None, status=status)})
+    document = await _export_real({rule_type: FakeJsonResponse(None, status=status)})
 
     types = document["sites"]["site1"]["rule_types"]
     assert types[rule_type] == {"status": "unsupported", "count": 0, "rules": []}

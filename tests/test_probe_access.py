@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import json
 
-from custom_components.unifi_insights.api.access import UniFiAccessClient
+from unifi_official_api.access import UniFiAccessClient
+
 from custom_components.unifi_insights.probe import ProbeStatus, async_probe_access
-from tests.test_api_access_client import FakeResponse, fake_session
+from tests.fixtures.http_fakes import FakeResponse, fake_session
 
 
 def _client(*responses: FakeResponse) -> UniFiAccessClient:

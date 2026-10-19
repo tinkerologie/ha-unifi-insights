@@ -14,13 +14,13 @@ from homeassistant.helpers import (
     entity_registry as er,
 )
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-from custom_components.unifi_insights import CarrierFabricData
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiError,
     UniFiResponseError,
 )
+
+from custom_components.unifi_insights import CarrierFabricData
 from custom_components.unifi_insights.const import (
     CONF_CARRIER_ACTIONS,
     CONF_CARRIER_ORG_ID,

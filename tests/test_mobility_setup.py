@@ -10,9 +10,9 @@ import pytest
 from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from unifi_official_api import UniFiAuthenticationError
 
 from custom_components.unifi_insights import async_remove_config_entry_device
-from custom_components.unifi_insights.api import UniFiAuthenticationError
 from custom_components.unifi_insights.const import DOMAIN
 from tests.fixtures.mobility_responses import (
     OFFICE_ROUTER_ID,

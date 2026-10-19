@@ -12,12 +12,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from homeassistant import config_entries
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiRateLimitError,
     UniFiResponseError,
 )
-from custom_components.unifi_insights.api.const import DEFAULT_RATE_LIMIT_RETRY_AFTER
+from unifi_official_api.const import DEFAULT_RATE_LIMIT_RETRY_AFTER
+
 from custom_components.unifi_insights.const import DOMAIN
 from custom_components.unifi_insights.coordinators.site_manager import (
     _ACCOUNT_REGISTRY,

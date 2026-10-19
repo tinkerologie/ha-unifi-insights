@@ -15,13 +15,14 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
+from unifi_official_api.auth import ApiKeyAuth, LocalAuth
+from unifi_official_api.const import ConnectionType
+from unifi_official_api.exceptions import UniFiValidationError
+from unifi_official_api.innerspace import UniFiInnerSpaceClient
+from unifi_official_api.innerspace import client as innerspace_client
+from unifi_official_api.innerspace.models import InnerSpaceFloorPlan
+
 from custom_components.unifi_insights import innerspace_transforms
-from custom_components.unifi_insights.api.auth import ApiKeyAuth, LocalAuth
-from custom_components.unifi_insights.api.const import ConnectionType
-from custom_components.unifi_insights.api.exceptions import UniFiValidationError
-from custom_components.unifi_insights.api.innerspace import UniFiInnerSpaceClient
-from custom_components.unifi_insights.api.innerspace import client as innerspace_client
-from custom_components.unifi_insights.api.innerspace.models import InnerSpaceFloorPlan
 from custom_components.unifi_insights.const import DOMAIN
 from custom_components.unifi_insights.coordinators import UnifiFacadeCoordinator
 from custom_components.unifi_insights.diagnostics import (

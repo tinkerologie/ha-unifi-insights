@@ -24,11 +24,12 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
-from custom_components.unifi_insights.api import ApiKeyAuth, ConnectionType
-from custom_components.unifi_insights.api.network.models.routes import (
+from unifi_official_api import ApiKeyAuth, ConnectionType
+from unifi_official_api.network.models.routes import (
     PolicyBasedRoute,
 )
-from custom_components.unifi_insights.api.protect import UniFiProtectClient
+from unifi_official_api.protect import UniFiProtectClient
+
 from custom_components.unifi_insights.const import (
     ATTR_CAMERA_ID,
     ATTR_CAMERA_NAME,

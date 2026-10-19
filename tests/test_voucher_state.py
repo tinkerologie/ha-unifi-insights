@@ -8,8 +8,8 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from unifi_official_api.network.models.voucher import Voucher
 
-from custom_components.unifi_insights.api.network.models.voucher import Voucher
 from custom_components.unifi_insights.coordinators.voucher_state import (
     DATA_LIMIT_MBYTES_RANGE,
     GUEST_LIMIT_UI_MAX,

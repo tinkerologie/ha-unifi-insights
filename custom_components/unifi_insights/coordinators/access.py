@@ -14,8 +14,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiError,
@@ -24,13 +23,14 @@ from custom_components.unifi_insights.api import (
     UniFiTimeoutError,
     UniFiValidationError,
 )
-from custom_components.unifi_insights.api.access import (
+from unifi_official_api.access import (
     GATE_COMMANDS,
     GateCommand,
 )
-from custom_components.unifi_insights.api.access.websocket import (
+from unifi_official_api.access.websocket import (
     AccessNotificationSocket,
 )
+
 from custom_components.unifi_insights.console_identity import (
     normalize_console_namespace,
 )
@@ -46,12 +46,11 @@ if TYPE_CHECKING:
 
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
-
-    from custom_components.unifi_insights.api.access import UniFiAccessClient
-    from custom_components.unifi_insights.api.access.models.devices import (
+    from unifi_official_api.access import UniFiAccessClient
+    from unifi_official_api.access.models.devices import (
         AccessDevice,
     )
-    from custom_components.unifi_insights.api.access.models.doors import AccessDoor
+    from unifi_official_api.access.models.doors import AccessDoor
 
 _LOGGER = logging.getLogger(__name__)
 

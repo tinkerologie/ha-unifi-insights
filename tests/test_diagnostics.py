@@ -16,9 +16,10 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.unifi_insights.api import __version__
-from custom_components.unifi_insights.api.const import SENSITIVE_CREDENTIAL_KEYS
-from custom_components.unifi_insights.api.network.models.client import Client
+from unifi_official_api import __version__
+from unifi_official_api.const import SENSITIVE_CREDENTIAL_KEYS
+from unifi_official_api.network.models.client import Client
+
 from custom_components.unifi_insights.const import (
     CONF_ACCESS_WEBHOOK_ENDPOINT_ID,
     CONF_ACCESS_WEBHOOK_ID,

@@ -16,18 +16,18 @@ from homeassistant.const import CONF_API_KEY
 from homeassistant.core import callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util.hass_dict import HassKey
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     ApiKeyAuth,
     UniFiAuthenticationError,
     UniFiError,
     UniFiRateLimitError,
     UniFiResponseError,
 )
-from custom_components.unifi_insights.api.mobility import (
+from unifi_official_api.mobility import (
     UniFiMobilityClient,
     is_valid_mobility_id,
 )
+
 from custom_components.unifi_insights.const import (
     CONF_CONNECTION_TYPE,
     CONNECTION_TYPE_REMOTE,

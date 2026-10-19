@@ -1,7 +1,7 @@
 # ADR-003: Vendor the UniFi API client inside the integration
 
 **Date:** 2026-10-16 (recorded retroactively; vendored in release 2026.3.0)
-**Status:** Accepted
+**Status:** Superseded by [ADR-008](./008-depend-on-unifi-official-api-from-pypi.md) (2026-10-19)
 
 ## Context
 

@@ -11,12 +11,12 @@ from unittest.mock import MagicMock
 import pytest
 from homeassistant.components.diagnostics import REDACTED, async_redact_data
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-from custom_components.unifi_insights.api.access.models import (
+from unifi_official_api.access.models import (
     AccessDevice,
     AccessDoor,
     AccessUser,
 )
+
 from custom_components.unifi_insights.const import (
     CONF_ACCESS_TOKEN,
     CONF_ACCESS_WEBHOOK_ENDPOINT_ID,

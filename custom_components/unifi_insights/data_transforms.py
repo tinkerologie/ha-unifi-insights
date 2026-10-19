@@ -1,8 +1,8 @@
 # Copyright 2026 UniFi Insights contributors
 """
-Data transformation functions for vendored UniFi API responses.
+Data transformation functions for `unifi-official-api` responses.
 
-This module provides transformation functions to convert vendored API
+This module provides transformation functions to convert `unifi-official-api`
 response formats to the internal data structures expected by entities,
 maintaining backward compatibility.
 """

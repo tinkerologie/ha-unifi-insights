@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
+from unifi_official_api.exceptions import UniFiResponseError
 
-from custom_components.unifi_insights.api.exceptions import UniFiResponseError
 from custom_components.unifi_insights.const import DOMAIN
 
 from .config_sections import (
@@ -25,7 +25,7 @@ from .rule_audit import RULE_FAMILIES
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
 
-    from custom_components.unifi_insights.api.network import UniFiNetworkClient
+    from unifi_official_api.network import UniFiNetworkClient
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -19,8 +19,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from pydantic import ValidationError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     ApiKeyAuth,
     ConnectionType,
     UniFiAuthenticationError,
@@ -32,7 +31,7 @@ from custom_components.unifi_insights.api import (
     UniFiRuleNotEditableError,
     UniFiTimeoutError,
 )
-from custom_components.unifi_insights.api.innerspace import (
+from unifi_official_api.innerspace import (
     InnerSpaceAccessPoint,
     InnerSpaceFloorPlan,
     InnerSpaceInventoryDevice,
@@ -41,17 +40,17 @@ from custom_components.unifi_insights.api.innerspace import (
     InnerSpaceSwitch,
     UniFiInnerSpaceClient,
 )
-from custom_components.unifi_insights.api.network.endpoints.vouchers import (
+from unifi_official_api.network.endpoints.vouchers import (
     VouchersEndpoint,
 )
-from custom_components.unifi_insights.api.network.models import (
+from unifi_official_api.network.models import (
     LegacyPortMetrics,
     PortBytesMetrics,
     SiteReportBucket,
 )
-from custom_components.unifi_insights.api.protect import UniFiProtectClient
-from custom_components.unifi_insights.api.protect.endpoints.chimes import ChimesEndpoint
-from custom_components.unifi_insights.api.protect.models import (
+from unifi_official_api.protect import UniFiProtectClient
+from unifi_official_api.protect.endpoints.chimes import ChimesEndpoint
+from unifi_official_api.protect.models import (
     Camera,
     Chime,
     Fob,
@@ -63,10 +62,11 @@ from custom_components.unifi_insights.api.protect.models import (
     TalkbackSession,
     Viewer,
 )
-from custom_components.unifi_insights.api.protect.talkback import (
+from unifi_official_api.protect.talkback import (
     TalkbackSchemeError,
     TalkbackStreamError,
 )
+
 from custom_components.unifi_insights.const import (
     CONF_CONNECTION_TYPE,
     CONF_SITE_IDS,
@@ -4888,7 +4888,7 @@ class TestUnifiProtectCoordinator:
         actual field name), not just the invented "device" key.
 
         UNVALIDATED (task 3): the real `Event` model
-        (api/protect/models/event.py) has no generic "device" field - only
+        (unifi_official_api.protect.models.event) has no generic "device" field - only
         `camera`/`cameraId` or `sensor`/`sensorId`. Before this fix,
         `_process_event_for_device` was unreachable dead code in practice
         because it only ever looked for "device".
@@ -6439,7 +6439,7 @@ class TestUnifiProtectCoordinator:
 
         # The mock protect client's default camera fixture returns
         # "camera1" but with no lastMotionStart/lastMotionEnd fields at all
-        # (matching the real REST model - see api/protect/models/camera.py).
+        # (matching the library REST model, unifi_official_api.protect.models.camera).
         await coordinator._fetch_cameras()
 
         assert "lastMotionStart" not in coordinator.data["cameras"]["camera1"]
@@ -8071,7 +8071,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_play_chime(self, facade_coordinator: UnifiFacadeCoordinator):
-        """The vendored no-I/O stub surfaces a translated unsupported error."""
+        """The library no-I/O stub surfaces a translated unsupported error."""
         client = facade_coordinator.protect_client
         assert client is not None
         with (
@@ -8288,7 +8288,9 @@ class TestUnifiFacadeCoordinator:
                 "cam1"
             )
             mock_stream_cls.assert_called_once_with(
-                session, "http://media.local/audio.mp3", facade_coordinator.hass
+                session,
+                "http://media.local/audio.mp3",
+                loop=facade_coordinator.hass.loop,
             )
             mock_stream.start.assert_called_once()
 

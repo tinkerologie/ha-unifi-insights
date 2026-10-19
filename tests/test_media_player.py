@@ -17,9 +17,9 @@ from homeassistant.components.media_player import (
     MediaType,
 )
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from unifi_official_api.protect.models.files import TalkbackSession
+from unifi_official_api.protect.talkback import TalkbackStream
 
-from custom_components.unifi_insights.api.protect.models.files import TalkbackSession
-from custom_components.unifi_insights.api.protect.talkback import TalkbackStream
 from custom_components.unifi_insights.const import (
     CAMERA_STATE_CONNECTED,
     DOMAIN,
@@ -789,7 +789,9 @@ class TestUnifiProtectCameraSpeaker:
             samplingRate=24000,
             bitsPerSample=16,
         )
-        stream = TalkbackStream(session, "http://processed.local/test.mp3", hass)
+        stream = TalkbackStream(
+            session, "http://processed.local/test.mp3", loop=hass.loop
+        )
 
         transcoder_started = threading.Event()
 
@@ -821,10 +823,7 @@ class TestUnifiProtectCameraSpeaker:
                 return_value="http://processed.local/test.mp3",
             ),
             patch(
-                (
-                    "custom_components.unifi_insights.api.protect.talkback"
-                    "._transcode_and_stream"
-                ),
+                ("unifi_official_api.protect.talkback._transcode_and_stream"),
                 side_effect=_mock_transcode,
             ),
         ):

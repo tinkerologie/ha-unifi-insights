@@ -20,11 +20,11 @@ from homeassistant.exceptions import (
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from unifi_official_api import ApiKeyAuth, ConnectionType
+from unifi_official_api.protect import UniFiProtectClient
 from yarl import URL
 
 from custom_components.unifi_insights import services
-from custom_components.unifi_insights.api import ApiKeyAuth, ConnectionType
-from custom_components.unifi_insights.api.protect import UniFiProtectClient
 from custom_components.unifi_insights.services import (
     SERVICE_AUTHORIZE_GUEST,
     SERVICE_PLAY_CHIME_RINGTONE,
@@ -55,8 +55,9 @@ from custom_components.unifi_insights.services import (
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
-from custom_components.unifi_insights.api.network.client import UniFiNetworkClient
-from custom_components.unifi_insights.api.network.models.client import ClientType
+from unifi_official_api.network.client import UniFiNetworkClient
+from unifi_official_api.network.models.client import ClientType
+
 from custom_components.unifi_insights.const import DOMAIN, SERVICE_POWER_CYCLE_PORT
 from custom_components.unifi_insights.coordinators.access import (
     UnifiInsightsAccessCoordinator,

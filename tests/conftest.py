@@ -10,9 +10,9 @@ import pytest
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
 from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from unifi_official_api.exceptions import UniFiUnsupportedError
+from unifi_official_api.innerspace import InnerSpaceProject
 
-from custom_components.unifi_insights.api.exceptions import UniFiUnsupportedError
-from custom_components.unifi_insights.api.innerspace import InnerSpaceProject
 from custom_components.unifi_insights.const import (
     CONF_CONNECTION_TYPE,
     CONNECTION_TYPE_LOCAL,

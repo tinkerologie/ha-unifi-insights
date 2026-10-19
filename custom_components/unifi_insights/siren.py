@@ -16,12 +16,12 @@ from homeassistant.core import callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
-
-from .api.protect.endpoints.sirens import (
+from unifi_official_api.protect.endpoints.sirens import (
     SIREN_PLAY_DURATIONS,
     SIREN_VOLUME_MAX,
     SIREN_VOLUME_MIN,
 )
+
 from .const import DEVICE_TYPE_SIREN, DOMAIN
 from .entity import UnifiProtectEntity
 

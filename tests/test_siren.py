@@ -31,13 +31,13 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
-
-from custom_components.unifi_insights import siren as siren_platform
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiNotFoundError,
     UniFiResponseError,
 )
-from custom_components.unifi_insights.api.protect.models import Siren
+from unifi_official_api.protect.models import Siren
+
+from custom_components.unifi_insights import siren as siren_platform
 from custom_components.unifi_insights.const import DOMAIN
 from custom_components.unifi_insights.siren import (
     PARALLEL_UPDATES,

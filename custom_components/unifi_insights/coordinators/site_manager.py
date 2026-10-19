@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util.hass_dict import HassKey
+from unifi_official_api import ApiKeyAuth, UniFiRateLimitError
+from unifi_official_api.const import DEFAULT_RATE_LIMIT_RETRY_AFTER
+from unifi_official_api.site_manager import UniFiSiteManagerClient
 
-from custom_components.unifi_insights.api import ApiKeyAuth, UniFiRateLimitError
-from custom_components.unifi_insights.api.const import DEFAULT_RATE_LIMIT_RETRY_AFTER
-from custom_components.unifi_insights.api.site_manager import UniFiSiteManagerClient
 from custom_components.unifi_insights.const import (
     DOMAIN,
     ISP_WAN_NUMBERS,

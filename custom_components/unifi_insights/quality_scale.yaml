@@ -23,8 +23,10 @@ rules:
     status: done
     comment: Full pytest coverage.xml reports 100% line and branch coverage for config_flow.py.
   dependency-transparency:
-    status: todo
-    comment: Vendored api/ awaits PyPI extraction per docs/development/DECISIONS.md.
+    status: done
+    comment: >-
+      manifest.json pins unifi-official-api 2.0.0, published to PyPI by its
+      release workflow at a tagged release (ADR-008).
   docs-actions:
     status: done
     comment: README.md documents Network, Protect, Access and Carrier Fabric actions.
@@ -173,7 +175,7 @@ rules:
   async-dependency:
     status: done
     comment: >-
-      Vendored api/ clients use asyncio and aiohttp for network I/O; segno renders
+      unifi-official-api clients use asyncio and aiohttp for network I/O; segno renders
       QR codes into in-memory BytesIO buffers in image.py without external I/O.
   inject-websession:
     status: done
@@ -181,5 +183,5 @@ rules:
   strict-typing:
     status: todo
     comment: >-
-      py.typed and typed ConfigEntry aliases exist, but mypy excludes api/,
-      ignores missing imports and does not enable the complete strict option set.
+      py.typed and typed ConfigEntry aliases exist, but mypy ignores missing
+      imports and does not enable the complete strict option set.

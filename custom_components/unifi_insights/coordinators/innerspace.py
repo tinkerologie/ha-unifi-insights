@@ -9,13 +9,13 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers import device_registry as dr
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiResponseError,
     UniFiTimeoutError,
 )
+
 from custom_components.unifi_insights.const import DOMAIN, SCAN_INTERVAL_INNERSPACE
 from custom_components.unifi_insights.data_transforms import (
     normalize_innerspace_snapshot,
@@ -27,10 +27,9 @@ from .base import UnifiBaseCoordinator
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
-
-    from custom_components.unifi_insights.api.innerspace import UniFiInnerSpaceClient
-    from custom_components.unifi_insights.api.network import UniFiNetworkClient
-    from custom_components.unifi_insights.api.protect import UniFiProtectClient
+    from unifi_official_api.innerspace import UniFiInnerSpaceClient
+    from unifi_official_api.network import UniFiNetworkClient
+    from unifi_official_api.protect import UniFiProtectClient
 
     from .device import UnifiDeviceCoordinator
     from .protect import UnifiProtectCoordinator

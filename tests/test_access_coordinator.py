@@ -22,8 +22,7 @@ from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
 )
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiError,
@@ -31,11 +30,12 @@ from custom_components.unifi_insights.api import (
     UniFiResponseError,
     UniFiValidationError,
 )
-from custom_components.unifi_insights.api.access.models.devices import AccessDevice
-from custom_components.unifi_insights.api.access.models.doors import AccessDoor
-from custom_components.unifi_insights.api.access.models.emergency import (
+from unifi_official_api.access.models.devices import AccessDevice
+from unifi_official_api.access.models.doors import AccessDoor
+from unifi_official_api.access.models.emergency import (
     AccessEmergencyStatus,
 )
+
 from custom_components.unifi_insights.const import (
     CONF_ACCESS_TOKEN,
     CONF_CONSOLE_ID,

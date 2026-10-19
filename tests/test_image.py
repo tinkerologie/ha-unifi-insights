@@ -18,11 +18,11 @@ from pytest_homeassistant_custom_component.common import (
     MockEntityPlatform,
     async_fire_time_changed,
 )
-
-from custom_components.unifi_insights.api.exceptions import (
+from unifi_official_api.exceptions import (
     UniFiConnectionError,
     UniFiNotFoundError,
 )
+
 from custom_components.unifi_insights.const import DOMAIN
 from custom_components.unifi_insights.image import (
     UnifiFloorPlanImage,

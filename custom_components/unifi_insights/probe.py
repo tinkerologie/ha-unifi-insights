@@ -17,7 +17,7 @@ from enum import StrEnum
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
-from .api import (
+from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiRateLimitError,
@@ -29,11 +29,11 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from contextlib import AbstractAsyncContextManager
 
-    from .api.access import UniFiAccessClient
-    from .api.carrier_fabric import UniFiCarrierFabricClient
-    from .api.innerspace import UniFiInnerSpaceClient
-    from .api.network import UniFiNetworkClient
-    from .api.protect import UniFiProtectClient
+    from unifi_official_api.access import UniFiAccessClient
+    from unifi_official_api.carrier_fabric import UniFiCarrierFabricClient
+    from unifi_official_api.innerspace import UniFiInnerSpaceClient
+    from unifi_official_api.network import UniFiNetworkClient
+    from unifi_official_api.protect import UniFiProtectClient
 
 _LOGGER = logging.getLogger(__name__)
 

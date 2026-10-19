@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 from homeassistant.components.light import ATTR_BRIGHTNESS, ColorMode
 from homeassistant.exceptions import HomeAssistantError
+from unifi_official_api import ApiKeyAuth, ConnectionType
+from unifi_official_api.protect import UniFiProtectClient
 
-from custom_components.unifi_insights.api import ApiKeyAuth, ConnectionType
-from custom_components.unifi_insights.api.protect import UniFiProtectClient
 from custom_components.unifi_insights.const import (
     ATTR_LIGHT_DARK,
     ATTR_LIGHT_ID,

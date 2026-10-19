@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 from urllib.parse import unquote, urlsplit, urlunsplit
 
-from .api.innerspace.client import is_valid_asset_segment
+from unifi_official_api.innerspace.client import is_valid_asset_segment
 
 _MAC_HEX_LEN = 12
 

@@ -37,8 +37,6 @@ custom_components/unifi_insights/
 ├── access_webhook.py           # Signed UniFi Access webhook lifecycle
 ├── diagnostics.py              # Three-layer redacted diagnostics export
 ├── coordinators/               # Multi-coordinator package (see below)
-├── api/                        # Vendored unifi-official-api clients (Network, Protect, Access,
-│                               # InnerSpace, Site Manager, Mobility, Carrier Fabric)
 ├── frontend/                   # Built card bundles (topology, site-health, internet-activity,
 │                               # performance, protect-status, timeline)
 ├── icons.json, strings.json, translations/en.json
@@ -56,23 +54,21 @@ docs/development/               # This document, DECISIONS.md and adr/
 
 ### API client
 
-**Library:** vendored copy of `unifi-official-api` under `custom_components/unifi_insights/api/` (see [ADR-003](./adr/003-vendor-the-unifi-api-client.md)).
+**Library:** [`unifi-official-api`](https://pypi.org/project/unifi-official-api/) from PyPI, pinned in `manifest.json` as `unifi-official-api[talkback]==2.0.0` and imported as `unifi_official_api` (see [ADR-008](./adr/008-depend-on-unifi-official-api-from-pypi.md), which supersedes the vendored copy of [ADR-003](./adr/003-vendor-the-unifi-api-client.md)). API contract fixes go to [tinkerologie/unifi-official-api](https://github.com/tinkerologie/unifi-official-api) first; the integration then raises its pin.
 
 The package provides one async client per UniFi application:
 
-| Client                  | Package               | Used for                                                       |
-| ----------------------- | --------------------- | -------------------------------------------------------------- |
-| `UniFiNetworkClient`    | `api/network/`        | Sites, devices, clients, WiFi, firewall, routes, vouchers, DPI |
-| `UniFiProtectClient`    | `api/protect/`        | Cameras, lights, sensors, chimes, NVR, WebSocket, talkback     |
-| `UniFiAccessClient`     | `api/access/`         | Doors, users, emergency status, webhooks                       |
-| `UniFiInnerSpaceClient` | `api/innerspace/`     | Floor plans and device placements                              |
-| Site Manager client     | `api/site_manager/`   | Cloud console discovery and ISP metrics                        |
-| Mobility client         | `api/mobility/`       | Workspaces and mobile routers                                  |
-| Carrier Fabric client   | `api/carrier_fabric/` | Organizations, subscribers, fabrics                            |
+| Client                  | Module                              | Used for                                                       |
+| ----------------------- | ----------------------------------- | -------------------------------------------------------------- |
+| `UniFiNetworkClient`    | `unifi_official_api.network`        | Sites, devices, clients, WiFi, firewall, routes, vouchers, DPI |
+| `UniFiProtectClient`    | `unifi_official_api.protect`        | Cameras, lights, sensors, chimes, NVR, WebSocket, talkback     |
+| `UniFiAccessClient`     | `unifi_official_api.access`         | Doors, users, emergency status, webhooks                       |
+| `UniFiInnerSpaceClient` | `unifi_official_api.innerspace`     | Floor plans and device placements                              |
+| Site Manager client     | `unifi_official_api.site_manager`   | Cloud console discovery and ISP metrics                        |
+| Mobility client         | `unifi_official_api.mobility`       | Workspaces and mobile routers                                  |
+| Carrier Fabric client   | `unifi_official_api.carrier_fabric` | Organizations, subscribers, fabrics                            |
 
-The vendored tree is planned to move back upstream as `unifi-official-api` 2.0.0 ([tinkerologie/unifi-official-api#41](https://github.com/tinkerologie/unifi-official-api/issues/41)) after #330; see [DECISIONS.md](./DECISIONS.md).
-
-Every client receives Home Assistant's shared `aiohttp` session through `async_get_clientsession(hass)` (Quality Scale `inject-websession`). Responses are Pydantic models with `extra="ignore"`, so new API fields never break parsing. Integration code never issues raw HTTP calls.
+Every client receives Home Assistant's shared `aiohttp` session through `async_get_clientsession(hass)` (Quality Scale `inject-websession`). Responses are Pydantic models that keep unknown fields (`extra="allow"`), so new API fields never break parsing. Integration code never issues raw HTTP calls.
 
 ### Multi-coordinator architecture
 
@@ -163,7 +159,7 @@ Six Lovelace cards are built from `frontend/src/` with Vite into `custom_compone
 
 ### Push channels
 
-- **Protect WebSocket** (`api/protect/websocket.py`): device and event updates with heartbeat and health checks, falling back to the 30 s poll.
+- **Protect WebSocket** (`unifi_official_api.protect.websocket`): device and event updates with heartbeat and health checks, falling back to the 30 s poll.
 - **Access webhook** (`access_webhook.py`): signed access-granted and access-denied results delivered through Home Assistant's `webhook` component.
 
 ### Diagnostics
@@ -178,7 +174,7 @@ Six Lovelace cards are built from `frontend/src/` with Vite into `custom_compone
 └───────────┬────────────┘
             ▼
 ┌────────────────────────┐
-│  Vendored API clients  │ ← one per UniFi application, shared aiohttp session
+│  unifi-official-api    │ ← one client per UniFi application, shared aiohttp session
 └───────────┬────────────┘
             │
    ┌────────┼─────────┬──────────┬──────────┬───────────┬──────────┐

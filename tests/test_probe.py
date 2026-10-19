@@ -10,8 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import aiohttp
 import pytest
 from pydantic import BaseModel, ValidationError
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     ApiKeyAuth,
     ConnectionType,
     UniFiAuthenticationError,
@@ -21,9 +20,10 @@ from custom_components.unifi_insights.api import (
     UniFiResponseError,
     UniFiTimeoutError,
 )
-from custom_components.unifi_insights.api.innerspace import UniFiInnerSpaceClient
-from custom_components.unifi_insights.api.network import UniFiNetworkClient
-from custom_components.unifi_insights.api.protect import UniFiProtectClient
+from unifi_official_api.innerspace import UniFiInnerSpaceClient
+from unifi_official_api.network import UniFiNetworkClient
+from unifi_official_api.protect import UniFiProtectClient
+
 from custom_components.unifi_insights.probe import (
     ProbeStatus,
     async_probe_carrier_fabric,

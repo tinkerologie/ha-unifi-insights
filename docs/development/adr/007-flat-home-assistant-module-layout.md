@@ -1,6 +1,6 @@
 # ADR-007: Flat Home Assistant module layout
 
-**Date:** 2026-10-16 (revised 2026-10-17: size budget and `api/` end state)
+**Date:** 2026-10-16 (revised 2026-10-17: size budget and `api/` end state; revised 2026-10-19: `api/` removed by #345)
 **Status:** Proposed (implementation tracked in [#341](https://github.com/tinkerologie/ha-unifi-insights/issues/341), part of [#343](https://github.com/tinkerologie/ha-unifi-insights/issues/343); originally [#330](https://github.com/tinkerologie/ha-unifi-insights/issues/330))
 
 ## Context
@@ -17,7 +17,7 @@ Home Assistant's guidance is explicit:
 
 ## Decision
 
-Adopt a flat Home Assistant layout with exactly two subpackages, `coordinators/` and the vendored `api/`. `api/` is temporary: its removal is part of this layout's end state (see [End state](#end-state-no-vendored-api-client)). Every module has one of five roles, and a new file is allowed only if it does not fit an existing module of the same role.
+Adopt a flat Home Assistant layout with exactly one subpackage, `coordinators/`. The vendored `api/` package was removed by #345 (see [End state](#end-state-no-vendored-api-client) and [ADR-008](./008-depend-on-unifi-official-api-from-pypi.md)). Every module has one of five roles, and a new file is allowed only if it does not fit an existing module of the same role.
 
 ### Target layout
 
@@ -93,17 +93,16 @@ custom_components/unifi_insights/
 │   ├── carrier_fabric.py
 │   └── rule_audit.py           # ← coordinators/rule_export.py
 │
-├── api/                        # vendored client package (unchanged; see ADR-003)
 └── frontend/                   # built card bundles (unchanged; see ADR-005)
 ```
 
 Deleted outright: `coordinator.py` (dead legacy coordinator; removed in #334), `repairs.py` (scaffold never wired; removed in #334), `carrier_fabric_data.py` (into `__init__.py`), `helpers.py`, `led_level.py`, `storage_telemetry.py`, the 12 entity satellites, the 6 dashboard builders, 2 topology helpers, and 3 `coordinators/` helper modules.
 
-| Area                       | Before | After |
-| -------------------------- | ------ | ----- |
-| Root `.py` modules         | 57     | 33    |
-| `coordinators/` modules    | 16     | 15    |
-| Subpackages (non-vendored) | 1      | 1     |
+| Area                    | Before | After |
+| ----------------------- | ------ | ----- |
+| Root `.py` modules      | 57     | 33    |
+| `coordinators/` modules | 16     | 15    |
+| Subpackages             | 1      | 1     |
 
 ### Size budget
 
@@ -113,14 +112,14 @@ Several modules are already over budget: `coordinators/protect.py` (3,070), `ser
 
 ### End state: no vendored API client
 
-Home Assistant requires device communication to live in a library published on PyPI ([development checklist](https://developers.home-assistant.io/docs/development_checklist), [creating a platform](https://developers.home-assistant.io/docs/creating_platform_index)). The vendored `api/` package (128 files, about 17,400 lines) is 128 of the integration's 201 Python files today. [tinkerologie/unifi-official-api#41](https://github.com/tinkerologie/unifi-official-api/issues/41) moves it back upstream as 2.0.0. ADR-008 records that change and supersedes ADR-003. After it lands, `coordinators/` is the only subpackage.
+Home Assistant requires device communication to live in a library published on PyPI ([development checklist](https://developers.home-assistant.io/docs/development_checklist), [creating a platform](https://developers.home-assistant.io/docs/creating_platform_index)). The vendored `api/` package (128 files, about 17,400 lines) was 128 of the integration's 199 Python files. [tinkerologie/unifi-official-api#41](https://github.com/tinkerologie/unifi-official-api/issues/41) moved it back upstream as `unifi-official-api` 2.0.0, and #345 replaced it with that PyPI dependency ([ADR-008](./008-depend-on-unifi-official-api-from-pypi.md), superseding ADR-003). `coordinators/` is now the only subpackage. #345 landed before #341 so that the file moves never reorganize client tests that were about to be deleted.
 
-| Python files    | Today | After #341 | After unifi-official-api#41 |
-| --------------- | ----- | ---------- | --------------------------- |
-| Root modules    | 57    | 33         | 33                          |
-| `coordinators/` | 16    | 15         | 15                          |
-| `api/`          | 128   | 128        | 0                           |
-| **Total**       | 201   | 176        | 48                          |
+| Python files    | Before #345 | After #345 (today) | After #341 |
+| --------------- | ----------- | ------------------ | ---------- |
+| Root modules    | 55          | 55                 | 33         |
+| `coordinators/` | 16          | 16                 | 15         |
+| `api/`          | 128         | 0                  | 0          |
+| **Total**       | 199         | 71                 | 48         |
 
 ### Module roles
 
@@ -134,18 +133,12 @@ A new module is justified only when it introduces a new platform, a new coordina
 
 ### Test layout (proposed, separate PR)
 
-`tests/` is 110 flat files and 119,000 lines, with `test_coordinators.py` alone at 11,600 lines. Mirror the package instead:
+`tests/` is 84 flat files and 93,000 lines (after #345 removed the vendored client tests), with `test_coordinators.py` alone at 12,000 lines. Mirror the package instead:
 
 ```text
 tests/
 ├── conftest.py
 ├── fixtures/                   # unchanged
-├── api/                        # one test module per vendored client subpackage
-│   ├── test_network_client.py, test_network_endpoints.py, test_network_models.py
-│   ├── test_protect_client.py, test_protect_endpoints.py, test_protect_websocket.py, test_protect_talkback.py
-│   ├── test_access_*.py, test_innerspace_client.py, test_site_manager_client.py,
-│   │   test_mobility_client.py, test_carrier_fabric_client.py
-│   └── test_base.py
 ├── coordinators/               # one test module per coordinator module
 │   ├── test_base.py, test_config.py, test_device.py, test_protect.py, test_protect_ws.py,
 │   │   test_protect_events.py, test_facade.py, test_access.py, test_innerspace.py,
@@ -176,7 +169,7 @@ docs/development/
 - Pros: smallest diff.
 - Cons: leaves 29 files defining entities for 17 platforms and the duplicated base classes that caused the drift.
 
-### Option C: Flat layout with `coordinators/` and `api/` (chosen)
+### Option C: Flat layout with `coordinators/` as the only subpackage (chosen)
 
 - Pros: matches the Home Assistant file structure and `common-modules`; every entity is found by platform; one place for each helper; precedent in Core's `unifi` (`hub/`) and `unifiprotect` (flat).
 - Cons: merging the satellites makes the platform files bigger. The [size budget](#size-budget) handles this: duplication is removed before the merges, so no module ends up over about 2,000 lines.

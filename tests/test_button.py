@@ -13,13 +13,13 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import UNDEFINED
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     ApiKeyAuth,
     ConnectionType,
     UniFiConnectionError,
 )
-from custom_components.unifi_insights.api.network import UniFiNetworkClient
+from unifi_official_api.network import UniFiNetworkClient
+
 from custom_components.unifi_insights.button import (
     BUTTON_TYPES,
     UnifiClientReconnectButton,
@@ -48,7 +48,7 @@ from custom_components.unifi_insights.coordinators.facade import (
     UnifiFacadeCoordinator,
 )
 from custom_components.unifi_insights.coordinators.voucher_state import VoucherSettings
-from tests.test_api_network_more_endpoints import _Response, _Session
+from tests.fixtures.http_fakes import FakeJsonResponse, FakeQueuedSession
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -1853,10 +1853,10 @@ class TestGenerateVoucherButton:
                 }
             ]
         }
-        session = _Session(
+        session = FakeQueuedSession(
             [
-                _Response(post_response),
-                _Response(post_response),
+                FakeJsonResponse(post_response),
+                FakeJsonResponse(post_response),
             ]
         )
         client = UniFiNetworkClient(

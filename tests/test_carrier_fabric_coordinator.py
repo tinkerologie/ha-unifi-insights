@@ -8,18 +8,18 @@ import pytest
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiError,
     UniFiResponseError,
     UniFiTimeoutError,
 )
-from custom_components.unifi_insights.api.carrier_fabric.models import (
+from unifi_official_api.carrier_fabric.models import (
     ServicePlan,
     Subscriber,
 )
+
 from custom_components.unifi_insights.const import (
     CARRIER_FABRIC_SCAN_INTERVAL,
     CONF_CARRIER_ORG_ID,

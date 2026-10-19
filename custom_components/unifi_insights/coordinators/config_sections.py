@@ -7,8 +7,9 @@ import logging
 from functools import partial
 from typing import TYPE_CHECKING, Any, Final
 
-from custom_components.unifi_insights.api import UniFiAuthenticationError
-from custom_components.unifi_insights.api.network.models import is_predefined_nat_rule
+from unifi_official_api import UniFiAuthenticationError
+from unifi_official_api.network.models import is_predefined_nat_rule
+
 from custom_components.unifi_insights.topology_contract import normalize_mac
 
 from .internet_activity import resolve_report_site_name
@@ -16,7 +17,7 @@ from .internet_activity import resolve_report_site_name
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from custom_components.unifi_insights.api.network import UniFiNetworkClient
+    from unifi_official_api.network import UniFiNetworkClient
 
 _LOGGER = logging.getLogger(__name__)
 

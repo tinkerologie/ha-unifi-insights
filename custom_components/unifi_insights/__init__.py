@@ -14,13 +14,7 @@ from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL, Platfo
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util.hass_dict import HassKey
-
-from .access_webhook import (
-    async_remove_access_webhook,
-    async_setup_access_webhook,
-    async_unload_access_webhook,
-)
-from .api import (
+from unifi_official_api import (
     ApiKeyAuth,
     ConnectionType,
     LocalAuth,
@@ -28,11 +22,17 @@ from .api import (
     UniFiError,
     UniFiTimeoutError,
 )
-from .api.access import UniFiAccessClient
-from .api.carrier_fabric.client import UniFiCarrierFabricClient
-from .api.innerspace import UniFiInnerSpaceClient
-from .api.network import UniFiNetworkClient
-from .api.protect import UniFiProtectClient
+from unifi_official_api.access import UniFiAccessClient
+from unifi_official_api.carrier_fabric.client import UniFiCarrierFabricClient
+from unifi_official_api.innerspace import UniFiInnerSpaceClient
+from unifi_official_api.network import UniFiNetworkClient
+from unifi_official_api.protect import UniFiProtectClient
+
+from .access_webhook import (
+    async_remove_access_webhook,
+    async_setup_access_webhook,
+    async_unload_access_webhook,
+)
 from .carrier_fabric_data import (
     CarrierFabricConfigEntry,
     CarrierFabricData,

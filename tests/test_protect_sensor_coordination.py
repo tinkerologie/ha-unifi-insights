@@ -25,11 +25,12 @@ if TYPE_CHECKING:
 
     from homeassistant.core import HomeAssistant
 
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
 )
-from custom_components.unifi_insights.api.protect.models.sensor import Sensor
+from unifi_official_api.protect.models.sensor import Sensor
+
 from custom_components.unifi_insights.const import (
     CONF_CONNECTION_TYPE,
     CONNECTION_TYPE_LOCAL,

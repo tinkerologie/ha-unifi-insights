@@ -8,7 +8,7 @@ tamper status, and a keypad fob's keypad and arm-control settings. The public
 API cannot write any of these (``PATCH`` accepts ``name`` only), so every
 entity is read-only.
 
-The vendored models accept any value so a firmware addition never drops a
+The `unifi-official-api` models accept any value so a firmware addition never drops a
 device; the spec's enums and ranges are enforced here instead, and anything
 outside them reads as unknown (``None``) rather than as a misleading state.
 """

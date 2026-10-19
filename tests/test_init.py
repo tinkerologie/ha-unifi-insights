@@ -18,6 +18,20 @@ if TYPE_CHECKING:
     from homeassistant.helpers.entity_registry import EntityRegistry
     from pytest_homeassistant_custom_component.typing import WebSocketGenerator
 
+from unifi_official_api import (
+    UniFiAuthenticationError,
+    UniFiConnectionError,
+    UniFiNotFoundError,
+    UniFiResponseError,
+    UniFiTimeoutError,
+)
+from unifi_official_api.innerspace import (
+    InnerSpaceFloorPlan,
+    InnerSpaceInventoryDevice,
+    InnerSpaceProject,
+    InnerSpaceProjectIdentity,
+)
+
 from custom_components.unifi_insights import (
     _SETUP_PROBE_ATTEMPTS,
     PLATFORMS,
@@ -26,19 +40,6 @@ from custom_components.unifi_insights import (
     _raise_for_setup_probes,
     async_remove_config_entry_device,
     async_unload_entry,
-)
-from custom_components.unifi_insights.api import (
-    UniFiAuthenticationError,
-    UniFiConnectionError,
-    UniFiNotFoundError,
-    UniFiResponseError,
-    UniFiTimeoutError,
-)
-from custom_components.unifi_insights.api.innerspace import (
-    InnerSpaceFloorPlan,
-    InnerSpaceInventoryDevice,
-    InnerSpaceProject,
-    InnerSpaceProjectIdentity,
 )
 from custom_components.unifi_insights.const import (
     CONF_CONSOLE_ID,

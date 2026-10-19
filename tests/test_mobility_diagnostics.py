@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from unifi_official_api import UniFiResponseError
 
-from custom_components.unifi_insights.api import UniFiResponseError
 from custom_components.unifi_insights.const import DOMAIN
 from custom_components.unifi_insights.diagnostics import (
     async_get_config_entry_diagnostics,

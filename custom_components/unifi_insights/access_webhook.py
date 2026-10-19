@@ -19,14 +19,14 @@ from homeassistant.components import webhook
 from homeassistant.const import CONF_HOST, CONF_VERIFY_SSL
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.network import NoURLAvailableError
-
-from .api import (
+from unifi_official_api import (
     UniFiError,
     UniFiNotFoundError,
     UniFiResponseError,
     UniFiValidationError,
 )
-from .api.access import UniFiAccessClient
+from unifi_official_api.access import UniFiAccessClient
+
 from .const import (
     ACCESS_WEBHOOK_EVENT,
     CONF_ACCESS_PORT,
@@ -48,8 +48,8 @@ if TYPE_CHECKING:
     from aiohttp.web import Request
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
+    from unifi_official_api.access.models import AccessWebhookEndpoint
 
-    from .api.access.models import AccessWebhookEndpoint
     from .coordinators.access import UnifiInsightsAccessCoordinator
 
 _LOGGER = logging.getLogger(__name__)

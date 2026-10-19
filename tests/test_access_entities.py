@@ -11,6 +11,13 @@ from homeassistant.components.cover import CoverDeviceClass, CoverEntityFeature
 from homeassistant.const import CONF_API_KEY
 from homeassistant.exceptions import HomeAssistantError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from unifi_official_api import (
+    UniFiAuthenticationError,
+    UniFiResponseError,
+)
+from unifi_official_api.access.models.emergency import (
+    AccessEmergencyStatus,
+)
 
 from custom_components.unifi_insights import UnifiInsightsData
 from custom_components.unifi_insights import button as button_platform
@@ -25,13 +32,6 @@ from custom_components.unifi_insights.access_entity import (
     console_device_info,
     door_device_info,
     doorbell_device_info,
-)
-from custom_components.unifi_insights.api import (
-    UniFiAuthenticationError,
-    UniFiResponseError,
-)
-from custom_components.unifi_insights.api.access.models.emergency import (
-    AccessEmergencyStatus,
 )
 from custom_components.unifi_insights.carrier_fabric_data import CarrierFabricData
 from custom_components.unifi_insights.const import CONF_ACCESS_TOKEN, DOMAIN

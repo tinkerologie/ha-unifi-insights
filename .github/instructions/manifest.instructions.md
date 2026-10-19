@@ -27,7 +27,7 @@ applyTo: "custom_components/unifi_insights/manifest.json"
   "integration_type": "hub",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/tinkerologie/ha-unifi-insights/issues",
-  "requirements": ["segno==1.6.6"],
+  "requirements": ["segno==1.6.6", "unifi-official-api[talkback]==2.0.0"],
   "ssdp": [
     { "manufacturer": "Ubiquiti Networks", "modelName": "UniFi Dream Machine" },
     {
@@ -53,7 +53,7 @@ applyTo: "custom_components/unifi_insights/manifest.json"
 - **iot_class** — `local_polling` (polling with real-time WebSocket updates for Protect)
 - **after_dependencies** — `["http", "frontend", "lovelace"]` for custom Lovelace card static path and resource registration (`frontend.py`)
 - **dependencies** — `ffmpeg` and `stream` (camera streaming), `media_source` (Protect media browsing), `wake_on_lan` (Wake button magic packet), `webhook` (alarm/event webhooks), `websocket_api` (frontend card WS commands)
-- **requirements** — `["segno==1.6.6"]` (QR code generation for guest vouchers). The UniFi API client is vendored under `custom_components/unifi_insights/api`; never re-add `unifi-official-api` to `requirements`
+- **requirements** — `["segno==1.6.6", "unifi-official-api[talkback]==2.0.0"]` (QR code generation for guest vouchers, and the UniFi API client library with PyAV for Protect talkback). Keep the `unifi-official-api` pin identical in `pyproject.toml` `[project].dependencies` and `requirements.txt`
 - **ssdp** — Discovery matchers for UniFi Dream Machine variants
 - **version** — Calendar versioning: `YYYY.MM.PATCH`
 
@@ -61,4 +61,4 @@ applyTo: "custom_components/unifi_insights/manifest.json"
 
 - Keep keys sorted (`domain` and `name` first, then alphabetical as required by Hassfest)
 - Never add unnecessary runtime dependencies
-- Never declare the vendored API package in `requirements`
+- Never vendor the UniFi API client; raise the `unifi-official-api` pin after an upstream release instead

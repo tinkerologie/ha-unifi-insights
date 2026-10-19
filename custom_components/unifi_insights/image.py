@@ -15,8 +15,8 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
+from unifi_official_api.exceptions import UniFiError
 
-from .api.exceptions import UniFiError
 from .console_identity import resolve_console_namespace
 from .const import DOMAIN, MANUFACTURER
 from .coordinators import UnifiFacadeCoordinator

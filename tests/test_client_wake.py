@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 from homeassistant.exceptions import HomeAssistantError
 from pytest_homeassistant_custom_component.common import async_mock_service
+from unifi_official_api import UniFiResponseError
 
-from custom_components.unifi_insights.api import UniFiResponseError
 from custom_components.unifi_insights.client_wake import (
     derive_directed_broadcast,
     find_client_by_mac,

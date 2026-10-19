@@ -12,8 +12,8 @@ from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.const import EntityCategory, UnitOfInformation
 from homeassistant.helpers.translation import async_get_translations
 from pydantic import ValidationError
+from unifi_official_api.protect.models.nvr import NVR, StorageInfo
 
-from custom_components.unifi_insights.api.protect.models.nvr import NVR, StorageInfo
 from custom_components.unifi_insights.binary_sensor import (
     BINARY_SENSOR_TYPES,
     UnifiInsightsNVRStorageBinarySensor,

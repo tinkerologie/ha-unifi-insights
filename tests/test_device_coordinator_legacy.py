@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from custom_components.unifi_insights.api.network.models.device import (
+from unifi_official_api.network.models.device import (
     LegacyPortMetrics,
     PortBytesMetrics,
 )
+
 from custom_components.unifi_insights.coordinators.device import (
     UnifiDeviceCoordinator,
 )

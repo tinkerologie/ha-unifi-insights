@@ -14,11 +14,10 @@ if TYPE_CHECKING:
 
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
-
-    from custom_components.unifi_insights.api.innerspace import UniFiInnerSpaceClient
-    from custom_components.unifi_insights.api.network import UniFiNetworkClient
-    from custom_components.unifi_insights.api.network.models.voucher import Voucher
-    from custom_components.unifi_insights.api.protect import UniFiProtectClient
+    from unifi_official_api.innerspace import UniFiInnerSpaceClient
+    from unifi_official_api.network import UniFiNetworkClient
+    from unifi_official_api.network.models.voucher import Voucher
+    from unifi_official_api.protect import UniFiProtectClient
 
     from .config import UnifiConfigCoordinator
     from .device import UnifiDeviceCoordinator
@@ -31,22 +30,22 @@ from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 from pydantic import ValidationError
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiError,
     UniFiGlobalAlarmManagerError,
     UniFiNotFoundError,
     UniFiRuleNotEditableError,
 )
-from custom_components.unifi_insights.api.exceptions import UniFiUnsupportedError
-from custom_components.unifi_insights.api.protect.talkback import (
+from unifi_official_api.exceptions import UniFiUnsupportedError
+from unifi_official_api.protect.talkback import (
     TalkbackCodecError,
     TalkbackSamplingRateError,
     TalkbackSchemeError,
     TalkbackStream,
 )
-from custom_components.unifi_insights.api.validation import sanitized_validation_fields
+from unifi_official_api.validation import sanitized_validation_fields
+
 from custom_components.unifi_insights.client_wake import (
     WAKE_ON_LAN_DOMAIN,
     WAKE_ON_LAN_SERVICE,
@@ -1374,7 +1373,7 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ) from err
 
         try:
-            stream = TalkbackStream(session, media_url, self.hass)
+            stream = TalkbackStream(session, media_url, loop=self.hass.loop)
             await stream.start()
             return stream
         except (

@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from custom_components.unifi_insights.api.exceptions import (
+from unifi_official_api.exceptions import (
     UniFiResponseError,
 )
+
 from custom_components.unifi_insights.coordinators.config import (
     UnifiConfigCoordinator,
 )

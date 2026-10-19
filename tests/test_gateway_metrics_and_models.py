@@ -4,13 +4,13 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from custom_components.unifi_insights.api.network.endpoints.devices import (
+from unifi_official_api.network.endpoints.devices import (
     DevicesEndpoint,
 )
-from custom_components.unifi_insights.api.network.models.device import (
+from unifi_official_api.network.models.device import (
     LegacyPortMetrics,
 )
+
 from custom_components.unifi_insights.const import (
     GATEWAY_MODEL_PREFIXES,
 )

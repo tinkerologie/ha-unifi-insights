@@ -10,8 +10,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiError,
@@ -19,6 +18,7 @@ from custom_components.unifi_insights.api import (
     UniFiResponseError,
     UniFiTimeoutError,
 )
+
 from custom_components.unifi_insights.const import (
     CARRIER_FABRIC_SCAN_INTERVAL,
     CONF_CARRIER_ORG_ID,
@@ -28,8 +28,7 @@ from custom_components.unifi_insights.const import (
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
-
-    from custom_components.unifi_insights.api.carrier_fabric.client import (
+    from unifi_official_api.carrier_fabric.client import (
         UniFiCarrierFabricClient,
     )
 

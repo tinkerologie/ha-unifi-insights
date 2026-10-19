@@ -11,12 +11,12 @@ from typing import TYPE_CHECKING
 import pytest
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-from custom_components.unifi_insights.api.protect.models.camera import (
+from unifi_official_api.protect.models.camera import (
     CameraState,
     CameraType,
     RecordingMode,
 )
+
 from custom_components.unifi_insights.console_identity import (
     build_legacy_site_unique_id,
     build_site_unique_id,

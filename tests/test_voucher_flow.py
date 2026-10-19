@@ -23,11 +23,11 @@ from homeassistant.const import CONF_API_KEY
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
+from unifi_official_api import ApiKeyAuth, ConnectionType
+from unifi_official_api.exceptions import UniFiConnectionError
+from unifi_official_api.network import UniFiNetworkClient
+from unifi_official_api.network.models.voucher import Voucher
 
-from custom_components.unifi_insights.api import ApiKeyAuth, ConnectionType
-from custom_components.unifi_insights.api.exceptions import UniFiConnectionError
-from custom_components.unifi_insights.api.network import UniFiNetworkClient
-from custom_components.unifi_insights.api.network.models.voucher import Voucher
 from custom_components.unifi_insights.const import DOMAIN
 from custom_components.unifi_insights.coordinators.config import (
     UnifiConfigCoordinator,
@@ -342,7 +342,7 @@ async def voucher_flow(
 
 
 def _voucher_transport(responses: list[Any]) -> UniFiNetworkClient:
-    """Use the real vendored transport over queued mocked HTTP responses."""
+    """Use the real `unifi-official-api` transport over queued mocked HTTP responses."""
     session = MagicMock(closed=False)
     contexts = []
     for body in responses:

@@ -13,22 +13,21 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
 )
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiRateLimitError,
     UniFiResponseError,
     UniFiTimeoutError,
 )
+
 from custom_components.unifi_insights.const import DOMAIN
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
-
-    from custom_components.unifi_insights.api.network import UniFiNetworkClient
-    from custom_components.unifi_insights.api.protect import UniFiProtectClient
+    from unifi_official_api.network import UniFiNetworkClient
+    from unifi_official_api.protect import UniFiProtectClient
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -100,7 +99,7 @@ class UnifiBaseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         A 403, a 404 or another 4xx client error from an optional feature
         endpoint (WiFi, firewall policies, per-device statistics) means this
         console or API key does not expose that feature. So does a 2xx whose
-        body is not JSON: api/base.py raises that for consoles that answer an
+        body is not JSON: the library raises that for consoles that answer an
         endpoint they lack with the web UI's HTML page (see the sites fetch
         in coordinators/config.py). Both are valid, stable answers, so the
         caller treats them as "no data" instead of a failure. A 401 is

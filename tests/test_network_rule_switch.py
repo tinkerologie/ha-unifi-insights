@@ -12,9 +12,9 @@ from homeassistant.const import EntityCategory
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
+from unifi_official_api.exceptions import UniFiConnectionError
+from unifi_official_api.network.models import NatRule, StaticRoute
 
-from custom_components.unifi_insights.api.exceptions import UniFiConnectionError
-from custom_components.unifi_insights.api.network.models import NatRule, StaticRoute
 from custom_components.unifi_insights.const import DOMAIN
 from custom_components.unifi_insights.network_rule_switch import (
     NAT_RULE_SWITCH,

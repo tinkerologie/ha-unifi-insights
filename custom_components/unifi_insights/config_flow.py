@@ -25,9 +25,7 @@ from homeassistant.helpers.selector import (
     SelectSelectorMode,
 )
 from pydantic import ValidationError
-from yarl import URL
-
-from .api import (
+from unifi_official_api import (
     ApiKeyAuth,
     ConnectionType,
     LocalAuth,
@@ -38,10 +36,12 @@ from .api import (
     UniFiTimeoutError,
     UniFiValidationError,
 )
-from .api.access import UniFiAccessClient
-from .api.carrier_fabric.client import UniFiCarrierFabricClient
-from .api.network import UniFiNetworkClient
-from .api.protect import UniFiProtectClient
+from unifi_official_api.access import UniFiAccessClient
+from unifi_official_api.carrier_fabric.client import UniFiCarrierFabricClient
+from unifi_official_api.network import UniFiNetworkClient
+from unifi_official_api.protect import UniFiProtectClient
+from yarl import URL
+
 from .console_identity import (
     DEFAULT_SITE_ID,
     device_fields,

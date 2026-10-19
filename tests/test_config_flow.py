@@ -10,15 +10,15 @@ from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
 from homeassistant.data_entry_flow import FlowResultType
 from pydantic import ValidationError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiNotFoundError,
     UniFiResponseError,
     UniFiTimeoutError,
 )
-from custom_components.unifi_insights.api.network.models.site import Site
+from unifi_official_api.network.models.site import Site
+
 from custom_components.unifi_insights.config_flow import (
     UnifiInsightsConfigFlow,
     UnifiInsightsOptionsFlow,

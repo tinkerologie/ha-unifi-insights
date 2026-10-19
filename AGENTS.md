@@ -33,7 +33,6 @@ This is **UniFi Insights**, a Home Assistant custom integration that provides mo
 
 - `custom_components/unifi_insights/` — Main integration code
 - `custom_components/unifi_insights/coordinators/` — Multi-coordinator system
-- `custom_components/unifi_insights/api/` — Vendored `unifi-official-api` async clients (Network, Protect, Access, InnerSpace, Site Manager, Mobility, Carrier Fabric)
 - `custom_components/unifi_insights/frontend/` — Built Lovelace card bundles served by `frontend.py`
 - `frontend/` — TypeScript + Lit source for the custom Lovelace dashboard cards
 - `config/` — Home Assistant configuration for local testing
@@ -134,12 +133,13 @@ When a task completes and the developer moves to a new topic, suggest committing
 
 **This is a CUSTOM integration, not a Home Assistant Core integration.** While we follow Core patterns for quality and maintainability, we have more flexibility in implementation decisions.
 
-**Vendored API package:**
+**UniFi API library (`unifi-official-api`):**
 
-- The upstream `unifi-official-api` project is vendored locally under `custom_components/unifi_insights/api`
+- All device communication goes through the [`unifi-official-api`](https://pypi.org/project/unifi-official-api/) package from PyPI, imported as `unifi_official_api` and pinned in `manifest.json` `requirements` (see `docs/development/adr/008-depend-on-unifi-official-api-from-pypi.md`)
 - Reuse its client methods (`network_client`, `protect_client`, `access_client`, `innerspace_client`, `carrier_fabric_client`) rather than manual HTTP calls
 - Pass Home Assistant's shared aiohttp session (`async_get_clientsession(hass)`) into clients (Quality Scale: `inject-websession`)
-- NEVER create a custom HTTP client — extend or reuse the vendored package instead
+- NEVER create a custom HTTP client, vendor library code, or add local shims or monkey patches over library behaviour
+- **API contract fixes go upstream first:** fix the client, endpoint, model, or exception in [tinkerologie/unifi-official-api](https://github.com/tinkerologie/unifi-official-api), release a new version, then raise the pin here (`manifest.json`, `pyproject.toml`, `requirements.txt`)
 
 **Quality Scale requirements (strict — Bronze through Platinum):**
 
@@ -257,7 +257,7 @@ The integration uses a multi-coordinator pattern stored in `entry.runtime_data`:
 **Data flow:**
 
 ```
-UniFi APIs → Vendored Clients → Specialized Coordinators (Config / Device / Protect / Access / InnerSpace / Site Manager / Mobility) → Facade Coordinator → Entities
+UniFi APIs → unifi-official-api Clients → Specialized Coordinators (Config / Device / Protect / Access / InnerSpace / Site Manager / Mobility) → Facade Coordinator → Entities
 ```
 
 ### Device Info & Home Assistant 2026.10+ Device Registry Rules
@@ -281,9 +281,9 @@ All entities must provide consistent `DeviceInfo` via the base entity classes in
 - `iot_class: "local_polling"` — Local polling with WebSocket/webhook push where available
 - `dependencies: ["ffmpeg", "media_source", "stream", "wake_on_lan", "webhook", "websocket_api"]`
 - `after_dependencies: ["http", "frontend", "lovelace"]` — Ensures custom card static paths and Lovelace resources register cleanly
-- `requirements: ["segno==1.6.6"]` — QR code generation for WiFi/vouchers
+- `requirements: ["segno==1.6.6", "unifi-official-api[talkback]==2.0.0"]` — QR code generation for WiFi/vouchers, and the UniFi API client library (the `talkback` extra declares PyAV for Protect talkback)
 
-The UniFi API client package is vendored in-repo under `custom_components/unifi_insights/api`; do not re-add `unifi-official-api` to `manifest.json` requirements.
+Keep the `unifi-official-api` pin identical in `manifest.json`, `pyproject.toml` `[project].dependencies`, and `requirements.txt`.
 
 ### Config Flow
 
@@ -420,7 +420,7 @@ Aim for zero validation errors in generated code.
 - `tests/` mirrors `custom_components/unifi_insights/` structure
 - Use fixtures for common setup (Home Assistant mock, coordinator, etc.)
 - Mock external API calls
-- Every module, including the vendored `api/` client, must be ≥95% (branch coverage enabled, checked per file in CI with `python script/check_coverage_per_file.py coverage.xml --fail-under 95`)
+- Every module must be ≥95% (branch coverage enabled, checked per file in CI with `python script/check_coverage_per_file.py coverage.xml --fail-under 95`)
 
 Local `pytest` enforces only the 95% total coverage threshold. To check per-file coverage locally, run `pytest --cov-report=xml`, then `python script/check_coverage_per_file.py coverage.xml --fail-under 95`.
 

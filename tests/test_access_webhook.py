@@ -21,15 +21,15 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.network import NoURLAvailableError
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-from custom_components.unifi_insights import access_webhook as aw
-from custom_components.unifi_insights.api import (
+from unifi_official_api import (
     UniFiConnectionError,
     UniFiNotFoundError,
     UniFiResponseError,
     UniFiValidationError,
 )
-from custom_components.unifi_insights.api.access.models import AccessWebhookEndpoint
+from unifi_official_api.access.models import AccessWebhookEndpoint
+
+from custom_components.unifi_insights import access_webhook as aw
 from custom_components.unifi_insights.const import (
     ACCESS_WEBHOOK_EVENT,
     CONF_ACCESS_PORT,

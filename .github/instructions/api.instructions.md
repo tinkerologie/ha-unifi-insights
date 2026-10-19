@@ -1,10 +1,10 @@
 ---
-applyTo: "custom_components/unifi_insights/__init__.py, custom_components/unifi_insights/probe.py, custom_components/unifi_insights/coordinators/**/*.py, custom_components/unifi_insights/api/**/*.py"
+applyTo: "custom_components/unifi_insights/__init__.py, custom_components/unifi_insights/probe.py, custom_components/unifi_insights/coordinators/**/*.py"
 ---
 
 # API and Coordinator Instructions
 
-**Applies to:** Integration setup, capability probing, coordinators, and vendored API clients
+**Applies to:** Integration setup, capability probing, coordinators, and use of the `unifi-official-api` library
 
 ## Architecture (CRITICAL)
 
@@ -12,15 +12,18 @@ applyTo: "custom_components/unifi_insights/__init__.py, custom_components/unifi_
 
 - **Entities:** Read `coordinator.data` only; never call API clients directly in state properties
 - **Coordinators:** Call API clients, normalize data via `data_transforms.py`, handle errors and polling/WebSocket lifecycle
-- **API Clients:** Vendored under `custom_components/unifi_insights/api/` (`network`, `protect`, `access`, `innerspace`, `site_manager`, `mobility`, `carrier_fabric`)
+- **API Clients:** The `unifi-official-api` PyPI package, imported as `unifi_official_api` (`network`, `protect`, `access`, `innerspace`, `site_manager`, `mobility`, `carrier_fabric`)
 
-## Vendored API Package
+## `unifi-official-api` Library
 
-This integration vendors the `unifi-official-api` package locally under `custom_components/unifi_insights/api/`. It is not declared as an external PyPI dependency in `manifest.json`.
+All device communication goes through the [`unifi-official-api`](https://pypi.org/project/unifi-official-api/) package from PyPI ([ADR-008](../../docs/development/adr/008-depend-on-unifi-official-api-from-pypi.md)). `manifest.json` `requirements`, `pyproject.toml` `[project].dependencies`, and `requirements.txt` pin the same version.
 
 **Rules:**
 
-- NEVER create ad-hoc `aiohttp` calls outside `custom_components/unifi_insights/api/` — reuse or extend the vendored client modules
+- NEVER create ad-hoc `aiohttp` calls in the integration — reuse the library's client methods
+- NEVER vendor library code or add local shims or monkey patches over library behaviour
+- **Contract fixes go upstream first:** when an endpoint, model, exception, or client behaviour is wrong or missing, fix it in [tinkerologie/unifi-official-api](https://github.com/tinkerologie/unifi-official-api), release a new version, then raise the pin in all three files and run the full test suite against it
+- Patch library symbols in tests where the integration looks them up (for example `custom_components.unifi_insights.coordinators.facade.TalkbackStream`), not inside `unifi_official_api`
 - Inject Home Assistant's shared `aiohttp.ClientSession` via `async_get_clientsession(hass, verify_ssl=...)` (Platinum `inject-websession`)
 - All client operations must be async (Platinum `async-dependency`)
 - Always consult the [UniFi Developer Portal](https://developer.ui.com/) machine-readable specs before adding or modifying API endpoints or models:
@@ -43,9 +46,9 @@ In `__init__.py` and `probe.py`:
 
 ## Exception Hierarchy
 
-Map vendored API exceptions (`custom_components/unifi_insights/api/`) to Home Assistant exceptions:
+Map `unifi_official_api.exceptions` to Home Assistant exceptions:
 
-| Vendored API Exception                                                          | Home Assistant Exception                                             | Context                                                     |
+| Library Exception                                                               | Home Assistant Exception                                             | Context                                                     |
 | ------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------- |
 | `UniFiAuthenticationError`                                                      | `ConfigEntryAuthFailed`                                              | Setup (`__init__.py`) or Coordinator (`_async_update_data`) |
 | `UniFiConnectionError`, `UniFiTimeoutError`                                     | `ConfigEntryNotReady`                                                | Setup (`__init__.py`) when controller is unreachable        |

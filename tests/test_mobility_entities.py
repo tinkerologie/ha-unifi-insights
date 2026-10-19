@@ -19,10 +19,10 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from unifi_official_api import UniFiConnectionError
 from yarl import URL
 
 from custom_components.unifi_insights import mobility_entity
-from custom_components.unifi_insights.api import UniFiConnectionError
 from custom_components.unifi_insights.const import (
     CONF_TRACK_WIFI_CLIENTS,
     CONF_TRACK_WIRED_CLIENTS,

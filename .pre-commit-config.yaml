@@ -8,11 +8,9 @@ repos:
     rev: v0.14.13
     hooks:
       - id: ruff-check
-        exclude: ^custom_components/unifi_insights/api/
         args:
           - --fix
       - id: ruff-format
-        exclude: ^custom_components/unifi_insights/api/
         files: ^((custom_components|tests|script)/.+)?[^/]+\.(py|pyi)$
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.1

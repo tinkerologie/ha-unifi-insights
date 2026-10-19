@@ -11,11 +11,6 @@ integration:
           - custom_components/unifi_insights/services.py
           - custom_components/unifi_insights/services.yaml
 
-api:
-  - changed-files:
-      - any-glob-to-any-file:
-          - custom_components/unifi_insights/api/**
-
 coordinator:
   - changed-files:
       - any-glob-to-any-file:

@@ -19,9 +19,9 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry as MockConfigEntryForTest,
 )
+from unifi_official_api import UniFiResponseError
 
 from custom_components.unifi_insights import CarrierFabricData
-from custom_components.unifi_insights.api import UniFiResponseError
 from custom_components.unifi_insights.console_identity import (
     build_legacy_site_unique_id,
     build_site_unique_id,
