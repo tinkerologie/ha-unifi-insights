@@ -422,7 +422,7 @@ class TestRefreshDataService:
         await async_unload_services(hass)
 
     async def test_refresh_data_one_console_down_still_refreshes_the_others(
-        self, hass: HomeAssistant
+        self, hass: HomeAssistant, caplog: pytest.LogCaptureFixture
     ):
         """One unreachable console must not stop the others being refreshed."""
         broken = MagicMock()
@@ -467,12 +467,14 @@ class TestRefreshDataService:
         healthy.async_refresh_or_raise.assert_called_once_with(include_protect=True)
 
         message = str(raised.value)
-        # The message names the console that failed, and does not double up
-        # the "Error refreshing ..." prefix the facade already supplies.
-        assert "Upstairs console" in message
-        assert "timeout" in message
+        # The message names the console that failed. The API error text stays
+        # in the log only (#339).
+        assert message == "Unable to refresh UniFi Insights data from Upstairs console"
+        assert raised.value.translation_placeholders == {"targets": "Upstairs console"}
+        assert "timeout" not in message
         assert "Garage console" not in message
-        assert message.count("Error refreshing") == 1
+        assert "Error refreshing Upstairs console" in caplog.text
+        assert "devices coordinator: timeout" in caplog.text
 
         await async_unload_services(hass)
 
@@ -1680,7 +1682,10 @@ class TestServiceErrorHandling:
                 "async_entries",
                 return_value=[mock_entry],
             ),
-            pytest.raises(HomeAssistantError, match="UniFi Insights: Error refreshing"),
+            pytest.raises(
+                HomeAssistantError,
+                match=r"^Unable to refresh UniFi Insights data from UniFi Insights$",
+            ),
         ):
             await hass.services.async_call(
                 DOMAIN,
@@ -6388,7 +6393,7 @@ class TestRemoveClientsService:
         await async_unload_services(hass)
 
     async def test_remove_clients_continues_and_aggregates_failures(
-        self, hass: HomeAssistant
+        self, hass: HomeAssistant, caplog: pytest.LogCaptureFixture
     ):
         """Test remove_clients continues past per-site failure and aggregates errors."""
         coord1 = MagicMock()
@@ -6427,7 +6432,7 @@ class TestRemoveClientsService:
             ),
             pytest.raises(
                 HomeAssistantError,
-                match=r"Console 1 \(site site1\): Connection refused",
+                match=r"^Failed to remove clients: Console 1 \(site site1\)$",
             ) as exc_info,
         ):
             await hass.services.async_call(
@@ -6437,9 +6442,14 @@ class TestRemoveClientsService:
                 blocking=True,
             )
         assert exc_info.value.translation_key == "remove_clients_failed"
+        # Only the console and site reach the action error; the API error
+        # text stays in the log (#339), and the single failure is the cause.
         assert exc_info.value.translation_placeholders == {
-            "failures": "Console 1 (site site1): Connection refused"
+            "failures": "Console 1 (site site1)"
         }
+        assert "Connection refused" not in str(exc_info.value)
+        assert "Connection refused" in caplog.text
+        assert str(exc_info.value.__cause__) == "Connection refused"
 
         # Confirm console 2 was still processed
         coord2.device_coordinator.async_forget_clients_batch.assert_awaited_once_with(
@@ -6492,7 +6502,7 @@ class TestRemoveClientsService:
         await async_unload_services(hass)
 
     async def test_remove_clients_classic_error_envelope_failure(
-        self, hass: HomeAssistant
+        self, hass: HomeAssistant, caplog: pytest.LogCaptureFixture
     ):
         """Test classic error response reports failure and forgets nothing."""
         for error_type in ["error", "failed", "missing_meta"]:
@@ -6524,7 +6534,8 @@ class TestRemoveClientsService:
                 )
 
             assert exc_info.value.translation_key == "remove_clients_failed"
-            assert f"Classic API call failed: {error_type}" in str(exc_info.value)
+            assert f"Classic API call failed: {error_type}" not in str(exc_info.value)
+            assert f"Classic API call failed: {error_type}" in caplog.text
             coord.device_coordinator.async_forget_clients_batch.assert_not_called()
             await async_unload_services(hass)
 

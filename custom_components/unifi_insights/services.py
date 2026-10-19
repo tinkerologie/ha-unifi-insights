@@ -624,6 +624,7 @@ async def _async_handle_reconnect_client(
 async def _async_handle_remove_clients(hass: HomeAssistant, call: ServiceCall) -> None:
     """Handle remove_clients service call."""
     failures: list[str] = []
+    errors: list[HomeAssistantError] = []
 
     for console in resolve_network_consoles_call(hass, call):
         total_removed_console = 0
@@ -639,26 +640,30 @@ async def _async_handle_remove_clients(hass: HomeAssistant, call: ServiceCall) -
                     )
                     total_removed_console += len(eligible_macs)
             except HomeAssistantError as err:
-                _LOGGER.debug(
+                # The error text stays in the log; the action error only names
+                # the console and site, because API text is not user-facing.
+                _LOGGER.warning(
                     "Error removing clients from %s (site %s): %s",
                     console.title,
                     site_id,
                     err,
                 )
-                failures.append(f"{console.title} (site {site_id}): {err}")
+                failures.append(f"{console.title} (site {site_id})")
+                errors.append(err)
 
         _LOGGER.debug(
             "Removed %d clients for console %s", total_removed_console, console.title
         )
 
     if failures:
-        msg = "; ".join(failures)
+        joined = "; ".join(failures)
+        msg = f"Failed to remove clients: {joined}"
         raise HomeAssistantError(
             msg,
             translation_domain=DOMAIN,
             translation_key="remove_clients_failed",
-            translation_placeholders={"failures": msg},
-        )
+            translation_placeholders={"failures": joined},
+        ) from (errors[0] if len(errors) == 1 else None)
 
 
 async def _async_handle_export_network_rules(
@@ -748,7 +753,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             f" (ID: {site_id})" if site_id else "s",
         )
 
-        failures: list[str] = []
         failed_titles: list[str] = []
         for console in selection.targets:
             try:
@@ -759,23 +763,21 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 )
             except HomeAssistantError as err:
                 # Keep going: one unreachable console must not stop the others
-                # from being refreshed. Logged at debug because every failure
-                # is re-raised to the caller below, which Home Assistant
-                # already logs - an error line here would just duplicate it.
-                _LOGGER.debug("Error refreshing %s: %s", console.title, err)
-                failures.append(f"{console.title}: {err}")
+                # from being refreshed. The error text stays in the log; the
+                # action error only names the consoles that failed.
+                _LOGGER.warning("Error refreshing %s: %s", console.title, err)
                 failed_titles.append(console.title)
             else:
                 _LOGGER.info("Successfully refreshed coordinator data")
 
-        if failures:
-            # Each failure already carries its own "Error refreshing ..."
-            # sentence from the facade, so do not prefix a second one.
+        if failed_titles:
+            targets = ", ".join(failed_titles)
+            msg = f"Unable to refresh UniFi Insights data from {targets}"
             raise HomeAssistantError(
-                "; ".join(failures),
+                msg,
                 translation_domain=DOMAIN,
                 translation_key="refresh_failed",
-                translation_placeholders={"targets": ", ".join(failed_titles)},
+                translation_placeholders={"targets": targets},
             )
 
     async def async_handle_restart_device(call: ServiceCall) -> None:
