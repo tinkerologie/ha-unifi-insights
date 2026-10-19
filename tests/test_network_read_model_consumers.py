@@ -36,6 +36,11 @@ from custom_components.unifi_insights.button import (
     async_setup_entry as button_setup,
 )
 from custom_components.unifi_insights.const import DOMAIN
+from custom_components.unifi_insights.dashboard_snapshots import (
+    build_internet_activity_snapshot,
+    build_performance_snapshot,
+    build_site_health_snapshot,
+)
 from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
     build_site_network_facts,
@@ -47,10 +52,6 @@ from custom_components.unifi_insights.entity import (
     is_device_online,
     is_gateway_device,
 )
-from custom_components.unifi_insights.internet_activity_snapshot import (
-    build_internet_activity_snapshot,
-)
-from custom_components.unifi_insights.performance import build_performance_snapshot
 from custom_components.unifi_insights.sensor import (
     PORT_SENSOR_TYPES,
     SENSOR_TYPES,
@@ -60,7 +61,6 @@ from custom_components.unifi_insights.sensor import (
     _discover_port_sensors,
 )
 from custom_components.unifi_insights.services import _is_wireless_client
-from custom_components.unifi_insights.site_health import build_site_health_snapshot
 from custom_components.unifi_insights.topology import build_site_topology
 from custom_components.unifi_insights.topology_contract import (
     device_kind as topology_device_kind,

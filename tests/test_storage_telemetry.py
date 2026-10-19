@@ -24,11 +24,11 @@ from custom_components.unifi_insights.binary_sensor import (
 from custom_components.unifi_insights.coordinators.protect import (
     UnifiProtectCoordinator,
 )
+from custom_components.unifi_insights.dashboard_snapshots import build_protect_snapshot
 from custom_components.unifi_insights.data_transforms import (
     normalize_legacy_storage,
     normalize_nvr_storage,
 )
-from custom_components.unifi_insights.protect_snapshot import build_protect_snapshot
 from custom_components.unifi_insights.sensor import (
     UnifiProtectNVRSensor,
 )

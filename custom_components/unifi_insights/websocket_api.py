@@ -27,22 +27,24 @@ from homeassistant.util.hass_dict import HassKey
 
 from .console_identity import async_get_device_entry, resolve_console_namespace
 from .const import DOMAIN
-from .dashboard_contract_utils import as_dict, content_revision
+from .dashboard_snapshots import (
+    as_dict,
+    build_internet_activity_snapshot,
+    build_no_protect_snapshot,
+    build_performance_snapshot,
+    build_protect_snapshot,
+    build_site_health_snapshot,
+    build_timeline_snapshot,
+    build_unavailable_internet_activity,
+    build_unavailable_performance,
+    build_unavailable_protect_snapshot,
+    build_unavailable_site_health,
+    build_unavailable_timeline,
+    content_revision,
+)
 from .data_transforms import NETWORK_FACTS_KEY
 from .device_tracker import _client_tracker_entries, _mac_from_unique_id
 from .entity import get_field
-from .internet_activity_snapshot import (
-    build_internet_activity_snapshot,
-    build_unavailable_internet_activity,
-)
-from .performance import build_performance_snapshot, build_unavailable_performance
-from .protect_snapshot import (
-    build_no_protect_snapshot,
-    build_protect_snapshot,
-    build_unavailable_protect_snapshot,
-)
-from .site_health import build_site_health_snapshot, build_unavailable_site_health
-from .timeline import build_timeline_snapshot, build_unavailable_timeline
 from .topology import build_site_topology, build_unavailable_topology
 from .topology_contract import (
     MAX_CLIENTS_PER_SITE,

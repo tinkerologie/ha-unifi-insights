@@ -24,7 +24,21 @@ from custom_components.unifi_insights.console_identity import (
     build_site_unique_id,
 )
 from custom_components.unifi_insights.const import CONF_CONSOLE_ID, DOMAIN
-from custom_components.unifi_insights.dashboard_contract_utils import (
+from custom_components.unifi_insights.dashboard_snapshots import (
+    WINDOWS,
+    _wan_state,
+    bits_per_second_to_int,
+    build_internet_activity_snapshot,
+    build_no_protect_snapshot,
+    build_performance_snapshot,
+    build_protect_snapshot,
+    build_site_health_snapshot,
+    build_timeline_snapshot,
+    build_unavailable_internet_activity,
+    build_unavailable_performance,
+    build_unavailable_protect_snapshot,
+    build_unavailable_site_health,
+    build_unavailable_timeline,
     content_revision,
     enum_str,
     is_protect_device_connected,
@@ -34,30 +48,6 @@ from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
     build_site_network_facts,
     get_site_gateway_id,
-)
-from custom_components.unifi_insights.internet_activity_snapshot import (
-    WINDOWS,
-    build_internet_activity_snapshot,
-    build_unavailable_internet_activity,
-)
-from custom_components.unifi_insights.performance import (
-    bits_per_second_to_int,
-    build_performance_snapshot,
-    build_unavailable_performance,
-)
-from custom_components.unifi_insights.protect_snapshot import (
-    build_no_protect_snapshot,
-    build_protect_snapshot,
-    build_unavailable_protect_snapshot,
-)
-from custom_components.unifi_insights.site_health import (
-    _wan_state,
-    build_site_health_snapshot,
-    build_unavailable_site_health,
-)
-from custom_components.unifi_insights.timeline import (
-    build_timeline_snapshot,
-    build_unavailable_timeline,
 )
 from custom_components.unifi_insights.topology import build_site_topology
 

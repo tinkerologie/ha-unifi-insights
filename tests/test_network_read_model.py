@@ -23,6 +23,7 @@ from custom_components.unifi_insights.coordinators.device import (
 from custom_components.unifi_insights.coordinators.protect import (
     UnifiProtectCoordinator,
 )
+from custom_components.unifi_insights.dashboard_snapshots import bits_per_second_to_int
 from custom_components.unifi_insights.data_transforms import (
     NETWORK_DEVICE_STATES,
     NETWORK_FACTS_KEY,
@@ -47,7 +48,6 @@ from custom_components.unifi_insights.data_transforms import (
 from custom_components.unifi_insights.innerspace_transforms import (
     _normalize_innerspace_mac,
 )
-from custom_components.unifi_insights.performance import bits_per_second_to_int
 from custom_components.unifi_insights.sensor import bytes_to_bits
 from custom_components.unifi_insights.service_targets import _mac_key
 from tests.fixtures.library_responses import (

@@ -62,7 +62,7 @@ from custom_components.unifi_insights.const import (
     DOMAIN,
     SITE_ENTITY_SUFFIXES,
 )
-from custom_components.unifi_insights.internet_activity_snapshot import (
+from custom_components.unifi_insights.dashboard_snapshots import (
     _resolve_entity_ids,
 )
 from custom_components.unifi_insights.number import VOUCHER_NUMBER_DESCRIPTIONS

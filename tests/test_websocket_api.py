@@ -33,20 +33,18 @@ from custom_components.unifi_insights.const import (
     CONNECTION_TYPE_CARRIER_FABRIC,
     DOMAIN,
 )
+from custom_components.unifi_insights.dashboard_snapshots import (
+    WINDOWS,
+    build_performance_snapshot,
+    build_site_health_snapshot,
+    build_unavailable_performance,
+    build_unavailable_site_health,
+)
 from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
     build_site_network_facts,
 )
 from custom_components.unifi_insights.device_tracker import UnifiClientTracker
-from custom_components.unifi_insights.internet_activity_snapshot import WINDOWS
-from custom_components.unifi_insights.performance import (
-    build_performance_snapshot,
-    build_unavailable_performance,
-)
-from custom_components.unifi_insights.site_health import (
-    build_site_health_snapshot,
-    build_unavailable_site_health,
-)
 from custom_components.unifi_insights.topology import build_site_topology
 from custom_components.unifi_insights.websocket_api import (
     _UNLOAD_WATCHERS,
