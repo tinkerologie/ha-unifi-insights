@@ -17,6 +17,7 @@ from custom_components.unifi_insights.binary_sensor import (
     UnifiInsightsWanLinkBinarySensor,
     UnifiPortBinarySensor,
     UnifiProtectBinarySensor,
+    UnifiProtectSecurityBinarySensor,
     _get_supported_smart_detect_types,
     _is_doorbell_camera,
     _is_smart_detect_active,
@@ -30,9 +31,6 @@ from custom_components.unifi_insights.const import (
     DEVICE_TYPE_SENSOR,
 )
 from custom_components.unifi_insights.data_transforms import NetworkPortFacts
-from custom_components.unifi_insights.protect_security_entity import (
-    UnifiProtectSecurityBinarySensor,
-)
 from tests.fixtures.library_responses import (
     SAMPLE_ALARM_HUB,
     SAMPLE_THREAD_LINK_STATION,

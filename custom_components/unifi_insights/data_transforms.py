@@ -44,6 +44,8 @@ from .const import (
     CAMERA_TYPE_DOORBELL_MAIN,
     CAMERA_TYPE_DOORBELL_PACKAGE,
     CAMERA_TYPE_DOORBELL_WITH_PACKAGE_DETECTION,
+    DEVICE_TYPE_ALARM_HUB,
+    DEVICE_TYPE_LINK_STATION,
     GATEWAY_MODEL_PREFIXES,
     STORAGE_NEARLY_FULL_PERCENT,
 )
@@ -1412,3 +1414,47 @@ def fullest_persistent_storage_mount(
         if (percent := storage_used_percent(mount)) is not None
     ]
     return max(scored, key=lambda item: item[1]) if scored else None
+
+
+# --- Protect security devices ------------------------------------------------
+
+THREAD_DEVICE_TYPES = (DEVICE_TYPE_LINK_STATION, DEVICE_TYPE_ALARM_HUB)
+
+
+def nested_dict(data: dict[str, Any], *keys: str) -> dict[str, Any] | None:
+    """
+    Follow ``keys`` through nested dicts, or return None.
+
+    Coordinator dicts come from ``model_dump(exclude_none=False)``, so an
+    absent object is an explicit ``None`` and ``data.get(key, {})`` would not
+    fall back.
+    """
+    value: Any = data
+    for key in keys:
+        value = value.get(key) if isinstance(value, dict) else None
+    return value if isinstance(value, dict) else None
+
+
+def thread_network(data: dict[str, Any]) -> dict[str, Any] | None:
+    """Return ``threadState.network``; None on SKUs without Thread."""
+    return nested_dict(data, "threadState", "network")
+
+
+def has_thread_network(data: dict[str, Any]) -> bool:
+    """Return True if the gateway reports a Thread network."""
+    return thread_network(data) is not None
+
+
+def has_keypad(data: dict[str, Any]) -> bool:
+    """Return True for a fob with a PIN keypad."""
+    flags = data.get("featureFlags")
+    return isinstance(flags, dict) and flags.get("hasKeypad") is True
+
+
+def always_true(_data: dict[str, Any]) -> bool:
+    return True
+
+
+def present_attributes(**attributes: Any) -> dict[str, Any]:
+    """Drop attributes that are None rather than reporting null values."""
+    return {key: value for key, value in attributes.items() if value is not None}

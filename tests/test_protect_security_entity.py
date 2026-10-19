@@ -13,12 +13,14 @@ from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.const import PERCENTAGE, EntityCategory
 
-from custom_components.unifi_insights.const import DOMAIN
-from custom_components.unifi_insights.protect_security_entity import (
-    THREAD_ROLES,
+from custom_components.unifi_insights.binary_sensor import (
     UnifiProtectSecurityBinarySensor,
-    UnifiProtectSecuritySensor,
     discover_protect_security_binary_sensors,
+)
+from custom_components.unifi_insights.const import DOMAIN
+from custom_components.unifi_insights.sensor import (
+    THREAD_ROLES,
+    UnifiProtectSecuritySensor,
     discover_protect_security_sensors,
 )
 from tests.fixtures.library_responses import (

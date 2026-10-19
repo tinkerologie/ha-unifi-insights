@@ -16,11 +16,14 @@ from homeassistant.const import (
     EntityCategory,
 )
 from homeassistant.core import callback
+from homeassistant.util import dt as dt_util
 
 from .const import (
     ATTR_CAMERA_ID,
     ATTR_CAMERA_NAME,
     ATTR_LAST_MOTION,
+    ATTR_LAST_TAMPER_AT,
+    ATTR_LAST_TAMPER_USER,
     ATTR_SENSOR_EXTERNAL_LEAK_DETECTED,
     ATTR_SENSOR_EXTERNAL_LEAK_DETECTED_AT,
     ATTR_SENSOR_ID,
@@ -33,7 +36,10 @@ from .const import (
     ATTR_SENSOR_OPEN_STATUS_CHANGED_AT,
     ATTR_SENSOR_TAMPER_DETECTED,
     ATTR_SENSOR_TAMPER_DETECTED_AT,
+    ATTR_THREAD_ERROR_REASON,
+    DEVICE_TYPE_ALARM_HUB,
     DEVICE_TYPE_CAMERA,
+    DEVICE_TYPE_FOB,
     DEVICE_TYPE_NVR,
     DEVICE_TYPE_SENSOR,
     MOBILITY_ROUTER_CONNECTED,
@@ -44,14 +50,21 @@ from .const import (
     STORAGE_NEARLY_FULL_PERCENT,
 )
 from .data_transforms import (
+    THREAD_DEVICE_TYPES,
     NetworkDeviceFacts,
     NetworkPortFacts,
+    always_true,
     device_facts,
     fullest_persistent_storage_mount,
     get_port_label,
+    has_keypad,
+    has_thread_network,
     is_doorbell_camera_model,
+    nested_dict,
     normalize_nvr_storage,
     persistent_storage_mounts,
+    present_attributes,
+    thread_network,
 )
 from .entity import (
     UnifiInsightsEntity,
@@ -59,8 +72,8 @@ from .entity import (
     UnifiProtectEntity,
     async_add_mobility_router_entities,
     get_field,
+    protect_security_devices,
 )
-from .protect_security_entity import discover_protect_security_binary_sensors
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1168,3 +1181,160 @@ def discover_storage_binary_sensors(
         return []
     known_keys.add(key)
     return [UnifiStorageNearlyFullBinarySensor(coordinator, site_id, device_id)]
+
+
+# --- Protect security devices ------------------------------------------------
+
+
+def _tamper_state(data: dict[str, Any]) -> bool | None:
+    """
+    Map ``alarmHub.deviceTamperStatus`` to on/off.
+
+    The field is optional. Missing or unrecognized reads as unknown: falling
+    through to off would report "not tampered", a false all-clear.
+    """
+    status = (nested_dict(data, "alarmHub") or {}).get("deviceTamperStatus")
+    if status == "tampered":
+        return True
+    if status == "restored":
+        return False
+    return None
+
+
+def _thread_problem(data: dict[str, Any]) -> bool | None:
+    """Map the Thread network status to a PROBLEM state (error is on)."""
+    status = (thread_network(data) or {}).get("status")
+    if status == "error":
+        return True
+    if status == "ready":
+        return False
+    return None
+
+
+def _keypad_beep(data: dict[str, Any]) -> bool | None:
+    """Return whether a keypress beeps."""
+    value = (nested_dict(data, "keypadSettings") or {}).get("beepEnabled")
+    return value if isinstance(value, bool) else None
+
+
+def _tamper_attributes(data: dict[str, Any]) -> dict[str, Any]:
+    """Return the latest tamper event's user and time (ISO 8601, UTC)."""
+    user = data.get("_lastTamperUser")
+    at = data.get("_lastTamperAt")
+    when = None
+    if isinstance(at, (int, float)) and not isinstance(at, bool):
+        when = dt_util.utc_from_timestamp(at / 1000).isoformat()
+    return present_attributes(
+        **{
+            ATTR_LAST_TAMPER_USER: user if isinstance(user, str) else None,
+            ATTR_LAST_TAMPER_AT: when,
+        }
+    )
+
+
+def _thread_problem_attributes(data: dict[str, Any]) -> dict[str, Any]:
+    network = thread_network(data) or {}
+    return present_attributes(**{ATTR_THREAD_ERROR_REASON: network.get("errorReason")})
+
+
+@dataclass(frozen=True, kw_only=True)
+class UnifiProtectSecurityBinarySensorEntityDescription(BinarySensorEntityDescription):
+    """Describes a binary sensor of a Protect security device."""
+
+    device_types: tuple[str, ...]
+    value_fn: Callable[[dict[str, Any]], bool | None]
+    supported_fn: Callable[[dict[str, Any]], bool] = always_true
+    attributes_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+
+
+SECURITY_BINARY_SENSOR_TYPES: tuple[
+    UnifiProtectSecurityBinarySensorEntityDescription, ...
+] = (
+    UnifiProtectSecurityBinarySensorEntityDescription(
+        key="alarm_hub_device_tamper",
+        translation_key="alarm_hub_device_tamper",
+        device_class=BinarySensorDeviceClass.TAMPER,
+        device_types=(DEVICE_TYPE_ALARM_HUB,),
+        value_fn=_tamper_state,
+        attributes_fn=_tamper_attributes,
+    ),
+    UnifiProtectSecurityBinarySensorEntityDescription(
+        key="thread_network_problem",
+        translation_key="thread_network_problem",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        device_types=THREAD_DEVICE_TYPES,
+        value_fn=_thread_problem,
+        supported_fn=has_thread_network,
+        attributes_fn=_thread_problem_attributes,
+    ),
+    UnifiProtectSecurityBinarySensorEntityDescription(
+        key="fob_keypad_beep",
+        translation_key="fob_keypad_beep",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        device_types=(DEVICE_TYPE_FOB,),
+        value_fn=_keypad_beep,
+        supported_fn=has_keypad,
+    ),
+)
+
+
+class UnifiProtectSecurityBinarySensor(UnifiProtectEntity, BinarySensorEntity):
+    """Binary sensor of an alarm hub, link station or fob."""
+
+    entity_description: UnifiProtectSecurityBinarySensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsFacadeCoordinator,
+        description: UnifiProtectSecurityBinarySensorEntityDescription,
+        device_type: str,
+        device_id: str,
+    ) -> None:
+        """Initialize the binary sensor."""
+        super().__init__(coordinator, device_type, device_id, description.key)
+        self.entity_description = description
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the state, or None when it is unknown."""
+        data = self.device_data
+        return self.entity_description.value_fn(data) if data else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return attributes that have a value."""
+        data = self.device_data
+        if not data or self.entity_description.attributes_fn is None:
+            return {}
+        return self.entity_description.attributes_fn(data)
+
+
+def discover_protect_security_binary_sensors(
+    coordinator: UnifiInsightsFacadeCoordinator,
+    known_keys: set[tuple[Any, ...]],
+) -> list[BinarySensorEntity]:
+    """
+    Return binary sensors for security devices not yet in ``known_keys``.
+
+    Called on every coordinator update, so an entity whose capability shows up
+    later (a Thread network forming, a fob newly adopted) is added then.
+    """
+    entities: list[BinarySensorEntity] = []
+    for device_type, device_id, data in protect_security_devices(coordinator):
+        for description in SECURITY_BINARY_SENSOR_TYPES:
+            if device_type not in description.device_types:
+                continue
+            if not description.supported_fn(data):
+                continue
+            key = (device_type, device_id, description.key)
+            if key in known_keys:
+                continue
+            known_keys.add(key)
+            entities.append(
+                UnifiProtectSecurityBinarySensor(
+                    coordinator, description, device_type, device_id
+                )
+            )
+    return entities

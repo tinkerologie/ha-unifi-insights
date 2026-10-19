@@ -18,8 +18,11 @@ from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    DEVICE_TYPE_ALARM_HUB,
     DEVICE_TYPE_CAMERA,
+    DEVICE_TYPE_FOB,
     DEVICE_TYPE_LIGHT,
+    DEVICE_TYPE_LINK_STATION,
     DEVICE_TYPE_NVR,
     DEVICE_TYPE_SENSOR,
     DOMAIN,
@@ -1006,3 +1009,32 @@ def async_add_mobility_router_entities(
 
     async_discover()
     entry.async_on_unload(coordinator.async_add_listener(async_discover))
+
+
+# --- Protect security devices ------------------------------------------------
+
+
+def protect_security_devices(
+    coordinator: UnifiInsightsFacadeCoordinator,
+) -> list[tuple[str, str, dict[str, Any]]]:
+    """Return (device_type, device_id, data) for every security device."""
+    if not coordinator.protect_client:
+        return []
+    protect = coordinator.data.get("protect")
+    if not isinstance(protect, dict):
+        return []
+    devices: list[tuple[str, str, dict[str, Any]]] = []
+    for device_type in (
+        DEVICE_TYPE_ALARM_HUB,
+        DEVICE_TYPE_LINK_STATION,
+        DEVICE_TYPE_FOB,
+    ):
+        collection = protect.get(f"{device_type}s")
+        if not isinstance(collection, dict):
+            continue
+        devices.extend(
+            (device_type, device_id, data)
+            for device_id, data in collection.items()
+            if isinstance(data, dict)
+        )
+    return devices

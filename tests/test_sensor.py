@@ -45,9 +45,6 @@ from custom_components.unifi_insights.const import (
     DOMAIN,
 )
 from custom_components.unifi_insights.data_transforms import get_site_gateway_id
-from custom_components.unifi_insights.protect_security_entity import (
-    UnifiProtectSecuritySensor,
-)
 from custom_components.unifi_insights.sensor import (
     NVR_SENSOR_TYPES,
     OUTLET_SENSOR_TYPES,
@@ -64,6 +61,7 @@ from custom_components.unifi_insights.sensor import (
     UnifiOutletSensor,
     UnifiPortSensor,
     UnifiProtectNVRSensor,
+    UnifiProtectSecuritySensor,
     UnifiProtectSensor,
     UnifiProtectSensorEntityDescription,
     UnifiSiteClientSensor,

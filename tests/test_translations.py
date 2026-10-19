@@ -21,6 +21,7 @@ import yaml
 
 from custom_components.unifi_insights.binary_sensor import (
     BINARY_SENSOR_TYPES,
+    SECURITY_BINARY_SENSOR_TYPES,
     STORAGE_NEARLY_FULL_DESCRIPTION,
 )
 from custom_components.unifi_insights.coordinators.rule_audit import (
@@ -30,12 +31,9 @@ from custom_components.unifi_insights.device_tracker import LOCATION_DESCRIPTION
 from custom_components.unifi_insights.network_rule_switch import (
     NETWORK_RULE_SWITCH_TYPES,
 )
-from custom_components.unifi_insights.protect_security_entity import (
-    SECURITY_BINARY_SENSOR_TYPES,
-    SECURITY_SENSOR_TYPES,
-)
 from custom_components.unifi_insights.sensor import (
     ROUTER_SENSORS,
+    SECURITY_SENSOR_TYPES,
     STORAGE_SENSOR_TYPES,
     WORKSPACE_SENSORS,
 )

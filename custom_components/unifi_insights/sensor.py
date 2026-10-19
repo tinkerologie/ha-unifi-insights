@@ -34,6 +34,8 @@ from . import CarrierFabricData, site_internet_activity_sensor
 from .carrier_fabric_sensor import async_setup_carrier_fabric_sensors
 from .console_identity import async_migrate_site_entity, resolve_console_namespace
 from .const import (
+    ATTR_ARM_PROFILE_ID,
+    ATTR_NIGHT_PROFILE_ID,
     ATTR_NVR_ID,
     ATTR_NVR_NAME,
     ATTR_NVR_STORAGE_AVAILABLE,
@@ -48,6 +50,11 @@ from .const import (
     ATTR_SENSOR_LIGHT_VALUE,
     ATTR_SENSOR_NAME,
     ATTR_SENSOR_TEMPERATURE_VALUE,
+    ATTR_THREAD_CHANNEL,
+    ATTR_THREAD_EXTENDED_PAN_ID,
+    ATTR_THREAD_NETWORK_NAME,
+    ATTR_THREAD_PAN_ID,
+    DEVICE_TYPE_FOB,
     DEVICE_TYPE_NVR,
     DEVICE_TYPE_SENSOR,
     DOMAIN,
@@ -59,15 +66,22 @@ from .const import (
 from .coordinators import UnifiInsightsFacadeCoordinator
 from .coordinators.mobility import UnifiInsightsMobilityCoordinator
 from .data_transforms import (
+    THREAD_DEVICE_TYPES,
     NetworkDeviceFacts,
+    always_true,
     bytes_to_bits_per_second,
     device_facts,
     find_storage_mount,
     get_storage_mounts,
+    has_keypad,
+    has_thread_network,
     is_volatile_storage_mount,
+    nested_dict,
     normalize_nvr_storage,
+    present_attributes,
     storage_mount_labels,
     storage_used_percent,
+    thread_network,
 )
 from .data_transforms import get_port_label as _get_port_label
 from .entity import (
@@ -80,6 +94,7 @@ from .entity import (
     first_not_none,
     get_field,
     mobility_workspace_device_info,
+    protect_security_devices,
 )
 from .entity import (
     get_client_type as _get_client_type,
@@ -87,7 +102,6 @@ from .entity import (
 from .innerspace_entity import (
     _discover_innerspace_sensors,
 )
-from .protect_security_entity import discover_protect_security_sensors
 from .site_internet_activity_sensor import (
     _discover_site_internet_activity_sensors,
 )
@@ -2685,6 +2699,212 @@ def discover_storage_sensors(
                     mount_point=mount_point,
                     mount_label=labels[mount_point],
                     volatile=volatile,
+                )
+            )
+    return entities
+
+
+# --- Protect security devices ------------------------------------------------
+
+# Entities for UniFi Protect security devices: alarm hubs, link stations, fobs.
+#
+# Covers the Protect 7.3.70 additions: Thread mesh state on link stations and
+# alarm hubs (both use the ``linkStation`` schema), the alarm hub's device
+# tamper status, and a keypad fob's keypad and arm-control settings. The public
+# API cannot write any of these (``PATCH`` accepts ``name`` only), so every
+# entity is read-only.
+#
+# The `unifi-official-api` models accept any value so a firmware addition never drops a
+# device; the spec's enums and ranges are enforced here instead, and anything
+# outside them reads as unknown (``None``) rather than as a misleading state.
+
+# Spec enum for linkStationThreadNetwork.role.
+THREAD_ROLES: list[str] = ["disabled", "detached", "child", "router", "leader"]
+ARM_CONTROL_STATES: list[str] = ["enabled", "disabled"]
+# fobKeypadSettings.beepVolume range per spec, in percent.
+_MAX_BEEP_VOLUME = 100
+
+
+def _has_arm_control(data: dict[str, Any]) -> bool:
+    """Return True if the fob reports arm-control settings at all."""
+    return nested_dict(data, "armControlSettings") is not None
+
+
+def _keypad_volume(data: dict[str, Any]) -> int | None:
+    """Return the keypress beep volume, 0-100 % per spec."""
+    value = (nested_dict(data, "keypadSettings") or {}).get("beepVolume")
+    if (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and 0 <= value <= _MAX_BEEP_VOLUME
+    ):
+        return value
+    return None
+
+
+def _thread_role(data: dict[str, Any]) -> str | None:
+    """
+    Return the Thread role, limited to the ENUM options.
+
+    HA raises if an ENUM sensor's state is not one of its options, so a role
+    newer firmware adds reads as unknown until the integration learns it.
+    """
+    role = (thread_network(data) or {}).get("role")
+    if isinstance(role, str) and role in THREAD_ROLES:
+        return role
+    if role is not None:
+        _LOGGER.debug("Unrecognized Thread role %r; reporting unknown", role)
+    return None
+
+
+def _thread_joined_devices(data: dict[str, Any]) -> int | None:
+    """Return how many devices have joined the Thread network."""
+    value = (thread_network(data) or {}).get("joinedDeviceCount")
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
+
+
+def _arm_control(data: dict[str, Any]) -> str | None:
+    """Return whether the fob may arm and disarm external arm profiles."""
+    enabled = (nested_dict(data, "armControlSettings") or {}).get("enabled")
+    if enabled is True:
+        return "enabled"
+    if enabled is False:
+        return "disabled"
+    return None
+
+
+def _thread_network_attributes(data: dict[str, Any]) -> dict[str, Any]:
+    # lastUpdatedAt is left out on purpose: it changes on every gateway
+    # refresh, so each refresh would write a new recorder row.
+    network = thread_network(data) or {}
+    return present_attributes(
+        **{
+            ATTR_THREAD_CHANNEL: network.get("channel"),
+            ATTR_THREAD_NETWORK_NAME: network.get("networkName"),
+            ATTR_THREAD_PAN_ID: network.get("panId"),
+            ATTR_THREAD_EXTENDED_PAN_ID: network.get("extendedPanId"),
+        }
+    )
+
+
+def _arm_control_attributes(data: dict[str, Any]) -> dict[str, Any]:
+    settings = nested_dict(data, "armControlSettings") or {}
+    return present_attributes(
+        **{
+            ATTR_ARM_PROFILE_ID: settings.get("armProfileId"),
+            ATTR_NIGHT_PROFILE_ID: settings.get("nightProfileId"),
+        }
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class UnifiProtectSecuritySensorEntityDescription(SensorEntityDescription):
+    """Describes a sensor of a Protect security device."""
+
+    device_types: tuple[str, ...]
+    value_fn: Callable[[dict[str, Any]], StateType]
+    supported_fn: Callable[[dict[str, Any]], bool] = always_true
+    attributes_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+
+
+SECURITY_SENSOR_TYPES: tuple[UnifiProtectSecuritySensorEntityDescription, ...] = (
+    UnifiProtectSecuritySensorEntityDescription(
+        key="thread_role",
+        translation_key="thread_role",
+        device_class=SensorDeviceClass.ENUM,
+        options=THREAD_ROLES,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        device_types=THREAD_DEVICE_TYPES,
+        value_fn=_thread_role,
+        supported_fn=has_thread_network,
+        attributes_fn=_thread_network_attributes,
+    ),
+    UnifiProtectSecuritySensorEntityDescription(
+        key="thread_joined_devices",
+        translation_key="thread_joined_devices",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        device_types=THREAD_DEVICE_TYPES,
+        value_fn=_thread_joined_devices,
+        supported_fn=has_thread_network,
+    ),
+    UnifiProtectSecuritySensorEntityDescription(
+        key="fob_keypad_beep_volume",
+        translation_key="fob_keypad_beep_volume",
+        native_unit_of_measurement=PERCENTAGE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        device_types=(DEVICE_TYPE_FOB,),
+        value_fn=_keypad_volume,
+        supported_fn=has_keypad,
+    ),
+    UnifiProtectSecuritySensorEntityDescription(
+        key="fob_arm_control",
+        translation_key="fob_arm_control",
+        device_class=SensorDeviceClass.ENUM,
+        options=ARM_CONTROL_STATES,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        device_types=(DEVICE_TYPE_FOB,),
+        value_fn=_arm_control,
+        supported_fn=_has_arm_control,
+        attributes_fn=_arm_control_attributes,
+    ),
+)
+
+
+class UnifiProtectSecuritySensor(UnifiProtectEntity, SensorEntity):
+    """Sensor of an alarm hub, link station or fob."""
+
+    entity_description: UnifiProtectSecuritySensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsFacadeCoordinator,
+        description: UnifiProtectSecuritySensorEntityDescription,
+        device_type: str,
+        device_id: str,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_type, device_id, description.key)
+        self.entity_description = description
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the state, or None when it is unknown."""
+        data = self.device_data
+        return self.entity_description.value_fn(data) if data else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return attributes that have a value."""
+        data = self.device_data
+        if not data or self.entity_description.attributes_fn is None:
+            return {}
+        return self.entity_description.attributes_fn(data)
+
+
+def discover_protect_security_sensors(
+    coordinator: UnifiInsightsFacadeCoordinator,
+    known_keys: set[tuple[Any, ...]],
+) -> list[SensorEntity]:
+    """Return sensors for security devices not yet in ``known_keys``."""
+    entities: list[SensorEntity] = []
+    for device_type, device_id, data in protect_security_devices(coordinator):
+        for description in SECURITY_SENSOR_TYPES:
+            if device_type not in description.device_types:
+                continue
+            if not description.supported_fn(data):
+                continue
+            key = (device_type, device_id, description.key)
+            if key in known_keys:
+                continue
+            known_keys.add(key)
+            entities.append(
+                UnifiProtectSecuritySensor(
+                    coordinator, description, device_type, device_id
                 )
             )
     return entities
