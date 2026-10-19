@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any, Final, NamedTuple, override
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import async_track_time_interval
 from pydantic import ValidationError
@@ -38,7 +37,6 @@ from unifi_official_api.protect.talkback import (
 )
 from unifi_official_api.validation import sanitized_validation_fields
 
-from custom_components.unifi_insights.console_identity import async_get_device_entry
 from custom_components.unifi_insights.const import (
     DEVICE_TYPE_CAMERA,
     DEVICE_TYPE_CHIME,
@@ -2909,8 +2907,6 @@ class UnifiProtectCoordinator(UnifiBaseCoordinator):
         cannot be undone. Devices still inside the grace window stay in the
         tracked set so their absence keeps accumulating across polls.
         """
-        device_registry = dr.async_get(self.hass)
-
         for device_type in [
             "cameras",
             "lights",
@@ -2951,29 +2947,17 @@ class UnifiProtectCoordinator(UnifiBaseCoordinator):
                     continue
 
                 missing_polls.pop(device_id, None)
-                # Try both identifier patterns (with and without "protect_" prefix)
-                for identifier in [
-                    f"protect_{device_type[:-1]}_{device_id}",  # protect_camera_xyz
-                    device_id,  # Just the device ID
-                ]:
-                    device = async_get_device_entry(
-                        device_registry,
-                        (DOMAIN, identifier),
-                        self.config_entry.entry_id,
-                    )
-                    if device:
-                        _LOGGER.info(
-                            "Protect coordinator: Removing stale %s device: %s "
-                            "(absent for %d consecutive polls)",
-                            device_type,
-                            device_id,
-                            count,
-                        )
-                        device_registry.async_update_device(
-                            device_id=device.id,
-                            remove_config_entry_id=self.config_entry.entry_id,
-                        )
-                        break
+                _LOGGER.debug(
+                    "Protect coordinator: %s device %s absent for %d consecutive "
+                    "polls; removing it",
+                    device_type,
+                    device_id,
+                    count,
+                )
+                # Both identifier patterns: protect_camera_xyz, then the bare id.
+                self._remove_stale_device(
+                    f"protect_{device_type[:-1]}_{device_id}", device_id
+                )
 
                 if device_type == "sensors":
                     # Matches `_drop_rebuilt_latch_trackers` / the removed-

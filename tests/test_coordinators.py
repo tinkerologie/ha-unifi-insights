@@ -3018,7 +3018,7 @@ class TestUnifiDeviceCoordinator:
 
         # Mock device registry
         with patch(
-            "custom_components.unifi_insights.coordinators.device.dr.async_get"
+            "custom_components.unifi_insights.coordinators.base.dr.async_get"
         ) as mock_registry:
             mock_device = MagicMock()
             mock_device.id = "device_entry_id"
@@ -3056,7 +3056,7 @@ class TestUnifiDeviceCoordinator:
 
         # Mock device registry to return None for the device lookup
         with patch(
-            "custom_components.unifi_insights.coordinators.device.dr.async_get"
+            "custom_components.unifi_insights.coordinators.base.dr.async_get"
         ) as mock_registry:
             set_mock_device_lookup(mock_registry.return_value, None)
 
@@ -4950,7 +4950,7 @@ class TestUnifiProtectCoordinator:
 
         # Mock device registry
         with patch(
-            "custom_components.unifi_insights.coordinators.protect.dr.async_get"
+            "custom_components.unifi_insights.coordinators.base.dr.async_get"
         ) as mock_registry:
             mock_device = MagicMock()
             mock_device.id = "device_entry_id"
@@ -5687,7 +5687,7 @@ class TestUnifiProtectCoordinator:
 
         # Mock device registry to return None (device not found)
         with patch(
-            "custom_components.unifi_insights.coordinators.protect.dr.async_get"
+            "custom_components.unifi_insights.coordinators.base.dr.async_get"
         ) as mock_registry:
             set_mock_device_lookup(mock_registry.return_value, None)
 
@@ -5873,7 +5873,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator._consecutive_empty_fetches.get(collection, 0) == 0
 
         with patch(
-            "custom_components.unifi_insights.coordinators.protect.dr.async_get"
+            "custom_components.unifi_insights.coordinators.base.dr.async_get"
         ) as mock_registry:
             set_mock_device_lookup(mock_registry.return_value, MagicMock())
             coordinator._cleanup_stale_devices()
@@ -6165,7 +6165,7 @@ class TestUnifiProtectCoordinator:
         assert "sensor1" in coordinator.data["sensors"]
 
         with patch(
-            "custom_components.unifi_insights.coordinators.protect.dr.async_get"
+            "custom_components.unifi_insights.coordinators.base.dr.async_get"
         ) as mock_registry:
             mock_device = MagicMock()
             set_mock_device_lookup(mock_registry.return_value, mock_device)
@@ -6195,7 +6195,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["sensors"] == {}
 
         with patch(
-            "custom_components.unifi_insights.coordinators.protect.dr.async_get"
+            "custom_components.unifi_insights.coordinators.base.dr.async_get"
         ) as mock_registry:
             mock_device = MagicMock()
             mock_device.id = "sensor1_entry_id"
@@ -6234,7 +6234,7 @@ class TestUnifiProtectCoordinator:
         coordinator.protect_client.cameras.last_result_complete = False
 
         with patch(
-            "custom_components.unifi_insights.coordinators.protect.dr.async_get"
+            "custom_components.unifi_insights.coordinators.base.dr.async_get"
         ) as mock_registry:
             set_mock_device_lookup(mock_registry.return_value, MagicMock())
             for _ in range(MAX_CONSECUTIVE_MISSING_POLLS + 2):
@@ -6335,7 +6335,7 @@ class TestUnifiProtectCoordinator:
         coordinator.data["cameras"] = {"cam1": {"id": "cam1"}}
 
         with patch(
-            "custom_components.unifi_insights.coordinators.protect.dr.async_get"
+            "custom_components.unifi_insights.coordinators.base.dr.async_get"
         ) as mock_registry:
             set_mock_device_lookup(mock_registry.return_value, MagicMock())
             for _ in range(MAX_CONSECUTIVE_MISSING_POLLS):
@@ -6359,7 +6359,7 @@ class TestUnifiProtectCoordinator:
         mock_device.id = "registry_id_cam2"
 
         with patch(
-            "custom_components.unifi_insights.coordinators.protect.dr.async_get"
+            "custom_components.unifi_insights.coordinators.base.dr.async_get"
         ) as mock_registry:
             set_mock_device_lookup(mock_registry.return_value, mock_device)
             for _ in range(MAX_CONSECUTIVE_MISSING_POLLS + 1):
@@ -6382,7 +6382,7 @@ class TestUnifiProtectCoordinator:
         coordinator._previous_protect_device_ids["cameras"] = {"cam1", "cam2"}
 
         with patch(
-            "custom_components.unifi_insights.coordinators.protect.dr.async_get"
+            "custom_components.unifi_insights.coordinators.base.dr.async_get"
         ) as mock_registry:
             set_mock_device_lookup(mock_registry.return_value, MagicMock())
             # Absent for one poll short of the threshold.
@@ -9144,10 +9144,10 @@ class TestProtectSecurityDeviceFamilies:
 
         with (
             patch(
-                "custom_components.unifi_insights.coordinators.protect.dr.async_get"
+                "custom_components.unifi_insights.coordinators.base.dr.async_get"
             ) as mock_registry,
             patch(
-                "custom_components.unifi_insights.coordinators.protect.async_get_device_entry",
+                "custom_components.unifi_insights.coordinators.base.async_get_device_entry",
                 side_effect=lambda _reg, ident, _entry: (
                     mock_device if ident == (DOMAIN, identifier) else None
                 ),
@@ -10043,7 +10043,7 @@ class TestProtectSecurityDeviceFamilies:
         coordinator.data["alarm_hubs"] = {}
 
         with patch(
-            "custom_components.unifi_insights.coordinators.protect.dr.async_get"
+            "custom_components.unifi_insights.coordinators.base.dr.async_get"
         ) as mock_registry:
             set_mock_device_lookup(mock_registry.return_value, None)
             for _ in range(MAX_CONSECUTIVE_MISSING_POLLS + 1):

@@ -8,7 +8,6 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.helpers import device_registry as dr
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
@@ -16,8 +15,7 @@ from unifi_official_api import (
     UniFiTimeoutError,
 )
 
-from custom_components.unifi_insights.console_identity import async_get_device_entry
-from custom_components.unifi_insights.const import DOMAIN, SCAN_INTERVAL_INNERSPACE
+from custom_components.unifi_insights.const import SCAN_INTERVAL_INNERSPACE
 from custom_components.unifi_insights.data_transforms import (
     normalize_innerspace_snapshot,
 )
@@ -90,21 +88,8 @@ class UnifiInsightsInnerSpaceCoordinator(UnifiBaseCoordinator):
             for plan_id, plan in self.data.get("floor_plans", {}).items()
             if isinstance(plan, dict) and plan.get("image_url")
         }
-        device_registry = dr.async_get(self.hass)
         for plan_id in self._previous_floor_plan_ids - current_ids:
-            identifier = f"innerspace_floor_plan_{plan_id}"
-            device = async_get_device_entry(
-                device_registry, (DOMAIN, identifier), self.config_entry.entry_id
-            )
-            if device:
-                _LOGGER.info(
-                    "InnerSpace coordinator: Removing stale floor plan device: %s",
-                    identifier,
-                )
-                device_registry.async_update_device(
-                    device_id=device.id,
-                    remove_config_entry_id=self.config_entry.entry_id,
-                )
+            self._remove_stale_device(f"innerspace_floor_plan_{plan_id}")
         self._previous_floor_plan_ids = current_ids
 
     async def _async_update_data(self) -> dict[str, Any]:

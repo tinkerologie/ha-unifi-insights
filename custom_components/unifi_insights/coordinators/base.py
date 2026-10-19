@@ -10,6 +10,7 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
@@ -24,6 +25,7 @@ from unifi_official_api import (
 )
 from unifi_official_api.validation import sanitized_validation_fields
 
+from custom_components.unifi_insights.console_identity import async_get_device_entry
 from custom_components.unifi_insights.const import DOMAIN
 
 if TYPE_CHECKING:
@@ -173,6 +175,29 @@ class UnifiBaseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def available(self) -> bool:
         """Return coordinator availability."""
         return self._available
+
+    def _remove_stale_device(self, *identifiers: str) -> bool:
+        """
+        Detach a device the console no longer reports from this config entry.
+
+        Each identifier is tried in order, and the first device registered
+        under it in this entry is detached. Returns whether a device was found.
+        Callers decide when a device counts as stale.
+        """
+        device_registry = dr.async_get(self.hass)
+        for identifier in identifiers:
+            device = async_get_device_entry(
+                device_registry, (DOMAIN, identifier), self.config_entry.entry_id
+            )
+            if device is None:
+                continue
+            _LOGGER.info("%s: removing stale device %s", self.name, identifier)
+            device_registry.async_update_device(
+                device_id=device.id,
+                remove_config_entry_id=self.config_entry.entry_id,
+            )
+            return True
+        return False
 
     def _model_to_dict(self, model: Any) -> dict[str, Any]:
         """

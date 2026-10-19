@@ -16,7 +16,6 @@ from homeassistant.exceptions import (
     ServiceNotFound,
     ServiceValidationError,
 )
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from unifi_official_api import (
     UniFiAuthenticationError,
@@ -37,7 +36,6 @@ from custom_components.unifi_insights.client_wake import (
     first_non_blank_text,
     history_network_hint,
 )
-from custom_components.unifi_insights.console_identity import async_get_device_entry
 from custom_components.unifi_insights.const import DOMAIN, SCAN_INTERVAL_DEVICE
 from custom_components.unifi_insights.data_transforms import (
     CPU_STAT_KEYS,
@@ -1399,33 +1397,15 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
 
     def _cleanup_stale_devices(self) -> None:
         """Remove stale network devices from the device registry (Gold requirement)."""
-        device_registry = dr.async_get(self.hass)
-
-        # Collect current network device IDs
         current_network_device_ids: set[str] = set()
         for site_id, devices in self.data.get("devices", {}).items():
             for device_id in devices:
                 current_network_device_ids.add(f"{site_id}_{device_id}")
 
-        # Find and remove stale network devices
-        stale_network_ids = (
+        for device_identifier in (
             self._previous_network_device_ids - current_network_device_ids
-        )
-        for device_identifier in stale_network_ids:
-            device = async_get_device_entry(
-                device_registry,
-                (DOMAIN, device_identifier),
-                self.config_entry.entry_id,
-            )
-            if device:
-                _LOGGER.info(
-                    "Device coordinator: Removing stale network device: %s",
-                    device_identifier,
-                )
-                device_registry.async_update_device(
-                    device_id=device.id,
-                    remove_config_entry_id=self.config_entry.entry_id,
-                )
+        ):
+            self._remove_stale_device(device_identifier)
 
         self._previous_network_device_ids = current_network_device_ids
 

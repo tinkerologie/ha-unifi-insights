@@ -1585,7 +1585,7 @@ class TestSensorTrackerCleanup:
         coordinator.data["sensors"] = {}
 
         with patch(
-            "custom_components.unifi_insights.coordinators.protect.dr.async_get"
+            "custom_components.unifi_insights.coordinators.base.dr.async_get"
         ) as mock_registry:
             mock_device = MagicMock()
             mock_device.id = "device_entry_id"
