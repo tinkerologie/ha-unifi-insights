@@ -98,8 +98,8 @@ from .entity import (
     UnifiInsightsEntity,
     UnifiMobilityRouterEntity,
     UnifiProtectEntity,
+    UnifiSiteEntity,
     async_add_mobility_router_entities,
-    build_site_device_info,
     device_has_feature,
     first_not_none,
     get_field,
@@ -2117,12 +2117,9 @@ class UnifiProtectNVRSensor(UnifiProtectEntity, SensorEntity):
         }
 
 
-class UnifiSiteClientSensor(
-    CoordinatorEntity[UnifiInsightsFacadeCoordinator], SensorEntity
-):
+class UnifiSiteClientSensor(UnifiSiteEntity, SensorEntity):
     """Representation of a site-level client count sensor."""
 
-    _attr_has_entity_name = True
     entity_description: UnifiInsightsSensorEntityDescription
 
     def __init__(
@@ -2134,16 +2131,9 @@ class UnifiSiteClientSensor(
         unique_id: str,
     ) -> None:
         """Initialize the site-level client sensor."""
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._site_id = site_id
-
-        self._attr_unique_id = unique_id
-        self._attr_device_info = DeviceInfo(**self._build_device_info())  # type: ignore[typeddict-item]
-
-    def _build_device_info(self) -> dict[str, Any]:
-        """Build device info for site-level entity grouping."""
-        return build_site_device_info(self.coordinator.data, self._site_id)
+        super().__init__(
+            coordinator, site_id, unique_id=unique_id, description=description
+        )
 
     @property
     def available(self) -> bool:
@@ -3033,12 +3023,9 @@ VOUCHER_SENSOR_TYPES: tuple[UnifiVoucherSensorEntityDescription, ...] = (
 )
 
 
-class UnifiVoucherSensor(
-    CoordinatorEntity[UnifiInsightsFacadeCoordinator], SensorEntity
-):
+class UnifiVoucherSensor(UnifiSiteEntity, SensorEntity):
     """Representation of a UniFi hotspot voucher sensor."""
 
-    _attr_has_entity_name = True
     entity_description: UnifiVoucherSensorEntityDescription
 
     def __init__(
@@ -3050,12 +3037,8 @@ class UnifiVoucherSensor(
         unique_id: str,
     ) -> None:
         """Initialize the voucher sensor."""
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._site_id = site_id
-        self._attr_unique_id = unique_id
-        self._attr_device_info = DeviceInfo(
-            **build_site_device_info(coordinator.data, site_id)  # type: ignore[typeddict-item]
+        super().__init__(
+            coordinator, site_id, unique_id=unique_id, description=description
         )
 
     @property
@@ -3252,12 +3235,9 @@ SITE_INTERNET_ACTIVITY_SENSOR_TYPES: tuple[
 )
 
 
-class UnifiSiteInternetActivitySensor(
-    CoordinatorEntity[UnifiInsightsFacadeCoordinator], SensorEntity
-):
+class UnifiSiteInternetActivitySensor(UnifiSiteEntity, SensorEntity):
     """Sensor showing historical WAN download/upload bytes for a UniFi site."""
 
-    _attr_has_entity_name = True
     entity_description: UnifiSiteInternetActivitySensorEntityDescription
 
     def __init__(
@@ -3269,22 +3249,16 @@ class UnifiSiteInternetActivitySensor(
         unique_id: str,
     ) -> None:
         """Initialize the site internet activity sensor."""
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._site_id = site_id
+        super().__init__(
+            coordinator, site_id, unique_id=unique_id, description=description
+        )
 
-        self._attr_unique_id = unique_id
-        self._attr_device_info = DeviceInfo(**self._build_device_info())  # type: ignore[typeddict-item]
         self._attr_extra_state_attributes = {
             "period": description.period_label,
             "unifi_window": description.unifi_window,
             "direction": description.direction,
             "report_interval": description.report_interval,
         }
-
-    def _build_device_info(self) -> dict[str, Any]:
-        """Build device info for site-level entity grouping."""
-        return build_site_device_info(self.coordinator.data, self._site_id)
 
     def _get_window_value(self) -> int | None:
         """Return the current byte total for this sensor's window and metric."""

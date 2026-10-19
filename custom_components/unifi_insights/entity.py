@@ -510,6 +510,35 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         return data if isinstance(data, dict) else None
 
 
+class UnifiSiteEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
+    """
+    Base entity for one site, grouped under the site's gateway or site device.
+
+    Subclasses decide availability: each site entity depends on a different
+    coordinator section.
+    """
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsFacadeCoordinator,
+        site_id: str,
+        *,
+        unique_id: str,
+        description: EntityDescription | None = None,
+    ) -> None:
+        """Initialize the site entity."""
+        super().__init__(coordinator)
+        if description is not None:
+            self.entity_description = description
+        self._site_id = site_id
+        self._attr_unique_id = unique_id
+        self._attr_device_info = DeviceInfo(
+            **build_site_device_info(coordinator.data, site_id)  # type: ignore[typeddict-item]
+        )
+
+
 __all__ = [
     "UnifiInnerSpaceEntity",
     "UnifiInsightsEntity",

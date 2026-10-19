@@ -12,7 +12,6 @@ from homeassistant.components.event import (
 )
 from homeassistant.const import EntityCategory
 from homeassistant.core import callback
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -30,10 +29,10 @@ from .coordinators.rule_audit import RULE_CHANGE_TYPES
 from .entity import (
     UnifiAccessDoorEntity,
     UnifiAccessEntity,
+    UnifiSiteEntity,
     access_coordinator_for,
     access_unique_id,
     async_discover_access_entities,
-    build_site_device_info,
     door_device_info,
     doorbell_device_info,
     get_field,
@@ -675,12 +674,11 @@ def _event_data(change: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class UnifiInsightsNetworkRuleChangeEvent(
-    CoordinatorEntity["UnifiInsightsFacadeCoordinator"],
+    UnifiSiteEntity,
     EventEntity,
 ):
     """Event entity that fires once for each added, modified or deleted rule."""
 
-    _attr_has_entity_name = True
     _attr_translation_key = RULE_CHANGE_EVENT_KEY
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_event_types: ClassVar[list[str]] = list(RULE_CHANGE_TYPES)  # type: ignore[misc]
@@ -693,16 +691,12 @@ class UnifiInsightsNetworkRuleChangeEvent(
         unique_id: str,
     ) -> None:
         """Initialize the rule change event entity."""
-        super().__init__(coordinator)
-        self._site_id = site_id
+        super().__init__(coordinator, site_id, unique_id=unique_id)
         self._last_available = self.available
-        self._attr_unique_id = unique_id
         # Changes detected before this entity existed are history, not news.
         self._last_sequence = max(
             (change["sequence"] for change in self._site_changes()), default=0
         )
-        site_info = build_site_device_info(coordinator.data, site_id)
-        self._attr_device_info = DeviceInfo(**site_info)  # type: ignore[typeddict-item]
 
     def _site_changes(self) -> list[dict[str, Any]]:
         """Return this site's well-formed change records, oldest first."""

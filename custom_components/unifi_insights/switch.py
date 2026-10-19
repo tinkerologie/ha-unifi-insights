@@ -41,10 +41,10 @@ from .data_transforms import get_site_gateway_id
 from .entity import (
     UnifiAccessEntity,
     UnifiProtectEntity,
+    UnifiSiteEntity,
     access_coordinator_for,
     access_unique_id,
     async_discover_access_entities,
-    build_site_device_info,
     console_device_info,
     get_field,
     is_device_online,
@@ -1769,13 +1769,12 @@ NETWORK_RULE_SWITCH_TYPES = (
 
 
 class UnifiInsightsNetworkRuleSwitch(
-    CoordinatorEntity["UnifiInsightsFacadeCoordinator"],
+    UnifiSiteEntity,
     SwitchEntity,
 ):
     """Switch to enable or disable one UniFi network rule."""
 
     entity_description: UnifiInsightsNetworkRuleSwitchEntityDescription
-    _attr_has_entity_name = True
 
     def __init__(
         self,
@@ -1785,11 +1784,13 @@ class UnifiInsightsNetworkRuleSwitch(
         rule_id: str,
     ) -> None:
         """Initialize the network rule switch."""
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._site_id = site_id
+        super().__init__(
+            coordinator,
+            site_id,
+            unique_id=f"{site_id}_{rule_id}_{description.unique_id_suffix}",
+            description=description,
+        )
         self._rule_id = rule_id
-        self._attr_unique_id = f"{site_id}_{rule_id}_{description.unique_id_suffix}"
 
         rule_name = self._get_rule_data().get(description.name_field)
         if isinstance(rule_name, str) and rule_name.strip():
@@ -1798,9 +1799,6 @@ class UnifiInsightsNetworkRuleSwitch(
         else:
             self._attr_translation_key = description.unnamed_translation_key
             self._attr_translation_placeholders = {"rule_id": rule_id}
-
-        site_info = build_site_device_info(coordinator.data, site_id)
-        self._attr_device_info = DeviceInfo(**site_info)  # type: ignore[typeddict-item]
 
     def _get_rule_data(self) -> dict[str, Any]:
         """Get rule data from coordinator."""

@@ -26,7 +26,7 @@ from .data_transforms import (
     parse_timestamp,
     voucher_site_ids,
 )
-from .entity import build_site_device_info
+from .entity import UnifiSiteEntity
 from .innerspace_transforms import parse_floor_plan_asset_path, strip_url_query
 
 if TYPE_CHECKING:
@@ -444,9 +444,7 @@ class UnifiFloorPlanImage(
         return self._cached_bytes
 
 
-class UnifiVoucherQrCodeImage(
-    CoordinatorEntity[UnifiInsightsFacadeCoordinator], ImageEntity
-):
+class UnifiVoucherQrCodeImage(UnifiSiteEntity, ImageEntity):
     """
     QR code of the latest generated hotspot voucher code.
 
@@ -454,7 +452,6 @@ class UnifiVoucherQrCodeImage(
     It does NOT configure Wi-Fi credentials or join a network.
     """
 
-    _attr_has_entity_name = True
     _attr_translation_key = "voucher_qr_code"
     _attr_content_type = "image/png"
 
@@ -467,14 +464,9 @@ class UnifiVoucherQrCodeImage(
         unique_id: str,
     ) -> None:
         """Initialize the voucher QR code image."""
-        CoordinatorEntity.__init__(self, coordinator)
+        UnifiSiteEntity.__init__(self, coordinator, site_id, unique_id=unique_id)
         ImageEntity.__init__(self, hass)
         self.hass = hass
-        self._site_id = site_id
-        self._attr_unique_id = unique_id
-        self._attr_device_info = DeviceInfo(
-            **build_site_device_info(coordinator.data, site_id)  # type: ignore[typeddict-item]
-        )
         self._last_observed_payload: str | None = self._current_payload()
         self._rendered_payload: str | None = None
         self._rendered_png: bytes | None = None

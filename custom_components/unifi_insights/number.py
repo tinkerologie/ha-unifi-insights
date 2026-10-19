@@ -15,9 +15,7 @@ from homeassistant.components.number import (
 )
 from homeassistant.const import UnitOfDataRate, UnitOfInformation, UnitOfTime
 from homeassistant.core import callback
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .console_identity import async_migrate_site_entity, resolve_console_namespace
 from .const import (
@@ -35,7 +33,6 @@ from .const import (
     DEVICE_TYPE_CHIME,
     DEVICE_TYPE_LIGHT,
 )
-from .coordinators import UnifiInsightsFacadeCoordinator
 from .data_transforms import (
     VOUCHER_INPUTS,
     cast_input,
@@ -46,7 +43,7 @@ from .data_transforms import (
 )
 from .entity import (
     UnifiProtectEntity,
-    build_site_device_info,
+    UnifiSiteEntity,
 )
 
 if TYPE_CHECKING:
@@ -54,6 +51,7 @@ if TYPE_CHECKING:
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
     from . import UnifiInsightsConfigEntry
+    from .coordinators import UnifiInsightsFacadeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -495,12 +493,9 @@ def _async_setup_voucher_numbers(
     discover()
 
 
-class UnifiVoucherInputNumber(
-    CoordinatorEntity[UnifiInsightsFacadeCoordinator], RestoreNumber
-):
+class UnifiVoucherInputNumber(UnifiSiteEntity, RestoreNumber):
     """Input number entity holding parameters for next generated voucher."""
 
-    _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.CONFIG
     entity_description: NumberEntityDescription
 
@@ -513,12 +508,8 @@ class UnifiVoucherInputNumber(
         unique_id: str,
     ) -> None:
         """Initialize the voucher input number."""
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._site_id = site_id
-        self._attr_unique_id = unique_id
-        self._attr_device_info = DeviceInfo(
-            **build_site_device_info(coordinator.data, site_id)  # type: ignore[typeddict-item]
+        super().__init__(
+            coordinator, site_id, unique_id=unique_id, description=description
         )
 
     @property
