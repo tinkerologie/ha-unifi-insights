@@ -6579,3 +6579,28 @@ async def test_resolve_carrier_subscriber_target_foreign_registry_owner(
         _resolve_carrier_subscriber_target(hass, call)
 
     assert exc_info.value.translation_key == "carrier_entry_not_loaded"
+
+
+async def test_refresh_data_failure_is_translated(hass: HomeAssistant) -> None:
+    """A failed refresh_data names the failed consoles in refresh_failed."""
+    broken = MagicMock()
+    broken.data = {"sites": {"site1": {}}}
+    broken.async_refresh_or_raise = AsyncMock(
+        side_effect=HomeAssistantError("Error refreshing UniFi Insights data: x")
+    )
+    broken_entry = MagicMock()
+    broken_entry.title = "Upstairs console"
+    broken_entry.runtime_data = MagicMock()
+    broken_entry.runtime_data.coordinator = broken
+
+    await async_setup_services(hass)
+    with (
+        patch.object(hass.config_entries, "async_entries", return_value=[broken_entry]),
+        pytest.raises(HomeAssistantError) as raised,
+    ):
+        await hass.services.async_call(DOMAIN, SERVICE_REFRESH_DATA, {}, blocking=True)
+
+    assert raised.value.translation_domain == DOMAIN
+    assert raised.value.translation_key == "refresh_failed"
+    assert raised.value.translation_placeholders == {"targets": "Upstairs console"}
+    await async_unload_services(hass)

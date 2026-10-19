@@ -111,7 +111,7 @@ async def test_fixed_message_is_kept_for_existing_callers() -> None:
     """A caller's established English message stays the error text."""
     action = AsyncMock(side_effect=RuntimeError("boom"))
 
-    with pytest.raises(HomeAssistantError, match="^Unable to restart dev1$") as caught:
+    with pytest.raises(HomeAssistantError, match=r"^Unable to restart dev1$") as caught:
         await async_execute_command(
             CommandFailure(
                 translation_key="command_failed", message="Unable to restart dev1"

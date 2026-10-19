@@ -19,8 +19,15 @@ from custom_components.unifi_insights.const import (
     DOMAIN,
 )
 
+from .fixtures.command_owners import (
+    SeededOwners,
+    async_refresh_owners,
+    async_shutdown_owners,
+    build_seeded_owners,
+)
+
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import AsyncGenerator, Generator
 
     from homeassistant.core import HomeAssistant
 
@@ -503,3 +510,12 @@ def device_config_entry_ids(device: dr.DeviceEntry) -> set[str]:
         entry_id = device.config_entry_id
         return {entry_id} if entry_id else set()
     return set(device.config_entries)
+
+
+@pytest.fixture
+async def seeded_owners(hass: HomeAssistant) -> AsyncGenerator[SeededOwners]:
+    """Real command owners over seeded autospecced clients, refreshed once."""
+    owners = build_seeded_owners(hass)
+    await async_refresh_owners(owners)
+    yield owners
+    await async_shutdown_owners(owners)
