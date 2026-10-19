@@ -13,13 +13,6 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .access_entity import (
-    UnifiAccessEntity,
-    access_coordinator_for,
-    access_unique_id,
-    async_discover_access_entities,
-    console_device_info,
-)
 from .const import (
     ATTR_CAMERA_ID,
     ATTR_CAMERA_NAME,
@@ -41,7 +34,12 @@ from .coordinators.config_sections import (
 )
 from .data_transforms import get_site_gateway_id
 from .entity import (
+    UnifiAccessEntity,
     UnifiProtectEntity,
+    access_coordinator_for,
+    access_unique_id,
+    async_discover_access_entities,
+    console_device_info,
     get_field,
     is_device_online,
 )

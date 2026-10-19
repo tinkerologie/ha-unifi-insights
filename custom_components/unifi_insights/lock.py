@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from homeassistant.components.lock import LockEntity
 
-from .access_entity import (
+from .entity import (
     UnifiAccessDoorEntity,
     access_coordinator_for,
     access_unique_id,

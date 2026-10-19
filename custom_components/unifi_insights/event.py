@@ -14,15 +14,6 @@ from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .access_entity import (
-    UnifiAccessDoorEntity,
-    UnifiAccessEntity,
-    access_coordinator_for,
-    access_unique_id,
-    async_discover_access_entities,
-    door_device_info,
-    doorbell_device_info,
-)
 from .console_identity import resolve_console_namespace
 from .const import (
     DOMAIN,
@@ -33,7 +24,16 @@ from .const import (
     SMART_DETECT_VEHICLE,
 )
 from .coordinators.access import access_doorbell_signal, access_result_signal
-from .entity import get_field
+from .entity import (
+    UnifiAccessDoorEntity,
+    UnifiAccessEntity,
+    access_coordinator_for,
+    access_unique_id,
+    async_discover_access_entities,
+    door_device_info,
+    doorbell_device_info,
+    get_field,
+)
 from .network_rule_audit_event import discover_network_rule_change_events
 
 if TYPE_CHECKING:

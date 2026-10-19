@@ -11,7 +11,7 @@ from homeassistant.components.cover import (
     CoverEntityFeature,
 )
 
-from .access_entity import (
+from .entity import (
     UnifiAccessDoorEntity,
     access_coordinator_for,
     access_unique_id,

@@ -21,14 +21,14 @@ from homeassistant.helpers import (
     entity_registry as er,
 )
 
-from .carrier_fabric_entity import (
-    UnifiCarrierFabricEntity,
-    UnifiCarrierFabricSubscriberEntity,
-)
 from .const import (
     CONF_TRACK_SUBSCRIBERS,
     DEFAULT_TRACK_SUBSCRIBERS,
     DOMAIN,
+)
+from .entity import (
+    UnifiCarrierFabricEntity,
+    UnifiCarrierFabricSubscriberEntity,
 )
 
 if TYPE_CHECKING:

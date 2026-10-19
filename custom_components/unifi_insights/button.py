@@ -19,13 +19,6 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .access_entity import (
-    UnifiAccessDoorEntity,
-    access_coordinator_for,
-    access_unique_id,
-    async_discover_access_entities,
-    door_device_info,
-)
 from .client_wake import (
     find_client_by_mac,
     first_non_blank_text,
@@ -58,10 +51,15 @@ from .data_transforms import (
     voucher_site_ids,
 )
 from .entity import (
+    UnifiAccessDoorEntity,
     UnifiInsightsEntity,
     UnifiProtectEntity,
+    access_coordinator_for,
+    access_unique_id,
+    async_discover_access_entities,
     build_site_device_info,
     camera_supports_ptz,
+    door_device_info,
     get_client_type,
     get_field,
 )

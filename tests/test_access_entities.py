@@ -24,7 +24,8 @@ from custom_components.unifi_insights import button as button_platform
 from custom_components.unifi_insights import cover as cover_platform
 from custom_components.unifi_insights import lock as lock_platform
 from custom_components.unifi_insights import switch as switch_platform
-from custom_components.unifi_insights.access_entity import (
+from custom_components.unifi_insights.const import CONF_ACCESS_TOKEN, DOMAIN
+from custom_components.unifi_insights.entity import (
     UnifiAccessDoorEntity,
     UnifiAccessEntity,
     access_coordinator_for,
@@ -34,7 +35,6 @@ from custom_components.unifi_insights.access_entity import (
     door_device_info,
     doorbell_device_info,
 )
-from custom_components.unifi_insights.const import CONF_ACCESS_TOKEN, DOMAIN
 from tests.test_access_coordinator import (
     DEVICES,
     DOORS,

@@ -4,11 +4,17 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from homeassistant.core import callback
-from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
-from homeassistant.helpers.entity import DeviceInfo, EntityDescription
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.device_registry import (
+    CONNECTION_NETWORK_MAC,
+    DeviceEntryType,
+    DeviceInfo,
+)
+from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
@@ -20,6 +26,8 @@ from .const import (
     MANUFACTURER,
 )
 from .coordinators import UnifiInsightsFacadeCoordinator
+from .coordinators.access import UnifiInsightsAccessCoordinator
+from .coordinators.base import CommandFailure, async_execute_command
 
 # Re-exported (see __all__): the platforms import the field helpers from here.
 from .data_transforms import (
@@ -32,7 +40,17 @@ from .data_transforms import (
     get_field,
     get_site_gateway_id,
 )
-from .innerspace_entity import UnifiInnerSpaceEntity
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Iterable
+
+    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.helpers.entity import Entity, EntityDescription
+    from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+    from . import CarrierFabricConfigEntry
+    from .coordinators.access import Feature
+    from .coordinators.carrier_fabric import UnifiInsightsCarrierFabricCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -494,3 +512,394 @@ __all__ = [
     "get_field",
     "is_device_online",
 ]
+
+
+# --- Access ------------------------------------------------------------------
+
+# Shared base entity, identity and discovery for UniFi Access entities.
+
+
+def access_unique_id(namespace: str, *parts: str) -> str:
+    """Return an entity unique id scoped to one console."""
+    return "_".join(("unifi_insights_access", namespace, *parts))
+
+
+def door_device_info(namespace: str, door_id: str, door_name: str | None) -> DeviceInfo:
+    """Return the device a door's entities belong to."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, f"access_door_{namespace}_{door_id}")},
+        name=door_name or f"Access door {door_id}",
+        manufacturer=MANUFACTURER,
+        model="UniFi Access door",
+    )
+
+
+def console_device_info(namespace: str) -> DeviceInfo:
+    """Return the console-level Access device."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, f"access_console_{namespace}")},
+        name="UniFi Access",
+        manufacturer=MANUFACTURER,
+        model="UniFi Access",
+    )
+
+
+def doorbell_device_info(
+    namespace: str, device_id: str, device_name: str | None
+) -> DeviceInfo:
+    """Return the Access hardware that reports doorbell rings."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, f"access_device_{namespace}_{device_id}")},
+        name=device_name or f"Access device {device_id}",
+        manufacturer=MANUFACTURER,
+    )
+
+
+class UnifiAccessEntity(CoordinatorEntity[UnifiInsightsAccessCoordinator]):
+    """Base entity for Access. Available only with valid, undenied, present data."""
+
+    _attr_has_entity_name = True
+    _feature: Feature = "doors"
+
+    def __init__(self, coordinator: UnifiInsightsAccessCoordinator) -> None:
+        """Bind the entity to the coordinator that owns its console."""
+        super().__init__(coordinator)
+        namespace = coordinator.namespace
+        if namespace is None:
+            msg = "Access entities need a valid console namespace"
+            raise ValueError(msg)
+        self._namespace = namespace
+
+    @property
+    def available(self) -> bool:
+        """Return False unless the last refresh worked and the resource is present."""
+        return (
+            self.coordinator.last_update_success
+            and self.coordinator.feature_available(self._feature)
+            and self._is_present()
+        )
+
+    def _is_present(self) -> bool:
+        """Return True when the entity's resource is in the current data."""
+        return True
+
+    @staticmethod
+    async def _async_command[**P](
+        message: str,
+        command: Callable[P, Awaitable[None]],
+        /,
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> None:
+        """
+        Call an Access coordinator command (ADR-010).
+
+        The coordinator translates every UniFi API failure itself. Any other
+        failure keeps ``message`` as a translated ``command_failed`` error,
+        as before the command path was typed.
+        """
+        await async_execute_command(
+            CommandFailure(translation_key="command_failed", message=message),
+            command,
+            *args,
+            **kwargs,
+        )
+
+
+class UnifiAccessDoorEntity(UnifiAccessEntity):
+    """Base entity for one Access door."""
+
+    def __init__(
+        self, coordinator: UnifiInsightsAccessCoordinator, door_id: str
+    ) -> None:
+        """Bind the entity to one door id."""
+        super().__init__(coordinator)
+        self._door_id = door_id
+
+    @property
+    def door(self) -> dict[str, object] | None:
+        """Return the door record, or None when the door is gone."""
+        door: dict[str, object] | None = self.coordinator.data["doors"].get(
+            self._door_id
+        )
+        return door
+
+    def _is_present(self) -> bool:
+        """Return True while the door is in the current data."""
+        return self.door is not None
+
+
+def access_coordinator_for(
+    entry: ConfigEntry,
+) -> UnifiInsightsAccessCoordinator | None:
+    """Return the entry's Access coordinator, or None for any other entry type."""
+    # Imported here: the package __init__ imports the platforms, so a module-level
+    # import would make a cycle.
+    from . import UnifiInsightsData  # noqa: PLC0415
+
+    data = getattr(entry, "runtime_data", None)
+    if not isinstance(data, UnifiInsightsData):
+        return None
+    return data.access_coordinator
+
+
+@callback
+def async_discover_access_entities(
+    entry: ConfigEntry,
+    coordinator: UnifiInsightsAccessCoordinator,
+    add_entities: AddEntitiesCallback,
+    *,
+    known_ids: set[str],
+    keys: Callable[[], Iterable[str]],
+    make: Callable[[str], Entity],
+) -> None:
+    """
+    Add entities for new keys now and after every coordinator update.
+
+    Nothing is added and no listener is registered without a valid console
+    namespace, so entities never get an identity the console does not own.
+    """
+    if coordinator.namespace is None:
+        return
+
+    @callback
+    def _discover() -> None:
+        """Add the entities for keys that have not been seen before."""
+        new_keys = [key for key in keys() if key not in known_ids]
+        if not new_keys:
+            return
+        known_ids.update(new_keys)
+        add_entities([make(key) for key in new_keys])
+
+    _discover()
+    entry.async_on_unload(coordinator.async_add_listener(_discover))
+
+
+# --- Carrier Fabric ----------------------------------------------------------
+
+# Base entity classes for UniFi Carrier Fabric integration.
+
+
+class UnifiCarrierFabricEntity(
+    CoordinatorEntity["UnifiInsightsCarrierFabricCoordinator"]
+):
+    """Base entity for UniFi Carrier Fabric organisation-level entities."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsCarrierFabricCoordinator,
+        entry: CarrierFabricConfigEntry,
+    ) -> None:
+        """Initialize the Carrier Fabric entity."""
+        super().__init__(coordinator)
+        self._entry = entry
+        self._entry_unique_id: str = entry.unique_id or entry.entry_id
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return organisation device info."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry_unique_id)},
+            name="UniFi Carrier Fabric",
+            manufacturer="Ubiquiti",
+            model="Carrier Fabric",
+            entry_type=DeviceEntryType.SERVICE,
+        )
+
+
+class UnifiCarrierFabricSubscriberEntity(UnifiCarrierFabricEntity):
+    """Base entity for UniFi Carrier Fabric subscriber entities."""
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsCarrierFabricCoordinator,
+        entry: CarrierFabricConfigEntry,
+        subscriber_id: str,
+    ) -> None:
+        """Initialize the subscriber entity."""
+        super().__init__(coordinator, entry)
+        self._subscriber_id = subscriber_id
+
+    @property
+    def _subscriber_data(self) -> dict[str, Any] | None:
+        """Get subscriber data from coordinator."""
+        subs = self.coordinator.data.get("subscribers", {})
+        if isinstance(subs, dict):
+            return subs.get(self._subscriber_id)
+        return None
+
+    @property
+    def available(self) -> bool:
+        """Return True if subscriber is present in coordinator data."""
+        if not super().available:
+            return False
+        subs = self.coordinator.data.get("subscribers", {})
+        return isinstance(subs, dict) and self._subscriber_id in subs
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return subscriber device info."""
+        sub = self._subscriber_data or {}
+        name = (
+            sub.get("name")
+            or sub.get("subscriberNumber")
+            or f"Subscriber {self._subscriber_id[:8]}"
+        )
+        info: dict[str, Any] = {
+            "identifiers": {(DOMAIN, f"carrier_subscriber_{self._subscriber_id}")},
+            "via_device": (DOMAIN, self._entry_unique_id),
+            "name": str(name),
+            "manufacturer": "Ubiquiti",
+            "model": "Subscriber",
+            "entry_type": DeviceEntryType.SERVICE,
+        }
+        return cast("DeviceInfo", info)
+
+
+# --- InnerSpace --------------------------------------------------------------
+
+
+class UnifiInnerSpaceEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
+    """Base class for UniFi InnerSpace entities."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsFacadeCoordinator,
+        description: EntityDescription,
+        record_id: str,
+    ) -> None:
+        """Initialize the InnerSpace entity."""
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._record_id = record_id
+        self._attr_unique_id = f"innerspace_{record_id}_{description.key}"
+        self._attr_device_info = self._build_device_info()
+
+    @property
+    def innerspace_record(self) -> dict[str, Any] | None:
+        """Return the normalized InnerSpace record from coordinator data."""
+        innerspace = self.coordinator.data.get("innerspace", {})
+        if not isinstance(innerspace, dict):
+            return None
+        devices = innerspace.get("devices", {})
+        if not isinstance(devices, dict):
+            return None
+        record = devices.get(self._record_id)
+        return record if isinstance(record, dict) else None
+
+    def _build_device_info(self) -> DeviceInfo:
+        """
+        Build device info for an InnerSpace record.
+
+        Attaches to an existing Network or Protect device when MAC correlation
+        is unambiguous, or creates a standalone InnerSpace device otherwise.
+        Does not set ``suggested_area`` from floor-plan names.
+        """
+        record = self.innerspace_record or {}
+        matched_domain = record.get("matched_domain")
+        matched_site_id = record.get("matched_site_id")
+        matched_device_id = record.get("matched_device_id")
+        matched_protect_type = record.get("matched_protect_type")
+
+        if (
+            matched_domain == "network"
+            and isinstance(matched_site_id, str)
+            and isinstance(matched_device_id, str)
+            and self.coordinator.get_device(matched_site_id, matched_device_id)
+            is not None
+        ):
+            return {
+                "identifiers": {(DOMAIN, f"{matched_site_id}_{matched_device_id}")},
+            }
+
+        if (
+            matched_domain == "protect"
+            and isinstance(matched_protect_type, str)
+            and isinstance(matched_device_id, str)
+        ):
+            protect_section = self.coordinator.data.get("protect", {}).get(
+                f"{matched_protect_type}s", {}
+            )
+            if (
+                isinstance(protect_section, dict)
+                and matched_device_id in protect_section
+            ):
+                return {
+                    "identifiers": {
+                        (
+                            DOMAIN,
+                            f"protect_{matched_protect_type}_{matched_device_id}",
+                        )
+                    },
+                }
+
+        name = (
+            record.get("name")
+            or record.get("model")
+            or f"UniFi InnerSpace Device {self._record_id}"
+        )
+        device_info: DeviceInfo = {
+            "identifiers": {(DOMAIN, f"innerspace_{self._record_id}")},
+            "name": str(name),
+            "manufacturer": MANUFACTURER,
+            "model": record.get("model") or "UniFi InnerSpace Device",
+        }
+        if serial := record.get("serial"):
+            device_info["serial_number"] = str(serial)
+        return device_info
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return current device info reflecting any updated MAC correlation."""
+        device_info = self._build_device_info()
+        self._attr_device_info = device_info
+        return device_info
+
+    def _reconcile_device_association(self, new_device_info: DeviceInfo) -> None:
+        """Reconcile entity registry device_id when MAC correlation changes."""
+        old_identifiers = (
+            self._attr_device_info.get("identifiers")
+            if self._attr_device_info
+            else None
+        )
+        new_identifiers = new_device_info.get("identifiers")
+        self._attr_device_info = new_device_info
+        if (
+            old_identifiers == new_identifiers
+            or not new_identifiers
+            or self.hass is None
+            or not self.entity_id
+            or self.coordinator.config_entry is None
+        ):
+            return
+        ent_reg = er.async_get(self.hass)
+        if ent_reg.async_get(self.entity_id) is None:
+            return
+        dev_reg = dr.async_get(self.hass)
+        device = dev_reg.async_get_or_create(
+            config_entry_id=self.coordinator.config_entry.entry_id,
+            identifiers=new_identifiers,
+            name=new_device_info.get("name"),
+            manufacturer=new_device_info.get("manufacturer"),
+            model=new_device_info.get("model"),
+            serial_number=new_device_info.get("serial_number"),
+        )
+        ent_reg.async_update_entity(self.entity_id, device_id=device.id)
+
+    @property
+    def available(self) -> bool:
+        """Return True if the InnerSpace coordinator and record are available."""
+        return bool(
+            self.coordinator.innerspace_available and self.innerspace_record is not None
+        )
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        new_device_info = self._build_device_info()
+        self._reconcile_device_association(new_device_info)
+        self.async_write_ha_state()
