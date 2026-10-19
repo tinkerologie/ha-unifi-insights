@@ -23,13 +23,13 @@ from custom_components.unifi_insights.coordinators.device import (
 from custom_components.unifi_insights.coordinators.protect import (
     UnifiProtectCoordinator,
 )
-from custom_components.unifi_insights.coordinators.voucher_state import _field
 from custom_components.unifi_insights.data_transforms import (
     NETWORK_DEVICE_STATES,
     NETWORK_FACTS_KEY,
     NetworkDeviceFacts,
     NetworkPortFacts,
     SiteNetworkFacts,
+    _field,
     as_bits_per_second,
     build_site_network_facts,
     bytes_to_bits_per_second,

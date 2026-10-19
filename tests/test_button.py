@@ -46,8 +46,10 @@ from custom_components.unifi_insights.const import (
 from custom_components.unifi_insights.coordinators.facade import (
     UnifiFacadeCoordinator,
 )
-from custom_components.unifi_insights.coordinators.voucher_state import VoucherSettings
-from custom_components.unifi_insights.data_transforms import device_ports
+from custom_components.unifi_insights.data_transforms import (
+    VoucherSettings,
+    device_ports,
+)
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
 from tests.fixtures.http_fakes import FakeJsonResponse, FakeQueuedSession
 

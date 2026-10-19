@@ -24,9 +24,9 @@ from unifi_official_api.network.models.voucher import Voucher
 from custom_components.unifi_insights.coordinators.facade import (
     UnifiFacadeCoordinator,
 )
-from custom_components.unifi_insights.coordinators.voucher_state import VoucherSettings
 from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
+    VoucherSettings,
     build_site_network_facts,
 )
 from tests.fixtures.library_responses import (

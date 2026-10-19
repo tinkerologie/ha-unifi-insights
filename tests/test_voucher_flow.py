@@ -38,7 +38,7 @@ from custom_components.unifi_insights.coordinators.device import (
 from custom_components.unifi_insights.coordinators.facade import (
     UnifiFacadeCoordinator,
 )
-from custom_components.unifi_insights.coordinators.voucher_state import (
+from custom_components.unifi_insights.data_transforms import (
     count_active_vouchers,
 )
 from custom_components.unifi_insights.image import UnifiVoucherQrCodeImage

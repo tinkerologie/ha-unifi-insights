@@ -51,8 +51,11 @@ from .coordinators.device import (
     port_can_be_power_cycled,
     power_cyclable_ports,
 )
-from .coordinators.voucher_state import voucher_request_kwargs, voucher_site_ids
-from .data_transforms import current_chime_ringtone_id
+from .data_transforms import (
+    current_chime_ringtone_id,
+    voucher_request_kwargs,
+    voucher_site_ids,
+)
 from .entity import (
     UnifiInsightsEntity,
     UnifiProtectEntity,

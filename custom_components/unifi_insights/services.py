@@ -59,9 +59,8 @@ from .const import (
 )
 from .coordinators.carrier_fabric import InvalidSubscriberIdError
 from .coordinators.rule_audit import RULE_TYPES
-from .data_transforms import client_connection_type
+from .data_transforms import client_connection_type, percent_to_led_level
 from .diagnostics import redact_network_rule_export
-from .led_level import percent_to_led_level
 from .service_targets import (
     resolve_access_call,
     resolve_carrier_subscriber_call,

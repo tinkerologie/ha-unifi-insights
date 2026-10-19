@@ -20,7 +20,7 @@ from unifi_official_api.exceptions import UniFiError
 from .console_identity import resolve_console_namespace
 from .const import DOMAIN, MANUFACTURER
 from .coordinators import UnifiFacadeCoordinator
-from .coordinators.voucher_state import (
+from .data_transforms import (
     _field,
     latest_voucher_qr_payload,
     parse_timestamp,

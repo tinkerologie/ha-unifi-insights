@@ -36,9 +36,11 @@ from .const import (
     DEVICE_TYPE_LIGHT,
 )
 from .coordinators import UnifiFacadeCoordinator
-from .coordinators.voucher_state import (
+from .data_transforms import (
     VOUCHER_INPUTS,
     cast_input,
+    led_level_to_percent,
+    percent_to_led_level,
     restore_input,
     voucher_site_ids,
 )
@@ -47,7 +49,6 @@ from .entity import (
     build_site_device_info,
 )
 from .helpers import async_migrate_site_entity
-from .led_level import led_level_to_percent, percent_to_led_level
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant

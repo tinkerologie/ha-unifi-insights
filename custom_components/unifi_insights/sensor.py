@@ -51,7 +51,12 @@ from .const import (
     MANUFACTURER,
 )
 from .coordinators import UnifiFacadeCoordinator
-from .data_transforms import NetworkDeviceFacts, bytes_to_bits_per_second, device_facts
+from .data_transforms import (
+    NetworkDeviceFacts,
+    bytes_to_bits_per_second,
+    device_facts,
+    normalize_nvr_storage,
+)
 from .entity import (
     UnifiInsightsEntity,
     UnifiProtectEntity,
@@ -74,7 +79,6 @@ from .site_internet_activity_sensor import (
     _discover_site_internet_activity_sensors,
 )
 from .storage_entity import discover_storage_sensors, is_storage_unique_id
-from .storage_telemetry import normalize_nvr_storage
 from .voucher_sensor import discover_voucher_sensors
 
 if TYPE_CHECKING:

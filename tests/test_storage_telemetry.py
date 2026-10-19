@@ -24,7 +24,10 @@ from custom_components.unifi_insights.binary_sensor import (
 from custom_components.unifi_insights.coordinators.protect import (
     UnifiProtectCoordinator,
 )
-from custom_components.unifi_insights.data_transforms import normalize_legacy_storage
+from custom_components.unifi_insights.data_transforms import (
+    normalize_legacy_storage,
+    normalize_nvr_storage,
+)
 from custom_components.unifi_insights.protect_snapshot import build_protect_snapshot
 from custom_components.unifi_insights.sensor import (
     UnifiProtectNVRSensor,
@@ -32,7 +35,6 @@ from custom_components.unifi_insights.sensor import (
 from custom_components.unifi_insights.sensor import (
     async_setup_entry as setup_sensors,
 )
-from custom_components.unifi_insights.storage_telemetry import normalize_nvr_storage
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant

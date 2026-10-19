@@ -42,7 +42,12 @@ from .const import (
     SMART_DETECT_PERSON,
     SMART_DETECT_VEHICLE,
 )
-from .data_transforms import NetworkDeviceFacts, NetworkPortFacts, device_facts
+from .data_transforms import (
+    NetworkDeviceFacts,
+    NetworkPortFacts,
+    device_facts,
+    normalize_nvr_storage,
+)
 from .entity import (
     UnifiInsightsEntity,
     UnifiProtectEntity,
@@ -52,7 +57,6 @@ from .helpers import get_port_label, is_doorbell_camera_model
 from .mobility_entity import async_setup_mobility_binary_sensors
 from .protect_security_entity import discover_protect_security_binary_sensors
 from .storage_entity import discover_storage_binary_sensors
-from .storage_telemetry import normalize_nvr_storage
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant

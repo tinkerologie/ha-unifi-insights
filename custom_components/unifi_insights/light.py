@@ -25,8 +25,8 @@ from .const import (
     LIGHT_MODE_ALWAYS,
     LIGHT_MODE_OFF,
 )
+from .data_transforms import MAX_LED_LEVEL, MIN_LED_LEVEL, valid_led_level
 from .entity import UnifiProtectEntity
-from .led_level import MAX_LED_LEVEL, MIN_LED_LEVEL, valid_led_level
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant

@@ -13,7 +13,7 @@ from .dashboard_contract_utils import (
     is_protect_device_connected,
     utc_iso,
 )
-from .storage_telemetry import normalize_nvr_storage
+from .data_transforms import normalize_nvr_storage
 
 LOW_BATTERY_PCT = 20
 

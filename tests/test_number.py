@@ -31,7 +31,7 @@ from custom_components.unifi_insights.const import (
     DEVICE_TYPE_CHIME,
     DEVICE_TYPE_LIGHT,
 )
-from custom_components.unifi_insights.coordinators.voucher_state import VoucherSettings
+from custom_components.unifi_insights.data_transforms import VoucherSettings
 from custom_components.unifi_insights.number import (
     PARALLEL_UPDATES,
     VOUCHER_NUMBER_DESCRIPTIONS,

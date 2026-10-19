@@ -24,7 +24,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .coordinators import UnifiFacadeCoordinator
-from .coordinators.voucher_state import (
+from .data_transforms import (
     _field,
     count_active_vouchers,
     parse_timestamp,

@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 from unifi_official_api.network.models.voucher import Voucher
 
-from custom_components.unifi_insights.coordinators.voucher_state import (
+from custom_components.unifi_insights.data_transforms import (
     DATA_LIMIT_MBYTES_RANGE,
     GUEST_LIMIT_UI_MAX,
     TIME_LIMIT_MINUTES_RANGE,
