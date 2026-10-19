@@ -101,14 +101,13 @@ SAMPLE_NETWORK_DEVICE = {
     "site_id": "default",
 }
 
-# Built from issue evidence, not a verbatim capture. The live UDM Pro on #337
-# (diagnostics, 2026-10-17) reported model "UDM Pro", no v1 ``type``,
-# ``features: ["switching"]``, a list-shaped ``interfaces`` and, with the
-# legacy fetch failing, no legacy block. Those values are as reported; the id,
-# MAC, IP, firmware and the interface names (the spec's overview enum) are
-# placeholders. This is the raw v1 overview item; SAMPLE_UDM_PRO_OVERVIEW is
-# what the coordinator stores from it (``model_dump(by_alias=True)``, which
-# adds ``type: None`` and an empty ``ports``).
+# Captured (redacted) from the maintainer's UDM Pro through the official
+# Network API (GET /v1/sites/{site}/devices, 2026-10-19). It reports no v1
+# ``type``, only ``features: ["switching"]`` and a list-shaped ``interfaces``.
+# Only the id, MAC, IP and name are replaced with placeholders. This is the raw
+# v1 overview item; SAMPLE_UDM_PRO_OVERVIEW is what the coordinator stores
+# from it (``model_dump(by_alias=True)``, which adds ``type: None`` and an
+# empty ``ports``).
 SAMPLE_UDM_PRO_OVERVIEW_API = {
     "id": "00000000-0000-4000-8000-0000000000d1",
     "macAddress": "aa:bb:cc:00:00:d1",
@@ -117,7 +116,7 @@ SAMPLE_UDM_PRO_OVERVIEW_API = {
     "model": "UDM Pro",
     "state": "ONLINE",
     "supported": True,
-    "firmwareVersion": "4.3.6",
+    "firmwareVersion": "5.1.33",
     "firmwareUpdatable": False,
     "features": ["switching"],
     "interfaces": ["ports"],
@@ -126,23 +125,20 @@ SAMPLE_UDM_PRO_OVERVIEW = Device.model_validate(SAMPLE_UDM_PRO_OVERVIEW_API).mod
     by_alias=True
 )
 
-# Built from issue evidence, not a verbatim capture. The key set is the one
-# the live UDM Pro on #337 reported (2026-10-17), minus the keys the
-# coordinator adds itself (clients, poe_*, port_*); ``uplink`` carries only
-# txRateBps/rxRateBps there. The two rates are the first same-moment v1
-# sample of the UDM Pro SE on #337 (2026-10-19), in bits/s. Every other value
-# is a placeholder.
+# Captured (redacted) from the same UDM Pro (GET
+# /v1/sites/{site}/devices/{id}/statistics/latest, 2026-10-19). The record has
+# no identifiers, so it is verbatim. ``uplink`` rates are bits/s (#337).
 SAMPLE_UDM_PRO_STATS = {
-    "uptimeSec": 864000,
-    "lastHeartbeatAt": "2026-10-17T12:00:00Z",
-    "nextHeartbeatAt": "2026-10-17T12:00:10Z",
-    "loadAverage1Min": 0.42,
-    "loadAverage5Min": 0.38,
-    "loadAverage15Min": 0.35,
-    "cpuUtilizationPct": 12.5,
-    "memoryUtilizationPct": 63.2,
-    "uplink": {"txRateBps": 93688, "rxRateBps": 144528},
-    "interfaces": {"radios": []},
+    "uptimeSec": 3333412,
+    "lastHeartbeatAt": "2026-10-19T06:10:15Z",
+    "nextHeartbeatAt": "2026-10-19T06:10:39Z",
+    "loadAverage1Min": 1.18,
+    "loadAverage5Min": 1.3,
+    "loadAverage15Min": 1.4,
+    "cpuUtilizationPct": 14.6,
+    "memoryUtilizationPct": 62.5,
+    "uplink": {"txRateBps": 35072, "rxRateBps": 74016},
+    "interfaces": {},
 }
 
 

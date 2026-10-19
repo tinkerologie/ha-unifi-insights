@@ -282,11 +282,11 @@ async def test_system_and_uplink_sensors_read_published_facts(
             sensor = UnifiInsightsSensor(coordinator, description, SITE, "udm")
             values[key] = sensor.native_value
     assert values == {
-        "cpu_usage": 12.5,
-        "memory_usage": 63.2,
-        "uptime": "10d 0h 0m",
-        "tx_rate": 93688,
-        "rx_rate": 144528,
+        "cpu_usage": 14.6,
+        "memory_usage": 62.5,
+        "uptime": "38d 13h 56m",
+        "tx_rate": 35072,
+        "rx_rate": 74016,
     }
 
     # Sensors that still read raw stats have no value without them.
@@ -523,7 +523,7 @@ def test_drift_1_gateway_agrees_everywhere(gateway: dict[str, Any]) -> None:
 @pytest.mark.parametrize(
     ("stats", "expected"),
     [
-        pytest.param(dict(SAMPLE_UDM_PRO_STATS), (93688, 144528), id="captured"),
+        pytest.param(dict(SAMPLE_UDM_PRO_STATS), (35072, 74016), id="captured"),
         pytest.param(
             {"uplink": {"txRateBps": 100, "rxRateBps": 50}}, (100, 50), id="public"
         ),

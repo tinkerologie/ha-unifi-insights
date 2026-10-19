@@ -2729,7 +2729,7 @@ class TestUnifiDeviceCoordinator:
         assert facts.ports == ()
         assert facts.kind == "gateway"
         assert site.gateway_id == SAMPLE_UDM_PRO_OVERVIEW["id"]
-        assert (facts.tx_bps, facts.rx_bps) == (93688.0, 144528.0)
+        assert (facts.tx_bps, facts.rx_bps) == (35072.0, 74016.0)
 
     @pytest.mark.asyncio
     async def test_auth_failure_wins_over_other_site_failures(

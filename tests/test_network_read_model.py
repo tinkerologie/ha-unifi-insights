@@ -58,7 +58,7 @@ from tests.fixtures.library_responses import (
     SAMPLE_UDM_PRO_STATS,
 )
 
-# --- Constructed fixtures derived from the issue-evidence records ----------
+# --- Constructed fixtures derived from the captured records ----------
 
 # Constructed legacy port_table rows (not a capture), normalised through the
 # coordinator's own legacy port normaliser so the shape is the stored one.
@@ -73,7 +73,7 @@ _LEGACY_PORTS = [
     if (port := UnifiDeviceCoordinator._normalize_legacy_port(row)) is not None
 ]
 
-# Constructed: the issue-evidence overview after a successful legacy merge
+# Constructed: the captured overview after a successful legacy merge
 # (the live console reported legacy_type "udm" and port_table-backed ports).
 UDM_PRO_LEGACY_ENRICHED: dict[str, Any] = {
     **SAMPLE_UDM_PRO_OVERVIEW,
@@ -562,8 +562,8 @@ def test_uplink_rate_bps(stats: dict[str, Any], expected: tuple[Any, Any]) -> No
         pytest.param(
             SAMPLE_UDM_PRO_OVERVIEW,
             SAMPLE_UDM_PRO_STATS,
-            (12.5, 63.2, 864000, 93688.0, 144528.0),
-            id="issue-evidence",
+            (14.6, 62.5, 3333412, 35072.0, 74016.0),
+            id="captured",
         ),
         pytest.param({}, ZERO_STATS, (0.0, 0.0, 0, 0.0, 0.0), id="zeros"),
         pytest.param(
@@ -703,7 +703,7 @@ def test_site_gateway_is_first_gateway_in_map_order() -> None:
     assert site.devices["udm"].is_site_gateway is True
     assert site.devices["second"].kind == "gateway"
     assert site.devices["second"].is_site_gateway is False
-    assert site.devices["udm"].tx_bps == 93688.0
+    assert site.devices["udm"].tx_bps == 35072.0
     assert site.devices["7"].device_id == "7"
     assert site.devices["7"].cpu_pct is None
 
