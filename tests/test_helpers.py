@@ -21,7 +21,7 @@ def registry() -> MagicMock:
     return MagicMock(spec=dr.DeviceRegistry)
 
 
-def test_uses_by_identifier_with_config_entry_id(registry):
+def test_uses_by_identifier_with_config_entry_id(registry: MagicMock) -> None:
     """With a config entry id the config-entry-scoped lookup is used."""
     device = object()
     registry.async_get_device_by_identifier.return_value = device
@@ -33,7 +33,7 @@ def test_uses_by_identifier_with_config_entry_id(registry):
     registry.async_get_device.assert_not_called()
 
 
-def test_miss_does_not_fall_back_to_deprecated_api(registry):
+def test_miss_does_not_fall_back_to_deprecated_api(registry: MagicMock) -> None:
     """A miss returns None without touching the deprecated async_get_device."""
     registry.async_get_device_by_identifier.return_value = None
 
@@ -42,7 +42,7 @@ def test_miss_does_not_fall_back_to_deprecated_api(registry):
     registry.async_get_devices.assert_not_called()
 
 
-def test_uses_get_devices_without_config_entry_id(registry):
+def test_uses_get_devices_without_config_entry_id(registry: MagicMock) -> None:
     """Without a config entry id the unscoped list lookup is used."""
     device = object()
     registry.async_get_devices.return_value = [device]
@@ -52,7 +52,7 @@ def test_uses_get_devices_without_config_entry_id(registry):
     registry.async_get_device.assert_not_called()
 
 
-def test_get_devices_empty_returns_none(registry):
+def test_get_devices_empty_returns_none(registry: MagicMock) -> None:
     """An empty list from async_get_devices resolves to None."""
     registry.async_get_devices.return_value = []
 

@@ -86,7 +86,7 @@ async def async_setup_entry(
 ## Device Registry Rules (HA 2026.8–2026.10+)
 
 - **Single config entry per device:** Every device belongs to a single config entry (`DeviceEntry.config_entry_id`) and at most one subentry (`DeviceEntry.config_subentry_id`). Never access deprecated `DeviceEntry.config_entries`, `DeviceEntry.config_entries_subentries`, or `DeviceEntry.primary_config_entry`.
-- **`via_device_id` replaces `via_device`:** `DeviceInfo["via_device"]` and `ATTR_VIA_DEVICE` are deprecated in HA 2026.8+. Link child devices to parent hubs/switches/OLTs using `via_device_id` resolved via `dr.async_get_device_id_by_identifier(hass, entry.entry_id, (DOMAIN, parent_id))` (or `parent_device.id`).
+- **`via_device_id` replaces `via_device`:** `DeviceInfo["via_device"]` and `ATTR_VIA_DEVICE` are deprecated in HA 2026.8+. Link child devices to parent hubs/switches/OLTs using `via_device_id` resolved via `dr.async_get_device_id_by_identifier(hass, (DOMAIN, parent_id), config_entry_id=entry.entry_id)` (or `parent_device.id`).
 - **Config-entry-scoped device lookups:** `dev_reg.async_get_device()` is deprecated in HA 2026.8+. Use `dev_reg.async_get_device_by_identifier(entry.entry_id, (DOMAIN, identifier))`, `dev_reg.async_get_device_by_connection(...)`, or `dr.async_get_device_and_config_entry_for_domain(...)`.
 - **`DeviceRegistry` collections:** `dev_reg.devices` and `dev_reg.child_devices` are read-only collections, not raw dicts. Do not call `.get()`, `.values()`, `.keys()`, or `id in dev_reg.devices`, and do not access `dev_reg.deleted_devices`.
 - **`DeviceInfo` fields:** Never use deprecated `default_manufacturer`, `default_model`, or `default_name`. Never read `DeviceEntry.suggested_area` (removed in HA 2026.9; read `DeviceEntry.area_id`).
