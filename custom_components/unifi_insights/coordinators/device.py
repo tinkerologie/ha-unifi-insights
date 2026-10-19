@@ -55,7 +55,6 @@ from custom_components.unifi_insights.topology_contract import (
 )
 
 from .base import CommandFailure, UnifiBaseCoordinator, async_execute_command
-from .config_sections import map_legacy_site_names
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -262,10 +261,6 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
             update_interval=SCAN_INTERVAL_DEVICE,
         )
         self.config_coordinator = config_coordinator
-        # Map integration site IDs to classic ("legacy") site names used by the
-        # /api/s/{site} endpoints. Populated on each update and reused for
-        # classic-API client actions (block/unblock/reconnect/forget).
-        self._legacy_site_names: dict[str, str] = {}
         # Successful legacy fallback does not fail the coordinator refresh.
         self._legacy_fallback_sites: set[str] = set()
         # Track previous device IDs for stale device cleanup (Gold requirement)
@@ -773,25 +768,6 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
             return None
         return {connection["network_id"]: connection for connection in connections}
 
-    def _map_legacy_site_names(
-        self,
-        site_ids: list[str],
-        legacy_sites: list[dict[str, Any]],
-    ) -> dict[str, str]:
-        """
-        Map integration site IDs to legacy site names used by `/api/s/{site}`.
-
-        Uses the config coordinator's single mapping rule
-        (``config_sections.map_legacy_site_names``) so the two can never drift.
-        """
-        return map_legacy_site_names(
-            {
-                site_id: self.config_coordinator.get_site(site_id) or {}
-                for site_id in site_ids
-            },
-            legacy_sites,
-        )
-
     async def _process_device(
         self,
         site_id: str,
@@ -1219,16 +1195,10 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
             )
 
             self._reused_stats = set()
-            legacy_site_names: dict[str, str] = {}
-            try:
-                legacy_sites = await self.network_client.sites.get_legacy_all()
-                legacy_site_names = self._map_legacy_site_names(site_ids, legacy_sites)
-                self._legacy_site_names = legacy_site_names
-            except Exception as err:
-                _LOGGER.debug(
-                    "Device coordinator: Unable to fetch legacy site mapping: %s",
-                    err,
-                )
+            # The config coordinator's published mapping (ADR-010), not a
+            # classic site lookup of our own: last-good during a lookup
+            # outage, pruned to the selected sites.
+            legacy_site_names = self.config_coordinator.legacy_site_names
 
             # Process all sites in parallel
             tasks = [
@@ -1475,15 +1445,6 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
         """Get all clients for a site."""
         result: dict[str, Any] = self.data.get("clients", {}).get(site_id, {})
         return result
-
-    def get_legacy_site_name(self, site_id: str) -> str | None:
-        """
-        Return the classic ("legacy") site name for an integration site ID.
-
-        Used for classic-API client actions, which are scoped by the site name
-        (for example ``default``) rather than the integration site UUID.
-        """
-        return self._legacy_site_names.get(site_id)
 
     async def async_restart_device(self, site_id: str, device_id: str) -> bool:
         """Restart a network device; a falsy result raises ``restart_rejected``."""

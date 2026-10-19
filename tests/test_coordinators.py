@@ -1861,8 +1861,10 @@ class TestUnifiDeviceCoordinator:
             protect_client=protect_client,
             entry=mock_config_entry,
         )
-        # Pre-populate with site data
+        # Pre-populate with site data and the legacy site mapping the config
+        # coordinator publishes for the device coordinator (ADR-010).
         coord.data["sites"] = {"default": {"id": "default", "name": "Default"}}
+        coord.data["legacy_site_names"] = {"default": "default"}
         return coord
 
     @pytest.fixture
@@ -2790,16 +2792,34 @@ class TestUnifiDeviceCoordinator:
     async def test_refresh_without_legacy_site_mapping(
         self, coordinator: UnifiDeviceCoordinator
     ):
-        """Sites still refresh when the classic site mapping is unavailable."""
-        coordinator.network_client.sites.get_legacy_all = AsyncMock(
-            side_effect=UniFiConnectionError("classic API down")
-        )
+        """Sites still refresh when no classic site mapping is published."""
+        # What the config coordinator publishes after a first failed lookup.
+        coordinator.config_coordinator.data["legacy_site_names"] = {}
+        coordinator.config_coordinator.data["legacy_mapping_failed"] = True
         coordinator.network_client.devices.get_legacy_site_devices = AsyncMock()
 
         result = await coordinator._async_update_data()
 
         assert "device1" in result["devices"]["default"]
         coordinator.network_client.devices.get_legacy_site_devices.assert_not_called()
+        coordinator.network_client.sites.get_legacy_all.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_refresh_reads_the_published_legacy_site_mapping(
+        self, coordinator: UnifiDeviceCoordinator
+    ):
+        """The device poll uses the config mapping and never looks it up itself."""
+        coordinator.config_coordinator.data["legacy_site_names"] = {
+            "default": "renamed"
+        }
+        coordinator.config_coordinator.data["legacy_mapping_failed"] = True
+
+        await coordinator._async_update_data()
+
+        coordinator.network_client.sites.get_legacy_all.assert_not_called()
+        coordinator.network_client.devices.get_legacy_site_devices.assert_awaited_with(
+            "renamed"
+        )
 
     @pytest.mark.asyncio
     async def test_stats_reuse_is_capped(self, coordinator: UnifiDeviceCoordinator):

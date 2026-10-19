@@ -152,15 +152,22 @@ class TestPoeEligibility:
 async def test_device_mapping_follows_the_config_rule(
     seeded_owners: SeededOwners,
 ) -> None:
-    """The device coordinator maps legacy sites with the config rule."""
+    """The device coordinator reads the config mapping instead of its own."""
     device = seeded_owners.device
     config = seeded_owners.config
+    network_client = seeded_owners.network_client
 
     assert config.data["legacy_site_names"] == {SITE_ID: "default"}
-    assert device.get_legacy_site_name(SITE_ID) == "default"
-    assert device._map_legacy_site_names(
-        [SITE_ID], [{"name": "renamed", "desc": "Default Site"}]
-    ) == {SITE_ID: "renamed"}
+    assert config.legacy_site_names == {SITE_ID: "default"}
+    network_client.sites.get_legacy_all.reset_mock()
+    network_client.devices.get_legacy_site_devices.reset_mock()
+    config.data = {**config.data, "legacy_site_names": {SITE_ID: "renamed"}}
+
+    await device.async_refresh()
+
+    assert device.last_update_success
+    network_client.sites.get_legacy_all.assert_not_called()
+    network_client.devices.get_legacy_site_devices.assert_awaited_once_with("renamed")
 
 
 MAC = "AA:BB:CC:DD:EE:FF"

@@ -78,7 +78,6 @@ def mock_sub_coordinators() -> tuple[MagicMock, MagicMock, MagicMock, MagicMock]
     device_coord.last_update_success = True
     device_coord.last_exception = None
     device_coord.async_refresh = AsyncMock()
-    device_coord.get_legacy_site_name.return_value = "default"
 
     protect_coord = MagicMock()
     protect_coord.data = {

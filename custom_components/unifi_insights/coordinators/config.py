@@ -71,7 +71,7 @@ __all__ = [
 ]
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Mapping
 
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import CALLBACK_TYPE, HomeAssistant
@@ -575,6 +575,17 @@ class UnifiConfigCoordinator(UnifiBaseCoordinator):
         sites = self.data.get("sites", {})
         result = sites.get(site_id)
         return result if isinstance(result, dict) else None
+
+    @property
+    def legacy_site_names(self) -> Mapping[str, str]:
+        """
+        Return the published integration site ID -> classic site name mapping.
+
+        The device coordinator reads it on each poll for legacy telemetry
+        instead of looking the classic sites up itself (ADR-010).
+        """
+        mapping: Mapping[str, str] = self.data.get("legacy_site_names", {})
+        return mapping
 
     def resolve_legacy_site_name(self, site_id: str, *, verified_only: bool) -> str:
         """

@@ -11,6 +11,9 @@ from unifi_official_api.network.models.device import (
     PortBytesMetrics,
 )
 
+from custom_components.unifi_insights.coordinators.config_sections import (
+    map_legacy_site_names,
+)
 from custom_components.unifi_insights.coordinators.device import (
     UnifiDeviceCoordinator,
 )
@@ -267,9 +270,9 @@ class TestMergeLegacyOutletData:
 
 
 class TestMapLegacySiteNames:
-    """Test _map_legacy_site_names edge cases."""
+    """Test the single legacy site mapping rule's edge cases."""
 
-    def test_legacy_site_missing_or_empty_name(self, mock_device_coordinator):
+    def test_legacy_site_missing_or_empty_name(self):
         """Skip legacy sites without a valid non-empty string name."""
         legacy_sites = [
             {"desc": "Site Without Name"},
@@ -277,22 +280,17 @@ class TestMapLegacySiteNames:
             {"name": 123, "desc": "Integer Name"},
             {"name": "site_alpha", "desc": "Alpha Site"},
         ]
-        mock_device_coordinator.config_coordinator.get_site = MagicMock(
-            return_value={"name": "Alpha Site", "id": "alpha_id"}
-        )
-        mappings = mock_device_coordinator._map_legacy_site_names(
-            legacy_sites=legacy_sites, site_ids=["alpha_id"]
+        mappings = map_legacy_site_names(
+            {"alpha_id": {"name": "Alpha Site", "id": "alpha_id"}}, legacy_sites
         )
         assert mappings.get("alpha_id") == "site_alpha"
 
-    def test_single_legacy_site_fallback(self, mock_device_coordinator):
+    def test_single_legacy_site_fallback(self):
         """Map unmatched site_id to the single legacy site if exactly one exists."""
         legacy_sites = [{"name": "default_legacy", "desc": "Some Name"}]
-        mock_device_coordinator.config_coordinator.get_site = MagicMock(
-            return_value={"name": "Unrelated Name", "id": "unmatched_site"}
-        )
-        mappings = mock_device_coordinator._map_legacy_site_names(
-            legacy_sites=legacy_sites, site_ids=["unmatched_site"]
+        mappings = map_legacy_site_names(
+            {"unmatched_site": {"name": "Unrelated Name", "id": "unmatched_site"}},
+            legacy_sites,
         )
         assert mappings.get("unmatched_site") == "default_legacy"
 

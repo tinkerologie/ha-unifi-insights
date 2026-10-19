@@ -6528,7 +6528,9 @@ class TestRemoveClientsService:
                     "name": "Office",
                     "internalReference": "alpha",
                 }
-            }
+            },
+            # The published fuzzy mapping points elsewhere and must be ignored.
+            "legacy_site_names": {"site1": "beta"},
         }
         mock_config_coordinator.get_site = mock_config_coordinator.data["sites"].get
         mock_config_coordinator.resolve_legacy_site_name = (
@@ -6539,8 +6541,6 @@ class TestRemoveClientsService:
 
         mock_device_coordinator = MagicMock()
         mock_device_coordinator.data = {}
-        # Device coordinator fuzzy mapping points elsewhere ("beta") and must be ignored
-        mock_device_coordinator.get_legacy_site_name = MagicMock(return_value="beta")
         # The real batch-forget owner command, so the request stays end to end.
         mock_device_coordinator.network_client = network_client
         mock_device_coordinator.config_coordinator = mock_config_coordinator
