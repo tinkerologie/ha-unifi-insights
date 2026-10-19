@@ -44,13 +44,15 @@ from custom_components.unifi_insights.coordinators.base import (
 from custom_components.unifi_insights.data_transforms import get_site_gateway_id
 from custom_components.unifi_insights.switch import (
     FIREWALL_RULE_SWITCH,
+    OUTLET_CYCLE_SWITCH,
+    OUTLET_RELAY_SWITCH,
     PARALLEL_UPDATES,
     POLICY_BASED_ROUTE_SWITCH,
     VPN_CLIENT_SWITCH,
     UnifiClientBlockSwitch,
     UnifiInsightsNetworkRuleSwitch,
-    UnifiOutletCycleSwitch,
     UnifiOutletSwitch,
+    UnifiOutletSwitchEntityDescription,
     UnifiProtectHighFPSSwitch,
     UnifiProtectStatusLightSwitch,
     UnifiWifiSwitch,
@@ -3408,8 +3410,22 @@ class TestUnifiOutletSwitch:
             async_add_entities,
         )
 
-        outlet_switches = [e for e in entities if isinstance(e, UnifiOutletSwitch)]
-        cycle_switches = [e for e in entities if isinstance(e, UnifiOutletCycleSwitch)]
+        outlet_switches = [
+            e
+            for e in entities
+            if (
+                isinstance(e, UnifiOutletSwitch)
+                and e.entity_description is OUTLET_RELAY_SWITCH
+            )
+        ]
+        cycle_switches = [
+            e
+            for e in entities
+            if (
+                isinstance(e, UnifiOutletSwitch)
+                and e.entity_description is OUTLET_CYCLE_SWITCH
+            )
+        ]
 
         assert len(outlet_switches) == 3
         # Outlets 1 and 2 have cycle_enabled not None; outlet 3 has cycle_enabled None
@@ -3435,18 +3451,50 @@ class TestUnifiOutletSwitch:
         )
         listener = mock_coordinator.async_add_listener.call_args[0][0]
 
-        outlet_before = len([e for e in entities if isinstance(e, UnifiOutletSwitch)])
+        outlet_before = len(
+            [
+                e
+                for e in entities
+                if (
+                    isinstance(e, UnifiOutletSwitch)
+                    and e.entity_description is OUTLET_RELAY_SWITCH
+                )
+            ]
+        )
         cycle_before = len(
-            [e for e in entities if isinstance(e, UnifiOutletCycleSwitch)]
+            [
+                e
+                for e in entities
+                if (
+                    isinstance(e, UnifiOutletSwitch)
+                    and e.entity_description is OUTLET_CYCLE_SWITCH
+                )
+            ]
         )
         assert outlet_before == 3
         assert cycle_before == 2
 
         listener()
 
-        outlet_after = len([e for e in entities if isinstance(e, UnifiOutletSwitch)])
+        outlet_after = len(
+            [
+                e
+                for e in entities
+                if (
+                    isinstance(e, UnifiOutletSwitch)
+                    and e.entity_description is OUTLET_RELAY_SWITCH
+                )
+            ]
+        )
         cycle_after = len(
-            [e for e in entities if isinstance(e, UnifiOutletCycleSwitch)]
+            [
+                e
+                for e in entities
+                if (
+                    isinstance(e, UnifiOutletSwitch)
+                    and e.entity_description is OUTLET_CYCLE_SWITCH
+                )
+            ]
         )
         assert outlet_after == outlet_before
         assert cycle_after == cycle_before
@@ -3457,9 +3505,10 @@ class TestUnifiOutletSwitch:
             0
         ]
         switch = UnifiOutletSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
+            mock_coordinator,
+            OUTLET_RELAY_SWITCH,
+            "site1",
+            "pdu1",
             outlet_index=1,
             outlet_data=outlet_data,
         )
@@ -3488,9 +3537,10 @@ class TestUnifiOutletSwitch:
             0
         ]
         switch = UnifiOutletSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
+            mock_coordinator,
+            OUTLET_RELAY_SWITCH,
+            "site1",
+            "pdu1",
             outlet_index=1,
             outlet_data=outlet_data,
         )
@@ -3503,9 +3553,10 @@ class TestUnifiOutletSwitch:
             1
         ]
         switch = UnifiOutletSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
+            mock_coordinator,
+            OUTLET_RELAY_SWITCH,
+            "site1",
+            "pdu1",
             outlet_index=2,
             outlet_data=outlet_data,
         )
@@ -3526,9 +3577,10 @@ class TestUnifiOutletSwitch:
             0
         ]
         switch = UnifiOutletSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
+            mock_coordinator,
+            OUTLET_RELAY_SWITCH,
+            "site1",
+            "pdu1",
             outlet_index=1,
             outlet_data=outlet_data,
         )
@@ -3550,10 +3602,7 @@ class TestUnifiOutletSwitch:
         mock_coordinator.data["devices"]["site1"]["pdu1"]["status"] = "offline"
 
         switch = UnifiOutletSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
-            outlet_index=1,
+            mock_coordinator, OUTLET_RELAY_SWITCH, "site1", "pdu1", outlet_index=1
         )
 
         assert switch.available is False
@@ -3562,9 +3611,10 @@ class TestUnifiOutletSwitch:
         """Test outlet switch edge cases for non-list table and alternative keys."""
         mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"] = "not_a_list"
         switch = UnifiOutletSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
+            mock_coordinator,
+            OUTLET_RELAY_SWITCH,
+            "site1",
+            "pdu1",
             outlet_index=1,
             outlet_data={"relay_state": True},
         )
@@ -3603,9 +3653,10 @@ class TestUnifiOutletSwitch:
             1
         ]
         switch = UnifiOutletSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
+            mock_coordinator,
+            OUTLET_RELAY_SWITCH,
+            "site1",
+            "pdu1",
             outlet_index=2,
             outlet_data=outlet_data,
         )
@@ -3636,9 +3687,10 @@ class TestUnifiOutletSwitch:
             0
         ]
         switch = UnifiOutletSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
+            mock_coordinator,
+            OUTLET_RELAY_SWITCH,
+            "site1",
+            "pdu1",
             outlet_index=1,
             outlet_data=outlet_data,
         )
@@ -3661,7 +3713,7 @@ class TestUnifiOutletSwitch:
 
 
 class TestUnifiOutletCycleSwitch:
-    """Tests for UnifiOutletCycleSwitch entity."""
+    """Tests for the outlet power-cycle switch."""
 
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
@@ -3708,14 +3760,15 @@ class TestUnifiOutletCycleSwitch:
         return coordinator
 
     def test_cycle_switch_properties(self, mock_coordinator) -> None:
-        """Test UnifiOutletCycleSwitch properties and unique_id literal."""
+        """Test the power-cycle switch properties and unique_id literal."""
         outlet_data = mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][
             0
         ]
-        switch = UnifiOutletCycleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
+        switch = UnifiOutletSwitch(
+            mock_coordinator,
+            OUTLET_CYCLE_SWITCH,
+            "site1",
+            "pdu1",
             outlet_index=1,
             outlet_data=outlet_data,
         )
@@ -3736,10 +3789,11 @@ class TestUnifiOutletCycleSwitch:
         outlet_data = mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][
             0
         ]
-        switch = UnifiOutletCycleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
+        switch = UnifiOutletSwitch(
+            mock_coordinator,
+            OUTLET_CYCLE_SWITCH,
+            "site1",
+            "pdu1",
             outlet_index=1,
             outlet_data=outlet_data,
         )
@@ -3751,10 +3805,11 @@ class TestUnifiOutletCycleSwitch:
         outlet_data = mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][
             1
         ]
-        switch = UnifiOutletCycleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
+        switch = UnifiOutletSwitch(
+            mock_coordinator,
+            OUTLET_CYCLE_SWITCH,
+            "site1",
+            "pdu1",
             outlet_index=2,
             outlet_data=outlet_data,
         )
@@ -3774,10 +3829,11 @@ class TestUnifiOutletCycleSwitch:
         outlet_data = mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][
             0
         ]
-        switch = UnifiOutletCycleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
+        switch = UnifiOutletSwitch(
+            mock_coordinator,
+            OUTLET_CYCLE_SWITCH,
+            "site1",
+            "pdu1",
             outlet_index=1,
             outlet_data=outlet_data,
         )
@@ -3804,10 +3860,11 @@ class TestUnifiOutletCycleSwitch:
         mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"] = [
             {"index": 1, "name": "Main Server", "cycle_enabled": False}
         ]
-        switch = UnifiOutletCycleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
+        switch = UnifiOutletSwitch(
+            mock_coordinator,
+            OUTLET_CYCLE_SWITCH,
+            "site1",
+            "pdu1",
             outlet_index=1,
             outlet_data={"index": 1, "cycle_enabled": False},
         )
@@ -3824,9 +3881,10 @@ class TestUnifiOutletCycleSwitch:
         # 1. Device data missing or not dict
         mock_coordinator.data["devices"] = {}
         switch = UnifiOutletSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
+            mock_coordinator,
+            OUTLET_RELAY_SWITCH,
+            "site1",
+            "pdu1",
             outlet_index=1,
             outlet_data={"relay_state": True},
         )
@@ -3851,10 +3909,11 @@ class TestUnifiOutletCycleSwitch:
         assert switch._get_outlet_data() is None
 
         # 3. Cycle switch with missing/offline data
-        cycle_switch = UnifiOutletCycleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
+        cycle_switch = UnifiOutletSwitch(
+            mock_coordinator,
+            OUTLET_CYCLE_SWITCH,
+            "site1",
+            "pdu1",
             outlet_index=1,
             outlet_data={"cycle_enabled": True},
         )
@@ -3864,10 +3923,11 @@ class TestUnifiOutletCycleSwitch:
 
     def test_cycle_switch_more_edge_cases(self, mock_coordinator: MagicMock) -> None:
         """Test cycle switch edge cases for non-list table and offline state."""
-        switch = UnifiOutletCycleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
+        switch = UnifiOutletSwitch(
+            mock_coordinator,
+            OUTLET_CYCLE_SWITCH,
+            "site1",
+            "pdu1",
             outlet_index=1,
             outlet_data={"cycle_enabled": True},
         )
@@ -3900,10 +3960,11 @@ class TestUnifiOutletCycleSwitch:
         outlet_data = mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][
             1
         ]
-        switch = UnifiOutletCycleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
+        switch = UnifiOutletSwitch(
+            mock_coordinator,
+            OUTLET_CYCLE_SWITCH,
+            "site1",
+            "pdu1",
             outlet_index=2,
             outlet_data=outlet_data,
         )
@@ -3933,10 +3994,11 @@ class TestUnifiOutletCycleSwitch:
         outlet_data = mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][
             0
         ]
-        switch = UnifiOutletCycleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
+        switch = UnifiOutletSwitch(
+            mock_coordinator,
+            OUTLET_CYCLE_SWITCH,
+            "site1",
+            "pdu1",
             outlet_index=1,
             outlet_data=outlet_data,
         )
@@ -4020,9 +4082,9 @@ class TestGetFirewallRuleAction:
         assert _get_firewall_rule_action({}) is None
 
 
-@pytest.mark.parametrize("switch_cls", [UnifiOutletSwitch, UnifiOutletCycleSwitch])
+@pytest.mark.parametrize("description", [OUTLET_RELAY_SWITCH, OUTLET_CYCLE_SWITCH])
 def test_outlet_lookup_skips_outlets_without_an_index(
-    switch_cls: type[UnifiOutletSwitch | UnifiOutletCycleSwitch],
+    description: UnifiOutletSwitchEntityDescription,
 ) -> None:
     """An outlet without any index alias is skipped, not matched."""
     coordinator = autospec_command_owners(MagicMock())
@@ -4039,6 +4101,40 @@ def test_outlet_lookup_skips_outlets_without_an_index(
         }
     }
 
-    switch = switch_cls(coordinator, "site1", "pdu1", 2)
+    switch = UnifiOutletSwitch(
+        coordinator, description, "site1", "pdu1", outlet_index=2
+    )
 
     assert switch._get_outlet_data() == {"outlet_idx": 2, "name": "Second"}
+
+
+def test_outlet_cycle_switch_reports_no_outlet_attributes() -> None:
+    """Only the relay switch reports the outlet attributes."""
+    coordinator = autospec_command_owners(MagicMock())
+    coordinator.data = {"devices": {}}
+    outlet = {"index": 1, "name": "Modem", "relay_state": True, "cycle_enabled": True}
+
+    relay = UnifiOutletSwitch(
+        coordinator,
+        OUTLET_RELAY_SWITCH,
+        "site1",
+        "pdu1",
+        outlet_index=1,
+        outlet_data=outlet,
+    )
+    cycle = UnifiOutletSwitch(
+        coordinator,
+        OUTLET_CYCLE_SWITCH,
+        "site1",
+        "pdu1",
+        outlet_index=1,
+        outlet_data=outlet,
+    )
+
+    assert relay.extra_state_attributes == {
+        "index": 1,
+        "name": "Modem",
+        "relay_state": True,
+        "cycle_enabled": True,
+    }
+    assert cycle.extra_state_attributes is None

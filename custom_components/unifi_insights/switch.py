@@ -528,37 +528,32 @@ async def async_setup_entry(
                         except TypeError, ValueError:
                             continue
 
-                        switch_key = (site_id, device_id, outlet_idx, "outlet_switch")
-                        if switch_key not in known_switch_keys:
-                            known_switch_keys.add(switch_key)
+                        for description in (OUTLET_RELAY_SWITCH, OUTLET_CYCLE_SWITCH):
+                            # Only outlets that report cycling get a cycle switch.
+                            if (
+                                description is OUTLET_CYCLE_SWITCH
+                                and outlet.get("cycle_enabled") is None
+                            ):
+                                continue
+                            outlet_key = (
+                                site_id,
+                                device_id,
+                                outlet_idx,
+                                description.key,
+                            )
+                            if outlet_key in known_switch_keys:
+                                continue
+                            known_switch_keys.add(outlet_key)
                             entities.append(
                                 UnifiOutletSwitch(
-                                    coordinator=coordinator,
-                                    site_id=site_id,
-                                    device_id=device_id,
+                                    coordinator,
+                                    description,
+                                    site_id,
+                                    device_id,
                                     outlet_index=outlet_idx,
                                     outlet_data=outlet,
                                 )
                             )
-
-                        if outlet.get("cycle_enabled") is not None:
-                            cycle_key = (
-                                site_id,
-                                device_id,
-                                outlet_idx,
-                                "outlet_cycle_switch",
-                            )
-                            if cycle_key not in known_switch_keys:
-                                known_switch_keys.add(cycle_key)
-                                entities.append(
-                                    UnifiOutletCycleSwitch(
-                                        coordinator=coordinator,
-                                        site_id=site_id,
-                                        device_id=device_id,
-                                        outlet_index=outlet_idx,
-                                        outlet_data=outlet,
-                                    )
-                                )
 
         entities.extend(discover_network_rule_switches(coordinator, known_switch_keys))
 
@@ -909,159 +904,66 @@ class UnifiWifiSwitch(
         )
 
 
+@dataclass(frozen=True, kw_only=True)
+class UnifiOutletSwitchEntityDescription(SwitchEntityDescription):
+    """One kind of PDU outlet switch: the relay, or automatic power cycling."""
+
+    unique_id_suffix: str
+    # Outlet field the switch reports: "relay_state" or "cycle_enabled".
+    state_field: str
+
+
+OUTLET_RELAY_SWITCH = UnifiOutletSwitchEntityDescription(
+    key="outlet_switch",
+    translation_key="outlet",
+    device_class=SwitchDeviceClass.OUTLET,
+    unique_id_suffix="",
+    state_field="relay_state",
+)
+
+OUTLET_CYCLE_SWITCH = UnifiOutletSwitchEntityDescription(
+    key="outlet_cycle_switch",
+    translation_key="outlet_cycle_enabled",
+    entity_category=EntityCategory.CONFIG,
+    entity_registry_enabled_default=False,
+    unique_id_suffix="_cycle_enabled",
+    state_field="cycle_enabled",
+)
+
+# Outlet fields the relay switch reports as attributes.
+_OUTLET_ATTRIBUTES = (
+    "name",
+    "relay_state",
+    "cycle_enabled",
+    "outlet_caps",
+    "outlet_voltage",
+    "outlet_current",
+    "outlet_power",
+    "outlet_power_factor",
+)
+
+
 class UnifiOutletSwitch(
     CoordinatorEntity["UnifiInsightsFacadeCoordinator"], SwitchEntity
 ):
-    """Per-outlet relay switch for UniFi PDU and smart power strip devices."""
+    """Relay or power-cycle switch of one UniFi PDU or smart power strip outlet."""
 
     _attr_has_entity_name = True
-    _attr_device_class = SwitchDeviceClass.OUTLET
+    entity_description: UnifiOutletSwitchEntityDescription
 
     def __init__(
         self,
         coordinator: UnifiInsightsFacadeCoordinator,
+        description: UnifiOutletSwitchEntityDescription,
         site_id: str,
         device_id: str,
+        *,
         outlet_index: int,
         outlet_data: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the outlet switch."""
         super().__init__(coordinator)
-        self._site_id = site_id
-        self._device_id = device_id
-        self._outlet_index = outlet_index
-        self._initial_outlet_data = outlet_data or {}
-
-        outlet = self._get_outlet_data() or self._initial_outlet_data
-        outlet_name = outlet.get("name") or f"Outlet {outlet_index}"
-
-        self._attr_unique_id = f"{site_id}_{device_id}_outlet_{outlet_index}"
-        self._attr_translation_key = "outlet"
-        self._attr_translation_placeholders = {"outlet_name": str(outlet_name)}
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{site_id}_{device_id}")},
-        )
-
-    def _get_device_data(self) -> dict[str, Any]:
-        """Return the coordinator's cached snapshot for this PDU device."""
-        device_data = (
-            self.coordinator.data.get("devices", {})
-            .get(self._site_id, {})
-            .get(self._device_id, {})
-        )
-        return device_data if isinstance(device_data, dict) else {}
-
-    def _get_outlet_data(self) -> dict[str, Any] | None:
-        """Get current outlet data from coordinator."""
-        device_data = self._get_device_data()
-        if not device_data:
-            return None
-        outlets = device_data.get("outlet_table", [])
-        if not isinstance(outlets, list):
-            return None
-        for outlet in outlets:
-            if not isinstance(outlet, dict):
-                continue
-            idx = outlet.get("index")
-            if idx is None:
-                idx = outlet.get("outlet_idx") or outlet.get("outletIdx")
-            if idx is not None:
-                try:
-                    if int(idx) == self._outlet_index:
-                        return outlet
-                except TypeError, ValueError:
-                    continue
-        return None
-
-    @property
-    def available(self) -> bool:
-        """Return True if switch is available."""
-        if not self.coordinator.device_available:
-            return False
-        device_data = self._get_device_data()
-        if not device_data or not is_device_online(device_data):
-            return False
-        return self._get_outlet_data() is not None
-
-    @property
-    def is_on(self) -> bool:
-        """Return True if outlet relay is energized (ON)."""
-        outlet = self._get_outlet_data()
-        if not outlet:
-            return bool(self._initial_outlet_data.get("relay_state", False))
-        return bool(outlet.get("relay_state", False))
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return outlet extra state attributes."""
-        outlet = self._get_outlet_data() or self._initial_outlet_data
-        attrs: dict[str, Any] = {"index": self._outlet_index}
-        for key in (
-            "name",
-            "relay_state",
-            "cycle_enabled",
-            "outlet_caps",
-            "outlet_voltage",
-            "outlet_current",
-            "outlet_power",
-            "outlet_power_factor",
-        ):
-            if key in outlet and outlet[key] is not None:
-                attrs[key] = outlet[key]
-        return attrs
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn on the outlet."""
-        _ = kwargs
-        _LOGGER.debug(
-            "Turning on outlet %d for device %s in site %s",
-            self._outlet_index,
-            self._device_id,
-            self._site_id,
-        )
-        await self.coordinator.device_coordinator.async_set_outlet_state(
-            self._site_id,
-            self._device_id,
-            self._outlet_index,
-            state=True,
-        )
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Turn off the outlet."""
-        _ = kwargs
-        _LOGGER.debug(
-            "Turning off outlet %d for device %s in site %s",
-            self._outlet_index,
-            self._device_id,
-            self._site_id,
-        )
-        await self.coordinator.device_coordinator.async_set_outlet_state(
-            self._site_id,
-            self._device_id,
-            self._outlet_index,
-            state=False,
-        )
-
-
-class UnifiOutletCycleSwitch(
-    CoordinatorEntity["UnifiInsightsFacadeCoordinator"], SwitchEntity
-):
-    """Switch to enable or disable automatic modem power cycling for a PDU outlet."""
-
-    _attr_has_entity_name = True
-    _attr_entity_category = EntityCategory.CONFIG
-    _attr_entity_registry_enabled_default = False
-
-    def __init__(
-        self,
-        coordinator: UnifiInsightsFacadeCoordinator,
-        site_id: str,
-        device_id: str,
-        outlet_index: int,
-        outlet_data: dict[str, Any] | None = None,
-    ) -> None:
-        """Initialize the outlet cycle switch."""
-        super().__init__(coordinator)
+        self.entity_description = description
         self._site_id = site_id
         self._device_id = device_id
         self._outlet_index = outlet_index
@@ -1071,9 +973,8 @@ class UnifiOutletCycleSwitch(
         outlet_name = outlet.get("name") or f"Outlet {outlet_index}"
 
         self._attr_unique_id = (
-            f"{site_id}_{device_id}_outlet_{outlet_index}_cycle_enabled"
+            f"{site_id}_{device_id}_outlet_{outlet_index}{description.unique_id_suffix}"
         )
-        self._attr_translation_key = "outlet_cycle_enabled"
         self._attr_translation_placeholders = {"outlet_name": str(outlet_name)}
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{site_id}_{device_id}")},
@@ -1120,54 +1021,50 @@ class UnifiOutletCycleSwitch(
             return False
         return self._get_outlet_data() is not None
 
-    def _get_current_relay_state(self) -> bool:
-        """Return the outlet's reported relay state, defaulting to OFF."""
-        outlet = self._get_outlet_data() or self._initial_outlet_data
-        return bool(outlet.get("relay_state", False))
-
     @property
     def is_on(self) -> bool:
-        """Return True if power cycling is enabled on this outlet."""
-        outlet = self._get_outlet_data()
-        if not outlet:
-            return bool(self._initial_outlet_data.get("cycle_enabled", False))
-        return bool(outlet.get("cycle_enabled", False))
+        """Return the outlet's relay or power-cycling state."""
+        outlet = self._get_outlet_data() or self._initial_outlet_data
+        return bool(outlet.get(self.entity_description.state_field, False))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return outlet attributes for the relay switch."""
+        if self.entity_description.state_field != "relay_state":
+            return None
+        outlet = self._get_outlet_data() or self._initial_outlet_data
+        attrs: dict[str, Any] = {"index": self._outlet_index}
+        for key in _OUTLET_ATTRIBUTES:
+            if key in outlet and outlet[key] is not None:
+                attrs[key] = outlet[key]
+        return attrs
+
+    async def _async_set(self, *, on: bool) -> None:
+        """Set the relay, or power cycling while keeping the relay as it is."""
+        owner = self.coordinator.device_coordinator
+        if self.entity_description.state_field == "relay_state":
+            await owner.async_set_outlet_state(
+                self._site_id, self._device_id, self._outlet_index, state=on
+            )
+            return
+        outlet = self._get_outlet_data() or self._initial_outlet_data
+        await owner.async_set_outlet_state(
+            self._site_id,
+            self._device_id,
+            self._outlet_index,
+            state=bool(outlet.get("relay_state", False)),
+            cycle_enabled=on,
+        )
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Enable power cycling on the outlet."""
+        """Turn on the relay or enable power cycling."""
         _ = kwargs
-        _LOGGER.debug(
-            "Enabling power cycle for outlet %d on device %s in site %s",
-            self._outlet_index,
-            self._device_id,
-            self._site_id,
-        )
-        current_relay = self._get_current_relay_state()
-        await self.coordinator.device_coordinator.async_set_outlet_state(
-            self._site_id,
-            self._device_id,
-            self._outlet_index,
-            state=current_relay,
-            cycle_enabled=True,
-        )
+        await self._async_set(on=True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """Disable power cycling on the outlet."""
+        """Turn off the relay or disable power cycling."""
         _ = kwargs
-        _LOGGER.debug(
-            "Disabling power cycle for outlet %d on device %s in site %s",
-            self._outlet_index,
-            self._device_id,
-            self._site_id,
-        )
-        current_relay = self._get_current_relay_state()
-        await self.coordinator.device_coordinator.async_set_outlet_state(
-            self._site_id,
-            self._device_id,
-            self._outlet_index,
-            state=current_relay,
-            cycle_enabled=False,
-        )
+        await self._async_set(on=False)
 
 
 # --- Network rules -----------------------------------------------------------
