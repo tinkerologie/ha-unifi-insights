@@ -30,6 +30,7 @@ An accepted ADR is never edited to change its meaning. A new ADR supersedes it i
 | [007](./adr/007-flat-home-assistant-module-layout.md)                | Flat Home Assistant module layout                             | Proposed              | 2026-10-16 |
 | [008](./adr/008-depend-on-unifi-official-api-from-pypi.md)           | Depend on `unifi-official-api` from PyPI                      | Accepted              | 2026-10-19 |
 | [009](./adr/009-amend-flat-module-layout.md)                         | Amendments to the flat module layout for the deepening issues | Accepted              | 2026-10-19 |
+| [010](./adr/010-one-owner-per-write-command.md)                      | One owner per write command                                   | Accepted              | 2026-10-19 |
 
 ### Multi-coordinator architecture behind a facade
 
@@ -62,6 +63,10 @@ Consolidate 57 root modules into 33 by moving every base entity into `entity.py`
 ### Amendments to the flat module layout
 
 ADR-007 is amended for the deepening issues #337, #338 and #339. `get_field()` and `first_not_none()` live in `data_transforms.py`, re-exported by `entity.py`. `data_transforms.normalize_mac()` is the canonical MAC parser for reading device data, and four identity-specific MAC policies stay separate and tested. `service_targets.py` is an allowed 34th root module. `coordinators/protect.py` has a size exception capped at 3,500 lines until #340 splits it. [ADR-009](./adr/009-amend-flat-module-layout.md)
+
+### One owner per write command
+
+Each write belongs to the coordinator that owns the data it changes: config (rules, Wi-Fi, guest authorisation), device (restart, PoE, outlets, clients), Protect (cameras, lights, chimes, viewers, alarms, sirens, talkback), Access and Carrier Fabric (unchanged), and the facade only for vouchers and `async_refresh_or_raise`. The owner runs the call through the shared `async_execute_command` in `coordinators/base.py`, raises translated errors, publishes a copy-on-write overlay and applies one recorded reconciliation policy; a failed refresh never fails a successful write. The config coordinator publishes the legacy site-name mapping and owns the only resolver, which never guesses `"default"`. Entities and services call owners with typed calls, replacing the string dispatch and its fallbacks. The Protect commands fit inside ADR-009's 3,500-line cap. Implemented in [#338](https://github.com/tinkerologie/ha-unifi-insights/issues/338). [ADR-010](./adr/010-one-owner-per-write-command.md)
 
 ## Future considerations
 
