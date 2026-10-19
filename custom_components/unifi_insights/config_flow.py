@@ -101,7 +101,7 @@ from .topology_contract import normalize_mac as normalize_hardware_mac
 
 # Schemas are typed against probatio, the library HA 2026.10 annotates its schema
 # arguments with. Runtime still imports voluptuous: HA 2026.10 aliases it to probatio,
-# and the 2026.6 minimum ships real voluptuous, so only the type checker sees probatio.
+# and the 2026.9 minimum ships real voluptuous, so only the type checker sees probatio.
 if TYPE_CHECKING:
     import probatio as vol
 else:
