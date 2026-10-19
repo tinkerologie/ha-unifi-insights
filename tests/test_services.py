@@ -2964,20 +2964,6 @@ class TestConsoleOwnershipRouting:
         coord1.async_generate_voucher = AsyncMock()
         coord1.async_delete_voucher = AsyncMock()
         _protect(coord1)
-        _protect(coord1)
-        _protect(coord1)
-        _protect(coord1)
-        _protect(coord1)
-        _protect(coord1)
-        _protect(coord1)
-        _protect(coord1)
-        _protect(coord1)
-        _protect(coord1)
-        _protect(coord1)
-        _protect(coord1)
-        _protect(coord1)
-        _protect(coord1)
-        _protect(coord1)
 
         entry1 = MagicMock()
         entry1.entry_id = "entry_1"
@@ -3002,20 +2988,6 @@ class TestConsoleOwnershipRouting:
         coord2.config_coordinator.async_authorize_guest = AsyncMock()
         coord2.async_generate_voucher = AsyncMock()
         coord2.async_delete_voucher = AsyncMock()
-        _protect(coord2)
-        _protect(coord2)
-        _protect(coord2)
-        _protect(coord2)
-        _protect(coord2)
-        _protect(coord2)
-        _protect(coord2)
-        _protect(coord2)
-        _protect(coord2)
-        _protect(coord2)
-        _protect(coord2)
-        _protect(coord2)
-        _protect(coord2)
-        _protect(coord2)
         _protect(coord2)
 
         entry2 = MagicMock()
@@ -4207,8 +4179,6 @@ class TestConsoleRoutingEdgeCases:
         """Test service calls passing optional camera_id and ignored guest options."""
         coord = MagicMock(protect_client=MagicMock())
         _protect(coord)
-        _protect(coord)
-        _protect(coord)
         coord.config_coordinator.async_authorize_guest = AsyncMock()
         coord.data = {
             "sites": {"s1": {}},
@@ -5075,8 +5045,6 @@ class TestServiceComprehensiveFullCoverage:
 
         # Chime services with camera_id as list
         coord = MagicMock(protect_client=MagicMock())
-        _protect(coord)
-        _protect(coord)
         _protect(coord)
         entry = MagicMock(
             entry_id="entry_p",

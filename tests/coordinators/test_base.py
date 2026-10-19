@@ -204,8 +204,11 @@ def test_command_exception_keys_match_in_both_files(key: str) -> None:
 
 
 # Modules that run write commands or call their owners (ADR-010).
+_TRANSLATED_ERRORS = frozenset({"HomeAssistantError", "ServiceValidationError"})
+
 _COMMAND_MODULES = (
     "coordinators/base.py",
+    "coordinators/carrier_fabric.py",
     "coordinators/config.py",
     "coordinators/device.py",
     "coordinators/facade.py",
@@ -225,6 +228,16 @@ _COMMAND_MODULES = (
 )
 
 
+def _raised_error_name(exc: ast.expr | None) -> str | None:
+    """Return the class name a ``raise`` uses, for ``X``, ``X(...)``, ``m.X(...)``."""
+    target = exc.func if isinstance(exc, ast.Call) else exc
+    if isinstance(target, ast.Name):
+        return target.id
+    if isinstance(target, ast.Attribute):
+        return target.attr
+    return None
+
+
 @pytest.mark.parametrize("module", _COMMAND_MODULES)
 def test_command_modules_raise_only_translated_errors(module: str) -> None:
     """Every HomeAssistantError or ServiceValidationError raised names a key."""
@@ -233,10 +246,31 @@ def test_command_modules_raise_only_translated_errors(module: str) -> None:
         node.lineno
         for node in ast.walk(tree)
         if isinstance(node, ast.Raise)
-        and isinstance(node.exc, ast.Call)
-        and getattr(node.exc.func, "id", None)
-        in {"HomeAssistantError", "ServiceValidationError"}
-        and "translation_key" not in {kw.arg for kw in node.exc.keywords}
+        and _raised_error_name(node.exc) in _TRANSLATED_ERRORS
+        and not (
+            isinstance(node.exc, ast.Call)
+            and "translation_key" in {kw.arg for kw in node.exc.keywords}
+        )
     ]
 
     assert untranslated == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "raise HomeAssistantError",
+        "raise HomeAssistantError('x')",
+        "raise exceptions.HomeAssistantError('x')",
+        "raise ServiceValidationError(translation_domain='d')",
+    ],
+)
+def test_translation_guard_catches_untranslated_raise_forms(source: str) -> None:
+    """The guard flags bare, called and attribute-qualified raises."""
+    node = ast.parse(source).body[0]
+    assert isinstance(node, ast.Raise)
+    assert _raised_error_name(node.exc) in _TRANSLATED_ERRORS
+    assert not (
+        isinstance(node.exc, ast.Call)
+        and "translation_key" in {kw.arg for kw in node.exc.keywords}
+    )

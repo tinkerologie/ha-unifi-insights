@@ -570,6 +570,53 @@ class TestRuleReconciliation:
         assert not config.firewall_available(SITE_ID)
         assert set(config._rule_refresh_retries) == {("firewall_rules", SITE_ID)}
 
+    @pytest.mark.parametrize(
+        ("command", "section", "endpoint", "lister"),
+        [
+            (
+                "async_set_policy_based_route_enabled",
+                "policy_based_routes",
+                "routes",
+                "list_routes",
+            ),
+            (
+                "async_set_vpn_client_enabled",
+                "vpn_clients",
+                "vpn_clients",
+                "list_vpn_clients",
+            ),
+        ],
+    )
+    async def test_missing_record_after_refresh_schedules_a_retry(
+        self,
+        rule_owners: SeededOwners,
+        command: str,
+        section: str,
+        endpoint: str,
+        lister: str,
+    ) -> None:
+        """A family that reports a failed read as empty still gets a retry."""
+        config = rule_owners.config
+        getattr(
+            getattr(rule_owners.network_client, endpoint), lister
+        ).side_effect = UniFiConnectionError("busy")
+
+        await getattr(config, command)(SITE_ID, "rule1", enabled=True)
+
+        assert config.last_update_success is True
+        assert "rule1" not in config.data[section].get(SITE_ID, {})
+        assert set(config._rule_refresh_retries) == {(section, SITE_ID)}
+
+    async def test_present_record_after_refresh_schedules_no_retry(
+        self, rule_owners: SeededOwners
+    ) -> None:
+        """A refresh that reads the written rule back needs no retry."""
+        config = rule_owners.config
+
+        await config.async_set_firewall_rule_enabled(SITE_ID, "rule1", enabled=True)
+
+        assert config._rule_refresh_retries == {}
+
     async def test_a_new_retry_replaces_the_pending_one(
         self, rule_owners: SeededOwners
     ) -> None:

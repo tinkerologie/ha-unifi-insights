@@ -910,7 +910,14 @@ class UnifiConfigCoordinator(UnifiBaseCoordinator):
                 section,
                 self.last_exception,
             )
-        if not self._section_available(section, site_id):
+        # Some families (policy-based routes, VPN clients) report a failed
+        # fetch as an empty map rather than a failed section, so the written
+        # record going missing is also a reason to retry.
+        refreshed = self.data.get(section)
+        refreshed_site = refreshed.get(site_id) if isinstance(refreshed, dict) else None
+        if not self._section_available(section, site_id) or not (
+            isinstance(refreshed_site, dict) and rule_id in refreshed_site
+        ):
             self._schedule_rule_refresh_retry(section, site_id)
 
     def _schedule_rule_refresh_retry(self, section: str, site_id: str) -> None:
