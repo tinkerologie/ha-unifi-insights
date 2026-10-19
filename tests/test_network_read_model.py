@@ -13,7 +13,7 @@ import pytest
 from unifi_official_api.network.models.client import ClientType
 from unifi_official_api.network.models.device import DeviceState
 
-from custom_components.unifi_insights import entity, topology_contract
+from custom_components.unifi_insights import entity, topology
 from custom_components.unifi_insights.console_identity import (
     normalize_mac as console_normalize_mac,
 )
@@ -155,9 +155,9 @@ def test_field_helpers_delegate_to_one_implementation() -> None:
     """The old helper names are thin wrappers over data_transforms.get_field."""
     assert entity.get_field is get_field
     assert entity.first_not_none is first_not_none
-    assert topology_contract.normalize_mac is normalize_mac
+    assert topology.normalize_mac is normalize_mac
     record = {"a": None, "b": 0}
-    assert topology_contract.first_present(record, "a", "b") == 0
+    assert topology.first_present(record, "a", "b") == 0
     assert _field(record, "a", "b") == 0
     assert _field(record, "a") is None
     assert UnifiProtectCoordinator._get_field(record, "a", default=3) == 3

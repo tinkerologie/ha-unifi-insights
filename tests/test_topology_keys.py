@@ -10,7 +10,7 @@ from unittest.mock import patch
 from homeassistant.exceptions import HomeAssistantError
 from pytest_homeassistant_custom_component.common import flush_store
 
-from custom_components.unifi_insights.topology_keys import (
+from custom_components.unifi_insights.topology import (
     _NODE_KEYS,
     async_get_node_key,
     async_load_node_keys,
@@ -107,7 +107,7 @@ async def test_unreadable_store_starts_fresh(
     with (
         caplog.at_level(logging.WARNING),
         patch(
-            "custom_components.unifi_insights.topology_keys.Store.async_load",
+            "custom_components.unifi_insights.topology.Store.async_load",
             side_effect=HomeAssistantError("corrupt"),
         ),
     ):

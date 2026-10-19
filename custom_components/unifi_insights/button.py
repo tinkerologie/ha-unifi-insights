@@ -64,7 +64,7 @@ from .entity import (
     get_client_type,
     get_field,
 )
-from .topology_contract import normalize_mac
+from .topology import normalize_mac
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

@@ -62,7 +62,7 @@ from custom_components.unifi_insights.sensor import (
 )
 from custom_components.unifi_insights.services import _is_wireless_client
 from custom_components.unifi_insights.topology import build_site_topology
-from custom_components.unifi_insights.topology_contract import (
+from custom_components.unifi_insights.topology import (
     device_kind as topology_device_kind,
 )
 from tests.fixtures.library_responses import (

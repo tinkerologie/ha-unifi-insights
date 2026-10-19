@@ -15,7 +15,7 @@ import math
 from typing import TYPE_CHECKING, Any, Final
 
 from .const import DOMAIN
-from .topology_contract import first_present, normalize_mac
+from .topology import first_present, normalize_mac
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

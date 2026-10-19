@@ -90,7 +90,7 @@ from .probe import (
     async_probe_protect,
 )
 from .services import async_setup_services
-from .topology_keys import async_load_node_keys, async_remove_node_key
+from .topology import async_load_node_keys, async_remove_node_key
 from .websocket_api import async_register_websocket_commands
 
 if TYPE_CHECKING:

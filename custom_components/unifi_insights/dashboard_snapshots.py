@@ -28,7 +28,7 @@ from .data_transforms import (
     site_device_facts,
     site_network_facts,
 )
-from .topology_contract import first_present, site_display_name
+from .topology import first_present, site_display_name
 
 # --- Shared contract helpers -------------------------------------------------
 

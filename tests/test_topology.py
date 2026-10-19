@@ -13,11 +13,9 @@ from pathlib import Path
 import pytest
 
 from custom_components.unifi_insights.topology import (
+    MAX_CLIENTS_PER_SITE,
     build_site_topology,
     build_unavailable_topology,
-)
-from custom_components.unifi_insights.topology_contract import (
-    MAX_CLIENTS_PER_SITE,
     device_kind,
     device_state,
     normalize_mac,

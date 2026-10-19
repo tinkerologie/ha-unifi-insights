@@ -45,15 +45,16 @@ from .dashboard_snapshots import (
 from .data_transforms import NETWORK_FACTS_KEY
 from .device_tracker import _client_tracker_entries, _mac_from_unique_id
 from .entity import get_field
-from .topology import build_site_topology, build_unavailable_topology
-from .topology_contract import (
+from .topology import (
     MAX_CLIENTS_PER_SITE,
+    async_get_node_key,
+    build_site_topology,
+    build_unavailable_topology,
     device_kind,
     opaque_node_id,
     site_display_name,
     wan_node_id,
 )
-from .topology_keys import async_get_node_key
 
 # Schemas are typed against probatio, the library HA 2026.10 annotates its schema
 # arguments with. Runtime still imports voluptuous: HA 2026.10 aliases it to probatio,
@@ -71,7 +72,7 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
     from . import UnifiInsightsConfigEntry
-    from .topology_contract import NodeKind, SiteTopology
+    from .topology import NodeKind, SiteTopology
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -95,7 +95,7 @@ from .probe import (
     async_probe_with_client,
     is_transient_error,
 )
-from .topology_contract import normalize_mac as normalize_hardware_mac
+from .topology import normalize_mac as normalize_hardware_mac
 
 # Schemas are typed against probatio, the library HA 2026.10 annotates its schema
 # arguments with. Runtime still imports voluptuous: HA 2026.10 aliases it to probatio,

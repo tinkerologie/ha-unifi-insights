@@ -49,7 +49,7 @@ from custom_components.unifi_insights.data_transforms import (
     normalize_legacy_storage,
     normalize_legacy_wans,
 )
-from custom_components.unifi_insights.topology_contract import (
+from custom_components.unifi_insights.topology import (
     first_present,
     normalize_mac,
 )

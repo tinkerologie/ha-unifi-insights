@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Final
 from unifi_official_api import UniFiAuthenticationError
 from unifi_official_api.network.models import is_predefined_nat_rule
 
-from custom_components.unifi_insights.topology_contract import normalize_mac
+from custom_components.unifi_insights.topology import normalize_mac
 
 from .internet_activity import resolve_report_site_name
 

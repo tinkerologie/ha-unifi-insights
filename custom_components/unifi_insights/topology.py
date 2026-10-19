@@ -2,12 +2,13 @@
 """
 Per-site network topology graph derived from coordinator data.
 
-This module is pure: it performs no I/O and imports nothing from Home
-Assistant or the rest of the integration beyond ``topology_contract`` and the
-equally pure ``data_transforms``, so the graph logic is unit-testable in
-isolation and cheap enough to run on every coordinator update. The snapshot
-types and node normalisers live in ``topology_contract``; device kind and
-state come from the published network facts (``site_network_facts``).
+The module has three sections: the snapshot contract and node normalisers,
+the per-entry node id keys, and the graph builder. The contract and graph
+sections are pure: they do no I/O and use only ``data_transforms`` from the
+integration, so the graph logic is unit-testable in isolation and cheap enough
+to run on every coordinator update. Only the node id keys use Home Assistant
+storage. Device kind and state come from the published network facts
+(``site_network_facts``).
 
 Relationship sources, verified against real hardware:
 
@@ -35,45 +36,352 @@ MAC-shaped identifiers are replaced by opaque hashes.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
-from typing import TYPE_CHECKING, Any, Final
+import logging
+import re
+import secrets
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Final, Literal, NotRequired, TypedDict
 
-from .data_transforms import site_device_facts, site_network_facts
-from .topology_contract import (
-    MAX_CLIENTS_PER_SITE,
-    TOPOLOGY_SCHEMA_VERSION,
-    UNKNOWN_CLIENT,
-    UNKNOWN_DEVICE,
-    as_int,
-    client_connection,
-    display_name,
-    first_present,
-    link_medium,
+from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.storage import Store
+from homeassistant.util.hass_dict import HassKey
+
+from .const import DOMAIN
+from .data_transforms import (
+    client_connection_type,
+    device_online_state,
+    device_ports,
+    get_field,
     normalize_mac,
-    opaque_node_id,
-    port_poe_watts,
-    site_display_name,
-    uplink_port_index,
-    wan_node_id,
-    wan_state,
+    site_device_facts,
+    site_network_facts,
 )
+from .data_transforms import device_kind as network_device_kind
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from homeassistant.core import HomeAssistant
+
     from .data_transforms import SiteNetworkFacts
-    from .topology_contract import (
-        NodeKind,
-        NodeState,
-        SiteTopology,
-        TopologyEdge,
-        TopologyIssue,
-        TopologyNode,
-        TopologyStatus,
-        TopologyTruncation,
-        TopologyUnresolved,
-        UnresolvedReason,
+
+_LOGGER = logging.getLogger(__name__)
+
+# --- Snapshot contract and node normalisers ----------------------------------
+
+# Frontend contract for the network topology snapshot (schema version 2).
+#
+# The TypedDicts here are the payload the topology WebSocket commands send, and
+# the helpers are the per-field normalisers the graph builder runs every device,
+# client and port through: MAC parsing, opaque node ids, device kind and state,
+# display and site names, link medium, client connection and port details.
+# The shared field and MAC primitives and the network device read model live
+# in ``data_transforms``. The kind, state, client and port helpers here are
+# adapters over the read-model rules for callers that hold a raw record; the
+# builders read the published facts.
+
+TOPOLOGY_SCHEMA_VERSION: Final = 2
+# Hard server-side cap on client nodes per site; requests may ask for fewer.
+MAX_CLIENTS_PER_SITE: Final = 500
+
+# A "wan" node is one internet connection of a gateway. It is the gateway's
+# uplink: its edge has the gateway as source and the WAN as target.
+NodeKind = Literal["wan", "gateway", "switch", "access_point", "client", "other"]
+NodeState = Literal["online", "offline", "unknown"]
+LinkMedium = Literal["wired", "wireless", "unknown"]
+ClientConnection = Literal["wired", "wireless"]
+TopologyStatus = Literal["ok", "partial", "unavailable"]
+IssueSeverity = Literal["info", "warning", "error"]
+UnresolvedReason = Literal["parent_not_found", "no_uplink_data"]
+
+
+class TopologyNode(TypedDict):
+    """A device or client in the graph."""
+
+    id: str
+    kind: NodeKind
+    name: str
+    state: NodeState
+    model: NotRequired[str]
+    ha_device_id: NotRequired[str]
+    connection: NotRequired[ClientConnection]
+    vlan_id: NotRequired[int]
+    network_name: NotRequired[str]
+
+
+class TopologyEdge(TypedDict):
+    """
+    A child -> parent link.
+
+    A ``gateway`` node is a ``source`` only of the edges to its own WANs.
+    """
+
+    source: str
+    target: str
+    medium: LinkMedium
+    speed_mbps: NotRequired[int]
+    parent_port: NotRequired[int]
+    child_port: NotRequired[int]
+    poe_power_w: NotRequired[float]
+
+
+class TopologyIssue(TypedDict):
+    """A machine-readable problem with the snapshot."""
+
+    code: str
+    severity: IssueSeverity
+
+
+class TopologyUnresolved(TypedDict):
+    """A node whose parent could not be placed in the graph."""
+
+    node_id: str
+    reason: UnresolvedReason
+
+
+class TopologyTruncation(TypedDict):
+    """How many clients were left out by the client cap."""
+
+    clients_total: int
+    clients_included: int
+
+
+class SiteTopology(TypedDict):
+    """
+    One site's topology snapshot (contract version 2).
+
+    ``status: "unavailable"`` comes in two shapes. With the
+    ``devices_unavailable`` issue the nodes and edges are the last-known data
+    (the device coordinator keeps its previous data when a poll fails). With
+    ``entry_unloaded`` or ``site_unavailable`` they are empty.
+    """
+
+    schema_version: int
+    entry_id: str
+    site_id: str
+    site_name: str
+    revision: str
+    status: TopologyStatus
+    issues: list[TopologyIssue]
+    nodes: list[TopologyNode]
+    edges: list[TopologyEdge]
+    unresolved: list[TopologyUnresolved]
+    truncation: TopologyTruncation | None
+
+
+def first_present(data: Mapping[str, Any], *keys: str) -> Any:
+    """Return the first non-None value among ``keys`` (get_field semantics)."""
+    return get_field(data, *keys)
+
+
+def opaque_node_id(prefix: str, key: bytes, raw_id: str) -> str:
+    """
+    Return a node id that never exposes a MAC address.
+
+    MAC-shaped ids are keyed with a per-entry secret (HMAC-SHA-256): the MAC
+    space is small enough to enumerate, especially per vendor prefix, so an
+    unkeyed hash of a public value plus the MAC could be reversed by anyone
+    who receives the snapshot. Other ids (v1 UUIDs) pass through unchanged.
+    """
+    mac = normalize_mac(raw_id)
+    if mac is None:
+        return f"{prefix}:{raw_id}"
+    digest = hmac.new(key, mac.encode(), hashlib.sha256).hexdigest()[:16]
+    return f"{prefix}:h{digest}"
+
+
+def wan_node_id(key: bytes, device_id: str, wan_key: str) -> str:
+    """
+    Return the node id of one WAN connection of a gateway.
+
+    The gateway part is opaque exactly like a device node id, so a WAN node
+    never exposes the gateway's MAC; the WAN key ("wan", "wan2") is not
+    sensitive and keeps the id stable between polls.
+    """
+    return f"{opaque_node_id('wan', key, device_id)}:{wan_key.lower()}"
+
+
+def wan_state(wan: Mapping[str, Any]) -> NodeState:
+    """Map a WAN record's ``connected`` flag onto online/offline/unknown."""
+    connected = wan.get("connected")
+    if connected is True:
+        return "online"
+    if connected is False:
+        return "offline"
+    return "unknown"
+
+
+def device_kind(device: Mapping[str, Any]) -> NodeKind:
+    """
+    Classify a raw device record with the read model's kind rule.
+
+    The builders read the published facts; this adapter is for callers that
+    hold only a raw record.
+    """
+    return network_device_kind(device)
+
+
+def device_state(device: Mapping[str, Any]) -> NodeState:
+    """Map a raw device record's state with the read model's spec rule."""
+    return device_online_state(device)
+
+
+def site_display_name(data: Mapping[str, Any], site_id: str) -> str:
+    """Return a site's display name, falling back to its id."""
+    sites = data.get("sites")
+    site = sites.get(site_id) if isinstance(sites, dict) else None
+    if isinstance(site, dict):
+        for key in ("name", "desc"):
+            value = site.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return site_id
+
+
+UNKNOWN_CLIENT: Final = "Unknown client"
+UNKNOWN_DEVICE: Final = "Unknown device"
+
+
+def as_int(value: Any) -> int | None:
+    """Return value when it is a real int (not a bool), else None."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def uplink_port_index(device: Mapping[str, Any]) -> int | None:
+    """Return the index of the port flagged as the device's uplink."""
+    for port in device_ports(device):
+        if port.is_uplink:
+            return as_int(port.raw_index)
+    return None
+
+
+def port_poe_watts(device: Mapping[str, Any], port_idx: int) -> float | None:
+    """Return the PoE draw on one port, or None when PoE is off or unknown."""
+    for port_facts in device_ports(device):
+        if as_int(port_facts.raw_index) != port_idx:
+            continue
+        port = port_facts.record
+        poe = port.get("poe")
+        if isinstance(poe, dict):
+            if poe.get("enabled") is not True:
+                return None
+            power = poe.get("power")
+        else:
+            if first_present(port, "poeEnabled", "poe_enabled") is False:
+                return None
+            power = first_present(port, "poePower", "poe_power")
+        try:
+            return round(float(power), 1) if power is not None else None
+        except TypeError, ValueError:
+            return None
+    return None
+
+
+def link_medium(value: Any) -> LinkMedium:
+    """Map a legacy uplink type onto the contract medium."""
+    if isinstance(value, str):
+        lowered = value.lower()
+        if lowered in {"wire", "wired"}:
+            return "wired"
+        if lowered in {"wireless", "mesh"}:
+            return "wireless"
+    return "unknown"
+
+
+def client_connection(client: Mapping[str, Any]) -> ClientConnection | None:
+    """Return a client's wired/wireless connection with the shared client rule."""
+    return client_connection_type(client)
+
+
+def display_name(value: Any, fallback: str) -> str:
+    """Return a usable name; blank or MAC-shaped names use the fallback."""
+    if isinstance(value, str) and value.strip() and normalize_mac(value) is None:
+        return value.strip()
+    return fallback
+
+
+# --- Per-entry node id keys --------------------------------------------------
+
+# Per-entry secret keys for opaque topology node ids.
+#
+# A MAC-derived node id is an HMAC of the MAC under its entry's key, so a
+# snapshot recipient cannot enumerate candidate MACs to reverse it. Keys are
+# random, stored in Home Assistant's private storage (never in the config entry,
+# so diagnostics cannot leak them) and kept across restarts so node ids stay
+# stable. The store is loaded once at component setup, before the topology
+# commands are registered, which lets the synchronous command handlers read a
+# key without an await (and without a window in which the entry can unload).
+
+_STORAGE_KEY: Final = f"{DOMAIN}.topology_keys"
+_STORAGE_VERSION: Final = 1
+_SAVE_DELAY: Final = 1
+_KEY_BYTES: Final = 32
+_KEY_RE: Final = re.compile(rf"[0-9a-f]{{{_KEY_BYTES * 2}}}")
+
+
+@dataclass
+class _NodeKeys:
+    """Loaded keys (entry_id -> hex) and the store that persists them."""
+
+    store: Store[dict[str, Any]]
+    keys: dict[str, str]
+
+    def data(self) -> dict[str, Any]:
+        """Return the payload to persist."""
+        return {"keys": dict(self.keys)}
+
+
+_NODE_KEYS: HassKey[_NodeKeys] = HassKey(f"{DOMAIN}_topology_node_keys")
+
+
+async def async_load_node_keys(hass: HomeAssistant) -> None:
+    """Load the stored keys into memory (once per Home Assistant instance)."""
+    if _NODE_KEYS in hass.data:
+        return
+    store: Store[dict[str, Any]] = Store(
+        hass, _STORAGE_VERSION, _STORAGE_KEY, private=True
     )
+    try:
+        stored = await store.async_load()
+    except HomeAssistantError:
+        # Losing the keys only changes MAC-derived node ids once; failing
+        # component setup over it would take every entity down with it.
+        _LOGGER.warning("Could not read topology node keys; generating new ones")
+        stored = None
+    raw = stored.get("keys") if isinstance(stored, dict) else None
+    keys = {
+        entry_id: key
+        for entry_id, key in (raw.items() if isinstance(raw, dict) else ())
+        if isinstance(key, str) and _KEY_RE.fullmatch(key)
+    }
+    hass.data.setdefault(_NODE_KEYS, _NodeKeys(store, keys))
+
+
+@callback
+def async_get_node_key(hass: HomeAssistant, entry_id: str) -> bytes:
+    """Return the entry's node-id key, creating and persisting it on first use."""
+    node_keys = hass.data[_NODE_KEYS]
+    key = node_keys.keys.get(entry_id)
+    if key is None:
+        key = node_keys.keys[entry_id] = secrets.token_hex(_KEY_BYTES)
+        node_keys.store.async_delay_save(node_keys.data, _SAVE_DELAY)
+    return bytes.fromhex(key)
+
+
+async def async_remove_node_key(hass: HomeAssistant, entry_id: str) -> None:
+    """Forget a deleted entry's key."""
+    await async_load_node_keys(hass)
+    node_keys = hass.data[_NODE_KEYS]
+    if node_keys.keys.pop(entry_id, None) is not None:
+        node_keys.store.async_delay_save(node_keys.data, _SAVE_DELAY)
+
+
+# --- Topology graph ----------------------------------------------------------
 
 _KIND_ORDER: Final[dict[str, int]] = {
     "wan": 0,
