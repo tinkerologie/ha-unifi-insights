@@ -177,7 +177,7 @@ def test_unique_id_and_named_translation(
 ) -> None:
     """Named rule populates unique_id, translation_key and trimmed rule_name."""
     mock_coordinator.data[desc.data_key] = {
-        "site1": {rule_id: {desc.name_field: rule_name, "enabled": True}}
+        "site1": {rule_id: {desc.name_fields[0]: rule_name, "enabled": True}}
     }
     switch = UnifiInsightsNetworkRuleSwitch(mock_coordinator, desc, "site1", rule_id)
     assert switch.unique_id == f"site1_{rule_id}_{desc.unique_id_suffix}"
@@ -197,7 +197,7 @@ def test_unnamed_rule_uses_rule_id_placeholder(
 ) -> None:
     """Unnamed rule falls back to unnamed translation and rule_id placeholder."""
     mock_coordinator.data[desc.data_key] = {
-        "site1": {"r1": {desc.name_field: name_val, "enabled": True}}
+        "site1": {"r1": {desc.name_fields[0]: name_val, "enabled": True}}
     }
     switch = UnifiInsightsNetworkRuleSwitch(mock_coordinator, desc, "site1", "r1")
     assert switch.translation_key == desc.unnamed_translation_key
@@ -610,7 +610,10 @@ def test_discovery_skips_nat_rule_and_static_route_with_non_bool_enabled(
     assert len(target_entities) == 0
 
 
-@pytest.mark.parametrize("desc", NETWORK_RULE_SWITCH_TYPES)
+_STRICT_RULE_SWITCH_TYPES = [d for d in NETWORK_RULE_SWITCH_TYPES if d.strict_enabled]
+
+
+@pytest.mark.parametrize("desc", _STRICT_RULE_SWITCH_TYPES)
 def test_rule_switch_availability_follows_its_own_section(
     mock_coordinator: MagicMock,
     desc: UnifiInsightsNetworkRuleSwitchEntityDescription,
@@ -635,7 +638,7 @@ def test_rule_switch_availability_follows_its_own_section(
     }
 
     # Only descriptor's availability returns False, other three True -> unavailable
-    for d in NETWORK_RULE_SWITCH_TYPES:
+    for d in _STRICT_RULE_SWITCH_TYPES:
         getattr(mock_coordinator, avail_attrs[d.key]).return_value = d.key != desc.key
     switch = UnifiInsightsNetworkRuleSwitch(
         mock_coordinator, desc, "site1", rule_ids[desc.key]
@@ -643,6 +646,6 @@ def test_rule_switch_availability_follows_its_own_section(
     assert switch.available is False
 
     # Reverse: only its own returns True, other three False -> available
-    for d in NETWORK_RULE_SWITCH_TYPES:
+    for d in _STRICT_RULE_SWITCH_TYPES:
         getattr(mock_coordinator, avail_attrs[d.key]).return_value = d.key == desc.key
     assert switch.available is True

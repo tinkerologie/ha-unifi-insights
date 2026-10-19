@@ -276,6 +276,21 @@ def _switch_supplied_placeholders() -> set[str]:
             for key in node.value.keys
             if isinstance(key, ast.Constant) and isinstance(key.value, str)
         }
+        # Rule switches name their placeholders in the description.
+        placeholders |= {
+            value.value
+            for node in ast.walk(tree)
+            for name, value in (
+                [(kw.arg, kw.value) for kw in node.keywords]
+                if isinstance(node, ast.Call)
+                else [(getattr(node.target, "id", None), node.value)]
+                if isinstance(node, ast.AnnAssign)
+                else []
+            )
+            if name in ("name_placeholder", "id_placeholder")
+            and isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+        }
     return placeholders
 
 
@@ -492,8 +507,11 @@ def test_network_rule_switch_translations_resolve_in_both_files() -> None:
 
     for desc in NETWORK_RULE_SWITCH_TYPES:
         for key, placeholder in (
-            (desc.translation_key, "{rule_name}"),
-            (desc.unnamed_translation_key, "{rule_id}"),
+            (desc.translation_key, f"{{{desc.name_placeholder}}}"),
+            (
+                desc.unnamed_translation_key,
+                f"{{{desc.id_placeholder}}}" if desc.id_placeholder else "",
+            ),
         ):
             assert key in strings_switch, f"{key} missing from strings.json"
             assert key in en_switch, f"{key} missing from translations/en.json"
@@ -688,9 +706,8 @@ def test_all_icons_json_entity_keys_match_live_inventory() -> None:
 # Four state-dependent icon choices: firewall, VPN route, ordinary route, VPN
 # client. The two route choices share one property in the current implementation.
 _DYNAMIC_ICON_PROPERTIES: Final = {
-    ("switch.py", "UnifiFirewallRuleSwitch"),
-    ("switch.py", "UnifiInsightsPolicyBasedRouteSwitch"),
-    ("switch.py", "UnifiInsightsVpnClientSwitch"),
+    # A policy-based route that sends traffic over a VPN shows the VPN icon.
+    ("switch.py", "UnifiInsightsNetworkRuleSwitch"),
 }
 
 
@@ -771,7 +788,7 @@ def test_no_static_mdi_strings_in_python_code() -> None:
         "SensorEntityDescription(key='test', icon=f'mdi:{kind}')",
         'class NewSwitch:\n @property\n def icon(self):\n  return "mdi:power"',
         (
-            "class UnifiFirewallRuleSwitch:\n @property\n"
+            "class UnifiInsightsNetworkRuleSwitch:\n @property\n"
             ' def icon(self):\n  return "mdi:power"'
         ),
     ],
@@ -789,7 +806,7 @@ def test_static_icon_guard_rejects_overrides_inside_reviewed_properties(
 ) -> None:
     """Only returned state icons are exempt; overrides cannot hide in properties."""
     source = (
-        "class UnifiFirewallRuleSwitch:\n @property\n def icon(self):\n"
+        "class UnifiInsightsNetworkRuleSwitch:\n @property\n def icon(self):\n"
         f"  {override}\n"
         '  return "mdi:power" if self.is_on else "mdi:power-off"'
     )

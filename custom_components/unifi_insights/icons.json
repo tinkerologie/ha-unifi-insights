@@ -392,32 +392,17 @@
       }
     },
     "switch": {
-      "outlet": {
-        "default": "mdi:power-socket-us"
+      "client_allow": {
+        "default": "mdi:account-lock"
       },
-      "port_forward": {
-        "default": "mdi:lan-connect",
+      "firewall_rule": {
+        "default": "mdi:shield-lock",
         "state": {
-          "off": "mdi:lan-disconnect"
+          "off": "mdi:shield-off"
         }
       },
-      "port_forward_unnamed": {
-        "default": "mdi:lan-connect",
-        "state": {
-          "off": "mdi:lan-disconnect"
-        }
-      },
-      "traffic_rule": {
-        "default": "mdi:filter",
-        "state": {
-          "off": "mdi:filter-off"
-        }
-      },
-      "traffic_rule_unnamed": {
-        "default": "mdi:filter",
-        "state": {
-          "off": "mdi:filter-off"
-        }
+      "high_fps_mode": {
+        "default": "mdi:fast-forward"
       },
       "nat_rule": {
         "default": "mdi:swap-horizontal",
@@ -429,6 +414,36 @@
         "default": "mdi:swap-horizontal",
         "state": {
           "off": "mdi:swap-horizontal-hidden"
+        }
+      },
+      "outlet": {
+        "default": "mdi:power-socket-us"
+      },
+      "outlet_cycle_enabled": {
+        "default": "mdi:restart"
+      },
+      "policy_based_route": {
+        "default": "mdi:routes",
+        "state": {
+          "off": "mdi:routes-clock"
+        }
+      },
+      "policy_based_route_unnamed": {
+        "default": "mdi:routes",
+        "state": {
+          "off": "mdi:routes-clock"
+        }
+      },
+      "port_forward": {
+        "default": "mdi:lan-connect",
+        "state": {
+          "off": "mdi:lan-disconnect"
+        }
+      },
+      "port_forward_unnamed": {
+        "default": "mdi:lan-connect",
+        "state": {
+          "off": "mdi:lan-disconnect"
         }
       },
       "static_route": {
@@ -446,17 +461,32 @@
       "status_light": {
         "default": "mdi:led-on"
       },
-      "high_fps_mode": {
-        "default": "mdi:fast-forward"
+      "traffic_rule": {
+        "default": "mdi:filter",
+        "state": {
+          "off": "mdi:filter-off"
+        }
       },
-      "client_allow": {
-        "default": "mdi:account-lock"
+      "traffic_rule_unnamed": {
+        "default": "mdi:filter",
+        "state": {
+          "off": "mdi:filter-off"
+        }
+      },
+      "vpn_client": {
+        "default": "mdi:vpn",
+        "state": {
+          "off": "mdi:vpn-off"
+        }
+      },
+      "vpn_client_unnamed": {
+        "default": "mdi:vpn",
+        "state": {
+          "off": "mdi:vpn-off"
+        }
       },
       "wifi": {
         "default": "mdi:wifi"
-      },
-      "outlet_cycle_enabled": {
-        "default": "mdi:restart"
       }
     },
     "event": {

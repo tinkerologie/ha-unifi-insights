@@ -43,18 +43,20 @@ from custom_components.unifi_insights.coordinators.base import (
 )
 from custom_components.unifi_insights.data_transforms import get_site_gateway_id
 from custom_components.unifi_insights.switch import (
+    FIREWALL_RULE_SWITCH,
     PARALLEL_UPDATES,
+    POLICY_BASED_ROUTE_SWITCH,
+    VPN_CLIENT_SWITCH,
     UnifiClientBlockSwitch,
-    UnifiFirewallRuleSwitch,
+    UnifiInsightsNetworkRuleSwitch,
     UnifiOutletCycleSwitch,
     UnifiOutletSwitch,
-    UnifiPolicyBasedRouteSwitch,
     UnifiProtectHighFPSSwitch,
     UnifiProtectStatusLightSwitch,
-    UnifiVpnClientSwitch,
     UnifiWifiSwitch,
     _get_firewall_rule_action,
     _prune_orphaned_switch_entities,
+    _route_kill_switch,
     async_setup_entry,
 )
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
@@ -1138,10 +1140,8 @@ class TestUnifiFirewallRuleSwitch:
 
     def test_initialization(self, mock_coordinator) -> None:
         """Test firewall switch initialization."""
-        switch = UnifiFirewallRuleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            rule_id="rule1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
         )
 
         assert switch._attr_unique_id == "site1_rule1_firewall_rule"
@@ -1150,10 +1150,8 @@ class TestUnifiFirewallRuleSwitch:
         self, mock_coordinator: MagicMock
     ) -> None:
         """Firewall switch is unavailable when its site's firewall fetch failed."""
-        switch = UnifiFirewallRuleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            rule_id="rule1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
         )
         mock_coordinator.firewall_available = MagicMock(return_value=True)
         assert switch.available is True
@@ -1163,15 +1161,13 @@ class TestUnifiFirewallRuleSwitch:
         mock_coordinator.firewall_available.assert_called_with("site1")
         assert switch._attr_translation_key == "firewall_rule"
         assert switch._attr_translation_placeholders == {"rule_name": "Block Instagram"}
-        assert switch._attr_entity_category == EntityCategory.CONFIG
+        assert switch.entity_category == EntityCategory.CONFIG
         assert switch._attr_device_info["identifiers"] == {(DOMAIN, "site1_gateway1")}
 
     def test_is_on(self, mock_coordinator) -> None:
         """Test firewall switch state mirrors rule enabled state."""
-        switch = UnifiFirewallRuleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            rule_id="rule1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
         )
 
         assert switch.is_on is True
@@ -1180,10 +1176,8 @@ class TestUnifiFirewallRuleSwitch:
 
     def test_extra_state_attributes(self, mock_coordinator) -> None:
         """Test firewall switch metadata attributes."""
-        switch = UnifiFirewallRuleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            rule_id="rule1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
         )
 
         attrs = switch.extra_state_attributes
@@ -1196,24 +1190,21 @@ class TestUnifiFirewallRuleSwitch:
 
     def test_icon_changes_with_state(self, mock_coordinator) -> None:
         """Test firewall switch icon reflects enabled state."""
-        switch = UnifiFirewallRuleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            rule_id="rule1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
         )
 
-        assert switch.icon == "mdi:shield-lock"
+        # The state icons come from icons.json.
+        assert switch.icon is None
         mock_coordinator.data["firewall_rules"]["site1"]["rule1"]["enabled"] = False
-        assert switch.icon == "mdi:shield-off"
+        assert switch.icon is None
 
     @pytest.mark.asyncio
     async def test_turn_on_updates_rule(self, mock_coordinator) -> None:
         """Test enabling a firewall rule."""
         mock_coordinator.data["firewall_rules"]["site1"]["rule1"]["enabled"] = False
-        switch = UnifiFirewallRuleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            rule_id="rule1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
         )
         switch.async_write_ha_state = MagicMock()
 
@@ -1230,10 +1221,8 @@ class TestUnifiFirewallRuleSwitch:
     @pytest.mark.asyncio
     async def test_turn_off_updates_rule(self, mock_coordinator) -> None:
         """Test disabling a firewall rule."""
-        switch = UnifiFirewallRuleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            rule_id="rule1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
         )
         switch.async_write_ha_state = MagicMock()
 
@@ -1251,10 +1240,8 @@ class TestUnifiFirewallRuleSwitch:
         """Test fallback device registry entry when no gateway device is found."""
         mock_coordinator.data["devices"]["site1"] = {}
 
-        switch = UnifiFirewallRuleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            rule_id="rule1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
         )
 
         assert switch._attr_device_info["identifiers"] == {
@@ -1271,10 +1258,8 @@ class TestUnifiFirewallRuleSwitch:
         )
         mock_coordinator.data["firewall_rules"]["site1"]["rule1"]["enabled"] = False
 
-        switch = UnifiFirewallRuleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            rule_id="rule1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
         )
         switch.async_write_ha_state = MagicMock()
 
@@ -1368,7 +1353,12 @@ class TestAsyncSetupEntryFirewallRules:
 
         entities = async_add_entities.call_args[0][0]
         firewall_switches = [
-            entity for entity in entities if isinstance(entity, UnifiFirewallRuleSwitch)
+            entity
+            for entity in entities
+            if (
+                isinstance(entity, UnifiInsightsNetworkRuleSwitch)
+                and entity.entity_description is FIREWALL_RULE_SWITCH
+            )
         ]
         assert len(firewall_switches) == 2
         assert {entity._rule_id for entity in firewall_switches} == {"rule1", "rule2"}
@@ -1392,7 +1382,12 @@ class TestAsyncSetupEntryFirewallRules:
 
         entities = async_add_entities.call_args[0][0]
         firewall_switches = [
-            entity for entity in entities if isinstance(entity, UnifiFirewallRuleSwitch)
+            entity
+            for entity in entities
+            if (
+                isinstance(entity, UnifiInsightsNetworkRuleSwitch)
+                and entity.entity_description is FIREWALL_RULE_SWITCH
+            )
         ]
         assert len(firewall_switches) == 2
         assert all(e._rule_id != "bad_rule" for e in firewall_switches)
@@ -1469,10 +1464,8 @@ class TestUnifiPolicyBasedRouteSwitch:
 
     def test_initialization(self, mock_coordinator: MagicMock) -> None:
         """Test policy-based route switch initialization."""
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
 
         assert switch._attr_unique_id == "site1_route1_policy_based_route"
@@ -1480,17 +1473,15 @@ class TestUnifiPolicyBasedRouteSwitch:
         assert switch._attr_translation_placeholders == {
             "route_name": "Route via Privado VPN"
         }
-        assert switch._attr_entity_category == EntityCategory.CONFIG
+        assert switch.entity_category == EntityCategory.CONFIG
         assert switch._attr_device_info["identifiers"] == {(DOMAIN, "site1_gateway1")}
 
     def test_available_follows_config_refresh(
         self, mock_coordinator: MagicMock
     ) -> None:
         """Route switch is unavailable while the config refresh is failing."""
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
         mock_coordinator.config_available = True
         assert switch.available is True
@@ -1500,10 +1491,8 @@ class TestUnifiPolicyBasedRouteSwitch:
 
     def test_is_on(self, mock_coordinator: MagicMock) -> None:
         """Test switch state mirrors route enabled state."""
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
 
         assert switch.is_on is True
@@ -1514,10 +1503,8 @@ class TestUnifiPolicyBasedRouteSwitch:
 
     def test_extra_state_attributes(self, mock_coordinator: MagicMock) -> None:
         """Test route metadata attributes."""
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
 
         attrs = switch.extra_state_attributes
@@ -1559,10 +1546,8 @@ class TestUnifiPolicyBasedRouteSwitch:
                 {"network_id": "67678b326c1d8157c66f4466", "type": "NETWORK"}
             ],
         }
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route3",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route3"
         )
 
         attrs = switch.extra_state_attributes
@@ -1586,10 +1571,8 @@ class TestUnifiPolicyBasedRouteSwitch:
             "enabled": True,
             "kill_switch_enabled": True,
         }
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route3",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route3"
         )
         switch.async_write_ha_state = MagicMock()
 
@@ -1650,13 +1633,11 @@ class TestUnifiPolicyBasedRouteSwitch:
         assert "killSwitch" in route_data
 
         mock_coordinator.data["policy_based_routes"]["site1"]["route4"] = route_data
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route4",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route4"
         )
 
-        assert switch._kill_switch_enabled is expected
+        assert _route_kill_switch(switch._get_rule_data()) is expected
         assert switch.extra_state_attributes["kill_switch_enabled"] is expected
 
     @pytest.mark.asyncio
@@ -1675,10 +1656,8 @@ class TestUnifiPolicyBasedRouteSwitch:
         mock_coordinator.data["policy_based_routes"]["site1"]["route4"] = (
             UnifiInsightsBaseCoordinator._model_to_dict(mock_coordinator, route)
         )
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route4",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route4"
         )
         switch.async_write_ha_state = MagicMock()
 
@@ -1689,10 +1668,8 @@ class TestUnifiPolicyBasedRouteSwitch:
 
     def test_icon_changes_with_state(self, mock_coordinator: MagicMock) -> None:
         """Test route switch icon reflects VPN and enabled state."""
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
         assert switch.icon == "mdi:vpn"
         mock_coordinator.data["policy_based_routes"]["site1"]["route1"]["enabled"] = (
@@ -1701,16 +1678,15 @@ class TestUnifiPolicyBasedRouteSwitch:
         assert switch.icon == "mdi:vpn-off"
 
         # Non-VPN route
-        switch2 = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route2",
+        switch2 = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route2"
         )
-        assert switch2.icon == "mdi:routes-clock"
+        # A non-VPN route uses its icons.json state icons.
+        assert switch2.icon is None
         mock_coordinator.data["policy_based_routes"]["site1"]["route2"]["enabled"] = (
             True
         )
-        assert switch2.icon == "mdi:routes"
+        assert switch2.icon is None
 
     @pytest.mark.asyncio
     async def test_turn_on_updates_route(self, mock_coordinator: MagicMock) -> None:
@@ -1718,10 +1694,8 @@ class TestUnifiPolicyBasedRouteSwitch:
         mock_coordinator.data["policy_based_routes"]["site1"]["route1"]["enabled"] = (
             False
         )
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
         switch.async_write_ha_state = MagicMock()
 
@@ -1738,10 +1712,8 @@ class TestUnifiPolicyBasedRouteSwitch:
     @pytest.mark.asyncio
     async def test_turn_off_updates_route(self, mock_coordinator: MagicMock) -> None:
         """Test disabling a policy-based route."""
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
         switch.async_write_ha_state = MagicMock()
 
@@ -1761,10 +1733,8 @@ class TestUnifiPolicyBasedRouteSwitch:
     ) -> None:
         """Test disabling a route with an active kill switch logs a warning."""
         # route1 has killSwitch=True in the fixture data.
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
         switch.async_write_ha_state = MagicMock()
 
@@ -1779,10 +1749,8 @@ class TestUnifiPolicyBasedRouteSwitch:
     ) -> None:
         """Test disabling a route without a kill switch logs no warning."""
         # route2 has no killSwitch key in the fixture data.
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route2",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route2"
         )
         switch.async_write_ha_state = MagicMock()
 
@@ -1799,10 +1767,8 @@ class TestUnifiPolicyBasedRouteSwitch:
         """Test fallback device registry entry when no gateway device is found."""
         mock_coordinator.data["devices"]["site1"] = {}
 
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
 
         assert switch._attr_device_info["identifiers"] == {
@@ -1823,10 +1789,8 @@ class TestUnifiPolicyBasedRouteSwitch:
             False
         )
 
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
         switch.async_write_ha_state = MagicMock()
 
@@ -1854,10 +1818,8 @@ class TestUnifiPolicyBasedRouteSwitch:
             True
         )
 
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
         switch.async_write_ha_state = MagicMock()
 
@@ -1879,10 +1841,8 @@ class TestUnifiPolicyBasedRouteSwitch:
         mock_coordinator.data.setdefault("policy_based_routes", {})["site1"] = {
             "route_unnamed": {"id": "route_unnamed", "name": ""}
         }
-        entity = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route_unnamed",
+        entity = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route_unnamed"
         )
         assert entity.translation_key == "policy_based_route_unnamed"
         assert entity.translation_placeholders == {"route_id": "route_unnamed"}
@@ -1952,10 +1912,13 @@ class TestAsyncSetupEntryPolicyBasedRoutes:
         route_switches = [
             entity
             for entity in entities
-            if isinstance(entity, UnifiPolicyBasedRouteSwitch)
+            if (
+                isinstance(entity, UnifiInsightsNetworkRuleSwitch)
+                and entity.entity_description is POLICY_BASED_ROUTE_SWITCH
+            )
         ]
         assert len(route_switches) == 2
-        assert {entity._route_id for entity in route_switches} == {"route1", "route2"}
+        assert {entity._rule_id for entity in route_switches} == {"route1", "route2"}
 
     @pytest.mark.asyncio
     async def test_setup_entry_routes_malformed_site_and_record_and_dedupe(
@@ -1983,10 +1946,13 @@ class TestAsyncSetupEntryPolicyBasedRoutes:
         route_switches = [
             entity
             for entity in entities
-            if isinstance(entity, UnifiPolicyBasedRouteSwitch)
+            if (
+                isinstance(entity, UnifiInsightsNetworkRuleSwitch)
+                and entity.entity_description is POLICY_BASED_ROUTE_SWITCH
+            )
         ]
         assert len(route_switches) == 2
-        assert all(e._route_id != "bad_route" for e in route_switches)
+        assert all(e._rule_id != "bad_route" for e in route_switches)
 
         # Re-running discovery on unchanged data must not add duplicates.
         listener()
@@ -2058,10 +2024,8 @@ class TestUnifiVpnClientSwitch:
 
     def test_initialization(self, mock_coordinator: MagicMock) -> None:
         """Test VPN client switch initialization."""
-        switch = UnifiVpnClientSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            client_id="vpn1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
         )
 
         assert switch._attr_unique_id == "site1_vpn1_vpn_client"
@@ -2069,15 +2033,13 @@ class TestUnifiVpnClientSwitch:
         assert switch._attr_translation_placeholders == {
             "vpn_client_name": "Privado VPN"
         }
-        assert switch._attr_entity_category == EntityCategory.CONFIG
+        assert switch.entity_category == EntityCategory.CONFIG
         assert switch._attr_device_info["identifiers"] == {(DOMAIN, "site1_gateway1")}
 
     def test_available(self, mock_coordinator: MagicMock) -> None:
         """Test switch availability depends on coordinator and data."""
-        switch = UnifiVpnClientSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            client_id="vpn1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
         )
         assert switch.available is True
         mock_coordinator.config_available = False
@@ -2089,10 +2051,8 @@ class TestUnifiVpnClientSwitch:
 
     def test_is_on(self, mock_coordinator: MagicMock) -> None:
         """Test switch state mirrors VPN client enabled state."""
-        switch = UnifiVpnClientSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            client_id="vpn1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
         )
 
         assert switch.is_on is True
@@ -2101,10 +2061,8 @@ class TestUnifiVpnClientSwitch:
 
     def test_extra_state_attributes(self, mock_coordinator: MagicMock) -> None:
         """Test VPN client metadata attributes."""
-        switch = UnifiVpnClientSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            client_id="vpn1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
         )
 
         attrs = switch.extra_state_attributes
@@ -2118,14 +2076,13 @@ class TestUnifiVpnClientSwitch:
 
     def test_icon_changes_with_state(self, mock_coordinator: MagicMock) -> None:
         """Test VPN client switch icon reflects enabled state."""
-        switch = UnifiVpnClientSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            client_id="vpn1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
         )
-        assert switch.icon == "mdi:vpn"
+        # The state icons come from icons.json.
+        assert switch.icon is None
         mock_coordinator.data["vpn_clients"]["site1"]["vpn1"]["enabled"] = False
-        assert switch.icon == "mdi:vpn-off"
+        assert switch.icon is None
 
     @pytest.mark.asyncio
     async def test_turn_on_updates_vpn_client(
@@ -2133,10 +2090,8 @@ class TestUnifiVpnClientSwitch:
     ) -> None:
         """Test enabling a VPN client."""
         mock_coordinator.data["vpn_clients"]["site1"]["vpn1"]["enabled"] = False
-        switch = UnifiVpnClientSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            client_id="vpn1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
         )
         switch.async_write_ha_state = MagicMock()
 
@@ -2155,10 +2110,8 @@ class TestUnifiVpnClientSwitch:
         self, mock_coordinator: MagicMock
     ) -> None:
         """Test disabling a VPN client."""
-        switch = UnifiVpnClientSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            client_id="vpn1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
         )
         switch.async_write_ha_state = MagicMock()
 
@@ -2178,10 +2131,8 @@ class TestUnifiVpnClientSwitch:
         """Test fallback device registry entry when no gateway device is found."""
         mock_coordinator.data["devices"]["site1"] = {}
 
-        switch = UnifiVpnClientSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            client_id="vpn1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
         )
 
         assert switch._attr_device_info["identifiers"] == {
@@ -2200,10 +2151,8 @@ class TestUnifiVpnClientSwitch:
         )
         mock_coordinator.data["vpn_clients"]["site1"]["vpn1"]["enabled"] = False
 
-        switch = UnifiVpnClientSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            client_id="vpn1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
         )
         switch.async_write_ha_state = MagicMock()
 
@@ -2224,10 +2173,8 @@ class TestUnifiVpnClientSwitch:
         )
         mock_coordinator.data["vpn_clients"]["site1"]["vpn1"]["enabled"] = True
 
-        switch = UnifiVpnClientSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            client_id="vpn1",
+        switch = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
         )
         switch.async_write_ha_state = MagicMock()
 
@@ -2242,10 +2189,8 @@ class TestUnifiVpnClientSwitch:
         mock_coordinator.data.setdefault("vpn_clients", {})["site1"] = {
             "vpn_unnamed": {"id": "vpn_unnamed"}
         }
-        entity = UnifiVpnClientSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            client_id="vpn_unnamed",
+        entity = UnifiInsightsNetworkRuleSwitch(
+            mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn_unnamed"
         )
         assert entity.translation_key == "vpn_client_unnamed"
 
@@ -2316,10 +2261,15 @@ class TestAsyncSetupEntryVpnClients:
 
         entities = async_add_entities.call_args[0][0]
         vpn_switches = [
-            entity for entity in entities if isinstance(entity, UnifiVpnClientSwitch)
+            entity
+            for entity in entities
+            if (
+                isinstance(entity, UnifiInsightsNetworkRuleSwitch)
+                and entity.entity_description is VPN_CLIENT_SWITCH
+            )
         ]
         assert len(vpn_switches) == 2
-        assert {entity._client_id for entity in vpn_switches} == {"vpn1", "vpn2"}
+        assert {entity._rule_id for entity in vpn_switches} == {"vpn1", "vpn2"}
 
     @pytest.mark.asyncio
     async def test_setup_entry_vpn_clients_malformed_site_and_record_and_dedupe(
@@ -2343,10 +2293,15 @@ class TestAsyncSetupEntryVpnClients:
 
         entities = async_add_entities.call_args[0][0]
         vpn_switches = [
-            entity for entity in entities if isinstance(entity, UnifiVpnClientSwitch)
+            entity
+            for entity in entities
+            if (
+                isinstance(entity, UnifiInsightsNetworkRuleSwitch)
+                and entity.entity_description is VPN_CLIENT_SWITCH
+            )
         ]
         assert len(vpn_switches) == 2
-        assert all(e._client_id != "bad_vpn" for e in vpn_switches)
+        assert all(e._rule_id != "bad_vpn" for e in vpn_switches)
 
         # Re-running discovery on unchanged data must not add duplicates.
         listener()
@@ -2475,7 +2430,7 @@ class TestUnifiProtectStatusLightSwitch:
         assert switch._device_type == DEVICE_TYPE_CAMERA
         assert switch._attr_has_entity_name is True
         assert switch._attr_translation_key == "status_light"
-        assert switch._attr_entity_category == EntityCategory.CONFIG
+        assert switch.entity_category == EntityCategory.CONFIG
         assert getattr(switch, "_attr_icon", None) is None
 
     def test_update_from_data_led_enabled(self, mock_coordinator) -> None:
@@ -2662,7 +2617,7 @@ class TestUnifiProtectHighFPSSwitch:
         assert switch._device_type == DEVICE_TYPE_CAMERA
         assert switch._attr_has_entity_name is True
         assert switch._attr_translation_key == "high_fps_mode"
-        assert switch._attr_entity_category == EntityCategory.CONFIG
+        assert switch.entity_category == EntityCategory.CONFIG
         assert getattr(switch, "_attr_icon", None) is None
 
     def test_update_from_data_default_mode(self, mock_coordinator) -> None:
