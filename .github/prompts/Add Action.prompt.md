@@ -37,7 +37,7 @@ action_name:
 **File:** `custom_components/unifi_insights/services.py`
 
 - Register all service actions inside `async_setup_services(hass)` called from `async_setup` (Bronze `action-setup`).
-- Route resource targets using `_get_coordinator_for_network_resource(...)` or `_get_coordinator_for_protect_resource(...)`. For console-wide actions without a resource target, accept an optional `console_id` parameter (required when multiple config entries exist) and route to the matching entry — never blindly pick the first config entry.
+- Route resource targets with one public `resolve_*_call(...)` resolver from `service_targets.py` (add routing rules there, not in `services.py`) and run the owner command its typed result holds. For console-wide actions without a resource target, accept an optional `console_id` parameter (required when multiple config entries exist) and route to the matching entry — never blindly pick the first config entry.
 - If using `homeassistant.helpers.service` extraction helpers (`async_extract_entities`, `extract_entity_ids`, `async_extract_config_entry_ids`), do **not** pass `hass` as the first argument (removed in HA 2026.10).
 - Raise `ServiceValidationError(translation_domain=DOMAIN, translation_key="...", translation_placeholders={...})` for invalid input or unknown targets.
 - Raise `HomeAssistantError(translation_domain=DOMAIN, translation_key="...", translation_placeholders={...}) from err` for API/device failures.

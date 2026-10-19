@@ -1,5 +1,5 @@
 ---
-applyTo: "custom_components/unifi_insights/services.py, custom_components/unifi_insights/services.yaml"
+applyTo: "custom_components/unifi_insights/services.py, custom_components/unifi_insights/service_targets.py, custom_components/unifi_insights/services.yaml"
 ---
 
 # Service Action Instructions
@@ -17,16 +17,16 @@ applyTo: "custom_components/unifi_insights/services.py, custom_components/unifi_
 - Register all service actions in `async_setup(hass, config)` (via `async_setup_services(hass)`), NOT in `async_setup_entry`.
 - Service actions remain registered across config entry reloads and validate active config entries when invoked.
 
-## Multi-Console Routing Helpers
+## Multi-Console Routing (`service_targets.py`)
 
-Service actions must run against the console that owns the target resource, never blindly against the first config entry:
+Service actions must run against the console that owns the target resource, never blindly against the first config entry. Target routing lives in `service_targets.py` (an ADR-009 seam); `services.py` keeps the schemas, handlers and registration.
 
-- `_get_coordinator_for_network_resource(hass, *, site_id=, device_id=, client_id=)` — resolves the coordinator owning a Network site, device, or client
-- `_get_coordinator_for_protect_resource(hass, *, resource_type=, resource_id=, secondary_resource_type=, secondary_resource_id=, console_id=)` — resolves the coordinator owning a Protect camera, light, chime, or viewer
+- Each handler calls exactly one public call-level resolver: `resolve_network_device_call(hass, call, action=)`, `resolve_network_client_call`, `resolve_network_site_call`, `resolve_network_consoles_call`, `resolve_refresh_call`, `resolve_protect_call(hass, call, resource_type)`, `resolve_protect_console_call`, `resolve_chime_pairing_call`, `resolve_rule_export_call`, `resolve_access_call` or `resolve_carrier_subscriber_call`. Family resolvers and helpers (including `_mac_key`) stay private.
+- A resolver returns a frozen result: the owning `entry`, the facade to read cached data from (`cache`), the command owner (`device_commands`, `config_commands`, `protect_commands`, `facade_commands`, `export_commands`, `access_commands` or `carrier_commands`) and the native ID and site.
+- Resolvers raise translated `ServiceValidationError`s when the target is missing, unknown, not loaded or ambiguous across consoles. Registry targets resolve to their owning entry (`DeviceEntry.config_entry_id`); identifier lookups are scoped to one config entry at a time.
+- Add a new routing rule to `service_targets.py` with real-registry table tests in `tests/test_service_targets.py`; test the handler in `tests/test_services.py` by patching the resolver and asserting the one owner command.
 
-Both raise `ServiceValidationError` when the target is unknown or ambiguous across multiple configured consoles. `_get_protect_owner(hass, call, resource_type, ...)` reads the target from the call, routes it the same way and returns the console's Protect command owner with the native ID.
-
-After routing, call the same owner command that entities use (ADR-010): `coordinator.config_coordinator`, `coordinator.device_coordinator` or the Protect owner, never a facade pass-through or an API client. The owner raises the translated API errors; the handler only validates input and routes. Actions without a routable target (`trigger_alarm`, `create_liveview`) accept an optional `console_id` parameter (entry title or entry ID), required only when multiple consoles are configured.
+After routing, call the result's owner command, the same one entities use (ADR-010), never a facade pass-through or an API client. The owner raises the translated API errors; the handler only validates input and routes. Actions without a routable target (`trigger_alarm`, `create_liveview`) accept an optional `console_id` parameter (entry title or entry ID), required only when multiple consoles are configured.
 
 ## Error Handling & Exception Translations (IQS `action-exceptions` & `exception-translations`)
 
@@ -46,7 +46,7 @@ After routing, call the same owner command that entities use (ADR-010): `coordin
       translation_placeholders={"device_id": device_id},
   ) from err
   ```
-- Define all `translation_key` entries under the top-level `"exceptions"` key in `strings.json` and `translations/en.json`.
+- Define all `translation_key` entries under the top-level `"exceptions"` key in `strings.json` and `translations/en.json`. `tests/test_translations.py` checks every error `services.py` and `service_targets.py` build: a literal key (or each branch of a conditional, or each call site of a key-forwarding helper), defined in both files, with matching placeholders.
 - Never expose raw stack traces or untranslated API exception strings (`str(err)`) in user-facing error placeholders.
 
 ## HA 2026.10–2026.11 Service Helper Changes
@@ -57,7 +57,7 @@ After routing, call the same owner command that entities use (ADR-010): `coordin
 ## Adding a New Service Action
 
 1. Define the schema in `services.yaml`
-2. Implement the async handler in `services.py` using `probatio`/`voluptuous` validation and multi-console routing helpers
+2. Implement the async handler in `services.py` using `probatio`/`voluptuous` validation and one `service_targets.resolve_*_call` resolver
 3. Register the action in `async_setup_services(hass)`
 4. Add action name, description, and field translations under `"services"` and error translations under `"exceptions"` in `strings.json` and `translations/en.json`
 5. Add unit tests covering success, validation errors (`ServiceValidationError`), and API errors (`HomeAssistantError`) in `tests/test_services.py`

@@ -320,7 +320,7 @@ See `.github/instructions/config_flow.instructions.md` for comprehensive pattern
 **Service actions (`services.py` & `services.yaml`):**
 
 - Register service actions in `async_setup` (not `async_setup_entry`) so they are available and validatable even when no config entry is loaded (Quality Scale: `action-setup`)
-- Route every action to the owning console with `_get_coordinator_for_network_resource` or `_get_coordinator_for_protect_resource`; never pick the first entry blindly
+- Route every action to the owning console with one `service_targets.resolve_*_call` resolver and run the owner command its typed result holds; never pick the first entry blindly. Target routing lives in `service_targets.py` (ADR-009 seam); `services.py` keeps schemas, handlers and registration
 - Do **not** pass `hass` to service extraction helpers (`async_extract_config_entry_ids(service_call)`, `async_extract_entity_ids(service_call)`, `async_extract_entities(entities, service_call)`, `@verify_domain_control(DOMAIN)`) — passing `hass` was removed in HA 2026.10
 - Do **not** use `device` filters inside `target:` selectors in `services.yaml` (removed in HA 2026.11)
 - Raise `ServiceValidationError` for invalid user input and `HomeAssistantError` for device/API failures, using `translation_domain=DOMAIN` and `translation_key=...` with matching entries under `exceptions` in `strings.json` (Quality Scale: `action-exceptions`, `exception-translations`)

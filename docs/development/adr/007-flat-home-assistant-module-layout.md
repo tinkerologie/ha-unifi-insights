@@ -67,6 +67,7 @@ custom_components/unifi_insights/
 │
 │   # Actions, dashboards, push channels, support
 ├── services.py / services.yaml
+├── service_targets.py          # service-call target routing (ADR-009 seam)
 ├── websocket_api.py
 ├── dashboard_snapshots.py      # ← site_health.py, performance.py, timeline.py, protect_snapshot.py,
 │                               #   internet_activity_snapshot.py, dashboard_contract_utils.py
@@ -100,7 +101,7 @@ Deleted outright: `coordinator.py` (dead legacy coordinator; removed in #334), `
 
 | Area                    | Before | After |
 | ----------------------- | ------ | ----- |
-| Root `.py` modules      | 57     | 33    |
+| Root `.py` modules      | 57     | 34¹   |
 | `coordinators/` modules | 16     | 15    |
 | Subpackages             | 1      | 1     |
 
@@ -116,10 +117,12 @@ Home Assistant requires device communication to live in a library published on P
 
 | Python files    | Before #345 | After #345 (today) | After #341 |
 | --------------- | ----------- | ------------------ | ---------- |
-| Root modules    | 55          | 55                 | 33         |
+| Root modules    | 55          | 55                 | 34¹        |
 | `coordinators/` | 16          | 16                 | 15         |
 | `api/`          | 128         | 0                  | 0          |
-| **Total**       | 199         | 71                 | 48         |
+| **Total**       | 199         | 71                 | 49¹        |
+
+¹ 33 in the original decision, plus `service_targets.py`, which [ADR-009](./009-amend-flat-module-layout.md) allows as the services/routing seam (added in #339).
 
 ### Module roles
 
