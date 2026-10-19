@@ -29,6 +29,7 @@ from .carrier_fabric_data import CarrierFabricData
 from .console_identity import resolve_console_namespace
 from .const import DOMAIN
 from .dashboard_contract_utils import as_dict, content_revision
+from .data_transforms import NETWORK_FACTS_KEY
 from .device_tracker import _client_tracker_entries, _mac_from_unique_id
 from .entity import get_field
 from .helpers import async_get_device_entry
@@ -384,7 +385,7 @@ def _snapshot_inputs(
     runtime = entry.runtime_data
     data = runtime.coordinator.data
     per_site = []
-    for section in ("devices", "clients", "client_links"):
+    for section in ("devices", "clients", "client_links", NETWORK_FACTS_KEY):
         by_site = data.get(section)
         per_site.append(by_site.get(site_id) if isinstance(by_site, dict) else None)
     return (
@@ -422,6 +423,7 @@ def _runtime_snapshot_inputs(
     devices = data.get("devices")
     stats = data.get("stats")
     clients = data.get("clients")
+    network_facts = data.get(NETWORK_FACTS_KEY)
     protect_signal = (
         _protect_change_signal(data.get("protect"), keys=("events",))
         if payload_type == "timeline"
@@ -432,6 +434,7 @@ def _runtime_snapshot_inputs(
         devices.get(site_id) if isinstance(devices, dict) else None,
         stats.get(site_id) if isinstance(stats, dict) else None,
         clients.get(site_id) if isinstance(clients, dict) else None,
+        network_facts.get(site_id) if isinstance(network_facts, dict) else None,
         protect_signal,
         data.get("internet_activity"),
         data.get("internet_activity_unavailable"),

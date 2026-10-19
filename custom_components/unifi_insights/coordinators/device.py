@@ -26,6 +26,11 @@ from unifi_official_api.network.models import (
 
 from custom_components.unifi_insights.const import DOMAIN, SCAN_INTERVAL_DEVICE
 from custom_components.unifi_insights.data_transforms import (
+    CPU_STAT_KEYS,
+    MEMORY_STAT_KEYS,
+    NETWORK_FACTS_KEY,
+    UPTIME_STAT_KEYS,
+    build_site_network_facts,
     normalize_legacy_storage,
     normalize_legacy_wans,
 )
@@ -44,18 +49,6 @@ if TYPE_CHECKING:
     from .config import UnifiConfigCoordinator
 
 _LOGGER = logging.getLogger(__name__)
-
-
-# Stats keys the v1 statistics endpoint may already have populated. A legacy
-# reading only fills a gap, it never overwrites a value v1 supplied.
-_CPU_STAT_KEYS = ("cpuUtilizationPct", "cpu_utilization_pct", "cpu_percent", "cpu")
-_MEMORY_STAT_KEYS = (
-    "memoryUtilizationPct",
-    "memory_utilization_pct",
-    "memory_percent",
-    "memory",
-)
-_UPTIME_STAT_KEYS = ("uptimeSec", "uptime_sec", "uptime_seconds", "uptime")
 
 
 def _fill_missing_stat(
@@ -108,9 +101,9 @@ def _merge_legacy_system_stats(
 ) -> None:
     """Fill CPU, memory and uptime in ``stats`` from a legacy device dict."""
     cpu, mem, uptime = _legacy_system_stats(legacy_device)
-    _fill_missing_stat(stats, "cpuUtilizationPct", _CPU_STAT_KEYS, cpu, float)
-    _fill_missing_stat(stats, "memoryUtilizationPct", _MEMORY_STAT_KEYS, mem, float)
-    _fill_missing_stat(stats, "uptimeSec", _UPTIME_STAT_KEYS, uptime, int)
+    _fill_missing_stat(stats, "cpuUtilizationPct", CPU_STAT_KEYS, cpu, float)
+    _fill_missing_stat(stats, "memoryUtilizationPct", MEMORY_STAT_KEYS, mem, float)
+    _fill_missing_stat(stats, "uptimeSec", UPTIME_STAT_KEYS, uptime, int)
 
 
 # How many consecutive polls a device's last good statistics are reused for
@@ -172,12 +165,22 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
             "clients": {},
             "stats": {},
             "vpn_connections": {},
+            # site_id -> SiteNetworkFacts, rebuilt (never mutated) per refresh
+            NETWORK_FACTS_KEY: {},
             "last_update": None,
         }
 
     @staticmethod
     def _normalize_mac(value: Any) -> str | None:
-        """Normalize a MAC address for dictionary lookups."""
+        """
+        Normalize a MAC address for dictionary lookups.
+
+        Identity policy: exact legacy key matching. It only strips and
+        lowercases, so a v1 device and its legacy record match on the spelling
+        both endpoints share. It is deliberately not the canonical
+        ``data_transforms.normalize_mac``, which validates and rewrites
+        separators.
+        """
         if not isinstance(value, str) or not value:
             return None
         return value.strip().lower()
@@ -777,21 +780,21 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
                     _fill_missing_stat(
                         stats,
                         "cpu_utilization_pct",
-                        _CPU_STAT_KEYS,
+                        CPU_STAT_KEYS,
                         metrics.cpu_utilization_pct,
                         float,
                     )
                     _fill_missing_stat(
                         stats,
                         "memory_utilization_pct",
-                        _MEMORY_STAT_KEYS,
+                        MEMORY_STAT_KEYS,
                         metrics.memory_utilization_pct,
                         float,
                     )
                     _fill_missing_stat(
                         stats,
                         "uptime_sec",
-                        _UPTIME_STAT_KEYS,
+                        UPTIME_STAT_KEYS,
                         metrics.uptime_sec,
                         int,
                     )
@@ -1087,7 +1090,15 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
             # Drop data for sites no longer polled so their entities stop
             # reporting last-known values. Site-level fetch failures below
             # still keep a polled site's previous data.
-            for key in ("devices", "stats", "clients", "vpn_connections"):
+            # The facts map is replaced like the others, so an empty site list
+            # also leaves it empty.
+            for key in (
+                "devices",
+                "stats",
+                "clients",
+                "vpn_connections",
+                NETWORK_FACTS_KEY,
+            ):
                 self.data[key] = {
                     site_id: value
                     for site_id, value in self.data[key].items()
@@ -1212,6 +1223,18 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
 
             # Compute per-port byte rates from deltas
             self._compute_port_rates()
+
+            # Publish the read model from the final, enriched maps. It is a
+            # new map each refresh: WebSocket change detection compares by
+            # identity. A failed refresh never gets here, so the last
+            # committed facts stay with the last committed devices and stats.
+            self.data[NETWORK_FACTS_KEY] = {
+                site_id: build_site_network_facts(
+                    self.data["devices"].get(site_id),
+                    self.data["stats"].get(site_id),
+                )
+                for site_id in site_ids
+            }
 
             # Forget failure counts for devices that are no longer reported.
             current_device_ids = {

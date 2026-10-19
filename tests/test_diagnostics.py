@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from homeassistant.components.diagnostics.const import REDACTED
 from homeassistant.const import CONF_API_KEY
+from homeassistant.helpers.json import ExtendedJSONEncoder, JSONEncoder
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -28,6 +29,10 @@ from custom_components.unifi_insights.const import (
 from custom_components.unifi_insights.coordinators.config import (
     UnifiConfigCoordinator,
 )
+from custom_components.unifi_insights.data_transforms import (
+    NETWORK_FACTS_KEY,
+    build_site_network_facts,
+)
 from custom_components.unifi_insights.diagnostics import (
     TO_REDACT,
     _redact_coordinator_data,
@@ -38,6 +43,8 @@ from tests.fixtures.library_responses import (
     SAMPLE_ALARM_HUB_TAMPER_EVENT,
     SAMPLE_SIREN,
     SAMPLE_THREAD_LINK_STATION,
+    SAMPLE_UDM_PRO_OVERVIEW,
+    SAMPLE_UDM_PRO_STATS,
 )
 from tests.fixtures.network_rule_responses import (
     nat_rule_record,
@@ -1016,3 +1023,58 @@ def test_diagnostics_shared_credentials_policy_invariants() -> None:
     assert "pin" not in TO_REDACT
     assert "pin_code" not in TO_REDACT
     assert "pin_codes" not in TO_REDACT
+
+
+async def test_diagnostics_exclude_network_facts(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    enable_custom_integrations,
+) -> None:
+    """
+    The frozen read-model records never reach the diagnostics payload.
+
+    The MAC pass cannot walk into dataclasses, and the download encoder falls
+    back to repr() for them, which would print raw MACs. The section repeats
+    devices and stats, so it is dropped before redaction.
+    """
+    device_mac = "AA:BB:CC:12:34:56"
+    lldp_mac = "aa:bb:cc:65:43:21"
+    devices = {
+        # A device the API listed without an id is keyed by its MAC.
+        device_mac.lower(): {
+            **SAMPLE_UDM_PRO_OVERVIEW,
+            "id": device_mac.lower(),
+            "macAddress": device_mac,
+            "ports": [
+                {
+                    "idx": 1,
+                    "name": f"Port to {lldp_mac}",
+                    "lldp_table": [{"chassis_id": lldp_mac}],
+                }
+            ],
+        }
+    }
+    stats = {device_mac.lower(): dict(SAMPLE_UDM_PRO_STATS)}
+    facts = {"site-1": build_site_network_facts(devices, stats)}
+    coordinator = init_integration.runtime_data.coordinator
+    coordinator.data["devices"] = {"site-1": devices}
+    coordinator.data["stats"] = {"site-1": stats}
+    coordinator.data[NETWORK_FACTS_KEY] = facts
+    before = copy.deepcopy({"devices": devices, "stats": stats})
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
+
+    assert NETWORK_FACTS_KEY not in diagnostics["data"]
+    # HA's strict encoder has no repr() fallback, so an opaque record fails it.
+    strict = json.dumps(diagnostics, cls=JSONEncoder)
+    downloaded = json.dumps(diagnostics, cls=ExtendedJSONEncoder)
+    for raw in (device_mac, device_mac.lower(), lldp_mac, lldp_mac.upper()):
+        assert raw not in strict
+        assert raw not in downloaded
+    assert coordinator.data[NETWORK_FACTS_KEY] is facts
+    assert {"devices": devices, "stats": stats} == before
+    # The raw sections are still there, with anonymised MACs.
+    (device,) = diagnostics["data"]["devices"]["site-1"].values()
+    assert device["macAddress"] != device_mac
+    assert device["name"] == "UDM-Pro"
+    assert diagnostics["data"]["stats"]["site-1"]

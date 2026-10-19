@@ -115,6 +115,10 @@ from custom_components.unifi_insights.coordinators.protect import (
     UNSUPPORTED_RESOURCE_RETRY,
     UnifiProtectCoordinator,
 )
+from custom_components.unifi_insights.data_transforms import (
+    NETWORK_FACTS_KEY,
+    SiteNetworkFacts,
+)
 from custom_components.unifi_insights.entity import is_device_online
 from custom_components.unifi_insights.helpers import async_get_device_entry
 from tests.conftest import mock_device_lookup_method, set_mock_device_lookup
@@ -124,6 +128,8 @@ from tests.fixtures.library_responses import (
     SAMPLE_KEYPAD_FOB,
     SAMPLE_SIREN,
     SAMPLE_THREAD_LINK_STATION,
+    SAMPLE_UDM_PRO_OVERVIEW,
+    SAMPLE_UDM_PRO_STATS,
 )
 
 if TYPE_CHECKING:
@@ -2596,6 +2602,134 @@ class TestUnifiDeviceCoordinator:
 
         assert coordinator.data["devices"] == {}
         assert coordinator.data["stats"] == {}
+
+    def test_network_facts_start_empty(self, coordinator: UnifiDeviceCoordinator):
+        """The facts map exists before the first refresh, so the facade finds it."""
+        assert coordinator.data[NETWORK_FACTS_KEY] == {}
+
+    @pytest.mark.asyncio
+    async def test_network_facts_published_and_replaced_each_refresh(
+        self, coordinator: UnifiDeviceCoordinator
+    ):
+        """Each successful refresh publishes a new facts map from final data."""
+        await coordinator._async_update_data()
+        first = coordinator.data[NETWORK_FACTS_KEY]
+        site = first["default"]
+
+        assert isinstance(site, SiteNetworkFacts)
+        assert site.devices["device1"].cpu_pct == 15.2
+        assert site.devices["device1"].uptime_s == 864000
+
+        await coordinator._async_update_data()
+        second = coordinator.data[NETWORK_FACTS_KEY]
+
+        assert second is not first
+        assert second["default"] is not site
+        assert second["default"] == site
+
+    @pytest.mark.asyncio
+    async def test_network_facts_kept_on_site_failure(
+        self, coordinator: UnifiDeviceCoordinator
+    ):
+        """A failed refresh keeps the last committed facts of retained sites."""
+        await coordinator._async_update_data()
+        committed = coordinator.data[NETWORK_FACTS_KEY]["default"]
+        coordinator.network_client.devices.get_all = AsyncMock(
+            side_effect=UniFiConnectionError("offline")
+        )
+
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+
+        assert coordinator.data[NETWORK_FACTS_KEY]["default"] is committed
+
+    @pytest.mark.asyncio
+    async def test_network_facts_pruned_with_their_site(
+        self, coordinator: UnifiDeviceCoordinator
+    ):
+        """Facts of a site no longer polled are dropped by replacement."""
+        stale = SiteNetworkFacts(gateway_id=None, devices={})
+        facts_map = {"gone": stale}
+        coordinator.data[NETWORK_FACTS_KEY] = facts_map
+
+        await coordinator._async_update_data()
+
+        assert "gone" not in coordinator.data[NETWORK_FACTS_KEY]
+        assert "default" in coordinator.data[NETWORK_FACTS_KEY]
+        assert facts_map == {"gone": stale}
+
+    @pytest.mark.asyncio
+    async def test_network_facts_cleared_without_sites(
+        self, coordinator: UnifiDeviceCoordinator
+    ):
+        """An empty site list leaves an empty (new) facts map."""
+        await coordinator._async_update_data()
+        previous = coordinator.data[NETWORK_FACTS_KEY]
+        coordinator.config_coordinator.data["sites"] = {}
+
+        await coordinator._async_update_data()
+
+        assert coordinator.data[NETWORK_FACTS_KEY] == {}
+        assert coordinator.data[NETWORK_FACTS_KEY] is not previous
+        assert "default" in previous
+
+    @pytest.mark.asyncio
+    async def test_network_facts_reflect_legacy_primary_ports(
+        self, coordinator: UnifiDeviceCoordinator
+    ):
+        """With the v1 list failing, facts carry the legacy device's ports."""
+        coordinator.network_client.devices.get_all = AsyncMock(
+            side_effect=UniFiResponseError("Internal Server Error", status_code=500)
+        )
+        coordinator.network_client.devices.get_legacy_site_devices = AsyncMock(
+            return_value=[
+                {
+                    "_id": "60a1b2c3d4e5f67890123456",
+                    "mac": "AA:BB:CC:DD:EE:FF",
+                    "name": "Legacy Gateway",
+                    "model": "UDMPRO",
+                    "type": "udm",
+                    "up": True,
+                    "port_table": [
+                        {"port_idx": 1, "up": True, "speed": 1000},
+                        {"port_idx": 9, "up": True, "media": "SFP+"},
+                    ],
+                }
+            ]
+        )
+
+        await coordinator._async_update_data()
+
+        site = coordinator.data[NETWORK_FACTS_KEY]["default"]
+        facts = site.devices["60a1b2c3d4e5f67890123456"]
+        assert site.gateway_id == "60a1b2c3d4e5f67890123456"
+        assert facts.online_state == "online"
+        assert [port.index for port in facts.ports] == [1, 9]
+
+    @pytest.mark.asyncio
+    async def test_network_facts_have_no_ports_when_legacy_fails(
+        self, coordinator: UnifiDeviceCoordinator
+    ):
+        """Ports need legacy data: the v1 overview alone yields none."""
+        coordinator.network_client.devices.get_all = AsyncMock(
+            return_value=[_create_mock_model(dict(SAMPLE_UDM_PRO_OVERVIEW))]
+        )
+        coordinator.network_client.devices.get_statistics = AsyncMock(
+            return_value=_create_mock_model(dict(SAMPLE_UDM_PRO_STATS))
+        )
+        coordinator.network_client.devices.get_legacy_site_devices = AsyncMock(
+            side_effect=UniFiConnectionError("classic API down")
+        )
+
+        await coordinator._async_update_data()
+
+        site = coordinator.data[NETWORK_FACTS_KEY]["default"]
+        facts = site.devices[SAMPLE_UDM_PRO_OVERVIEW["id"]]
+        assert isinstance(SAMPLE_UDM_PRO_OVERVIEW["interfaces"], list)
+        assert facts.ports == ()
+        assert facts.kind == "gateway"
+        assert site.gateway_id == SAMPLE_UDM_PRO_OVERVIEW["id"]
+        assert (facts.tx_bps, facts.rx_bps) == (93688.0, 144528.0)
 
     @pytest.mark.asyncio
     async def test_auth_failure_wins_over_other_site_failures(

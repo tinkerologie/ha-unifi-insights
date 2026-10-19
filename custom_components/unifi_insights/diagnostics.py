@@ -32,6 +32,7 @@ from .coordinators.carrier_fabric import (
     SERVICE_PLAN_ALLOWLIST,
     SUBSCRIBER_ALLOWLIST,
 )
+from .data_transforms import NETWORK_FACTS_KEY
 from .innerspace_transforms import build_innerspace_diagnostics_summary
 
 if TYPE_CHECKING:
@@ -814,6 +815,9 @@ async def async_get_config_entry_diagnostics(
     # nested fields. Build their summaries separately and exclude raw sections.
     facade_data = dict(coordinator.data)
     facade_data.pop("site_manager", None)
+    # The read model repeats devices and stats as frozen records, which the
+    # MAC pass cannot walk into; the raw sections already carry it all.
+    facade_data.pop(NETWORK_FACTS_KEY, None)
     innerspace_snapshot = facade_data.pop("innerspace", None)
     innerspace_coord = getattr(data, "innerspace_coordinator", None)
     if not isinstance(innerspace_snapshot, Mapping) and innerspace_coord is not None:

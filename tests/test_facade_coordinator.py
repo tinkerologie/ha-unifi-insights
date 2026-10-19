@@ -25,6 +25,14 @@ from custom_components.unifi_insights.coordinators.facade import (
     UnifiFacadeCoordinator,
 )
 from custom_components.unifi_insights.coordinators.voucher_state import VoucherSettings
+from custom_components.unifi_insights.data_transforms import (
+    NETWORK_FACTS_KEY,
+    build_site_network_facts,
+)
+from tests.fixtures.library_responses import (
+    SAMPLE_UDM_PRO_OVERVIEW,
+    SAMPLE_UDM_PRO_STATS,
+)
 
 
 @pytest.fixture
@@ -622,3 +630,49 @@ def test_build_innerspace_corr_key_skips_non_dict_devices() -> None:
     key = UnifiFacadeCoordinator._build_innerspace_corr_key({}, {}, protect_data)
     assert len(key[2]) == 1
     assert key[2][0] == ("cameras", "cam_good", "11:22:33:44:55:66")
+
+
+class TestFacadeNetworkFacts:
+    """Tests for the read-model accessors (#337)."""
+
+    def test_published_facts_pass_through_by_reference(
+        self,
+        facade: UnifiFacadeCoordinator,
+        mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Published facts are returned by identity, without a rebuild."""
+        device_coord = mock_sub_coordinators[1]
+        site = build_site_network_facts(
+            {"udm": SAMPLE_UDM_PRO_OVERVIEW, "sw": {"features": ["switching"]}},
+            {"udm": SAMPLE_UDM_PRO_STATS},
+        )
+        facts_map = {"site1": site}
+        device_coord.data = {**device_coord.data, NETWORK_FACTS_KEY: facts_map}
+        facade._aggregate_data()
+        builder = MagicMock(side_effect=AssertionError("rebuilt"))
+        monkeypatch.setattr(
+            "custom_components.unifi_insights.data_transforms.build_site_network_facts",
+            builder,
+        )
+
+        assert facade.data[NETWORK_FACTS_KEY] is facts_map
+        assert facade.get_device_facts("site1", "udm") is site.devices["udm"]
+        assert facade.get_site_gateway_id("site1") == "udm"
+        assert facade.get_device_facts("site1", "unknown") is None
+        assert facade.get_device_facts("unknown", "udm") is None
+        assert facade.get_site_gateway_id("unknown") is None
+        builder.assert_not_called()
+
+    def test_unpublished_facts_fall_back_to_raw_data(
+        self, facade: UnifiFacadeCoordinator
+    ) -> None:
+        """A child that never published facts still answers from raw data."""
+        facade._aggregate_data()
+
+        assert facade.data[NETWORK_FACTS_KEY] is None
+        facts = facade.get_device_facts("site1", "dev1")
+        assert facts is not None
+        assert facts.mac == "00:11:22:33:44:55"
+        assert facade.get_site_gateway_id("site1") is None
+        assert facade.get_device_facts("unknown", "dev1") is None

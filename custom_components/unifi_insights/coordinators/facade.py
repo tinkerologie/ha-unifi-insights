@@ -57,8 +57,12 @@ from custom_components.unifi_insights.client_wake import (
 )
 from custom_components.unifi_insights.const import CONF_CONSOLE_ID, DOMAIN
 from custom_components.unifi_insights.data_transforms import (
+    NETWORK_FACTS_KEY,
+    NetworkDeviceFacts,
     correlate_innerspace_devices,
+    device_facts,
     normalize_innerspace_snapshot,
+    site_network_facts,
 )
 from custom_components.unifi_insights.topology_contract import (
     first_present,
@@ -386,6 +390,9 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "clients": self._device_coordinator.data.get("clients", {}),
             "stats": self._device_coordinator.data.get("stats", {}),
             "vpn_connections": self._device_coordinator.data.get("vpn_connections", {}),
+            # Passed by reference like devices and stats. None (never
+            # published) makes the accessors build the facts from raw data.
+            NETWORK_FACTS_KEY: self._device_coordinator.data.get(NETWORK_FACTS_KEY),
             # From protect coordinator
             "protect": protect_data,
             # From innerspace coordinator
@@ -419,6 +426,17 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         stats = self.data.get("stats", {}).get(site_id, {})
         result = stats.get(device_id)
         return result if isinstance(result, dict) else None
+
+    def get_device_facts(
+        self, site_id: str, device_id: str
+    ) -> NetworkDeviceFacts | None:
+        """Return the read-model facts of one network device, or None."""
+        return device_facts(self.data, site_id, device_id)
+
+    def get_site_gateway_id(self, site_id: str) -> str | None:
+        """Return the ID of a site's gateway device, or None."""
+        site_facts = site_network_facts(self.data, site_id)
+        return site_facts.gateway_id if site_facts is not None else None
 
     @property
     def available(self) -> bool:

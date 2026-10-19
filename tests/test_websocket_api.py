@@ -32,9 +32,15 @@ from custom_components.unifi_insights.const import (
     CONNECTION_TYPE_CARRIER_FABRIC,
     DOMAIN,
 )
+from custom_components.unifi_insights.data_transforms import (
+    NETWORK_FACTS_KEY,
+    build_site_network_facts,
+)
 from custom_components.unifi_insights.device_tracker import UnifiClientTracker
 from custom_components.unifi_insights.helpers import async_get_device_entry
 from custom_components.unifi_insights.internet_activity_snapshot import WINDOWS
+from custom_components.unifi_insights.performance import build_performance_snapshot
+from custom_components.unifi_insights.site_health import build_site_health_snapshot
 from custom_components.unifi_insights.topology import build_site_topology
 from custom_components.unifi_insights.websocket_api import (
     _UNLOAD_WATCHERS,
@@ -2439,3 +2445,72 @@ async def test_node_details_wan_with_repeated_key_matches_the_snapshot(
     assert wan["name"] == "Fiber"
     assert msg["success"], msg
     assert msg["result"] == {"kind": "wan", "ip_address": WAN_IP}
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        (
+            "unifi_insights/topology/subscribe",
+            "build_site_topology",
+            build_site_topology,
+        ),
+        (
+            "unifi_insights/site_health/subscribe",
+            "build_site_health_snapshot",
+            build_site_health_snapshot,
+        ),
+        (
+            "unifi_insights/performance/subscribe",
+            "build_performance_snapshot",
+            build_performance_snapshot,
+        ),
+    ],
+    ids=["topology", "site_health", "performance"],
+)
+async def test_subscriptions_rebuild_when_only_network_facts_change(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    hass_ws_client,
+    case: tuple[str, str, Any],
+) -> None:
+    """A replaced facts map alone rebuilds; equal content still pushes nothing."""
+    command, builder_name, builder = case
+    data = _seed(init_integration)
+    data[NETWORK_FACTS_KEY] = {
+        **(data.get(NETWORK_FACTS_KEY) or {}),
+        SITE: build_site_network_facts(data["devices"][SITE], {}),
+    }
+    facade = init_integration.runtime_data.coordinator
+    facade.async_update_listeners()
+    await hass.async_block_till_done()
+    client = await hass_ws_client(hass)
+    await client.send_json(
+        {
+            "id": 1,
+            "type": command,
+            "entry_id": init_integration.entry_id,
+            "site_id": SITE,
+        }
+    )
+    assert (await client.receive_json())["success"]
+    assert (await client.receive_json())["type"] == "event"
+
+    with patch(
+        f"custom_components.unifi_insights.websocket_api.{builder_name}",
+        wraps=builder,
+    ) as spy:
+        facade.async_update_listeners()
+        await _assert_no_event(client, 2)
+        assert spy.call_count == 0
+
+        # Only the facts map is republished; devices and stats are the same
+        # objects. The inputs changed, so the snapshot is rebuilt, and its
+        # content did not, so nothing is pushed.
+        data[NETWORK_FACTS_KEY] = {
+            **data[NETWORK_FACTS_KEY],
+            SITE: build_site_network_facts(data["devices"][SITE], {}),
+        }
+        facade.async_update_listeners()
+        await _assert_no_event(client, 3)
+        assert spy.call_count == 1
