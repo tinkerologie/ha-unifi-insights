@@ -161,17 +161,8 @@ def _require_selected_site(entry: UnifiInsightsConfigEntry, site_id: str) -> Non
 
 
 def _device_in_entry(device: dr.DeviceEntry, entry_id: str) -> bool:
-    """
-    Return whether a registry device belongs to the config entry.
-
-    Home Assistant 2026.8+ gives a device a single owner (``config_entry_id``);
-    earlier versions list every owner in ``config_entries``, which 2026.9+
-    reports as deprecated, so it is only read when the single owner is absent.
-    """
-    owner = getattr(device, "config_entry_id", None)
-    if owner is not None:
-        return bool(owner == entry_id)
-    return entry_id in device.config_entries
+    """Return whether a registry device belongs to the config entry."""
+    return device.config_entry_id == entry_id
 
 
 def _ha_device_ids(

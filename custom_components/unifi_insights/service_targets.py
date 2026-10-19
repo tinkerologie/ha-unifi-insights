@@ -539,14 +539,8 @@ class _RegistryTarget:
 
 
 def _device_owner_id(device: dr.DeviceEntry | dr.ChildDeviceEntry) -> str | None:
-    """
-    Return the config entry that owns a registry device.
-
-    Home Assistant 2026.8+ gives a device a single owner. The deprecated
-    ``config_entries`` set is never read; on a release without the single
-    owner the device simply has no known owner.
-    """
-    return cast("str | None", getattr(device, "config_entry_id", None))
+    """Return the config entry that owns a registry device."""
+    return device.config_entry_id
 
 
 def _lookup_registry_target(

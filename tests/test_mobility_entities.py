@@ -4,14 +4,8 @@
 from __future__ import annotations
 
 import copy
-import importlib.util
-import sys
-import uuid
-from collections.abc import Mapping
-from dataclasses import dataclass, is_dataclass
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, get_type_hints
-from unittest.mock import MagicMock, patch
+from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock
 
 import pytest
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN, EntityCategory
@@ -20,9 +14,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from unifi_official_api import UniFiConnectionError
-from yarl import URL
 
-from custom_components.unifi_insights import mobility_entity
 from custom_components.unifi_insights.const import (
     CONF_TRACK_WIFI_CLIENTS,
     CONF_TRACK_WIRED_CLIENTS,
@@ -386,12 +378,8 @@ async def test_router_entities_never_reference_a_missing_workspace(
     assert _device(hass, entry.entry_id, f"mobility_workspace_{WORKSPACE_ID}")
 
 
-@pytest.mark.parametrize("has_via_device_id", [True, False])
-async def test_router_links_to_its_workspace_on_every_supported_release(
-    hass: HomeAssistant,
-    has_via_device_id: bool,  # noqa: FBT001
-) -> None:
-    """Releases before 2026.8 link the parent by identifier, newer ones by id."""
+async def test_router_links_to_its_workspace(hass: HomeAssistant) -> None:
+    """A router links to its workspace device by registry id."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={"connection_type": "remote", "console_id": "c", "api_key": "k"},
@@ -401,24 +389,13 @@ async def test_router_links_to_its_workspace_on_every_supported_release(
     coordinator = UnifiInsightsMobilityCoordinator(hass, entry, mobility_client_mock())
     coordinator.data = await coordinator._async_update_data()
 
-    with patch(
-        "custom_components.unifi_insights.mobility_entity._HAS_VIA_DEVICE_ID",
-        has_via_device_id,
-    ):
-        sensor = UnifiMobilitySensor(
-            coordinator, ROUTER_SENSORS[0], OFFICE_ROUTER_ID, "workspace-device-id"
-        )
+    sensor = UnifiMobilitySensor(
+        coordinator, ROUTER_SENSORS[0], OFFICE_ROUTER_ID, "workspace-device-id"
+    )
 
     device_info: dict[str, Any] = dict(sensor.device_info or {})
-    if has_via_device_id:
-        assert device_info["via_device_id"] == "workspace-device-id"
-        assert "via_device" not in device_info
-    else:
-        assert device_info["via_device"] == (
-            DOMAIN,
-            f"mobility_workspace_{WORKSPACE_ID}",
-        )
-        assert "via_device_id" not in device_info
+    assert device_info["via_device_id"] == "workspace-device-id"
+    assert "via_device" not in device_info
 
 
 def _value(key: str, device: dict[str, Any]) -> Any:
@@ -497,136 +474,3 @@ async def test_network_actions_reject_mobility_targets(
         with pytest.raises(ServiceValidationError) as err:
             _resolve_network_client_id(hass, target, [entry])
         assert err.value.translation_key == "target_mobility_unsupported"
-
-
-class _UnsetType:
-    """Test-local sentinel type substituting for upstream UndefinedType."""
-
-
-_UNSET = _UnsetType()
-
-
-@dataclass(slots=True, kw_only=True)
-class SyntheticDeviceInfoFixture:
-    """Synthetic reproduction of upstream DeviceInfo dataclass contract.
-
-    Cites commit: 13b09d6ef83cda562442a05f8cfdc74bdefd4a1f
-    Source file: homeassistant/helpers/device_registry.py
-    PR: home-assistant/core#180251
-    Issue: home-assistant/core#185211
-
-    This class is a synthetic reproduction of the upstream dataclass contract
-    for offline regression coverage and is not the full Home Assistant runtime.
-    Full Home Assistant 2026.11 runtime validation is deferred.
-    """
-
-    configuration_url: str | URL | _UnsetType | None = _UNSET
-    connections: set[tuple[str, str]] | _UnsetType = _UNSET
-    entry_type: dr.DeviceEntryType | _UnsetType | None = _UNSET
-    identifiers: set[tuple[str, str]] | _UnsetType = _UNSET
-    manufacturer: str | _UnsetType | None = _UNSET
-    model: str | _UnsetType | None = _UNSET
-    model_id: str | _UnsetType | None = _UNSET
-    name: str | _UnsetType | None = _UNSET
-    serial_number: str | _UnsetType | None = _UNSET
-    suggested_area: str | _UnsetType | None = _UNSET
-    sw_version: str | _UnsetType | None = _UNSET
-    hw_version: str | _UnsetType | None = _UNSET
-    translation_key: str | _UnsetType | None = _UNSET
-    translation_placeholders: Mapping[str, str] | _UnsetType | None = _UNSET
-    via_device_id: str | _UnsetType = _UNSET
-
-
-class _PlainDeviceInfoWithVia:
-    via_device_id: str
-
-
-class _PlainDeviceInfoWithoutVia:
-    name: str
-
-
-def _load_isolated_mobility_flag(
-    monkeypatch: pytest.MonkeyPatch,
-    device_info_cls: type,
-) -> bool:
-    """Load mobility_entity in an isolated sibling module with a patched DeviceInfo."""
-    canonical_sys_mod = sys.modules["custom_components.unifi_insights.mobility_entity"]
-    pkg_mod = sys.modules["custom_components.unifi_insights"]
-    canonical_pkg_attr = pkg_mod.mobility_entity
-    canonical_bound_device_info = mobility_entity.DeviceInfo
-    canonical_flag = mobility_entity._HAS_VIA_DEVICE_ID
-    original_dr_device_info = dr.DeviceInfo
-
-    unique_subname = f"_mobility_entity_metadata_test_{uuid.uuid4().hex}"
-    sibling_name = f"custom_components.unifi_insights.{unique_subname}"
-    module_path = Path(mobility_entity.__file__).resolve()
-
-    with monkeypatch.context() as m:
-        m.setattr(dr, "DeviceInfo", device_info_cls)
-        spec = importlib.util.spec_from_file_location(sibling_name, module_path)
-        assert spec is not None
-        assert spec.loader is not None
-        sibling_mod = importlib.util.module_from_spec(spec)
-        sys.modules[sibling_name] = sibling_mod
-        try:
-            spec.loader.exec_module(sibling_mod)
-            detected_flag: bool = sibling_mod._HAS_VIA_DEVICE_ID
-        finally:
-            sys.modules.pop(sibling_name, None)
-            if hasattr(pkg_mod, unique_subname):
-                delattr(pkg_mod, unique_subname)
-
-    assert (
-        sys.modules["custom_components.unifi_insights.mobility_entity"]
-        is canonical_sys_mod
-    )
-    assert pkg_mod.mobility_entity is canonical_pkg_attr
-    assert mobility_entity.DeviceInfo is canonical_bound_device_info
-    assert mobility_entity._HAS_VIA_DEVICE_ID is canonical_flag
-    assert dr.DeviceInfo is original_dr_device_info
-
-    return detected_flag
-
-
-def test_mobility_has_via_device_id_flag_matches_installed_device_info() -> None:
-    """_HAS_VIA_DEVICE_ID matches presence of via_device_id in installed DeviceInfo."""
-    assert (
-        "via_device_id" in dr.DeviceInfo.__annotations__
-    ) == mobility_entity._HAS_VIA_DEVICE_ID
-
-
-@pytest.mark.parametrize(
-    ("device_info_cls", "expected"),
-    [
-        pytest.param(_PlainDeviceInfoWithVia, True, id="plain-with-via"),
-        pytest.param(_PlainDeviceInfoWithoutVia, False, id="plain-without-via"),
-        pytest.param(
-            SyntheticDeviceInfoFixture,
-            True,
-            id="synthetic-dataclass-contract",
-        ),
-    ],
-)
-def test_mobility_entity_detects_via_device_id_without_typeddict_metadata(
-    monkeypatch: pytest.MonkeyPatch,
-    device_info_cls: type,
-    *,
-    expected: bool,
-) -> None:
-    """_HAS_VIA_DEVICE_ID detects via_device_id across stand-in DeviceInfo classes.
-
-    Uses __annotations__ alone via isolated import.
-    """
-    assert not hasattr(device_info_cls, "__optional_keys__")
-    assert not hasattr(device_info_cls, "__required_keys__")
-    if is_dataclass(device_info_cls):
-        assert is_dataclass(device_info_cls) is True
-        assert "via_device_id" in device_info_cls.__annotations__
-        hints = get_type_hints(device_info_cls)
-        assert hints["configuration_url"] == str | URL | _UnsetType | None
-        assert (
-            hints["translation_placeholders"] == Mapping[str, str] | _UnsetType | None
-        )
-
-    detected = _load_isolated_mobility_flag(monkeypatch, device_info_cls)
-    assert detected is expected

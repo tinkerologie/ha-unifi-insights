@@ -51,12 +51,6 @@ if TYPE_CHECKING:
 _DEFAULT_ROUTER_NAME = "UniFi Mobile Router"
 _WORKSPACE_MODEL = "UniFi Mobility workspace"
 _CONNECTED = "CONNECTED"
-# Home Assistant 2026.8 links a child to its parent by registry id
-# (`via_device_id`); older releases, still supported, only know `via_device`.
-# `__annotations__` works on the TypedDict (before 2026.11) and on the
-# dataclass (2026.11 and later) without relying on deprecated TypedDict
-# optional-key metadata.
-_HAS_VIA_DEVICE_ID = "via_device_id" in DeviceInfo.__annotations__
 # Enum sensor options: the API's values, lower-cased. "NULL" and empty
 # strings are not options; they mean the value is unknown.
 _ROUTER_STATES = [state.lower() for state in MOBILITY_ROUTER_STATES if state != "NULL"]
@@ -310,21 +304,14 @@ class UnifiMobilityRouterEntity(CoordinatorEntity[UnifiInsightsMobilityCoordinat
         name = device.get("name") or device.get("model") or _DEFAULT_ROUTER_NAME
         # No MAC connection: a Mobility router is its own device, and must not
         # merge into a Network device that happens to share the address.
-        device_info = DeviceInfo(
+        self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{MOBILITY_DEVICE_PREFIX}{device_id}")},
             name=str(name),
             manufacturer=MANUFACTURER,
             model=str(device.get("model") or _DEFAULT_ROUTER_NAME),
             sw_version=device.get("firmware_version") or None,
+            via_device_id=workspace_device_id,
         )
-        if _HAS_VIA_DEVICE_ID:
-            device_info["via_device_id"] = workspace_device_id
-        else:
-            device_info["via_device"] = (  # type: ignore[typeddict-unknown-key]
-                DOMAIN,
-                f"{MOBILITY_WORKSPACE_PREFIX}{device.get('workspace_id')}",
-            )
-        self._attr_device_info = device_info
 
     @property
     def router(self) -> dict[str, Any] | None:

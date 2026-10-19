@@ -2129,15 +2129,12 @@ async def test_node_details_checks_membership_of_every_device_lookup(
     assert phone["result"]["entity_id"].startswith("device_tracker.")
 
 
-def test_device_in_entry_reads_whichever_ownership_the_device_has() -> None:
-    """Single-entry devices (HA 2026.9+) and multi-entry devices are both handled."""
-    single = SimpleNamespace(config_entry_id="entry-a")
-    multi = SimpleNamespace(config_entries={"entry-a", "entry-b"})
+def test_device_in_entry_compares_the_owning_entry() -> None:
+    """A device belongs to the entry that owns it."""
+    device = SimpleNamespace(config_entry_id="entry-a")
 
-    assert _device_in_entry(single, "entry-a")
-    assert not _device_in_entry(single, "entry-b")
-    assert _device_in_entry(multi, "entry-b")
-    assert not _device_in_entry(multi, "entry-c")
+    assert _device_in_entry(device, "entry-a")
+    assert not _device_in_entry(device, "entry-b")
 
 
 @pytest.mark.parametrize("field", ["entry_id", "site_id", "node_id"])

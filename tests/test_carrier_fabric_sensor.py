@@ -410,21 +410,6 @@ async def test_carrier_fabric_track_subscribers_disabled_reconciliation(
     )
 
 
-class LegacyDeviceEntryDouble:
-    """DeviceEntry double matching Home Assistant 2026.6.2 tagged shape."""
-
-    def __init__(
-        self,
-        *,
-        device_id: str,
-        identifiers: set[tuple[str, str]],
-        config_entries: set[str],
-    ) -> None:
-        self.id = device_id
-        self.identifiers = identifiers
-        self.config_entries = config_entries
-
-
 class ModernDeviceEntryDouble:
     """DeviceEntry double matching Home Assistant 2026.10.1 tagged shape."""
 
@@ -618,55 +603,6 @@ async def test_reconcile_modern_no_deprecation_reported(
             )
         ]
         assert deprecation_warnings == []
-
-
-async def test_reconcile_subscriber_registry_legacy_sole_owner_double(
-    hass, carrier_entry
-):
-    """A legacy 2026.6.2 sole-owner double triggers whole-device removal."""
-    dev_reg = dr.async_get(hass)
-    legacy_device = LegacyDeviceEntryDouble(
-        device_id="dev_legacy_sole",
-        identifiers={(DOMAIN, "carrier_subscriber_leg_sole")},
-        config_entries={carrier_entry.entry_id},
-    )
-    with (
-        patch(
-            "homeassistant.helpers.device_registry.async_entries_for_config_entry",
-            return_value=[legacy_device],
-        ),
-        patch.object(dev_reg, "async_remove_device") as mock_remove,
-        patch.object(dev_reg, "async_update_device") as mock_update,
-    ):
-        reconcile_subscriber_registry(hass, carrier_entry.entry_id)
-
-    mock_remove.assert_called_once_with("dev_legacy_sole")
-    mock_update.assert_not_called()
-
-
-async def test_reconcile_subscriber_registry_legacy_shared_double(hass, carrier_entry):
-    """Legacy 2026.6.2 shared double detaches without whole-device removal."""
-    dev_reg = dr.async_get(hass)
-    legacy_device = LegacyDeviceEntryDouble(
-        device_id="dev_legacy_shared",
-        identifiers={(DOMAIN, "carrier_subscriber_leg_shared")},
-        config_entries={carrier_entry.entry_id, "other_entry"},
-    )
-    with (
-        patch(
-            "homeassistant.helpers.device_registry.async_entries_for_config_entry",
-            return_value=[legacy_device],
-        ),
-        patch.object(dev_reg, "async_remove_device") as mock_remove,
-        patch.object(dev_reg, "async_update_device") as mock_update,
-    ):
-        reconcile_subscriber_registry(hass, carrier_entry.entry_id)
-
-    mock_remove.assert_not_called()
-    mock_update.assert_called_once_with(
-        device_id="dev_legacy_shared",
-        remove_config_entry_id=carrier_entry.entry_id,
-    )
 
 
 async def test_reconcile_subscriber_registry_modern_double(hass, carrier_entry):
