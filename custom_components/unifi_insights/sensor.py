@@ -87,12 +87,11 @@ if TYPE_CHECKING:
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
     from homeassistant.helpers.typing import StateType
 
-    from . import UnifiInsightsConfigEntry
-    from .carrier_fabric_data import CarrierFabricConfigEntry
+    from . import CarrierFabricConfigEntry, UnifiInsightsConfigEntry
 
 from homeassistant.helpers.entity import DeviceInfo
 
-from .carrier_fabric_data import CarrierFabricData
+from . import CarrierFabricData
 from .carrier_fabric_sensor import async_setup_carrier_fabric_sensors
 
 # Preserve these public sensor-module exports without redundant import aliases.

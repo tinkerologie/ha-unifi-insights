@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-    from .carrier_fabric_data import CarrierFabricConfigEntry
+    from . import CarrierFabricConfigEntry
     from .coordinators.carrier_fabric import UnifiCarrierFabricCoordinator
 
 

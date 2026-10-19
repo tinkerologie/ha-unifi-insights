@@ -19,7 +19,7 @@ from unifi_official_api.access.models.emergency import (
     AccessEmergencyStatus,
 )
 
-from custom_components.unifi_insights import UnifiInsightsData
+from custom_components.unifi_insights import CarrierFabricData, UnifiInsightsData
 from custom_components.unifi_insights import button as button_platform
 from custom_components.unifi_insights import cover as cover_platform
 from custom_components.unifi_insights import lock as lock_platform
@@ -34,7 +34,6 @@ from custom_components.unifi_insights.access_entity import (
     door_device_info,
     doorbell_device_info,
 )
-from custom_components.unifi_insights.carrier_fabric_data import CarrierFabricData
 from custom_components.unifi_insights.const import CONF_ACCESS_TOKEN, DOMAIN
 from tests.test_access_coordinator import (
     DEVICES,

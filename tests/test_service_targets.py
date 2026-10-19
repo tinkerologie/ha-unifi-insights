@@ -28,7 +28,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.unifi_insights.carrier_fabric_data import CarrierFabricData
+from custom_components.unifi_insights import CarrierFabricData
 from custom_components.unifi_insights.const import (
     CAMERA_TYPE_DOORBELL,
     CONF_CARRIER_ACTIONS,

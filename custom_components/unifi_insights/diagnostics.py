@@ -14,7 +14,6 @@ from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
 from unifi_official_api import __version__ as api_version
 from unifi_official_api.const import SENSITIVE_CREDENTIAL_KEYS
 
-from .carrier_fabric_data import CarrierFabricData
 from .const import (
     CONF_ACCESS_WEBHOOK_ENDPOINT_ID,
     CONF_ACCESS_WEBHOOK_ID,
@@ -35,13 +34,14 @@ from .coordinators.carrier_fabric import (
 from .data_transforms import NETWORK_FACTS_KEY
 from .innerspace_transforms import build_innerspace_diagnostics_summary
 
+# CarrierFabricData is imported inside functions: __init__.py imports this
+# module (through services.py) while it loads, before the class exists.
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from homeassistant.core import HomeAssistant
 
-    from . import UnifiInsightsConfigEntry
-    from .carrier_fabric_data import CarrierFabricConfigEntry
+    from . import CarrierFabricConfigEntry, UnifiInsightsConfigEntry
     from .coordinators.access import UnifiInsightsAccessCoordinator
     from .coordinators.mobility import UnifiInsightsMobilityCoordinator
 
@@ -730,6 +730,8 @@ async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: UnifiInsightsConfigEntry | CarrierFabricConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
+    from . import CarrierFabricData  # noqa: PLC0415
+
     _ = hass
     _LOGGER.debug("Gathering diagnostics data for UniFi Insights")
 

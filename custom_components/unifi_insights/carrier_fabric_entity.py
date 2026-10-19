@@ -11,7 +11,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 
 if TYPE_CHECKING:
-    from .carrier_fabric_data import CarrierFabricConfigEntry
+    from . import CarrierFabricConfigEntry
     from .coordinators.carrier_fabric import UnifiCarrierFabricCoordinator
 
 

@@ -30,7 +30,6 @@ from homeassistant.helpers.target import (
     async_extract_referenced_entity_ids,
 )
 
-from .carrier_fabric_data import CarrierFabricData
 from .const import (
     CONF_CARRIER_ACTIONS,
     CONF_CONNECTION_TYPE,
@@ -41,12 +40,13 @@ from .const import (
 )
 from .data_transforms import is_doorbell_camera_model
 
+# CarrierFabricData is imported inside functions: __init__.py imports this
+# module while it loads, before the class exists.
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant, ServiceCall
 
-    from . import UnifiInsightsConfigEntry
-    from .carrier_fabric_data import CarrierFabricConfigEntry
+    from . import CarrierFabricConfigEntry, UnifiInsightsConfigEntry
     from .coordinators import (
         UnifiCarrierFabricCoordinator,
         UnifiConfigCoordinator,
@@ -216,6 +216,8 @@ def _is_console_entry(entry: ConfigEntry[Any]) -> TypeGuard[UnifiInsightsConfigE
     ``isinstance(UnifiInsightsData)`` check: it would change which entries are
     candidates, so the narrowing to ``UnifiInsightsConfigEntry`` is static only.
     """
+    from . import CarrierFabricData  # noqa: PLC0415
+
     return (
         hasattr(entry, "runtime_data")
         and bool(entry.runtime_data)
@@ -234,6 +236,8 @@ def _console_entries(hass: HomeAssistant) -> list[UnifiInsightsConfigEntry]:
 
 def _coord_data(entry: UnifiInsightsConfigEntry) -> dict[str, Any] | None:
     """Extract coordinator data dictionary if available and valid."""
+    from . import CarrierFabricData  # noqa: PLC0415
+
     runtime_data = getattr(entry, "runtime_data", None)
     if isinstance(runtime_data, CarrierFabricData):
         return None
@@ -1364,6 +1368,8 @@ def resolve_carrier_subscriber_call(
     hass: HomeAssistant, call: ServiceCall
 ) -> CarrierSubscriberTarget:
     """Resolve a Carrier Fabric subscriber action to its entry and subscriber."""
+    from . import CarrierFabricData  # noqa: PLC0415
+
     targets = _extract_carrier_targets(call)
     if not targets:
         msg = "At least one target must be specified"

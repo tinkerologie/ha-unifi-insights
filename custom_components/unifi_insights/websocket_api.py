@@ -25,7 +25,6 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util.hass_dict import HassKey
 
-from .carrier_fabric_data import CarrierFabricData
 from .console_identity import async_get_device_entry, resolve_console_namespace
 from .const import DOMAIN
 from .dashboard_contract_utils import as_dict, content_revision
@@ -57,6 +56,8 @@ from .topology_keys import async_get_node_key
 # Schemas are typed against probatio, the library HA 2026.10 annotates its schema
 # arguments with. Runtime still imports voluptuous: HA 2026.10 aliases it to probatio,
 # and the 2026.9 minimum ships real voluptuous, so only the type checker sees probatio.
+# CarrierFabricData is imported inside functions: __init__.py imports this
+# module while it loads, before the class exists.
 if TYPE_CHECKING:
     import probatio as vol
 else:
@@ -138,6 +139,8 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
 
 def _resolve_entry(hass: HomeAssistant, entry_id: str) -> UnifiInsightsConfigEntry:
     """Return a loaded UniFi Insights entry or raise _RequestError."""
+    from . import CarrierFabricData  # noqa: PLC0415
+
     entry = hass.config_entries.async_get_entry(entry_id)
     if entry is None or entry.domain != DOMAIN:
         msg = f"No UniFi Insights config entry {entry_id}"
@@ -590,6 +593,8 @@ def ws_topology_sources(
     msg: dict[str, Any],
 ) -> None:
     """List loaded entries and their selected sites for the card editor."""
+    from . import CarrierFabricData  # noqa: PLC0415
+
     sources = []
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
         runtime = getattr(entry, "runtime_data", None)
@@ -977,6 +982,8 @@ def ws_protect_sources(
     msg: dict[str, Any],
 ) -> None:
     """List loaded entries that can provide Protect snapshots."""
+    from . import CarrierFabricData  # noqa: PLC0415
+
     sources = []
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
         runtime = getattr(entry, "runtime_data", None)

@@ -33,10 +33,6 @@ from .access_webhook import (
     async_setup_access_webhook,
     async_unload_access_webhook,
 )
-from .carrier_fabric_data import (
-    CarrierFabricConfigEntry,
-    CarrierFabricData,
-)
 from .console_identity import (
     first_non_default_site_id,
     is_console_device,
@@ -140,6 +136,17 @@ class UnifiInsightsData:
 
 # Use TypeAlias for proper mypy validation (Python 3.10+ style)
 UnifiInsightsConfigEntry: TypeAlias = ConfigEntry[UnifiInsightsData]  # noqa: UP040
+
+
+@dataclass
+class CarrierFabricData:
+    """Runtime data for UniFi Carrier Fabric integration."""
+
+    client: UniFiCarrierFabricClient
+    coordinator: UnifiCarrierFabricCoordinator
+
+
+CarrierFabricConfigEntry: TypeAlias = ConfigEntry[CarrierFabricData]  # noqa: UP040
 
 CARRIER_FABRIC_PLATFORMS: list[Platform] = [Platform.SENSOR]
 
