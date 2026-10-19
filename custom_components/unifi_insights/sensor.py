@@ -1684,7 +1684,23 @@ class UnifiPortSensor(UnifiInsightsEntity, SensorEntity):
         if key in ("port_tx_bytes", "port_rx_bytes"):
             if port_data is None:
                 return self._stats_counter("port_bytes")
-            return self._stats_counter("port_bytes", "port_data")
+            counter = self._stats_counter("port_bytes", "port_data")
+            if counter is None:
+                # Last resort: the merged port record's own counters. Never
+                # default to 0, which would reset a total_increasing counter.
+                record_stats = port_data.get("stats")
+                if isinstance(record_stats, dict):
+                    value = get_field(
+                        record_stats,
+                        *(
+                            ("txBytes", "tx_bytes")
+                            if key == "port_tx_bytes"
+                            else ("rxBytes", "rx_bytes")
+                        ),
+                    )
+                    if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        counter = int(value)
+            return counter
         if key == "port_poe_power":
             # Prefer PoE watts from coordinator stats when available
             watts = self._stats_poe_watts()

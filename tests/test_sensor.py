@@ -1432,6 +1432,43 @@ class TestUnifiPortSensorEdgeCases:
 
         assert sensor.available is True
 
+    @pytest.mark.parametrize(
+        ("key", "record_stats", "expected"),
+        [
+            ("port_tx_bytes", {"txBytes": 42, "rxBytes": 7}, 42),
+            ("port_rx_bytes", {"rx_bytes": 7}, 7),
+            ("port_tx_bytes", {"txBytes": True}, None),
+            ("port_tx_bytes", {}, None),
+            ("port_tx_bytes", None, None),
+        ],
+    )
+    async def test_port_byte_counter_falls_back_to_port_record(
+        self,
+        hass: HomeAssistant,
+        mock_coordinator,
+        key: str,
+        record_stats: Any,
+        expected: int | None,
+    ):
+        """Without stats counters, bytes come from the port record, never 0."""
+        mock_coordinator.data.pop("network_facts", None)
+        port: dict[str, Any] = {"idx": 1}
+        if record_stats is not None:
+            port["stats"] = record_stats
+        mock_coordinator.data["devices"] = {
+            "site1": {"device1": {"id": "device1", "ports": [port]}}
+        }
+        mock_coordinator.data["stats"] = {"site1": {"device1": {}}}
+        sensor = UnifiPortSensor(
+            coordinator=mock_coordinator,
+            description=next(s for s in PORT_SENSOR_TYPES if s.key == key),
+            site_id="site1",
+            device_id="device1",
+            port_idx=1,
+        )
+
+        assert sensor.native_value == expected
+
     @pytest.mark.parametrize("key", ["port_tx_bytes", "port_tx_rate", "port_speed"])
     async def test_port_sensor_unavailable_when_device_refresh_fails(
         self, hass: HomeAssistant, mock_coordinator, key: str

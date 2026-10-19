@@ -61,7 +61,7 @@ Consolidate 57 root modules into 33 by moving every base entity into `entity.py`
 
 ### Amendments to the flat module layout
 
-## ADR-007 is amended for the deepening issues #337, #338 and #339. `get_field()` and `first_not_none()` live in `data_transforms.py`, re-exported by `entity.py`. `data_transforms.normalize_mac()` is the canonical MAC parser for reading device data, and four identity-specific MAC policies stay separate and tested. `service_targets.py` is an allowed 34th root module. `coordinators/protect.py` has a size exception capped at 3,500 lines until #340 splits it. [ADR-009](./adr/009-amend-flat-module-layout.md)
+ADR-007 is amended for the deepening issues #337, #338 and #339. `get_field()` and `first_not_none()` live in `data_transforms.py`, re-exported by `entity.py`. `data_transforms.normalize_mac()` is the canonical MAC parser for reading device data, and four identity-specific MAC policies stay separate and tested. `service_targets.py` is an allowed 34th root module. `coordinators/protect.py` has a size exception capped at 3,500 lines until #340 splits it. [ADR-009](./adr/009-amend-flat-module-layout.md)
 
 ## Future considerations
 
