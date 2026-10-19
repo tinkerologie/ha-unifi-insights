@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from unifi_official_api import (
@@ -31,6 +32,7 @@ from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
     UPTIME_STAT_KEYS,
     build_site_network_facts,
+    device_facts,
     normalize_legacy_storage,
     normalize_legacy_wans,
 )
@@ -40,16 +42,116 @@ from .base import UnifiBaseCoordinator
 from .config_sections import map_legacy_site_names
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
     from unifi_official_api.network import UniFiNetworkClient
     from unifi_official_api.protect import UniFiProtectClient
 
+    from custom_components.unifi_insights.data_transforms import NetworkPortFacts
+
     from .config import UnifiConfigCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def get_device_port(
+    coordinator_data: Any,
+    site_id: str | None,
+    device_id: str | None,
+    port_idx: int,
+) -> Mapping[str, Any] | None:
+    """
+    Return a device's port record, or None if it is not found.
+
+    Reads the shared port tuple of the published read model and matches the
+    raw index exactly: ``3`` finds ``3``, never ``"03"`` (PoE button and
+    action discovery only accept integer indexes).
+    """
+    if not site_id or not device_id or not isinstance(coordinator_data, dict):
+        return None
+    facts = device_facts(coordinator_data, site_id, device_id)
+    port = facts.port_by_raw_index(port_idx) if facts is not None else None
+    return port.record if port is not None else None
+
+
+def port_can_be_power_cycled(port: Mapping[str, Any]) -> bool:
+    """Return True if port can be power-cycled (PoE is enabled)."""
+    return isinstance(port.get("poe"), dict) and port["poe"].get("enabled") is True
+
+
+def power_cyclable_ports(
+    coordinator_data: Mapping[str, Any], site_id: str, device_id: str
+) -> tuple[NetworkPortFacts, ...]:
+    """
+    Return the device's ports that a PoE power cycle can target.
+
+    A port qualifies when its raw index is an integer (it feeds the button's
+    unique ID, so it is never normalised) and PoE is enabled on it.
+    """
+    facts = device_facts(coordinator_data, site_id, device_id)
+    return tuple(
+        port
+        for port in (facts.ports if facts is not None else ())
+        if isinstance(port.raw_index, int) and port_can_be_power_cycled(port.record)
+    )
+
+
+def require_power_cyclable_port(
+    coordinator_data: Any, site_id: str | None, device_id: str | None, port_idx: int
+) -> Mapping[str, Any]:
+    """
+    Return the port a PoE power cycle targets, or raise a validation error.
+
+    The shared eligibility check for every power-cycle caller: the device
+    must exist in the site, the port must exist on it, and PoE must be
+    enabled on the port.
+    """
+    devices = (
+        coordinator_data.get("devices") if isinstance(coordinator_data, dict) else None
+    )
+    site_devices = devices.get(site_id) if isinstance(devices, dict) else None
+    device_data = (
+        site_devices.get(device_id) if isinstance(site_devices, dict) else None
+    )
+    if not isinstance(device_data, dict):
+        msg = f"Device {device_id} was not found in site {site_id}"
+        raise ServiceValidationError(
+            msg,
+            translation_domain=DOMAIN,
+            translation_key="device_not_found",
+            translation_placeholders={
+                "device_id": str(device_id),
+                "site_id": str(site_id),
+            },
+        )
+
+    port = get_device_port(coordinator_data, site_id, device_id, port_idx)
+    if port is None:
+        msg = f"Port {port_idx} was not found on device {device_id}"
+        raise ServiceValidationError(
+            msg,
+            translation_domain=DOMAIN,
+            translation_key="port_not_found",
+            translation_placeholders={
+                "port_idx": str(port_idx),
+                "device_id": str(device_id),
+            },
+        )
+
+    if not port_can_be_power_cycled(port):
+        msg = f"Port {port_idx} on device {device_id} is not PoE-enabled"
+        raise ServiceValidationError(
+            msg,
+            translation_domain=DOMAIN,
+            translation_key="port_not_poe",
+            translation_placeholders={
+                "port_idx": str(port_idx),
+                "device_id": str(device_id),
+            },
+        )
+    return port
 
 
 def _fill_missing_stat(

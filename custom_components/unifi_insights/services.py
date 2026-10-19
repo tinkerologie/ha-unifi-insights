@@ -34,7 +34,6 @@ from unifi_official_api import (
     UniFiResponseError,
 )
 
-from .button import get_device_port, port_can_be_power_cycled
 from .carrier_fabric_data import CarrierFabricData
 from .const import (
     CONF_CARRIER_ACTIONS,
@@ -80,6 +79,7 @@ from .const import (
     VIDEO_MODE_SPORT,
 )
 from .coordinators.carrier_fabric import InvalidSubscriberIdError
+from .coordinators.device import require_power_cyclable_port
 from .coordinators.rule_audit import RULE_TYPES
 from .data_transforms import client_connection_type
 from .diagnostics import redact_network_rule_export
@@ -1849,51 +1849,8 @@ async def _async_handle_power_cycle_port(
 
     port_idx = call.data["port_idx"]
 
-    # Validate against the device's interfaces.ports[] where poe.enabled is true
-    devices = (
-        coordinator.data.get("devices") if isinstance(coordinator.data, dict) else None
-    )
-    site_devices = devices.get(site_id) if isinstance(devices, dict) else None
-    device_data = (
-        site_devices.get(device_id) if isinstance(site_devices, dict) else None
-    )
-
-    if not isinstance(device_data, dict):
-        msg = f"Device {device_id} was not found in site {site_id}"
-        raise ServiceValidationError(
-            msg,
-            translation_domain=DOMAIN,
-            translation_key="device_not_found",
-            translation_placeholders={
-                "device_id": str(device_id),
-                "site_id": str(site_id),
-            },
-        )
-
-    port = get_device_port(coordinator.data, site_id, device_id, port_idx)
-    if port is None:
-        msg = f"Port {port_idx} was not found on device {device_id}"
-        raise ServiceValidationError(
-            msg,
-            translation_domain=DOMAIN,
-            translation_key="port_not_found",
-            translation_placeholders={
-                "port_idx": str(port_idx),
-                "device_id": str(device_id),
-            },
-        )
-
-    if not port_can_be_power_cycled(port):
-        msg = f"Port {port_idx} on device {device_id} is not PoE-enabled"
-        raise ServiceValidationError(
-            msg,
-            translation_domain=DOMAIN,
-            translation_key="port_not_poe",
-            translation_placeholders={
-                "port_idx": str(port_idx),
-                "device_id": str(device_id),
-            },
-        )
+    # Validate against the device's ports where poe.enabled is true
+    require_power_cyclable_port(coordinator.data, site_id, device_id, port_idx)
 
     _LOGGER.info(
         "Power-cycling PoE port %d on device %s in site %s",

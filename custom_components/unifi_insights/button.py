@@ -46,8 +46,13 @@ from .const import (
     MANUFACTURER,
 )
 from .coordinators import UnifiFacadeCoordinator
+from .coordinators.device import (
+    get_device_port,
+    port_can_be_power_cycled,
+    power_cyclable_ports,
+)
 from .coordinators.voucher_state import voucher_request_kwargs, voucher_site_ids
-from .data_transforms import current_chime_ringtone_id, device_facts
+from .data_transforms import current_chime_ringtone_id
 from .entity import (
     UnifiInsightsEntity,
     UnifiProtectEntity,
@@ -78,31 +83,6 @@ PARALLEL_UPDATES = 1
 @dataclass
 class UnifiInsightsButtonEntityDescription(ButtonEntityDescription):  # type: ignore[misc]
     """Class describing UniFi Insights button entities."""
-
-
-def get_device_port(
-    coordinator_data: Any,
-    site_id: str | None,
-    device_id: str | None,
-    port_idx: int,
-) -> Mapping[str, Any] | None:
-    """
-    Return a device's port record, or None if it is not found.
-
-    Reads the shared port tuple of the published read model and matches the
-    raw index exactly: ``3`` finds ``3``, never ``"03"`` (PoE button and
-    action discovery only accept integer indexes).
-    """
-    if not site_id or not device_id or not isinstance(coordinator_data, dict):
-        return None
-    facts = device_facts(coordinator_data, site_id, device_id)
-    port = facts.port_by_raw_index(port_idx) if facts is not None else None
-    return port.record if port is not None else None
-
-
-def port_can_be_power_cycled(port: Mapping[str, Any]) -> bool:
-    """Return True if port can be power-cycled (PoE is enabled)."""
-    return isinstance(port.get("poe"), dict) and port["poe"].get("enabled") is True
 
 
 def _get_port_label(port: Mapping[str, Any], port_idx: int) -> str:
@@ -393,14 +373,11 @@ async def async_setup_entry(
                         )
 
                     # Discover PoE power-cycle buttons for PoE-enabled ports
-                    facts = device_facts(coordinator.data, site_id, device_id)
-                    for port_facts in facts.ports if facts is not None else ():
+                    for port_facts in power_cyclable_ports(
+                        coordinator.data, site_id, device_id
+                    ):
                         port = port_facts.record
                         port_idx = port_facts.raw_index
-                        if not isinstance(port_idx, int):
-                            continue
-                        if not port_can_be_power_cycled(port):
-                            continue
 
                         poe_btn_key = (
                             site_id,
