@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
     from . import UnifiInsightsConfigEntry
-    from .coordinators import UnifiFacadeCoordinator
+    from .coordinators import UnifiInsightsFacadeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ ARM_MODE_TO_STATE: Final[dict[str, AlarmControlPanelState]] = {
 }
 
 
-def _global_alarm_manager_is_off(coordinator: UnifiFacadeCoordinator) -> bool:
+def _global_alarm_manager_is_off(coordinator: UnifiInsightsFacadeCoordinator) -> bool:
     """
     Return whether Protect has said the global alarm manager is not enabled.
 
@@ -81,7 +81,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up the alarm control panel for the UniFi Protect NVR."""
     _ = hass
-    coordinator: UnifiFacadeCoordinator = entry.runtime_data.coordinator
+    coordinator: UnifiInsightsFacadeCoordinator = entry.runtime_data.coordinator
 
     # Skip if Protect API is not available
     if not coordinator.protect_client:
@@ -132,7 +132,7 @@ class UnifiProtectNvrAlarmControlPanel(UnifiProtectEntity, AlarmControlPanelEnti
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         nvr_id: str,
     ) -> None:
         """Initialize the alarm control panel."""

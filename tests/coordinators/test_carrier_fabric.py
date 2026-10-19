@@ -8,7 +8,7 @@ import pytest
 from custom_components.unifi_insights.const import DOMAIN
 from custom_components.unifi_insights.coordinators.carrier_fabric import (
     InvalidSubscriberIdError,
-    UnifiCarrierFabricCoordinator,
+    UnifiInsightsCarrierFabricCoordinator,
 )
 
 
@@ -16,7 +16,7 @@ from custom_components.unifi_insights.coordinators.carrier_fabric import (
 def test_invalid_subscriber_id_is_translated(subscriber_id: object) -> None:
     """The coordinator's own validation error carries its translation."""
     with pytest.raises(InvalidSubscriberIdError) as caught:
-        UnifiCarrierFabricCoordinator._validate_subscriber_uuid(subscriber_id)
+        UnifiInsightsCarrierFabricCoordinator._validate_subscriber_uuid(subscriber_id)
 
     assert isinstance(caught.value, ValueError)
     assert caught.value.translation_domain == DOMAIN

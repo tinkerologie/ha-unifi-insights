@@ -15,7 +15,7 @@ from custom_components.unifi_insights.coordinators.config_sections import (
     map_legacy_site_names,
 )
 from custom_components.unifi_insights.coordinators.device import (
-    UnifiDeviceCoordinator,
+    UnifiInsightsDeviceCoordinator,
 )
 
 if TYPE_CHECKING:
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def mock_device_coordinator(hass: HomeAssistant) -> UnifiDeviceCoordinator:
+def mock_device_coordinator(hass: HomeAssistant) -> UnifiInsightsDeviceCoordinator:
     """Create a device coordinator for legacy tests."""
     entry = MagicMock()
     entry.entry_id = "test_entry"
@@ -35,7 +35,7 @@ def mock_device_coordinator(hass: HomeAssistant) -> UnifiDeviceCoordinator:
     network_client.devices.get_statistics = AsyncMock(return_value=None)
     protect_client = MagicMock()
 
-    coordinator = UnifiDeviceCoordinator(
+    coordinator = UnifiInsightsDeviceCoordinator(
         hass=hass,
         network_client=network_client,
         protect_client=protect_client,
@@ -53,7 +53,7 @@ class TestMergeLegacyTemperatureData:
         """Return early if MAC cannot be normalized."""
         device_dict = {"name": "No MAC"}
         legacy_devices = {"00:11:22:33:44:55": {"mac": "00:11:22:33:44:55"}}
-        UnifiDeviceCoordinator._merge_legacy_temperature_data(
+        UnifiInsightsDeviceCoordinator._merge_legacy_temperature_data(
             device_dict, legacy_devices
         )
         assert "hasTemperature" not in device_dict
@@ -62,7 +62,7 @@ class TestMergeLegacyTemperatureData:
         """Return early if legacy device is missing or has no temperature data."""
         device_dict = {"mac": "00:11:22:33:44:55"}
         legacy_devices = {"00:11:22:33:44:55": {"mac": "00:11:22:33:44:55"}}
-        UnifiDeviceCoordinator._merge_legacy_temperature_data(
+        UnifiInsightsDeviceCoordinator._merge_legacy_temperature_data(
             device_dict, legacy_devices
         )
         assert "hasTemperature" not in device_dict
@@ -76,7 +76,7 @@ class TestMergeLegacyTemperatureData:
                 "generalTemperature": 45.5,
             }
         }
-        UnifiDeviceCoordinator._merge_legacy_temperature_data(
+        UnifiInsightsDeviceCoordinator._merge_legacy_temperature_data(
             device_dict, legacy_devices
         )
         assert device_dict["generalTemperature"] == 45.5
@@ -92,7 +92,7 @@ class TestMergeLegacyTemperatureData:
                 "temperatures": [{"name": "CPU", "value": 52.0}],
             }
         }
-        UnifiDeviceCoordinator._merge_legacy_temperature_data(
+        UnifiInsightsDeviceCoordinator._merge_legacy_temperature_data(
             device_dict, legacy_devices
         )
         assert device_dict["generalTemperature"] == 52.0
@@ -109,7 +109,7 @@ class TestMergeLegacyTemperatureData:
                 "temperatures": "invalid_string",
             }
         }
-        UnifiDeviceCoordinator._merge_legacy_temperature_data(
+        UnifiInsightsDeviceCoordinator._merge_legacy_temperature_data(
             device_dict, legacy_devices
         )
         assert device_dict["generalTemperature"] == 50.0
@@ -125,7 +125,7 @@ class TestMergeLegacyTemperatureData:
                 "temperatures": [{"name": "CPU", "value": 52.0}],
             }
         }
-        UnifiDeviceCoordinator._merge_legacy_temperature_data(
+        UnifiInsightsDeviceCoordinator._merge_legacy_temperature_data(
             device_dict, legacy_devices
         )
         assert "generalTemperature" not in device_dict
@@ -140,25 +140,33 @@ class TestMergeLegacyPortData:
         """Return early if device has no valid MAC."""
         device_dict = {"name": "No MAC"}
         legacy_devices = {"00:11:22:33:44:55": {"port_table": [{"port_idx": 1}]}}
-        UnifiDeviceCoordinator._merge_legacy_port_data(device_dict, legacy_devices)
+        UnifiInsightsDeviceCoordinator._merge_legacy_port_data(
+            device_dict, legacy_devices
+        )
         assert "ports" not in device_dict
 
     def test_legacy_device_missing(self):
         """Return early if legacy device not in mapping."""
         device_dict = {"mac": "00:11:22:33:44:55"}
         legacy_devices = {}
-        UnifiDeviceCoordinator._merge_legacy_port_data(device_dict, legacy_devices)
+        UnifiInsightsDeviceCoordinator._merge_legacy_port_data(
+            device_dict, legacy_devices
+        )
         assert "ports" not in device_dict
 
     def test_port_table_not_list_or_empty(self):
         """Return early if port_table is missing, non-list, or empty."""
         device_dict = {"mac": "00:11:22:33:44:55"}
         legacy_devices = {"00:11:22:33:44:55": {"port_table": []}}
-        UnifiDeviceCoordinator._merge_legacy_port_data(device_dict, legacy_devices)
+        UnifiInsightsDeviceCoordinator._merge_legacy_port_data(
+            device_dict, legacy_devices
+        )
         assert "ports" not in device_dict
 
         legacy_devices["00:11:22:33:44:55"]["port_table"] = "not_a_list"
-        UnifiDeviceCoordinator._merge_legacy_port_data(device_dict, legacy_devices)
+        UnifiInsightsDeviceCoordinator._merge_legacy_port_data(
+            device_dict, legacy_devices
+        )
         assert "ports" not in device_dict
 
     def test_port_table_non_dict_entry_and_none_normalizer(self):
@@ -173,7 +181,9 @@ class TestMergeLegacyPortData:
                 ]
             }
         }
-        UnifiDeviceCoordinator._merge_legacy_port_data(device_dict, legacy_devices)
+        UnifiInsightsDeviceCoordinator._merge_legacy_port_data(
+            device_dict, legacy_devices
+        )
         assert "ports" in device_dict
         assert len(device_dict["ports"]) == 1
         assert device_dict["ports"][0]["idx"] == 1
@@ -189,7 +199,9 @@ class TestMergeLegacyPortData:
                 ]
             }
         }
-        UnifiDeviceCoordinator._merge_legacy_port_data(device_dict, legacy_devices)
+        UnifiInsightsDeviceCoordinator._merge_legacy_port_data(
+            device_dict, legacy_devices
+        )
         assert "ports" not in device_dict
 
 
@@ -200,13 +212,15 @@ class TestMergeLegacyOutletData:
         """Return early if MAC is None."""
         device_dict = {"name": "No MAC"}
         legacy_devices = {"00:11:22:33:44:55": {"outlet_table": []}}
-        UnifiDeviceCoordinator._merge_legacy_outlet_data(device_dict, legacy_devices)
+        UnifiInsightsDeviceCoordinator._merge_legacy_outlet_data(
+            device_dict, legacy_devices
+        )
         assert "outlet_table" not in device_dict
 
     def test_legacy_device_missing(self):
         """Return early if legacy device is missing."""
         device_dict = {"mac": "00:11:22:33:44:55"}
-        UnifiDeviceCoordinator._merge_legacy_outlet_data(device_dict, {})
+        UnifiInsightsDeviceCoordinator._merge_legacy_outlet_data(device_dict, {})
         assert "outlet_table" not in device_dict
 
     def test_ac_power_budget_only(self):
@@ -219,7 +233,9 @@ class TestMergeLegacyOutletData:
                 "ac_power_budget": 100.0,
             }
         }
-        UnifiDeviceCoordinator._merge_legacy_outlet_data(device_dict, legacy_devices)
+        UnifiInsightsDeviceCoordinator._merge_legacy_outlet_data(
+            device_dict, legacy_devices
+        )
         assert device_dict["_id"] == "dev123"
         assert device_dict["outlet_ac_power_budget"] == 100.0
         assert "outlet_ac_power_consumption" not in device_dict
@@ -235,7 +251,9 @@ class TestMergeLegacyOutletData:
                 "ac_power_budget": 150.0,
             }
         }
-        UnifiDeviceCoordinator._merge_legacy_outlet_data(device_dict, legacy_devices)
+        UnifiInsightsDeviceCoordinator._merge_legacy_outlet_data(
+            device_dict, legacy_devices
+        )
         assert device_dict["outlet_ac_power_consumption"] == 42.5
         assert device_dict["ac_power_consumption"] == 42.5
         assert device_dict["outlet_ac_power_budget"] == 150.0
@@ -250,7 +268,9 @@ class TestMergeLegacyOutletData:
                 "outlet_table": [{"index": 1, "name": "Outlet 1", "relay_state": True}],
             }
         }
-        UnifiDeviceCoordinator._merge_legacy_outlet_data(device_dict, legacy_devices)
+        UnifiInsightsDeviceCoordinator._merge_legacy_outlet_data(
+            device_dict, legacy_devices
+        )
         assert "outlet_table" in device_dict
         assert "outlet_overrides" not in device_dict
 
@@ -264,7 +284,9 @@ class TestMergeLegacyOutletData:
                 "outlet_overrides": [{"index": 1, "name": "Override 1"}],
             }
         }
-        UnifiDeviceCoordinator._merge_legacy_outlet_data(device_dict, legacy_devices)
+        UnifiInsightsDeviceCoordinator._merge_legacy_outlet_data(
+            device_dict, legacy_devices
+        )
         assert "outlet_table" in device_dict
         assert device_dict["outlet_overrides"] == [{"index": 1, "name": "Override 1"}]
 

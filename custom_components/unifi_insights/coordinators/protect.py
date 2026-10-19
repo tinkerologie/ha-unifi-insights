@@ -55,7 +55,7 @@ from custom_components.unifi_insights.const import (
 )
 from custom_components.unifi_insights.data_transforms import get_field
 
-from .base import CommandFailure, UnifiBaseCoordinator, async_execute_command
+from .base import CommandFailure, UnifiInsightsBaseCoordinator, async_execute_command
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine, Mapping
@@ -427,7 +427,7 @@ def _normalize_epoch_seconds(value: Any) -> float | None:
     return None
 
 
-class UnifiProtectCoordinator(UnifiBaseCoordinator):
+class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
     """
     Coordinator for UniFi Protect device data (30 second updates + WebSocket).
 

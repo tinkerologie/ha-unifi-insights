@@ -17,7 +17,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER
-from .coordinators.facade import UnifiFacadeCoordinator
+from .coordinators.facade import UnifiInsightsFacadeCoordinator
 
 if TYPE_CHECKING:
     from homeassistant.helpers.device_registry import DeviceInfo
@@ -25,14 +25,14 @@ if TYPE_CHECKING:
     from homeassistant.helpers.typing import StateType
 
 
-class UnifiInnerSpaceEntity(CoordinatorEntity[UnifiFacadeCoordinator]):
+class UnifiInnerSpaceEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
     """Base class for UniFi InnerSpace entities."""
 
     _attr_has_entity_name = True
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         description: EntityDescription,
         record_id: str,
     ) -> None:
@@ -185,7 +185,7 @@ class UnifiInsightsInnerSpacePlacementSensor(UnifiInnerSpaceEntity, SensorEntity
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         description: SensorEntityDescription,
         record_id: str,
     ) -> None:
@@ -230,7 +230,7 @@ class UnifiInsightsInnerSpacePlacementSensor(UnifiInnerSpaceEntity, SensorEntity
 
 
 def _discover_innerspace_sensors(
-    coordinator: UnifiFacadeCoordinator,
+    coordinator: UnifiInsightsFacadeCoordinator,
     known_sensor_keys: set[tuple[Any, ...]],
     entities: list[SensorEntity],
 ) -> None:

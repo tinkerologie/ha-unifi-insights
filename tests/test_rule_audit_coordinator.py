@@ -1,5 +1,5 @@
 # Copyright 2026 UniFi Insights contributors
-"""Tests for rule audit integration in UnifiConfigCoordinator."""
+"""Tests for rule audit integration in UnifiInsightsConfigCoordinator."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from unifi_official_api.network.models import (
 )
 
 from custom_components.unifi_insights.coordinators.config import (
-    UnifiConfigCoordinator,
+    UnifiInsightsConfigCoordinator,
 )
 from custom_components.unifi_insights.coordinators.config_sections import (
     SECTION_OUTCOME_FAILED,
@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 @pytest.fixture
 def coordinator(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
-) -> UnifiConfigCoordinator:
+) -> UnifiInsightsConfigCoordinator:
     """Create a config coordinator with mocked network client."""
     client = _create_mock_network_client()
     site = _create_mock_model(
@@ -60,7 +60,7 @@ def coordinator(
         ("static_routes", "list_static_routes"),
     ):
         setattr(getattr(client, endpoint), method, AsyncMock(return_value=[]))
-    return UnifiConfigCoordinator(
+    return UnifiInsightsConfigCoordinator(
         hass=hass, network_client=client, protect_client=None, entry=mock_config_entry
     )
 
@@ -87,7 +87,7 @@ MODELS_BY_TYPE: dict[str, tuple[type, str]] = {
     ],
 )
 async def test_first_refresh_is_silent_then_change_is_reported(
-    coordinator: UnifiConfigCoordinator,
+    coordinator: UnifiInsightsConfigCoordinator,
     client_lister: str,
     record_id_key: str,
     rule_type: str,
@@ -131,7 +131,7 @@ async def test_first_refresh_is_silent_then_change_is_reported(
     ],
 )
 async def test_failed_or_unsupported_fetch_reports_no_deletions(
-    coordinator: UnifiConfigCoordinator, error: Exception
+    coordinator: UnifiInsightsConfigCoordinator, error: Exception
 ) -> None:
     """Failed or unsupported fetch keeps baseline and reports no deletions."""
     pf1 = _create_mock_model({"id": "pf1", "name": "Port Forward 1", "enabled": True})
@@ -154,7 +154,7 @@ async def test_failed_or_unsupported_fetch_reports_no_deletions(
 
 
 async def test_policy_based_route_failure_reports_no_deletions(
-    coordinator: UnifiConfigCoordinator,
+    coordinator: UnifiInsightsConfigCoordinator,
 ) -> None:
     """Failure fetching policy-based routes reports no spurious deletions."""
     route1 = _create_mock_model({"id": "r1", "description": "Route 1", "enabled": True})
@@ -174,7 +174,7 @@ async def test_policy_based_route_failure_reports_no_deletions(
 
 
 async def test_own_switch_toggle_is_reported(
-    coordinator: UnifiConfigCoordinator,
+    coordinator: UnifiInsightsConfigCoordinator,
 ) -> None:
     """In-place coordinator data mutation by switches still diffs correctly."""
     pf1 = _create_mock_model({"id": "pf1", "name": "Port Forward 1", "enabled": True})
@@ -199,7 +199,7 @@ async def test_own_switch_toggle_is_reported(
 
 
 async def test_audit_error_does_not_fail_the_refresh(
-    coordinator: UnifiConfigCoordinator, caplog: pytest.LogCaptureFixture
+    coordinator: UnifiInsightsConfigCoordinator, caplog: pytest.LogCaptureFixture
 ) -> None:
     """An exception in audit processing is caught and logged, not failing refresh."""
     coordinator._rule_audit.process = MagicMock(side_effect=RuntimeError("bug"))
@@ -213,7 +213,7 @@ async def test_audit_error_does_not_fail_the_refresh(
 
 
 async def test_no_sites_clears_rule_changes(
-    coordinator: UnifiConfigCoordinator,
+    coordinator: UnifiInsightsConfigCoordinator,
 ) -> None:
     """When no sites are returned, rule_changes dict is cleared."""
     pf1 = _create_mock_model({"id": "pf1", "name": "Port Forward 1", "enabled": True})
@@ -237,7 +237,7 @@ async def test_no_sites_clears_rule_changes(
 
 
 async def test_fetch_optional_section_records_outcomes(
-    coordinator: UnifiConfigCoordinator,
+    coordinator: UnifiInsightsConfigCoordinator,
 ) -> None:
     """_fetch_optional_section records ok, unsupported, and failed in outcomes."""
     outcomes: dict[tuple[str, str], str] = {}
@@ -273,7 +273,7 @@ async def test_fetch_optional_section_records_outcomes(
 
 
 async def test_empty_2xx_body_reports_no_deletions(
-    coordinator: UnifiConfigCoordinator,
+    coordinator: UnifiInsightsConfigCoordinator,
 ) -> None:
     """An empty 2xx body is not reported as every rule being deleted."""
     stub_client = MagicMock()

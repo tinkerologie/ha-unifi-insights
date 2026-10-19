@@ -22,7 +22,7 @@ from unifi_official_api.network.endpoints.vouchers import (
 from unifi_official_api.network.models.voucher import Voucher
 
 from custom_components.unifi_insights.coordinators.facade import (
-    UnifiFacadeCoordinator,
+    UnifiInsightsFacadeCoordinator,
 )
 from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
@@ -110,7 +110,7 @@ def facade(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
     mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
-) -> UnifiFacadeCoordinator:
+) -> UnifiInsightsFacadeCoordinator:
     """Create a test facade coordinator with mock children."""
     config_coord, device_coord, protect_coord, innerspace_coord = mock_sub_coordinators
     network_client = MagicMock()
@@ -118,7 +118,7 @@ def facade(
     network_client.clients.unblock = AsyncMock()
     protect_client = MagicMock()
 
-    return UnifiFacadeCoordinator(
+    return UnifiInsightsFacadeCoordinator(
         hass=hass,
         network_client=network_client,
         protect_client=protect_client,
@@ -153,7 +153,7 @@ class TestFacadeBuildInnerspaceCorrKey:
             "doorlocks": {"lock1": {"mac": "55:66:77:88:99:AA"}},
             "viewports": {"vp1": {"mac": "66:77:88:99:AA:BB"}},
         }
-        key = UnifiFacadeCoordinator._build_innerspace_corr_key(
+        key = UnifiInsightsFacadeCoordinator._build_innerspace_corr_key(
             raw_innerspace, devices, protect_data
         )
         assert isinstance(key, tuple)
@@ -165,7 +165,7 @@ class TestFacadeBuildInnerspaceCorrKey:
     def test_build_innerspace_corr_key_non_dict_inputs(self) -> None:
         """Test building correlation key with non-dict devices and protect data."""
         raw_innerspace = {"raw": 2}
-        key = UnifiFacadeCoordinator._build_innerspace_corr_key(
+        key = UnifiInsightsFacadeCoordinator._build_innerspace_corr_key(
             raw_innerspace, "not_dict", None
         )
         assert key == (id(raw_innerspace), (), ())
@@ -175,7 +175,7 @@ class TestFacadeInnerSpaceCaching:
     """Tests for InnerSpace data aggregation caching."""
 
     def test_aggregate_data_innerspace_cache_hit(
-        self, facade: UnifiFacadeCoordinator
+        self, facade: UnifiInsightsFacadeCoordinator
     ) -> None:
         """Test that repeated _aggregate_data calls reuse cached innerspace data."""
         facade._aggregate_data()
@@ -190,7 +190,7 @@ class TestFacadeAsyncRefreshChildren:
     """Tests for _async_refresh_children."""
 
     async def test_refresh_children_includes_innerspace(
-        self, facade: UnifiFacadeCoordinator, mock_sub_coordinators
+        self, facade: UnifiInsightsFacadeCoordinator, mock_sub_coordinators
     ) -> None:
         """Test _async_refresh_children with include_innerspace=True."""
         _, _, _, innerspace_coord = mock_sub_coordinators
@@ -205,7 +205,7 @@ class TestFacadeGenerateVoucher:
     """Tests for async_generate_voucher."""
 
     async def test_generate_voucher_with_rate_limits(
-        self, facade: UnifiFacadeCoordinator
+        self, facade: UnifiInsightsFacadeCoordinator
     ) -> None:
         """Test async_generate_voucher with rate limits and usage limits."""
         await facade.async_generate_voucher(
@@ -228,7 +228,7 @@ class TestFacadeGenerateVoucher:
         )
 
     async def test_generate_voucher_without_limits(
-        self, facade: UnifiFacadeCoordinator
+        self, facade: UnifiInsightsFacadeCoordinator
     ) -> None:
         """Test async_generate_voucher without optional limits."""
         await facade.async_generate_voucher(
@@ -245,7 +245,7 @@ class TestFacadeGenerateVoucher:
         )
 
     async def test_generate_voucher_passes_authorized_guest_limit(
-        self, facade: UnifiFacadeCoordinator
+        self, facade: UnifiInsightsFacadeCoordinator
     ) -> None:
         """Test async_generate_voucher passes authorized_guest_limit to create."""
         await facade.async_generate_voucher(
@@ -264,7 +264,7 @@ class TestFacadeGenerateVoucher:
         )
 
     async def test_generate_voucher_returns_created_vouchers_and_records_latest(
-        self, facade: UnifiFacadeCoordinator
+        self, facade: UnifiInsightsFacadeCoordinator
     ) -> None:
         """Test async_generate_voucher returns created vouchers and records latest."""
         v1 = Voucher.model_validate({"id": "v1", "code": "1111111111", "name": "G1"})
@@ -284,7 +284,7 @@ class TestFacadeGenerateVoucher:
         assert facade.data["latest_vouchers"]["site1"]["id"] == "v2"
 
     async def test_generate_voucher_records_last_voucher_of_a_batch(
-        self, facade: UnifiFacadeCoordinator
+        self, facade: UnifiInsightsFacadeCoordinator
     ) -> None:
         """When multiple vouchers are created, the last one is recorded as latest."""
         v1 = Voucher.model_validate({"id": "v1", "code": "1111111111", "name": "Batch"})
@@ -296,7 +296,7 @@ class TestFacadeGenerateVoucher:
         assert facade.data["latest_vouchers"]["site1"]["id"] == "v2"
 
     async def test_generate_voucher_with_unusable_result_records_nothing(
-        self, facade: UnifiFacadeCoordinator
+        self, facade: UnifiInsightsFacadeCoordinator
     ) -> None:
         """Unusable result (MagicMock) does not record latest voucher."""
         facade.network_client.vouchers.create = AsyncMock(return_value=MagicMock())
@@ -308,7 +308,7 @@ class TestFacadeGenerateVoucher:
 
     async def test_generate_voucher_refreshes_that_sites_inventory(
         self,
-        facade: UnifiFacadeCoordinator,
+        facade: UnifiInsightsFacadeCoordinator,
         mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
     ) -> None:
         """Creating a voucher triggers targeted refresh for that site."""
@@ -322,7 +322,7 @@ class TestFacadeGenerateVoucher:
 
     async def test_generate_voucher_survives_refresh_failure(
         self,
-        facade: UnifiFacadeCoordinator,
+        facade: UnifiInsightsFacadeCoordinator,
         mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
         caplog: pytest.LogCaptureFixture,
     ) -> None:
@@ -344,7 +344,7 @@ class TestFacadeGenerateVoucher:
 
     async def test_generate_voucher_validation_error_does_not_leak_code_in_logs(
         self,
-        facade: UnifiFacadeCoordinator,
+        facade: UnifiInsightsFacadeCoordinator,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Pydantic validation error does not leak code in logs."""
@@ -369,7 +369,7 @@ class TestFacadeGenerateVoucher:
 
     async def test_generate_voucher_real_endpoint_validation_error_does_not_leak_code(
         self,
-        facade: UnifiFacadeCoordinator,
+        facade: UnifiInsightsFacadeCoordinator,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Real endpoint validation failure does not leak code in logs."""
@@ -409,7 +409,7 @@ class TestFacadeGenerateVoucher:
 
     async def test_refresh_vouchers_auth_failure_starts_reauth_and_notifies(
         self,
-        facade: UnifiFacadeCoordinator,
+        facade: UnifiInsightsFacadeCoordinator,
         mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
     ) -> None:
         """A targeted voucher refresh auth failure starts reauth and notifies."""
@@ -428,7 +428,7 @@ class TestFacadeGenerateVoucher:
 
     async def test_refresh_vouchers_expected_failure_notifies(
         self,
-        facade: UnifiFacadeCoordinator,
+        facade: UnifiInsightsFacadeCoordinator,
         mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
     ) -> None:
         """Expected targeted voucher refresh errors keep the action successful."""
@@ -443,7 +443,7 @@ class TestFacadeGenerateVoucher:
 
     async def test_refresh_vouchers_unexpected_failure_propagates(
         self,
-        facade: UnifiFacadeCoordinator,
+        facade: UnifiInsightsFacadeCoordinator,
         mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
     ) -> None:
         """Unexpected targeted voucher refresh errors are not hidden."""
@@ -458,7 +458,7 @@ class TestFacadeGenerateVoucher:
 
     async def test_generate_voucher_api_error_raises_and_skips_refresh(
         self,
-        facade: UnifiFacadeCoordinator,
+        facade: UnifiInsightsFacadeCoordinator,
         mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
     ) -> None:
         """API failure raises HomeAssistantError and does not call refresh."""
@@ -474,7 +474,7 @@ class TestFacadeGenerateVoucher:
 
     async def test_delete_voucher_refreshes_and_clears_matching_latest(
         self,
-        facade: UnifiFacadeCoordinator,
+        facade: UnifiInsightsFacadeCoordinator,
         mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
     ) -> None:
         """Deleting matching voucher clears latest and refreshes inventory."""
@@ -487,7 +487,7 @@ class TestFacadeGenerateVoucher:
 
     async def test_delete_voucher_keeps_latest_of_other_voucher(
         self,
-        facade: UnifiFacadeCoordinator,
+        facade: UnifiInsightsFacadeCoordinator,
         mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
     ) -> None:
         """Deleting another voucher leaves latest intact and refreshes inventory."""
@@ -500,7 +500,7 @@ class TestFacadeGenerateVoucher:
 
     async def test_aggregate_exposes_config_vouchers(
         self,
-        facade: UnifiFacadeCoordinator,
+        facade: UnifiInsightsFacadeCoordinator,
         mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
     ) -> None:
         """Verify facade.data[vouchers] is sourced from config_coordinator."""
@@ -512,7 +512,7 @@ class TestFacadeGenerateVoucher:
 
     async def test_latest_voucher_is_refreshed_from_inventory(
         self,
-        facade: UnifiFacadeCoordinator,
+        facade: UnifiInsightsFacadeCoordinator,
         mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
     ) -> None:
         """Latest voucher updates attributes when refreshed from inventory."""
@@ -537,7 +537,7 @@ class TestFacadeGenerateVoucher:
 
     async def test_latest_voucher_is_kept_when_missing_from_inventory(
         self,
-        facade: UnifiFacadeCoordinator,
+        facade: UnifiInsightsFacadeCoordinator,
         mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
     ) -> None:
         """Latest voucher is kept in memory even if missing from polled inventory."""
@@ -549,7 +549,7 @@ class TestFacadeGenerateVoucher:
 
     async def test_latest_voucher_is_kept_when_inventory_is_not_a_mapping(
         self,
-        facade: UnifiFacadeCoordinator,
+        facade: UnifiInsightsFacadeCoordinator,
         mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
     ) -> None:
         """A malformed voucher inventory leaves the latest voucher untouched."""
@@ -561,7 +561,7 @@ class TestFacadeGenerateVoucher:
         assert facade.data["latest_vouchers"]["site1"] == latest
 
     def test_get_voucher_settings_creates_defaults_once_per_site(
-        self, facade: UnifiFacadeCoordinator
+        self, facade: UnifiInsightsFacadeCoordinator
     ) -> None:
         """get_voucher_settings returns existing or initializes default settings."""
         s1 = facade.get_voucher_settings("site1")
@@ -572,7 +572,7 @@ class TestFacadeGenerateVoucher:
 
     def test_vouchers_available_delegates_to_config_coordinator(
         self,
-        facade: UnifiFacadeCoordinator,
+        facade: UnifiInsightsFacadeCoordinator,
         mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
     ) -> None:
         """vouchers_available delegates to config_coordinator.vouchers_available."""
@@ -590,7 +590,9 @@ def test_build_innerspace_corr_key_skips_non_dict_devices() -> None:
             "cam_good": {"mac": "11:22:33:44:55:66"},
         }
     }
-    key = UnifiFacadeCoordinator._build_innerspace_corr_key({}, {}, protect_data)
+    key = UnifiInsightsFacadeCoordinator._build_innerspace_corr_key(
+        {}, {}, protect_data
+    )
     assert len(key[2]) == 1
     assert key[2][0] == ("cameras", "cam_good", "11:22:33:44:55:66")
 
@@ -600,7 +602,7 @@ class TestFacadeNetworkFacts:
 
     def test_published_facts_pass_through_by_reference(
         self,
-        facade: UnifiFacadeCoordinator,
+        facade: UnifiInsightsFacadeCoordinator,
         mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -628,7 +630,7 @@ class TestFacadeNetworkFacts:
         builder.assert_not_called()
 
     def test_unpublished_facts_fall_back_to_raw_data(
-        self, facade: UnifiFacadeCoordinator
+        self, facade: UnifiInsightsFacadeCoordinator
     ) -> None:
         """A child that never published facts still answers from raw data."""
         facade._aggregate_data()

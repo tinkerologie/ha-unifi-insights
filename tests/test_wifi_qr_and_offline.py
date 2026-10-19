@@ -13,33 +13,35 @@ from unifi_official_api.protect.models.viewer import (
     ViewerState,
 )
 
-from custom_components.unifi_insights.coordinators.config import UnifiConfigCoordinator
+from custom_components.unifi_insights.coordinators.config import (
+    UnifiInsightsConfigCoordinator,
+)
 
 
 class TestWifiQrPayload:
     """Tests for the WiFi QR connect-string builder (#49)."""
 
     def test_wpa_payload(self) -> None:
-        payload = UnifiConfigCoordinator._wifi_qr_payload(
+        payload = UnifiInsightsConfigCoordinator._wifi_qr_payload(
             "Home", "secret", "wpapsk", hidden=False
         )
         assert payload == "WIFI:T:WPA;S:Home;P:secret;;"
 
     def test_open_network_has_nopass(self) -> None:
-        payload = UnifiConfigCoordinator._wifi_qr_payload(
+        payload = UnifiInsightsConfigCoordinator._wifi_qr_payload(
             "Guest", None, "open", hidden=False
         )
         assert payload == "WIFI:T:nopass;S:Guest;;"
 
     def test_hidden_flag_and_escaping(self) -> None:
-        payload = UnifiConfigCoordinator._wifi_qr_payload(
+        payload = UnifiInsightsConfigCoordinator._wifi_qr_payload(
             "My;Net", "pa:ss", "wpapsk", hidden=True
         )
         # ';' and ':' inside values must be backslash-escaped, and H:true added.
         assert payload == r"WIFI:T:WPA;S:My\;Net;P:pa\:ss;H:true;;"
 
     def test_wep_payload(self) -> None:
-        payload = UnifiConfigCoordinator._wifi_qr_payload(
+        payload = UnifiInsightsConfigCoordinator._wifi_qr_payload(
             "Old", "k", "wep", hidden=False
         )
         assert payload.startswith("WIFI:T:WEP;")
@@ -58,7 +60,7 @@ class TestEnrichWifi:
             {"essid": "Other", "is_wired": False},
         ]
 
-        UnifiConfigCoordinator._enrich_wifi(wifi_dict, legacy, active)
+        UnifiInsightsConfigCoordinator._enrich_wifi(wifi_dict, legacy, active)
 
         wifi = wifi_dict["w1"]
         assert wifi["num_connected_clients"] == 2
@@ -67,7 +69,7 @@ class TestEnrichWifi:
 
     def test_enrich_without_matching_config(self) -> None:
         wifi_dict = {"w1": {"id": "w1", "name": "Home"}}
-        UnifiConfigCoordinator._enrich_wifi(wifi_dict, [], [])
+        UnifiInsightsConfigCoordinator._enrich_wifi(wifi_dict, [], [])
         # No secrets available, but the count key is still populated.
         assert wifi_dict["w1"]["num_connected_clients"] == 0
         assert "qr_code" not in wifi_dict["w1"]
@@ -77,14 +79,14 @@ class TestMapLegacySiteNames:
     """Tests for classic site-name resolution (#44/#49)."""
 
     def test_single_site_falls_back_to_only_legacy(self) -> None:
-        mapping = UnifiConfigCoordinator._map_legacy_site_names(
+        mapping = UnifiInsightsConfigCoordinator._map_legacy_site_names(
             {"uuid-1": {"name": "My Home"}},
             [{"name": "default", "desc": "Default"}],
         )
         assert mapping == {"uuid-1": "default"}
 
     def test_match_by_description(self) -> None:
-        mapping = UnifiConfigCoordinator._map_legacy_site_names(
+        mapping = UnifiInsightsConfigCoordinator._map_legacy_site_names(
             {"uuid-1": {"name": "HQ"}, "uuid-2": {"name": "Branch"}},
             [
                 {"name": "default", "desc": "HQ"},

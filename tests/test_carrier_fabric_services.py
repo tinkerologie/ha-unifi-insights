@@ -31,7 +31,7 @@ from custom_components.unifi_insights.const import (
 )
 from custom_components.unifi_insights.coordinators.carrier_fabric import (
     InvalidSubscriberIdError,
-    UnifiCarrierFabricCoordinator,
+    UnifiInsightsCarrierFabricCoordinator,
 )
 from custom_components.unifi_insights.services import (
     async_setup_services,
@@ -79,7 +79,7 @@ async def setup_carrier_services(hass, mock_carrier_client):
     carrier_entry.add_to_hass(hass)
     carrier_entry.mock_state(hass, ConfigEntryState.LOADED)
 
-    mock_coord = MagicMock(spec=UnifiCarrierFabricCoordinator)
+    mock_coord = MagicMock(spec=UnifiInsightsCarrierFabricCoordinator)
     mock_coord.async_suspend_subscriber = AsyncMock()
     mock_coord.async_resume_subscriber = AsyncMock()
     carrier_entry.runtime_data = CarrierFabricData(
@@ -741,8 +741,8 @@ async def test_write_conflict_retry_end_to_end(hass, setup_carrier_services):
     mock_client = setup_carrier_services["client"]
     sub_device = setup_carrier_services["sub_device"]
 
-    # Use a real UnifiCarrierFabricCoordinator
-    real_coord = UnifiCarrierFabricCoordinator(hass, mock_client, carrier_entry)
+    # Use a real UnifiInsightsCarrierFabricCoordinator
+    real_coord = UnifiInsightsCarrierFabricCoordinator(hass, mock_client, carrier_entry)
     carrier_entry.runtime_data = CarrierFabricData(
         client=mock_client,
         coordinator=real_coord,

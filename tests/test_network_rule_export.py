@@ -42,7 +42,9 @@ from custom_components.unifi_insights.const import (
     DOMAIN,
     SERVICE_EXPORT_NETWORK_RULES,
 )
-from custom_components.unifi_insights.coordinators.base import UnifiBaseCoordinator
+from custom_components.unifi_insights.coordinators.base import (
+    UnifiInsightsBaseCoordinator,
+)
 from custom_components.unifi_insights.coordinators.rule_audit import (
     RULE_TYPES,
     _export_record,
@@ -112,7 +114,7 @@ async def _build(client: MagicMock, **kwargs: Any) -> dict[str, Any]:
         client,
         _SITES,
         console=_CONSOLE,
-        is_unsupported=UnifiBaseCoordinator._is_unsupported_response,
+        is_unsupported=UnifiInsightsBaseCoordinator._is_unsupported_response,
         **options,
     )
 
@@ -455,7 +457,7 @@ async def test_malformed_site_exports_without_a_name() -> None:
         console=_CONSOLE,
         site_ids=None,
         rule_types=None,
-        is_unsupported=UnifiBaseCoordinator._is_unsupported_response,
+        is_unsupported=UnifiInsightsBaseCoordinator._is_unsupported_response,
     )
 
     site = document["sites"]["site1"]
@@ -870,7 +872,7 @@ async def _export_two_sites(
         console=_CONSOLE,
         site_ids=None,
         rule_types=None,
-        is_unsupported=UnifiBaseCoordinator._is_unsupported_response,
+        is_unsupported=UnifiInsightsBaseCoordinator._is_unsupported_response,
     )
 
 
@@ -1774,7 +1776,7 @@ async def test_service_exports_all_six_families_end_to_end(
             console=_CONSOLE,
             site_ids=site_ids,
             rule_types=rule_types,
-            is_unsupported=UnifiBaseCoordinator._is_unsupported_response,
+            is_unsupported=UnifiInsightsBaseCoordinator._is_unsupported_response,
         )
 
     coordinator = MagicMock()
@@ -1972,7 +1974,7 @@ async def test_service_empty_rule_types_exports_all(
             console=_CONSOLE,
             site_ids=site_ids,
             rule_types=rule_types,
-            is_unsupported=UnifiBaseCoordinator._is_unsupported_response,
+            is_unsupported=UnifiInsightsBaseCoordinator._is_unsupported_response,
         )
 
     coordinator = MagicMock()

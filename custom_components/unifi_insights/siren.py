@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
     from . import UnifiInsightsConfigEntry
-    from .coordinators import UnifiFacadeCoordinator
+    from .coordinators import UnifiInsightsFacadeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up sirens for UniFi Protect integration."""
     _ = hass
-    coordinator: UnifiFacadeCoordinator = entry.runtime_data.coordinator
+    coordinator: UnifiInsightsFacadeCoordinator = entry.runtime_data.coordinator
 
     # Skip if Protect API is not available
     if not coordinator.protect_client:
@@ -144,7 +144,7 @@ class UnifiProtectSiren(UnifiProtectEntity, SirenEntity):
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         siren_id: str,
     ) -> None:
         """Initialize the siren."""

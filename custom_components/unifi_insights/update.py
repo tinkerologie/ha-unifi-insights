@@ -16,7 +16,7 @@ from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, Device
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER
-from .coordinators import UnifiFacadeCoordinator
+from .coordinators import UnifiInsightsFacadeCoordinator
 from .entity import get_field
 
 if TYPE_CHECKING:
@@ -80,7 +80,9 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(async_discover_updates))
 
 
-class UnifiNetworkDeviceUpdate(CoordinatorEntity[UnifiFacadeCoordinator], UpdateEntity):
+class UnifiNetworkDeviceUpdate(
+    CoordinatorEntity[UnifiInsightsFacadeCoordinator], UpdateEntity
+):
     """Update entity for UniFi network devices."""
 
     _attr_has_entity_name = True
@@ -90,7 +92,7 @@ class UnifiNetworkDeviceUpdate(CoordinatorEntity[UnifiFacadeCoordinator], Update
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         site_id: str,
         device_id: str,
     ) -> None:

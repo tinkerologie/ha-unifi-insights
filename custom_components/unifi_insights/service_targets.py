@@ -48,12 +48,12 @@ if TYPE_CHECKING:
 
     from . import CarrierFabricConfigEntry, UnifiInsightsConfigEntry
     from .coordinators import (
-        UnifiCarrierFabricCoordinator,
-        UnifiConfigCoordinator,
-        UnifiDeviceCoordinator,
-        UnifiFacadeCoordinator,
         UnifiInsightsAccessCoordinator,
-        UnifiProtectCoordinator,
+        UnifiInsightsCarrierFabricCoordinator,
+        UnifiInsightsConfigCoordinator,
+        UnifiInsightsDeviceCoordinator,
+        UnifiInsightsFacadeCoordinator,
+        UnifiInsightsProtectCoordinator,
     )
 
 _LOGGER = logging.getLogger(__name__)
@@ -76,8 +76,8 @@ class NetworkDeviceTarget:
     """A Network device a restart or power-cycle call targets."""
 
     entry: UnifiInsightsConfigEntry
-    cache: UnifiFacadeCoordinator
-    device_commands: UnifiDeviceCoordinator
+    cache: UnifiInsightsFacadeCoordinator
+    device_commands: UnifiInsightsDeviceCoordinator
     device_id: str
     site_id: str
 
@@ -87,9 +87,9 @@ class NetworkClientTarget:
     """A Network client a reconnect or guest authorization call targets."""
 
     entry: UnifiInsightsConfigEntry
-    cache: UnifiFacadeCoordinator
-    device_commands: UnifiDeviceCoordinator
-    config_commands: UnifiConfigCoordinator
+    cache: UnifiInsightsFacadeCoordinator
+    device_commands: UnifiInsightsDeviceCoordinator
+    config_commands: UnifiInsightsConfigCoordinator
     client_id: str
     site_id: str
 
@@ -99,8 +99,8 @@ class NetworkSiteTarget:
     """The console owning a Network site, for the voucher actions."""
 
     entry: UnifiInsightsConfigEntry
-    cache: UnifiFacadeCoordinator
-    facade_commands: UnifiFacadeCoordinator
+    cache: UnifiInsightsFacadeCoordinator
+    facade_commands: UnifiInsightsFacadeCoordinator
     site_id: str
 
 
@@ -110,8 +110,8 @@ class NetworkConsoleTarget:
 
     title: str
     entry: UnifiInsightsConfigEntry
-    facade_commands: UnifiFacadeCoordinator
-    device_commands: UnifiDeviceCoordinator
+    facade_commands: UnifiInsightsFacadeCoordinator
+    device_commands: UnifiInsightsDeviceCoordinator
     site_ids: tuple[str, ...]
 
 
@@ -121,7 +121,7 @@ class ConsoleRefreshTarget:
 
     title: str
     entry: UnifiInsightsConfigEntry
-    facade_commands: UnifiFacadeCoordinator
+    facade_commands: UnifiInsightsFacadeCoordinator
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,8 +140,8 @@ class ProtectTarget:
     """A Protect camera, light, chime or viewer a call targets."""
 
     entry: UnifiInsightsConfigEntry
-    cache: UnifiFacadeCoordinator
-    protect_commands: UnifiProtectCoordinator
+    cache: UnifiInsightsFacadeCoordinator
+    protect_commands: UnifiInsightsProtectCoordinator
     resource_id: str
 
 
@@ -150,8 +150,8 @@ class ProtectConsoleTarget:
     """The Protect console of a call that names no resource."""
 
     entry: UnifiInsightsConfigEntry
-    cache: UnifiFacadeCoordinator
-    protect_commands: UnifiProtectCoordinator
+    cache: UnifiInsightsFacadeCoordinator
+    protect_commands: UnifiInsightsProtectCoordinator
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,8 +159,8 @@ class ChimePairingTarget:
     """A chime and the doorbell cameras to pair with it (empty: unpair all)."""
 
     entry: UnifiInsightsConfigEntry
-    cache: UnifiFacadeCoordinator
-    protect_commands: UnifiProtectCoordinator
+    cache: UnifiInsightsFacadeCoordinator
+    protect_commands: UnifiInsightsProtectCoordinator
     chime_id: str
     camera_ids: tuple[str, ...]
 
@@ -170,8 +170,8 @@ class RuleExportTarget:
     """The console a network rule export reads from."""
 
     entry: UnifiInsightsConfigEntry
-    cache: UnifiFacadeCoordinator
-    export_commands: UnifiFacadeCoordinator
+    cache: UnifiInsightsFacadeCoordinator
+    export_commands: UnifiInsightsFacadeCoordinator
     site_id: str | None
 
 
@@ -188,7 +188,7 @@ class CarrierSubscriberTarget:
     """A Carrier Fabric subscriber a suspend or resume call targets."""
 
     entry: CarrierFabricConfigEntry
-    carrier_commands: UnifiCarrierFabricCoordinator
+    carrier_commands: UnifiInsightsCarrierFabricCoordinator
     subscriber_id: str
 
 
@@ -422,7 +422,7 @@ def _client_records_match(records: dict[str, Any], client_id: str) -> bool:
 
 
 def _resolve_native_client_id(
-    cache: UnifiFacadeCoordinator, site_id: str, client_id: str
+    cache: UnifiInsightsFacadeCoordinator, site_id: str, client_id: str
 ) -> str:
     """Resolve a target client ID or MAC to the native cached client ID."""
     data = cache.data
@@ -1209,7 +1209,7 @@ def _resolve_chime_doorbell_camera_ids(
     doorbells: dict[str, Any] | None,
     *,
     chime_entry_id: str,
-    cache: UnifiFacadeCoordinator,
+    cache: UnifiInsightsFacadeCoordinator,
 ) -> list[str]:
     """
     Turn a ``doorbells`` target selection into the camera ids to pair.

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from custom_components.unifi_insights.coordinators.device import (
-    UnifiDeviceCoordinator,
+    UnifiInsightsDeviceCoordinator,
 )
 from custom_components.unifi_insights.sensor import (
     PORT_RATE_SENSOR_TYPES,
@@ -101,14 +101,16 @@ class TestEndToEndLegacyPortStatsPath:
         legacy_mapping = {"00:11:22:33:44:55": legacy_device}
 
         # Step 2: Merge legacy port data into device dict (no interfaces.ports)
-        UnifiDeviceCoordinator._merge_legacy_port_data(device_dict, legacy_mapping)
+        UnifiInsightsDeviceCoordinator._merge_legacy_port_data(
+            device_dict, legacy_mapping
+        )
         assert "ports" in device_dict
         assert len(device_dict["ports"]) == 3
 
         # Step 3: Run coordinator rate computation across two polls
         entry = MagicMock()
         entry.entry_id = "test_entry"
-        device_coord = UnifiDeviceCoordinator(
+        device_coord = UnifiInsightsDeviceCoordinator(
             hass=hass,
             network_client=MagicMock(),
             protect_client=MagicMock(),

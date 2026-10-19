@@ -60,14 +60,14 @@ from .const import (
     CONNECTION_TYPE_REMOTE as CONNECTION_TYPE_REMOTE,
 )
 from .coordinators import (
-    UnifiCarrierFabricCoordinator,
-    UnifiConfigCoordinator,
-    UnifiDeviceCoordinator,
-    UnifiFacadeCoordinator,
+    UnifiInsightsCarrierFabricCoordinator,
+    UnifiInsightsConfigCoordinator,
+    UnifiInsightsDeviceCoordinator,
+    UnifiInsightsFacadeCoordinator,
     UnifiInsightsInnerSpaceCoordinator,
     UnifiInsightsMobilityCoordinator,
+    UnifiInsightsProtectCoordinator,
     UnifiInsightsSiteManagerCoordinator,
-    UnifiProtectCoordinator,
 )
 from .coordinators.access import UnifiInsightsAccessCoordinator
 from .coordinators.mobility import (
@@ -103,9 +103,9 @@ if TYPE_CHECKING:
 class UnifiInsightsData:
     """Runtime data for UniFi Insights integration (Platinum multi-coordinator)."""
 
-    config_coordinator: UnifiConfigCoordinator
-    device_coordinator: UnifiDeviceCoordinator
-    protect_coordinator: UnifiProtectCoordinator | None
+    config_coordinator: UnifiInsightsConfigCoordinator
+    device_coordinator: UnifiInsightsDeviceCoordinator
+    protect_coordinator: UnifiInsightsProtectCoordinator | None
     network_client: UniFiNetworkClient
     protect_client: UniFiProtectClient | None
     innerspace_coordinator: UnifiInsightsInnerSpaceCoordinator | None = None
@@ -117,10 +117,10 @@ class UnifiInsightsData:
     access_client: UniFiAccessClient | None = None
     access_coordinator: UnifiInsightsAccessCoordinator | None = None
     # Facade coordinator for backward compatibility with entity classes
-    _facade_coordinator: UnifiFacadeCoordinator | None = None
+    _facade_coordinator: UnifiInsightsFacadeCoordinator | None = None
 
     @property
-    def coordinator(self) -> UnifiFacadeCoordinator:
+    def coordinator(self) -> UnifiInsightsFacadeCoordinator:
         """
         Return facade coordinator for backward compatibility.
 
@@ -143,7 +143,7 @@ class CarrierFabricData:
     """Runtime data for UniFi Carrier Fabric integration."""
 
     client: UniFiCarrierFabricClient
-    coordinator: UnifiCarrierFabricCoordinator
+    coordinator: UnifiInsightsCarrierFabricCoordinator
 
 
 CarrierFabricConfigEntry: TypeAlias = ConfigEntry[CarrierFabricData]  # noqa: UP040
@@ -324,7 +324,7 @@ def _raise_for_setup_probes(
 _is_console_device = is_console_device
 
 
-def _first_site_id(config_coordinator: UnifiConfigCoordinator) -> str | None:
+def _first_site_id(config_coordinator: UnifiInsightsConfigCoordinator) -> str | None:
     """Return the first non-default site ID in coordinator API order."""
     data = getattr(config_coordinator, "data", None)
     if not isinstance(data, dict):
@@ -370,7 +370,7 @@ async def _async_setup_carrier_fabric_entry(
         )
 
     # Coordinator
-    coordinator = UnifiCarrierFabricCoordinator(hass, client, entry)
+    coordinator = UnifiInsightsCarrierFabricCoordinator(hass, client, entry)
     await coordinator.async_config_entry_first_refresh()
 
     entry.runtime_data = CarrierFabricData(client=client, coordinator=coordinator)
@@ -533,7 +533,7 @@ async def async_setup_entry(
     _LOGGER.debug("Creating multi-coordinator architecture")
 
     # 1. Config coordinator - slow updates (5 minutes) for sites, WiFi
-    config_coordinator = UnifiConfigCoordinator(
+    config_coordinator = UnifiInsightsConfigCoordinator(
         hass=hass,
         network_client=network_client,
         protect_client=protect_client,
@@ -543,7 +543,7 @@ async def async_setup_entry(
     )
 
     # 2. Device coordinator - fast updates (30 seconds) for devices, stats
-    device_coordinator = UnifiDeviceCoordinator(
+    device_coordinator = UnifiInsightsDeviceCoordinator(
         hass=hass,
         network_client=network_client,
         protect_client=protect_client,
@@ -560,9 +560,9 @@ async def async_setup_entry(
     if not is_local and network_available and sites and sites[0].id:
         protect_site_id = sites[0].id
 
-    protect_coordinator: UnifiProtectCoordinator | None = None
+    protect_coordinator: UnifiInsightsProtectCoordinator | None = None
     if protect_client:
-        protect_coordinator = UnifiProtectCoordinator(
+        protect_coordinator = UnifiInsightsProtectCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
@@ -670,7 +670,7 @@ async def async_setup_entry(
 
     # Start the real-time Protect WebSocket subscription (additive to the
     # 30s poll above, which stays as the fallback - see
-    # UnifiProtectCoordinator.async_start_websocket). Registered for
+    # UnifiInsightsProtectCoordinator.async_start_websocket). Registered for
     # on-unload cleanup immediately so a setup failure later in this
     # function (e.g. platform forwarding below) can't leak the background
     # task - HA still runs async_on_unload callbacks when setup fails.
@@ -702,7 +702,7 @@ async def async_setup_entry(
 
     try:
         # The facade aggregates the optional account snapshot separately.
-        facade_coordinator = UnifiFacadeCoordinator(
+        facade_coordinator = UnifiInsightsFacadeCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
@@ -983,7 +983,9 @@ def _is_stale_mobility_identifier(
 
 
 def _is_stale_wifi_identifier(
-    identifier: str, config_coordinator: UnifiConfigCoordinator, polled: list[str]
+    identifier: str,
+    config_coordinator: UnifiInsightsConfigCoordinator,
+    polled: list[str],
 ) -> bool:
     """
     Return True if a ``wifi_{id}`` device is served by no polled site.

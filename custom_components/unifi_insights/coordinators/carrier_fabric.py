@@ -76,7 +76,7 @@ class InvalidSubscriberIdError(HomeAssistantError, ValueError):
     """Raised when a subscriber ID is not a valid UUID string."""
 
 
-class UnifiCarrierFabricCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+class UnifiInsightsCarrierFabricCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinator for UniFi Carrier Fabric API."""
 
     config_entry: ConfigEntry

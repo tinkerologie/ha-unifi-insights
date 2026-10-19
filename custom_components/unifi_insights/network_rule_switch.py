@@ -20,8 +20,8 @@ from .entity import build_site_device_info
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from .coordinators.config import UnifiConfigCoordinator
-    from .coordinators.facade import UnifiFacadeCoordinator
+    from .coordinators.config import UnifiInsightsConfigCoordinator
+    from .coordinators.facade import UnifiInsightsFacadeCoordinator
 
 
 class RuleToggleCommand(Protocol):
@@ -41,8 +41,8 @@ class UnifiInsightsNetworkRuleSwitchEntityDescription(
     unique_id_suffix: str
     name_field: str
     unnamed_translation_key: str
-    available_fn: Callable[[UnifiFacadeCoordinator, str], bool]
-    command: Callable[[UnifiConfigCoordinator], RuleToggleCommand]
+    available_fn: Callable[[UnifiInsightsFacadeCoordinator, str], bool]
+    command: Callable[[UnifiInsightsConfigCoordinator], RuleToggleCommand]
     attributes_fn: Callable[[dict[str, Any]], dict[str, Any]]
     is_hidden_fn: Callable[[dict[str, Any]], bool] | None = None
 
@@ -156,7 +156,7 @@ NETWORK_RULE_SWITCH_TYPES = (
 
 
 class UnifiInsightsNetworkRuleSwitch(
-    CoordinatorEntity["UnifiFacadeCoordinator"],
+    CoordinatorEntity["UnifiInsightsFacadeCoordinator"],
     SwitchEntity,
 ):
     """Switch to enable or disable one UniFi network rule."""
@@ -166,7 +166,7 @@ class UnifiInsightsNetworkRuleSwitch(
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         description: UnifiInsightsNetworkRuleSwitchEntityDescription,
         site_id: str,
         rule_id: str,
@@ -243,7 +243,7 @@ class UnifiInsightsNetworkRuleSwitch(
 
 
 def discover_network_rule_switches(
-    coordinator: UnifiFacadeCoordinator,
+    coordinator: UnifiInsightsFacadeCoordinator,
     known_keys: set[tuple[Any, ...]],
 ) -> list[SwitchEntity]:
     """Discover the switch entities of every network rule family."""

@@ -12,7 +12,7 @@ from unifi_official_api.exceptions import (
 )
 
 from custom_components.unifi_insights.coordinators.config import (
-    UnifiConfigCoordinator,
+    UnifiInsightsConfigCoordinator,
 )
 
 if TYPE_CHECKING:
@@ -38,7 +38,7 @@ class TestProtectOnlyPollingBehavior:
         """Test config coordinator skips sites.get_all when network unavailable."""
         network_client = _create_mock_network_client()
 
-        coordinator = UnifiConfigCoordinator(
+        coordinator = UnifiInsightsConfigCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=MagicMock(),
@@ -62,7 +62,7 @@ class TestProtectOnlyPollingBehavior:
             side_effect=UniFiResponseError("Response is not JSON", status_code=200)
         )
 
-        coordinator = UnifiConfigCoordinator(
+        coordinator = UnifiInsightsConfigCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=MagicMock(),

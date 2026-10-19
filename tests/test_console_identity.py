@@ -45,7 +45,7 @@ from custom_components.unifi_insights.const import (
     DOMAIN,
 )
 from custom_components.unifi_insights.coordinators.protect import (
-    UnifiProtectCoordinator,
+    UnifiInsightsProtectCoordinator,
 )
 from custom_components.unifi_insights.probe import ProbeResult, ProbeStatus
 from tests.conftest import device_config_entry_ids, get_device_by_identifier
@@ -1229,20 +1229,20 @@ async def test_async_setup_entry_discovers_console_identity_from_nvr(
             new_callable=AsyncMock,
         ) as mock_probe_prot,
         patch(
-            "custom_components.unifi_insights.UnifiConfigCoordinator.async_config_entry_first_refresh",
+            "custom_components.unifi_insights.UnifiInsightsConfigCoordinator.async_config_entry_first_refresh",
             new_callable=AsyncMock,
         ),
         patch(
-            "custom_components.unifi_insights.UnifiDeviceCoordinator.async_config_entry_first_refresh",
+            "custom_components.unifi_insights.UnifiInsightsDeviceCoordinator.async_config_entry_first_refresh",
             new_callable=AsyncMock,
         ),
         patch(
-            "custom_components.unifi_insights.UnifiProtectCoordinator.async_config_entry_first_refresh",
+            "custom_components.unifi_insights.UnifiInsightsProtectCoordinator.async_config_entry_first_refresh",
             autospec=True,
             side_effect=fake_protect_refresh,
         ),
         patch(
-            "custom_components.unifi_insights.UnifiProtectCoordinator.async_start_websocket",
+            "custom_components.unifi_insights.UnifiInsightsProtectCoordinator.async_start_websocket",
             new_callable=AsyncMock,
         ),
         patch(
@@ -1307,11 +1307,11 @@ async def test_async_setup_entry_discovers_console_identity_from_device_gateway(
             new_callable=AsyncMock,
         ) as mock_probe_prot,
         patch(
-            "custom_components.unifi_insights.UnifiConfigCoordinator.async_config_entry_first_refresh",
+            "custom_components.unifi_insights.UnifiInsightsConfigCoordinator.async_config_entry_first_refresh",
             new_callable=AsyncMock,
         ),
         patch(
-            "custom_components.unifi_insights.UnifiDeviceCoordinator.async_config_entry_first_refresh",
+            "custom_components.unifi_insights.UnifiInsightsDeviceCoordinator.async_config_entry_first_refresh",
             autospec=True,
             side_effect=fake_device_refresh,
         ),
@@ -1392,12 +1392,12 @@ async def test_console_identity_extra_coverage_branches(
             new_callable=AsyncMock,
         ) as mock_probe_prot,
         patch(
-            "custom_components.unifi_insights.UnifiConfigCoordinator.async_config_entry_first_refresh",
+            "custom_components.unifi_insights.UnifiInsightsConfigCoordinator.async_config_entry_first_refresh",
             autospec=True,
             side_effect=fake_config_sites,
         ),
         patch(
-            "custom_components.unifi_insights.UnifiDeviceCoordinator.async_config_entry_first_refresh",
+            "custom_components.unifi_insights.UnifiInsightsDeviceCoordinator.async_config_entry_first_refresh",
             autospec=True,
             side_effect=fake_device_data_with_non_dicts,
         ),
@@ -1419,7 +1419,7 @@ async def test_console_identity_extra_coverage_branches(
         await hass.config_entries.async_unload(entry.entry_id)
 
     # 3. Protect coordinator methods when client is None or timers already stopped
-    protect_coord = UnifiProtectCoordinator(
+    protect_coord = UnifiInsightsProtectCoordinator(
         hass,
         network_client=MagicMock(),
         protect_client=None,
@@ -1538,7 +1538,7 @@ async def test_console_identity_final_branch_coverage(
     # 1. Protect coordinator _start_sensor_reconcile_timer when timer already active
     entry = MockConfigEntry(domain=DOMAIN, data={})
     entry.add_to_hass(hass)
-    p_coord = UnifiProtectCoordinator(
+    p_coord = UnifiInsightsProtectCoordinator(
         hass, network_client=MagicMock(), protect_client=MagicMock(), entry=entry
     )
     p_coord._unsub_sensor_reconcile = MagicMock()
@@ -1716,22 +1716,22 @@ async def test_async_setup_entry_handles_malformed_coordinator_data(
             new_callable=AsyncMock,
         ) as mock_probe_prot,
         patch(
-            "custom_components.unifi_insights.UnifiConfigCoordinator.async_config_entry_first_refresh",
+            "custom_components.unifi_insights.UnifiInsightsConfigCoordinator.async_config_entry_first_refresh",
             autospec=True,
             side_effect=fake_config_sites,
         ),
         patch(
-            "custom_components.unifi_insights.UnifiDeviceCoordinator.async_config_entry_first_refresh",
+            "custom_components.unifi_insights.UnifiInsightsDeviceCoordinator.async_config_entry_first_refresh",
             autospec=True,
             side_effect=fake_device_refresh,
         ),
         patch(
-            "custom_components.unifi_insights.UnifiProtectCoordinator.async_config_entry_first_refresh",
+            "custom_components.unifi_insights.UnifiInsightsProtectCoordinator.async_config_entry_first_refresh",
             autospec=True,
             side_effect=fake_protect_refresh,
         ),
         patch(
-            "custom_components.unifi_insights.UnifiProtectCoordinator.async_start_websocket",
+            "custom_components.unifi_insights.UnifiInsightsProtectCoordinator.async_start_websocket",
             new_callable=AsyncMock,
         ),
         patch(
@@ -1793,20 +1793,20 @@ async def test_async_setup_entry_keeps_preset_console_name_from_nvr(
             new_callable=AsyncMock,
         ) as mock_probe_prot,
         patch(
-            "custom_components.unifi_insights.UnifiConfigCoordinator.async_config_entry_first_refresh",
+            "custom_components.unifi_insights.UnifiInsightsConfigCoordinator.async_config_entry_first_refresh",
             new_callable=AsyncMock,
         ),
         patch(
-            "custom_components.unifi_insights.UnifiDeviceCoordinator.async_config_entry_first_refresh",
+            "custom_components.unifi_insights.UnifiInsightsDeviceCoordinator.async_config_entry_first_refresh",
             new_callable=AsyncMock,
         ),
         patch(
-            "custom_components.unifi_insights.UnifiProtectCoordinator.async_config_entry_first_refresh",
+            "custom_components.unifi_insights.UnifiInsightsProtectCoordinator.async_config_entry_first_refresh",
             autospec=True,
             side_effect=fake_protect_refresh,
         ),
         patch(
-            "custom_components.unifi_insights.UnifiProtectCoordinator.async_start_websocket",
+            "custom_components.unifi_insights.UnifiInsightsProtectCoordinator.async_start_websocket",
             new_callable=AsyncMock,
         ),
         patch(
@@ -1871,11 +1871,11 @@ async def test_async_setup_entry_keeps_preset_console_name_from_device(
             new_callable=AsyncMock,
         ) as mock_probe_prot,
         patch(
-            "custom_components.unifi_insights.UnifiConfigCoordinator.async_config_entry_first_refresh",
+            "custom_components.unifi_insights.UnifiInsightsConfigCoordinator.async_config_entry_first_refresh",
             new_callable=AsyncMock,
         ),
         patch(
-            "custom_components.unifi_insights.UnifiDeviceCoordinator.async_config_entry_first_refresh",
+            "custom_components.unifi_insights.UnifiInsightsDeviceCoordinator.async_config_entry_first_refresh",
             autospec=True,
             side_effect=fake_device_refresh,
         ),
@@ -1929,11 +1929,11 @@ async def test_async_setup_entry_backfills_credential_identity_when_no_mac_found
             new_callable=AsyncMock,
         ) as mock_probe_prot,
         patch(
-            "custom_components.unifi_insights.UnifiConfigCoordinator.async_config_entry_first_refresh",
+            "custom_components.unifi_insights.UnifiInsightsConfigCoordinator.async_config_entry_first_refresh",
             new_callable=AsyncMock,
         ),
         patch(
-            "custom_components.unifi_insights.UnifiDeviceCoordinator.async_config_entry_first_refresh",
+            "custom_components.unifi_insights.UnifiInsightsDeviceCoordinator.async_config_entry_first_refresh",
             autospec=True,
             side_effect=fake_device_refresh,
         ),

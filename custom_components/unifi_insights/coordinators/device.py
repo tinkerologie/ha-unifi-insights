@@ -52,7 +52,7 @@ from custom_components.unifi_insights.topology import (
     normalize_mac,
 )
 
-from .base import CommandFailure, UnifiBaseCoordinator, async_execute_command
+from .base import CommandFailure, UnifiInsightsBaseCoordinator, async_execute_command
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -64,7 +64,7 @@ if TYPE_CHECKING:
 
     from custom_components.unifi_insights.data_transforms import NetworkPortFacts
 
-    from .config import UnifiConfigCoordinator
+    from .config import UnifiInsightsConfigCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -230,7 +230,7 @@ def _merge_legacy_system_stats(
 MAX_STATS_REUSE_POLLS = 3
 
 
-class UnifiDeviceCoordinator(UnifiBaseCoordinator):
+class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
     """
     Coordinator for fast-changing device data (30 second updates).
 
@@ -247,7 +247,7 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
         network_client: UniFiNetworkClient,
         protect_client: UniFiProtectClient | None,
         entry: ConfigEntry,
-        config_coordinator: UnifiConfigCoordinator,
+        config_coordinator: UnifiInsightsConfigCoordinator,
     ) -> None:
         """Initialize the device coordinator."""
         super().__init__(

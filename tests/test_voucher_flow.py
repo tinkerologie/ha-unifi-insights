@@ -30,13 +30,13 @@ from unifi_official_api.network.models.voucher import Voucher
 
 from custom_components.unifi_insights.const import DOMAIN
 from custom_components.unifi_insights.coordinators.config import (
-    UnifiConfigCoordinator,
+    UnifiInsightsConfigCoordinator,
 )
 from custom_components.unifi_insights.coordinators.device import (
-    UnifiDeviceCoordinator,
+    UnifiInsightsDeviceCoordinator,
 )
 from custom_components.unifi_insights.coordinators.facade import (
-    UnifiFacadeCoordinator,
+    UnifiInsightsFacadeCoordinator,
 )
 from custom_components.unifi_insights.data_transforms import (
     count_active_vouchers,
@@ -116,20 +116,20 @@ async def test_generate_flow_updates_inventory_and_latest_voucher(
         ]
     )
 
-    config_coord = UnifiConfigCoordinator(
+    config_coord = UnifiInsightsConfigCoordinator(
         hass=hass,
         network_client=network_client,
         protect_client=None,
         entry=entry,
     )
-    device_coord = UnifiDeviceCoordinator(
+    device_coord = UnifiInsightsDeviceCoordinator(
         hass=hass,
         network_client=network_client,
         protect_client=None,
         entry=entry,
         config_coordinator=config_coord,
     )
-    facade = UnifiFacadeCoordinator(
+    facade = UnifiInsightsFacadeCoordinator(
         hass=hass,
         network_client=network_client,
         protect_client=None,
@@ -249,20 +249,20 @@ async def test_slower_full_poll_does_not_regress_newer_targeted_refresh_state(
     network_client.vouchers = MagicMock()
     network_client.vouchers.get_all_pages = AsyncMock(side_effect=mock_get_all_pages)
 
-    config_coord = UnifiConfigCoordinator(
+    config_coord = UnifiInsightsConfigCoordinator(
         hass=hass,
         network_client=network_client,
         protect_client=None,
         entry=entry,
     )
-    device_coord = UnifiDeviceCoordinator(
+    device_coord = UnifiInsightsDeviceCoordinator(
         hass=hass,
         network_client=network_client,
         protect_client=None,
         entry=entry,
         config_coordinator=config_coord,
     )
-    facade = UnifiFacadeCoordinator(
+    facade = UnifiInsightsFacadeCoordinator(
         hass=hass,
         network_client=network_client,
         protect_client=None,
@@ -306,7 +306,9 @@ async def test_slower_full_poll_does_not_regress_newer_targeted_refresh_state(
 @pytest.fixture
 async def voucher_flow(
     hass: HomeAssistant,
-) -> AsyncGenerator[tuple[UnifiConfigCoordinator, UnifiFacadeCoordinator]]:
+) -> AsyncGenerator[
+    tuple[UnifiInsightsConfigCoordinator, UnifiInsightsFacadeCoordinator]
+]:
     """Build real coordinators with unrelated API sections mocked locally."""
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_API_KEY: "test-key"})
     client = MagicMock()
@@ -324,9 +326,9 @@ async def voucher_flow(
         ("vouchers", "get_all_pages"),
     ):
         setattr(getattr(client, endpoint), method, AsyncMock(return_value=[]))
-    config = UnifiConfigCoordinator(hass, client, None, entry)
-    device = UnifiDeviceCoordinator(hass, client, None, entry, config)
-    facade = UnifiFacadeCoordinator(
+    config = UnifiInsightsConfigCoordinator(hass, client, None, entry)
+    device = UnifiInsightsDeviceCoordinator(hass, client, None, entry, config)
+    facade = UnifiInsightsFacadeCoordinator(
         hass,
         client,
         None,
@@ -375,7 +377,7 @@ def _assert_credential_absent(
 
 
 async def test_root_validation_error_does_not_log_credential(
-    voucher_flow: tuple[UnifiConfigCoordinator, UnifiFacadeCoordinator],
+    voucher_flow: tuple[UnifiInsightsConfigCoordinator, UnifiInsightsFacadeCoordinator],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A root model error stays private through HTTP, endpoint and facade."""
@@ -398,7 +400,7 @@ async def test_root_validation_error_does_not_log_credential(
 
 
 async def test_root_validation_error_does_not_log_credential_polling(
-    voucher_flow: tuple[UnifiConfigCoordinator, UnifiFacadeCoordinator],
+    voucher_flow: tuple[UnifiInsightsConfigCoordinator, UnifiInsightsFacadeCoordinator],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A malformed root voucher preserves inventory without logging its code."""
@@ -419,7 +421,7 @@ async def test_root_validation_error_does_not_log_credential_polling(
 @pytest.mark.parametrize("method", ["GET", "POST"])
 @pytest.mark.parametrize("code", [9876543210, [9876543210], {"value": 9876543210}])
 async def test_numeric_code_does_not_log_credential(
-    voucher_flow: tuple[UnifiConfigCoordinator, UnifiFacadeCoordinator],
+    voucher_flow: tuple[UnifiInsightsConfigCoordinator, UnifiInsightsFacadeCoordinator],
     caplog: pytest.LogCaptureFixture,
     method: str,
     code: object,
@@ -458,7 +460,7 @@ async def test_numeric_code_does_not_log_credential(
     ],
 )
 async def test_malformed_voucher_body_does_not_log_credential(
-    voucher_flow: tuple[UnifiConfigCoordinator, UnifiFacadeCoordinator],
+    voucher_flow: tuple[UnifiInsightsConfigCoordinator, UnifiInsightsFacadeCoordinator],
     caplog: pytest.LogCaptureFixture,
     method: str,
     body: Any,
@@ -501,7 +503,7 @@ async def test_partial_overlap_is_incomplete(caplog: pytest.LogCaptureFixture) -
 
 
 async def test_partial_overlap_is_incomplete_coordinator(
-    voucher_flow: tuple[UnifiConfigCoordinator, UnifiFacadeCoordinator],
+    voucher_flow: tuple[UnifiInsightsConfigCoordinator, UnifiInsightsFacadeCoordinator],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Incomplete transport results keep the prior inventory and isolate failure."""
@@ -523,7 +525,7 @@ async def test_partial_overlap_is_incomplete_coordinator(
 
 async def test_real_model_refresh_does_not_redisplay_expired_qr(
     hass: HomeAssistant,
-    voucher_flow: tuple[UnifiConfigCoordinator, UnifiFacadeCoordinator],
+    voucher_flow: tuple[UnifiInsightsConfigCoordinator, UnifiInsightsFacadeCoordinator],
     freezer: Any,
 ) -> None:
     """A real model's null timestamp defaults cannot resurrect an expired QR."""
@@ -586,7 +588,7 @@ async def test_real_model_refresh_does_not_redisplay_expired_qr(
 
 @pytest.mark.parametrize("boundary", ["config", "facade"])
 async def test_root_validation_error_does_not_log_credential_sanitizers(
-    voucher_flow: tuple[UnifiConfigCoordinator, UnifiFacadeCoordinator],
+    voucher_flow: tuple[UnifiInsightsConfigCoordinator, UnifiInsightsFacadeCoordinator],
     caplog: pytest.LogCaptureFixture,
     boundary: str,
 ) -> None:
@@ -615,7 +617,7 @@ async def test_root_validation_error_does_not_log_credential_sanitizers(
 
 
 async def test_voucher_inventory_skips_records_without_id(
-    voucher_flow: tuple[UnifiConfigCoordinator, UnifiFacadeCoordinator],
+    voucher_flow: tuple[UnifiInsightsConfigCoordinator, UnifiInsightsFacadeCoordinator],
 ) -> None:
     """Voucher records lacking an id are not stored in the inventory."""
     config, _ = voucher_flow
@@ -629,7 +631,7 @@ async def test_voucher_inventory_skips_records_without_id(
 
 
 async def test_stale_targeted_voucher_refresh_is_discarded(
-    voucher_flow: tuple[UnifiConfigCoordinator, UnifiFacadeCoordinator],
+    voucher_flow: tuple[UnifiInsightsConfigCoordinator, UnifiInsightsFacadeCoordinator],
 ) -> None:
     """A slower, older targeted refresh cannot overwrite a newer inventory."""
     config, _ = voucher_flow
@@ -662,7 +664,7 @@ async def test_stale_targeted_voucher_refresh_is_discarded(
 
 
 async def test_stale_full_poll_keeps_newer_voucher_failure(
-    voucher_flow: tuple[UnifiConfigCoordinator, UnifiFacadeCoordinator],
+    voucher_flow: tuple[UnifiInsightsConfigCoordinator, UnifiInsightsFacadeCoordinator],
 ) -> None:
     """A stale full poll does not clear a newer targeted refresh's failure."""
     config, _ = voucher_flow

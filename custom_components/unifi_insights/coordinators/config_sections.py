@@ -1,5 +1,5 @@
 # Copyright 2026 UniFi Insights contributors
-"""Site configuration and legacy section helpers for UnifiConfigCoordinator."""
+"""Site configuration and legacy section helpers for UnifiInsightsConfigCoordinator."""
 
 from __future__ import annotations
 

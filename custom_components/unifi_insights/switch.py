@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
     from . import UnifiInsightsConfigEntry
-    from .coordinators import UnifiFacadeCoordinator
+    from .coordinators import UnifiInsightsFacadeCoordinator
     from .coordinators.access import EmergencyMode, UnifiInsightsAccessCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -72,7 +72,9 @@ def _get_firewall_rule_action(rule_data: dict[str, Any]) -> str | None:
     return str(action) if action is not None else None
 
 
-def _resolve_site_name(coordinator: UnifiFacadeCoordinator, site_id: str) -> str:
+def _resolve_site_name(
+    coordinator: UnifiInsightsFacadeCoordinator, site_id: str
+) -> str:
     """Resolve human-readable site name from coordinator data."""
     site_data = coordinator.data.get("sites", {}).get(site_id, {})
     meta = site_data.get("meta", {})
@@ -84,7 +86,7 @@ def _resolve_site_name(coordinator: UnifiFacadeCoordinator, site_id: str) -> str
 
 
 def _stale_switch_unique_ids(
-    coordinator: UnifiFacadeCoordinator,
+    coordinator: UnifiInsightsFacadeCoordinator,
     reg_entries: list[er.RegistryEntry],
     *,
     unique_id_suffix: str,
@@ -190,7 +192,7 @@ def _stale_switch_unique_ids(
 def _prune_orphaned_switch_entities(
     hass: HomeAssistant,
     entry: UnifiInsightsConfigEntry,
-    coordinator: UnifiFacadeCoordinator,
+    coordinator: UnifiInsightsFacadeCoordinator,
 ) -> None:
     """
     Remove registry rows for rule switches whose rule no longer exists.
@@ -355,7 +357,7 @@ async def async_setup_entry(
     """Set up switches for UniFi Insights integration."""
     # Access is set up before the Protect-dependent switches below.
     async_setup_access_switches(entry, async_add_entities)
-    coordinator: UnifiFacadeCoordinator = entry.runtime_data.coordinator
+    coordinator: UnifiInsightsFacadeCoordinator = entry.runtime_data.coordinator
     client_control = entry.options.get(CONF_CLIENT_CONTROL, DEFAULT_CLIENT_CONTROL)
 
     # Remove orphaned client block switches when client control is disabled.
@@ -637,7 +639,7 @@ async def async_setup_entry(
 
 
 class UnifiFirewallRuleSwitch(
-    CoordinatorEntity["UnifiFacadeCoordinator"], SwitchEntity
+    CoordinatorEntity["UnifiInsightsFacadeCoordinator"], SwitchEntity
 ):
     """Switch to enable or disable a user-defined firewall rule."""
 
@@ -646,7 +648,7 @@ class UnifiFirewallRuleSwitch(
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         site_id: str,
         rule_id: str,
     ) -> None:
@@ -748,7 +750,7 @@ class UnifiFirewallRuleSwitch(
 
 
 class UnifiInsightsPolicyBasedRouteSwitch(
-    CoordinatorEntity["UnifiFacadeCoordinator"], SwitchEntity
+    CoordinatorEntity["UnifiInsightsFacadeCoordinator"], SwitchEntity
 ):
     """Switch to enable or disable a policy-based route (traffic route)."""
 
@@ -757,7 +759,7 @@ class UnifiInsightsPolicyBasedRouteSwitch(
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         site_id: str,
         route_id: str,
     ) -> None:
@@ -917,7 +919,7 @@ class UnifiInsightsPolicyBasedRouteSwitch(
 
 
 class UnifiInsightsVpnClientSwitch(
-    CoordinatorEntity["UnifiFacadeCoordinator"], SwitchEntity
+    CoordinatorEntity["UnifiInsightsFacadeCoordinator"], SwitchEntity
 ):
     """Switch to enable or disable a UniFi VPN Client network connection."""
 
@@ -926,7 +928,7 @@ class UnifiInsightsVpnClientSwitch(
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         site_id: str,
         client_id: str,
     ) -> None:
@@ -1041,7 +1043,7 @@ class UnifiProtectStatusLightSwitch(UnifiProtectEntity, SwitchEntity):
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         camera_id: str,
     ) -> None:
         """Initialize the switch."""
@@ -1102,7 +1104,7 @@ class UnifiProtectHighFPSSwitch(UnifiProtectEntity, SwitchEntity):
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         camera_id: str,
     ) -> None:
         """Initialize the switch."""
@@ -1154,7 +1156,9 @@ class UnifiProtectHighFPSSwitch(UnifiProtectEntity, SwitchEntity):
         )
 
 
-class UnifiClientBlockSwitch(CoordinatorEntity["UnifiFacadeCoordinator"], SwitchEntity):
+class UnifiClientBlockSwitch(
+    CoordinatorEntity["UnifiInsightsFacadeCoordinator"], SwitchEntity
+):
     """
     Switch to allow/block a network client.
 
@@ -1167,7 +1171,7 @@ class UnifiClientBlockSwitch(CoordinatorEntity["UnifiFacadeCoordinator"], Switch
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         site_id: str,
         client_id: str,
     ) -> None:
@@ -1260,7 +1264,9 @@ class UnifiClientBlockSwitch(CoordinatorEntity["UnifiFacadeCoordinator"], Switch
         )
 
 
-class UnifiWifiSwitch(CoordinatorEntity["UnifiFacadeCoordinator"], SwitchEntity):
+class UnifiWifiSwitch(
+    CoordinatorEntity["UnifiInsightsFacadeCoordinator"], SwitchEntity
+):
     """Switch to enable/disable a WiFi network."""
 
     _attr_has_entity_name = True
@@ -1268,7 +1274,7 @@ class UnifiWifiSwitch(CoordinatorEntity["UnifiFacadeCoordinator"], SwitchEntity)
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         site_id: str,
         wifi_id: str,
         wifi_data: dict[str, Any],
@@ -1361,7 +1367,9 @@ class UnifiWifiSwitch(CoordinatorEntity["UnifiFacadeCoordinator"], SwitchEntity)
         )
 
 
-class UnifiOutletSwitch(CoordinatorEntity["UnifiFacadeCoordinator"], SwitchEntity):
+class UnifiOutletSwitch(
+    CoordinatorEntity["UnifiInsightsFacadeCoordinator"], SwitchEntity
+):
     """Per-outlet relay switch for UniFi PDU and smart power strip devices."""
 
     _attr_has_entity_name = True
@@ -1369,7 +1377,7 @@ class UnifiOutletSwitch(CoordinatorEntity["UnifiFacadeCoordinator"], SwitchEntit
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         site_id: str,
         device_id: str,
         outlet_index: int,
@@ -1493,7 +1501,9 @@ class UnifiOutletSwitch(CoordinatorEntity["UnifiFacadeCoordinator"], SwitchEntit
         )
 
 
-class UnifiOutletCycleSwitch(CoordinatorEntity["UnifiFacadeCoordinator"], SwitchEntity):
+class UnifiOutletCycleSwitch(
+    CoordinatorEntity["UnifiInsightsFacadeCoordinator"], SwitchEntity
+):
     """Switch to enable or disable automatic modem power cycling for a PDU outlet."""
 
     _attr_has_entity_name = True
@@ -1502,7 +1512,7 @@ class UnifiOutletCycleSwitch(CoordinatorEntity["UnifiFacadeCoordinator"], Switch
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         site_id: str,
         device_id: str,
         outlet_index: int,

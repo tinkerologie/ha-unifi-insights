@@ -144,7 +144,7 @@ def normalize_mac(value: Any) -> str | None:
     topology node-id HMAC. Four identity-specific policies deliberately stay
     separate because they feed stored or user-facing identities:
     ``console_identity.normalize_mac`` (stored console ids),
-    ``UnifiDeviceCoordinator._normalize_mac`` (exact legacy key matching),
+    ``UnifiInsightsDeviceCoordinator._normalize_mac`` (exact legacy key matching),
     ``innerspace_transforms._normalize_innerspace_mac`` (dotted InnerSpace
     MACs) and ``services._mac_key`` (MACs typed into action calls).
     """

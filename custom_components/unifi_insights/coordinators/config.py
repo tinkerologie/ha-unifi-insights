@@ -30,7 +30,7 @@ from custom_components.unifi_insights.const import (
     SCAN_INTERVAL_CONFIG,
 )
 
-from .base import CommandFailure, UnifiBaseCoordinator, async_execute_command
+from .base import CommandFailure, UnifiInsightsBaseCoordinator, async_execute_command
 from .config_sections import (
     SECTION_OUTCOME_FAILED,
     SECTION_OUTCOME_OK,
@@ -64,7 +64,7 @@ __all__ = [
     "WINDOW_1H_MS",
     "WINDOW_1M_MS",
     "WINDOW_1W_MS",
-    "UnifiConfigCoordinator",
+    "UnifiInsightsConfigCoordinator",
     "aggregate_internet_activity_windows",
 ]
 
@@ -96,7 +96,7 @@ RULE_REFRESH_RETRY_DELAY: Final = 15
 LEGACY_REMAP_COOLDOWN: Final = 60
 
 
-class UnifiConfigCoordinator(UnifiBaseCoordinator):
+class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
     """Coordinator for slow-changing configuration data (5 minute updates)."""
 
     _map_legacy_site_names = staticmethod(map_legacy_site_names)

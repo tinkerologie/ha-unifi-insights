@@ -76,17 +76,17 @@ Each config entry owns a set of `DataUpdateCoordinator` subclasses, one per data
 
 | Coordinator                           | Module                           | Interval         | Scope                                                     |
 | ------------------------------------- | -------------------------------- | ---------------- | --------------------------------------------------------- |
-| `UnifiConfigCoordinator`              | `coordinators/config.py`         | 5 min            | Sites, WiFi, networks, firewall, ACL, DNS, vouchers, VPN  |
-| `UnifiDeviceCoordinator`              | `coordinators/device.py`         | 30 s             | Network device and client metrics                         |
-| `UnifiProtectCoordinator`             | `coordinators/protect.py`        | 30 s + WebSocket | Cameras, lights, sensors, chimes, NVR, viewers, liveviews |
+| `UnifiInsightsConfigCoordinator`              | `coordinators/config.py`         | 5 min            | Sites, WiFi, networks, firewall, ACL, DNS, vouchers, VPN  |
+| `UnifiInsightsDeviceCoordinator`              | `coordinators/device.py`         | 30 s             | Network device and client metrics                         |
+| `UnifiInsightsProtectCoordinator`             | `coordinators/protect.py`        | 30 s + WebSocket | Cameras, lights, sensors, chimes, NVR, viewers, liveviews |
 | `UnifiInsightsAccessCoordinator`      | `coordinators/access.py`         | 30 s + webhook   | Doors, users, emergency status                            |
 | `UnifiInsightsInnerSpaceCoordinator`  | `coordinators/innerspace.py`     | 5 min            | Floor plans and placements                                |
 | `UnifiInsightsSiteManagerCoordinator` | `coordinators/site_manager.py`   | 10 min           | Cloud console and ISP metrics (shared per cloud key)      |
 | `UnifiInsightsMobilityCoordinator`    | `coordinators/mobility.py`       | 5 min (1 h idle) | Mobility workspaces and routers                           |
-| `UnifiCarrierFabricCoordinator`       | `coordinators/carrier_fabric.py` | 5 min            | Carrier Fabric organizations (standalone entry)           |
-| `UnifiFacadeCoordinator`              | `coordinators/facade.py`         | push only        | Unified read view over the coordinators above             |
+| `UnifiInsightsCarrierFabricCoordinator`       | `coordinators/carrier_fabric.py` | 5 min            | Carrier Fabric organizations (standalone entry)           |
+| `UnifiInsightsFacadeCoordinator`              | `coordinators/facade.py`         | push only        | Unified read view over the coordinators above             |
 
-All coordinators inherit `UnifiBaseCoordinator` (`coordinators/base.py`) for shared error mapping: authentication failures raise `ConfigEntryAuthFailed` (triggers reauth) and connection or server failures raise `UpdateFailed` (retry next interval).
+All coordinators inherit `UnifiInsightsBaseCoordinator` (`coordinators/base.py`) for shared error mapping: authentication failures raise `ConfigEntryAuthFailed` (triggers reauth) and connection or server failures raise `UpdateFailed` (retry next interval).
 
 The facade coordinator has no update interval. It subscribes to the specialized coordinators, aggregates their snapshots into one `data` mapping, and fans out a single listener notification. Entities and services read from the facade so they do not need to know which coordinator owns a field.
 
@@ -110,16 +110,16 @@ Every write command belongs to the coordinator that owns the data it changes (se
 - **Throughput units.** `uplink.txRateBps` and `rxRateBps` (and `tx_rate_bps`/`rx_rate_bps`) are already bits/s. Only the explicit `*_bytes_per_sec` fallbacks are multiplied by 8. Evidence on #337: same-moment samples on a UDM Pro SE and a USW Pro Max 24 read the v1 rates at 8× the legacy uplink bytes/s, a UCG-Fiber sample agreed, and a UDM Pro read 8.00× across seven devices against the legacy `stat/device` `tx_bytes-r`/`rx_bytes-r` that the UniFi UI shows rates from. The facts keep float bits/s, and the performance and internet activity payloads convert them to integers.
 - **Ports need legacy data.** The coordinator fetches only the v1 device overview, whose `interfaces` is a list of names. Port records come from the legacy `/stat/device` merge, so when that fetch fails, port sensors and SFP presence sensors lose their ports together. Each port keeps its raw index for unique IDs (SFP presence IDs use the raw spelling) and a normalized integer index for lookups.
 - **Diagnostics.** Diagnostics drop `network_facts` before redaction, because the section repeats `devices` and `stats` as frozen records that the MAC pass cannot walk.
-- **MAC policies.** `data_transforms.normalize_mac` is the canonical, validating parser and the topology HMAC input. Four identity-specific policies stay separate on purpose, because they feed stored or user-facing identities: `console_identity.normalize_mac`, `UnifiDeviceCoordinator._normalize_mac`, `innerspace_transforms._normalize_innerspace_mac` and `service_targets._mac_key`.
+- **MAC policies.** `data_transforms.normalize_mac` is the canonical, validating parser and the topology HMAC input. Four identity-specific policies stay separate on purpose, because they feed stored or user-facing identities: `console_identity.normalize_mac`, `UnifiInsightsDeviceCoordinator._normalize_mac`, `innerspace_transforms._normalize_innerspace_mac` and `service_targets._mac_key`.
 
 ### Runtime data
 
 ```python
 @dataclass
 class UnifiInsightsData:
-    config_coordinator: UnifiConfigCoordinator
-    device_coordinator: UnifiDeviceCoordinator
-    protect_coordinator: UnifiProtectCoordinator | None
+    config_coordinator: UnifiInsightsConfigCoordinator
+    device_coordinator: UnifiInsightsDeviceCoordinator
+    protect_coordinator: UnifiInsightsProtectCoordinator | None
     network_client: UniFiNetworkClient
     protect_client: UniFiProtectClient | None
     innerspace_coordinator: UnifiInsightsInnerSpaceCoordinator | None = None
@@ -138,18 +138,18 @@ Stored in `entry.runtime_data`. Carrier Fabric entries use a separate `CarrierFa
 ### Entity hierarchy
 
 ```text
-CoordinatorEntity[UnifiFacadeCoordinator]
+CoordinatorEntity[UnifiInsightsFacadeCoordinator]
   ├── UnifiInsightsEntity           # Network devices; available when coordinator.device_available
   │                                 # and the published online fact is "online"
   └── UnifiProtectEntity            # Protect devices; available when coordinator.protect_available
                                     # and state == "CONNECTED"
 CoordinatorEntity[UnifiInsightsAccessCoordinator]
   └── UnifiAccessEntity → UnifiAccessDoorEntity
-CoordinatorEntity[UnifiFacadeCoordinator]
+CoordinatorEntity[UnifiInsightsFacadeCoordinator]
   └── UnifiInnerSpaceEntity
 CoordinatorEntity[UnifiInsightsMobilityCoordinator]
   └── UnifiMobilityRouterEntity
-CoordinatorEntity[UnifiCarrierFabricCoordinator]
+CoordinatorEntity[UnifiInsightsCarrierFabricCoordinator]
   └── UnifiCarrierFabricEntity → UnifiCarrierFabricSubscriberEntity
 ```
 
@@ -218,7 +218,7 @@ Six Lovelace cards are built from `frontend/src/` with Vite into `custom_compone
    └───────────┘   └──────────────┘   └─────────────────────┘
 ```
 
-Carrier Fabric entries run a single `UnifiCarrierFabricCoordinator` feeding the sensor platform directly.
+Carrier Fabric entries run a single `UnifiInsightsCarrierFabricCoordinator` feeding the sensor platform directly.
 
 ## Key design decisions
 

@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
     from . import UnifiInsightsConfigEntry
-    from .coordinators import UnifiFacadeCoordinator
+    from .coordinators import UnifiInsightsFacadeCoordinator
     from .coordinators.access import UnifiInsightsAccessCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -374,7 +374,7 @@ def _is_doorbell_camera(camera_data: dict[str, Any]) -> bool:
 
 
 class UnifiProtectDoorbellEventEntity(
-    CoordinatorEntity["UnifiFacadeCoordinator"],
+    CoordinatorEntity["UnifiInsightsFacadeCoordinator"],
     EventEntity,
 ):
     """Event entity for UniFi Protect doorbell ring events."""
@@ -386,7 +386,7 @@ class UnifiProtectDoorbellEventEntity(
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         device_id: str,
     ) -> None:
         """Initialize the event entity."""
@@ -448,7 +448,7 @@ class UnifiProtectDoorbellEventEntity(
 
 
 class UnifiProtectSmartDetectEventEntity(
-    CoordinatorEntity["UnifiFacadeCoordinator"],
+    CoordinatorEntity["UnifiInsightsFacadeCoordinator"],
     EventEntity,
 ):
     """Event entity for UniFi Protect smart detection events."""
@@ -466,7 +466,7 @@ class UnifiProtectSmartDetectEventEntity(
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         device_id: str,
     ) -> None:
         """Initialize the event entity."""
@@ -542,7 +542,7 @@ class UnifiProtectSmartDetectEventEntity(
 
 
 class UnifiProtectSensorEventEntity(
-    CoordinatorEntity["UnifiFacadeCoordinator"],
+    CoordinatorEntity["UnifiInsightsFacadeCoordinator"],
     EventEntity,
 ):
     """Event entity for UniFi Protect sensor open/close events."""
@@ -556,7 +556,7 @@ class UnifiProtectSensorEventEntity(
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         device_id: str,
     ) -> None:
         """Initialize the event entity."""

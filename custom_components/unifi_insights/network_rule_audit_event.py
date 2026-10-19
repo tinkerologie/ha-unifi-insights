@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
 
-    from .coordinators.facade import UnifiFacadeCoordinator
+    from .coordinators.facade import UnifiInsightsFacadeCoordinator
 
 # Translation key and unique-id suffix. It is listed in SITE_ENTITY_SUFFIXES so a
 # console identity change re-keys this entity with the other site entities.
@@ -60,7 +60,7 @@ def _event_data(change: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class UnifiInsightsNetworkRuleChangeEvent(
-    CoordinatorEntity["UnifiFacadeCoordinator"],
+    CoordinatorEntity["UnifiInsightsFacadeCoordinator"],
     EventEntity,
 ):
     """Event entity that fires once for each added, modified or deleted rule."""
@@ -71,7 +71,11 @@ class UnifiInsightsNetworkRuleChangeEvent(
     _attr_event_types: ClassVar[list[str]] = list(RULE_CHANGE_TYPES)  # type: ignore[misc]
 
     def __init__(
-        self, coordinator: UnifiFacadeCoordinator, site_id: str, *, unique_id: str
+        self,
+        coordinator: UnifiInsightsFacadeCoordinator,
+        site_id: str,
+        *,
+        unique_id: str,
     ) -> None:
         """Initialize the rule change event entity."""
         super().__init__(coordinator)
@@ -127,7 +131,7 @@ class UnifiInsightsNetworkRuleChangeEvent(
 
 
 def discover_network_rule_change_events(
-    coordinator: UnifiFacadeCoordinator,
+    coordinator: UnifiInsightsFacadeCoordinator,
     known_site_ids: set[str],
     *,
     hass: HomeAssistant,

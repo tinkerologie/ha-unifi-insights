@@ -10,7 +10,7 @@ from homeassistant.exceptions import HomeAssistantError
 from unifi_official_api import UniFiConnectionError
 
 from custom_components.unifi_insights.const import DOMAIN
-from custom_components.unifi_insights.coordinators import UnifiFacadeCoordinator
+from custom_components.unifi_insights.coordinators import UnifiInsightsFacadeCoordinator
 from tests.fixtures.command_owners import SITE_ID
 
 if TYPE_CHECKING:
@@ -67,7 +67,7 @@ async def test_require_protect_coordinator_without_protect_is_translated(
     seeded_owners: SeededOwners,
 ) -> None:
     """Without Protect the accessor raises the translated prerequisite error."""
-    facade = UnifiFacadeCoordinator(
+    facade = UnifiInsightsFacadeCoordinator(
         seeded_owners.facade.hass,
         seeded_owners.network_client,
         None,

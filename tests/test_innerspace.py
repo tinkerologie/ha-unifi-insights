@@ -24,7 +24,7 @@ from unifi_official_api.innerspace.models import InnerSpaceFloorPlan
 
 from custom_components.unifi_insights import innerspace_transforms
 from custom_components.unifi_insights.const import DOMAIN
-from custom_components.unifi_insights.coordinators import UnifiFacadeCoordinator
+from custom_components.unifi_insights.coordinators import UnifiInsightsFacadeCoordinator
 from custom_components.unifi_insights.diagnostics import (
     async_get_config_entry_diagnostics,
 )
@@ -762,9 +762,9 @@ async def test_download_floor_plan_image_rejects_invalid_segments_before_request
 @pytest.mark.asyncio
 async def test_facade_coordinator_async_get_floor_plan_image() -> None:
     """Test async_get_floor_plan_image with and without client."""
-    coordinator = MagicMock(spec=UnifiFacadeCoordinator)
+    coordinator = MagicMock(spec=UnifiInsightsFacadeCoordinator)
     coordinator.innerspace_client = None
-    res_none = await UnifiFacadeCoordinator.async_get_floor_plan_image(
+    res_none = await UnifiInsightsFacadeCoordinator.async_get_floor_plan_image(
         coordinator, "fp-1", "plan.png"
     )
     assert res_none is None
@@ -773,7 +773,7 @@ async def test_facade_coordinator_async_get_floor_plan_image() -> None:
     mock_client.download_floor_plan_image.return_value = (b"bytes", "image/png")
     coordinator.innerspace_client = mock_client
 
-    res = await UnifiFacadeCoordinator.async_get_floor_plan_image(
+    res = await UnifiInsightsFacadeCoordinator.async_get_floor_plan_image(
         coordinator, "fp-1", "plan.png"
     )
     assert res == (b"bytes", "image/png")

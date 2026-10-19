@@ -38,11 +38,11 @@ from custom_components.unifi_insights.const import (
     DOMAIN,
 )
 from custom_components.unifi_insights.coordinators import (
-    UnifiCarrierFabricCoordinator,
-    UnifiConfigCoordinator,
-    UnifiDeviceCoordinator,
     UnifiInsightsAccessCoordinator,
-    UnifiProtectCoordinator,
+    UnifiInsightsCarrierFabricCoordinator,
+    UnifiInsightsConfigCoordinator,
+    UnifiInsightsDeviceCoordinator,
+    UnifiInsightsProtectCoordinator,
 )
 from custom_components.unifi_insights.service_targets import (
     AccessTarget,
@@ -97,10 +97,14 @@ def _facade(data: dict[str, Any], *, protect: bool = False) -> MagicMock:
     """Return a facade read view whose command owners are autospecced."""
     facade = MagicMock()
     facade.data = data
-    facade.device_coordinator = create_autospec(UnifiDeviceCoordinator, instance=True)
-    facade.config_coordinator = create_autospec(UnifiConfigCoordinator, instance=True)
+    facade.device_coordinator = create_autospec(
+        UnifiInsightsDeviceCoordinator, instance=True
+    )
+    facade.config_coordinator = create_autospec(
+        UnifiInsightsConfigCoordinator, instance=True
+    )
     facade.require_protect_coordinator.return_value = create_autospec(
-        UnifiProtectCoordinator, instance=True
+        UnifiInsightsProtectCoordinator, instance=True
     )
     facade.protect_client = object() if protect else None
     return facade
@@ -1690,7 +1694,9 @@ def _carrier_entry(
         entry.mock_state(hass, ConfigEntryState.LOADED)
         entry.runtime_data = CarrierFabricData(
             client=MagicMock(),
-            coordinator=create_autospec(UnifiCarrierFabricCoordinator, instance=True),
+            coordinator=create_autospec(
+                UnifiInsightsCarrierFabricCoordinator, instance=True
+            ),
         )
     if subscriber is not None:
         dr.async_get(hass).async_get_or_create(

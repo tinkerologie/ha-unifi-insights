@@ -20,7 +20,7 @@ from custom_components.unifi_insights.data_transforms import (
     normalize_innerspace_snapshot,
 )
 
-from .base import UnifiBaseCoordinator
+from .base import UnifiInsightsBaseCoordinator
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -29,13 +29,13 @@ if TYPE_CHECKING:
     from unifi_official_api.network import UniFiNetworkClient
     from unifi_official_api.protect import UniFiProtectClient
 
-    from .device import UnifiDeviceCoordinator
-    from .protect import UnifiProtectCoordinator
+    from .device import UnifiInsightsDeviceCoordinator
+    from .protect import UnifiInsightsProtectCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class UnifiInsightsInnerSpaceCoordinator(UnifiBaseCoordinator):
+class UnifiInsightsInnerSpaceCoordinator(UnifiInsightsBaseCoordinator):
     """
     Coordinator for UniFi InnerSpace floor plans, placed devices, and inventory.
 
@@ -52,8 +52,8 @@ class UnifiInsightsInnerSpaceCoordinator(UnifiBaseCoordinator):
         innerspace_client: UniFiInnerSpaceClient,
         entry: ConfigEntry,
         *,
-        device_coordinator: UnifiDeviceCoordinator | None = None,
-        protect_coordinator: UnifiProtectCoordinator | None = None,
+        device_coordinator: UnifiInsightsDeviceCoordinator | None = None,
+        protect_coordinator: UnifiInsightsProtectCoordinator | None = None,
     ) -> None:
         """Initialize the InnerSpace coordinator."""
         super().__init__(

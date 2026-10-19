@@ -36,10 +36,10 @@ from custom_components.unifi_insights.const import (
     DOMAIN,
 )
 from custom_components.unifi_insights.coordinators import (
-    UnifiConfigCoordinator,
-    UnifiDeviceCoordinator,
-    UnifiFacadeCoordinator,
-    UnifiProtectCoordinator,
+    UnifiInsightsConfigCoordinator,
+    UnifiInsightsDeviceCoordinator,
+    UnifiInsightsFacadeCoordinator,
+    UnifiInsightsProtectCoordinator,
 )
 
 from .library_responses import (
@@ -175,10 +175,10 @@ class SeededOwners:
     entry: MockConfigEntry
     network_client: NonCallableMagicMock
     protect_client: NonCallableMagicMock
-    config: UnifiConfigCoordinator
-    device: UnifiDeviceCoordinator
-    protect: UnifiProtectCoordinator
-    facade: UnifiFacadeCoordinator
+    config: UnifiInsightsConfigCoordinator
+    device: UnifiInsightsDeviceCoordinator
+    protect: UnifiInsightsProtectCoordinator
+    facade: UnifiInsightsFacadeCoordinator
 
     def coordinators(self) -> Iterator[Any]:
         """Yield every owner, for refresh and shutdown."""
@@ -202,10 +202,14 @@ def build_seeded_owners(hass: HomeAssistant) -> SeededOwners:
     protect_client = autospec_client(UniFiProtectClient)
     seed_network_client(network_client)
     seed_protect_client(protect_client)
-    config = UnifiConfigCoordinator(hass, network_client, protect_client, entry)
-    device = UnifiDeviceCoordinator(hass, network_client, protect_client, entry, config)
-    protect = UnifiProtectCoordinator(hass, network_client, protect_client, entry)
-    facade = UnifiFacadeCoordinator(
+    config = UnifiInsightsConfigCoordinator(hass, network_client, protect_client, entry)
+    device = UnifiInsightsDeviceCoordinator(
+        hass, network_client, protect_client, entry, config
+    )
+    protect = UnifiInsightsProtectCoordinator(
+        hass, network_client, protect_client, entry
+    )
+    facade = UnifiInsightsFacadeCoordinator(
         hass,
         network_client,
         protect_client,
@@ -235,10 +239,14 @@ def autospec_command_owners(facade: Any) -> Any:
     The Protect owner is what ``require_protect_coordinator()`` returns
     (see `protect_owner`). Returns the facade for chaining.
     """
-    facade.config_coordinator = create_autospec(UnifiConfigCoordinator, instance=True)
-    facade.device_coordinator = create_autospec(UnifiDeviceCoordinator, instance=True)
+    facade.config_coordinator = create_autospec(
+        UnifiInsightsConfigCoordinator, instance=True
+    )
+    facade.device_coordinator = create_autospec(
+        UnifiInsightsDeviceCoordinator, instance=True
+    )
     facade.require_protect_coordinator = MagicMock(
-        return_value=create_autospec(UnifiProtectCoordinator, instance=True)
+        return_value=create_autospec(UnifiInsightsProtectCoordinator, instance=True)
     )
     return facade
 

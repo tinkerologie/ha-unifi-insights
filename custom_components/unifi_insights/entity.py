@@ -19,7 +19,7 @@ from .const import (
     DOMAIN,
     MANUFACTURER,
 )
-from .coordinators import UnifiFacadeCoordinator
+from .coordinators import UnifiInsightsFacadeCoordinator
 
 # Re-exported (see __all__): the platforms import the field helpers from here.
 from .data_transforms import (
@@ -159,14 +159,14 @@ def camera_supports_speaker(camera_data: Any) -> bool:
     return False
 
 
-class UnifiInsightsEntity(CoordinatorEntity[UnifiFacadeCoordinator]):
+class UnifiInsightsEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
     """Base class for UniFi Insights entities."""
 
     _attr_has_entity_name = True
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         description: EntityDescription,
         site_id: str,
         device_id: str,
@@ -274,14 +274,14 @@ class UnifiInsightsEntity(CoordinatorEntity[UnifiFacadeCoordinator]):
         return result if isinstance(result, dict) else None
 
 
-class UnifiProtectEntity(CoordinatorEntity[UnifiFacadeCoordinator]):
+class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
     """Base class for UniFi Protect entities."""
 
     _attr_has_entity_name = True
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         device_type: str,
         device_id: str,
         entity_type: str | None = None,

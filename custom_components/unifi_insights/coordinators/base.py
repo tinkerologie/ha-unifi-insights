@@ -143,7 +143,7 @@ async def async_execute_command[**P, T](
     return result
 
 
-class UnifiBaseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+class UnifiInsightsBaseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Base class for UniFi Insights coordinators."""
 
     config_entry: ConfigEntry

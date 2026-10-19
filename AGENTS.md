@@ -504,7 +504,7 @@ See `.github/instructions/tests.instructions.md` for comprehensive testing patte
 - **Device Discovery:** Handle dynamic device discovery as UniFi networks can change
 - **Connection Resilience:** UniFi controllers may restart or become temporarily unavailable
 - **Multiple Sites & Consoles:** Support multi-site and multi-console UniFi deployments; always scope device and coordinator lookups to the owning config entry/console
-- **Protect Integration:** Protect entities are handled separately from network devices via `UnifiProtectCoordinator` and `UnifiProtectEntity`
+- **Protect Integration:** Protect entities are handled separately from network devices via `UnifiInsightsProtectCoordinator` and `UnifiProtectEntity`
 - **camelCase Tolerance:** UniFi API uses camelCase; use `get_field()` and `first_not_none()` for field access
 - **Data Transforms:** Extend `data_transforms.py` (or `innerspace_transforms.py`) when adding new API fields
 

@@ -19,10 +19,10 @@ if TYPE_CHECKING:
     from unifi_official_api.network.models.voucher import Voucher
     from unifi_official_api.protect import UniFiProtectClient
 
-    from .config import UnifiConfigCoordinator
-    from .device import UnifiDeviceCoordinator
+    from .config import UnifiInsightsConfigCoordinator
+    from .device import UnifiInsightsDeviceCoordinator
     from .innerspace import UnifiInsightsInnerSpaceCoordinator
-    from .protect import UnifiProtectCoordinator
+    from .protect import UnifiInsightsProtectCoordinator
     from .site_manager import UnifiInsightsSiteManagerCoordinator
 
 from homeassistant.core import callback
@@ -54,7 +54,7 @@ from .rule_audit import async_build_rule_export
 _LOGGER = logging.getLogger(__name__)
 
 
-class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """
     Facade coordinator providing unified data view for backward compatibility.
 
@@ -85,10 +85,10 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         network_client: UniFiNetworkClient,
         protect_client: UniFiProtectClient | None,
         entry: ConfigEntry,
-        config_coordinator: UnifiConfigCoordinator,
+        config_coordinator: UnifiInsightsConfigCoordinator,
         *,
-        device_coordinator: UnifiDeviceCoordinator,
-        protect_coordinator: UnifiProtectCoordinator | None,
+        device_coordinator: UnifiInsightsDeviceCoordinator,
+        protect_coordinator: UnifiInsightsProtectCoordinator | None,
         innerspace_client: UniFiInnerSpaceClient | None = None,
         innerspace_coordinator: UnifiInsightsInnerSpaceCoordinator | None = None,
         site_manager_coordinator: UnifiInsightsSiteManagerCoordinator | None = None,
@@ -414,16 +414,16 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return get_site_gateway_id(self.data, site_id)
 
     @property
-    def config_coordinator(self) -> UnifiConfigCoordinator:
+    def config_coordinator(self) -> UnifiInsightsConfigCoordinator:
         """Return the owner of the rule, Wi-Fi and guest commands (ADR-010)."""
         return self._config_coordinator
 
     @property
-    def device_coordinator(self) -> UnifiDeviceCoordinator:
+    def device_coordinator(self) -> UnifiInsightsDeviceCoordinator:
         """Return the owner of the device, outlet and client commands (ADR-010)."""
         return self._device_coordinator
 
-    def require_protect_coordinator(self) -> UnifiProtectCoordinator:
+    def require_protect_coordinator(self) -> UnifiInsightsProtectCoordinator:
         """Return the owner of the Protect commands, or raise if not configured."""
         if self._protect_coordinator is None:
             raise HomeAssistantError(

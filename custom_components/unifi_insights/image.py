@@ -19,7 +19,7 @@ from unifi_official_api.exceptions import UniFiError
 
 from .console_identity import async_migrate_site_entity, resolve_console_namespace
 from .const import DOMAIN, MANUFACTURER
-from .coordinators import UnifiFacadeCoordinator
+from .coordinators import UnifiInsightsFacadeCoordinator
 from .data_transforms import (
     _field,
     latest_voucher_qr_payload,
@@ -148,7 +148,9 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(async_discover_images))
 
 
-class UnifiWifiQrCodeImage(CoordinatorEntity[UnifiFacadeCoordinator], ImageEntity):
+class UnifiWifiQrCodeImage(
+    CoordinatorEntity[UnifiInsightsFacadeCoordinator], ImageEntity
+):
     """A QR code image that joins a device to a WiFi network."""
 
     _attr_has_entity_name = True
@@ -158,7 +160,7 @@ class UnifiWifiQrCodeImage(CoordinatorEntity[UnifiFacadeCoordinator], ImageEntit
     def __init__(
         self,
         hass: HomeAssistant,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         site_id: str,
         wifi_id: str,
     ) -> None:
@@ -231,7 +233,9 @@ class UnifiWifiQrCodeImage(CoordinatorEntity[UnifiFacadeCoordinator], ImageEntit
         return self._cached_png
 
 
-class UnifiFloorPlanImage(CoordinatorEntity[UnifiFacadeCoordinator], ImageEntity):
+class UnifiFloorPlanImage(
+    CoordinatorEntity[UnifiInsightsFacadeCoordinator], ImageEntity
+):
     """An image entity representing a UniFi InnerSpace floor plan."""
 
     _attr_has_entity_name = True
@@ -240,7 +244,7 @@ class UnifiFloorPlanImage(CoordinatorEntity[UnifiFacadeCoordinator], ImageEntity
     def __init__(
         self,
         hass: HomeAssistant,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         plan_id: str,
     ) -> None:
         """Initialize the floor plan image entity."""
@@ -440,7 +444,9 @@ class UnifiFloorPlanImage(CoordinatorEntity[UnifiFacadeCoordinator], ImageEntity
         return self._cached_bytes
 
 
-class UnifiVoucherQrCodeImage(CoordinatorEntity[UnifiFacadeCoordinator], ImageEntity):
+class UnifiVoucherQrCodeImage(
+    CoordinatorEntity[UnifiInsightsFacadeCoordinator], ImageEntity
+):
     """
     QR code of the latest generated hotspot voucher code.
 
@@ -455,7 +461,7 @@ class UnifiVoucherQrCodeImage(CoordinatorEntity[UnifiFacadeCoordinator], ImageEn
     def __init__(
         self,
         hass: HomeAssistant,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         site_id: str,
         *,
         unique_id: str,

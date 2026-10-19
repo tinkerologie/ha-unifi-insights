@@ -27,7 +27,7 @@ from custom_components.unifi_insights.const import (
     CONF_ACCESS_WEBHOOK_SECRET,
 )
 from custom_components.unifi_insights.coordinators.config import (
-    UnifiConfigCoordinator,
+    UnifiInsightsConfigCoordinator,
 )
 from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
@@ -169,7 +169,7 @@ async def test_diagnostics_redacts_wifi_qr_code(
 ) -> None:
     """Test diagnostics does not disclose password-bearing Wi-Fi QR payloads."""
     wifi = {"wifi-1": {"name": "Test WiFi"}}
-    UnifiConfigCoordinator._enrich_wifi(
+    UnifiInsightsConfigCoordinator._enrich_wifi(
         wifi,
         [
             {

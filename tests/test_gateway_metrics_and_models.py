@@ -15,7 +15,7 @@ from custom_components.unifi_insights.const import (
     GATEWAY_MODEL_PREFIXES,
 )
 from custom_components.unifi_insights.coordinators.device import (
-    UnifiDeviceCoordinator,
+    UnifiInsightsDeviceCoordinator,
     _legacy_system_stats,
     _merge_legacy_system_stats,
 )
@@ -117,7 +117,7 @@ class TestLegacyDeviceStatsExtraction:
         entry.entry_id = "test_entry"
         config_coordinator = MagicMock()
 
-        coordinator = UnifiDeviceCoordinator(
+        coordinator = UnifiInsightsDeviceCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,

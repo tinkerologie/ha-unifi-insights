@@ -21,7 +21,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .console_identity import async_migrate_site_entity
-from .coordinators import UnifiFacadeCoordinator
+from .coordinators import UnifiInsightsFacadeCoordinator
 from .entity import build_site_device_info
 
 
@@ -166,7 +166,7 @@ SITE_INTERNET_ACTIVITY_SENSOR_TYPES: tuple[
 
 
 class UnifiSiteInternetActivitySensor(
-    CoordinatorEntity[UnifiFacadeCoordinator], SensorEntity
+    CoordinatorEntity[UnifiInsightsFacadeCoordinator], SensorEntity
 ):
     """Sensor showing historical WAN download/upload bytes for a UniFi site."""
 
@@ -175,7 +175,7 @@ class UnifiSiteInternetActivitySensor(
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         description: UnifiSiteInternetActivitySensorEntityDescription,
         site_id: str,
         *,
@@ -247,7 +247,7 @@ class UnifiSiteInternetActivitySensor(
 
 
 def _discover_site_internet_activity_sensors(
-    coordinator: UnifiFacadeCoordinator,
+    coordinator: UnifiInsightsFacadeCoordinator,
     known_sensor_keys: set[tuple[str, ...]],
     *,
     hass: HomeAssistant,

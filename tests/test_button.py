@@ -44,7 +44,7 @@ from custom_components.unifi_insights.const import (
     MANUFACTURER,
 )
 from custom_components.unifi_insights.coordinators.facade import (
-    UnifiFacadeCoordinator,
+    UnifiInsightsFacadeCoordinator,
 )
 from custom_components.unifi_insights.data_transforms import (
     VoucherSettings,
@@ -1811,7 +1811,7 @@ class TestGenerateVoucherButton:
         config_coord.vouchers_available.return_value = True
         config_coord.async_refresh_vouchers = AsyncMock()
 
-        facade = UnifiFacadeCoordinator(
+        facade = UnifiInsightsFacadeCoordinator(
             hass=hass,
             network_client=client,
             protect_client=None,

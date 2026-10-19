@@ -1785,13 +1785,13 @@ async def test_no_mac_setup_uses_distinct_hosts_for_a_shared_site(
             AsyncMock(return_value=ProbeResult(ProbeStatus.UNSUPPORTED)),
         ),
         patch(
-            "custom_components.unifi_insights.UnifiConfigCoordinator."
+            "custom_components.unifi_insights.UnifiInsightsConfigCoordinator."
             "async_config_entry_first_refresh",
             autospec=True,
             side_effect=refresh_sites,
         ),
         patch(
-            "custom_components.unifi_insights.UnifiDeviceCoordinator."
+            "custom_components.unifi_insights.UnifiInsightsDeviceCoordinator."
             "async_config_entry_first_refresh",
             autospec=True,
             side_effect=refresh_devices,

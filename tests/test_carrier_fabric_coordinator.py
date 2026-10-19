@@ -27,7 +27,7 @@ from custom_components.unifi_insights.const import (
     DOMAIN,
 )
 from custom_components.unifi_insights.coordinators.carrier_fabric import (
-    UnifiCarrierFabricCoordinator,
+    UnifiInsightsCarrierFabricCoordinator,
 )
 
 
@@ -199,7 +199,9 @@ async def test_coordinator_data_ingestion_and_allowlist(
     mock_carrier_client.service_plans.get_all.return_value = raw_plans
     mock_carrier_client.subscribers.get_all.return_value = raw_subscribers
 
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, mock_carrier_entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(
+        hass, mock_carrier_client, mock_carrier_entry
+    )
     data = await coord._async_update_data()
 
     assert data["org_id"] == "org_123"
@@ -261,7 +263,9 @@ async def test_coordinator_refresh_auth_failed_401(
     mock_carrier_client.service_plans.get_all.side_effect = UniFiResponseError(
         status_code=401, message="Unauthorized"
     )
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, mock_carrier_entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(
+        hass, mock_carrier_client, mock_carrier_entry
+    )
     with pytest.raises(
         ConfigEntryAuthFailed, match="Carrier Fabric authentication failed"
     ):
@@ -277,7 +281,9 @@ async def test_coordinator_refresh_auth_failed_403(
         message="Forbidden",
         api_error_code="insufficient_scope",
     )
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, mock_carrier_entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(
+        hass, mock_carrier_client, mock_carrier_entry
+    )
     with pytest.raises(ConfigEntryAuthFailed, match="insufficient_scope"):
         await coord._async_update_data()
 
@@ -289,7 +295,9 @@ async def test_coordinator_refresh_rate_limited_429(
     mock_carrier_client.service_plans.get_all.side_effect = UniFiResponseError(
         status_code=429, message="Too Many Requests"
     )
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, mock_carrier_entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(
+        hass, mock_carrier_client, mock_carrier_entry
+    )
     with pytest.raises(UpdateFailed, match="Carrier Fabric API rate limited"):
         await coord._async_update_data()
 
@@ -301,7 +309,9 @@ async def test_coordinator_refresh_server_error_500(
     mock_carrier_client.service_plans.get_all.side_effect = UniFiResponseError(
         status_code=500, message="Internal Server Error"
     )
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, mock_carrier_entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(
+        hass, mock_carrier_client, mock_carrier_entry
+    )
     with pytest.raises(UpdateFailed, match="Carrier Fabric API error"):
         await coord._async_update_data()
 
@@ -313,7 +323,9 @@ async def test_coordinator_refresh_connection_error(
     mock_carrier_client.service_plans.get_all.side_effect = UniFiConnectionError(
         "Connection refused"
     )
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, mock_carrier_entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(
+        hass, mock_carrier_client, mock_carrier_entry
+    )
     with pytest.raises(UpdateFailed, match="Error connecting to Carrier Fabric API"):
         await coord._async_update_data()
 
@@ -325,7 +337,9 @@ async def test_coordinator_refresh_timeout_error(
     mock_carrier_client.service_plans.get_all.side_effect = UniFiTimeoutError(
         "Request timed out"
     )
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, mock_carrier_entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(
+        hass, mock_carrier_client, mock_carrier_entry
+    )
     with pytest.raises(UpdateFailed, match="Timeout connecting to Carrier Fabric API"):
         await coord._async_update_data()
 
@@ -334,7 +348,9 @@ async def test_coordinator_suspend_invalid_uuid(
     hass, mock_carrier_entry, mock_carrier_client
 ):
     """Test suspend validates UUID before any HTTP call."""
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, mock_carrier_entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(
+        hass, mock_carrier_client, mock_carrier_entry
+    )
     with pytest.raises(HomeAssistantError, match="Invalid subscriber ID format"):
         await coord.async_suspend_subscriber("invalid-uuid-format")
     mock_carrier_client.subscribers.suspend.assert_not_called()
@@ -344,7 +360,9 @@ async def test_coordinator_suspend_success(
     hass, mock_carrier_entry, mock_carrier_client
 ):
     """Test successful suspend calls client and refreshes coordinator."""
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, mock_carrier_entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(
+        hass, mock_carrier_client, mock_carrier_entry
+    )
     coord.async_refresh = AsyncMock()
 
     valid_id = "11111111-2222-3333-4444-555555555555"
@@ -360,7 +378,9 @@ async def test_coordinator_suspend_retry_on_write_conflict(
     hass, mock_carrier_entry, mock_carrier_client
 ):
     """Test suspend retries exactly once on write_conflict_retryable."""
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, mock_carrier_entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(
+        hass, mock_carrier_client, mock_carrier_entry
+    )
     coord.async_refresh = AsyncMock()
 
     mock_carrier_client.subscribers.suspend.side_effect = [
@@ -425,7 +445,9 @@ async def test_coordinator_suspend_typed_errors_propagate(
     hass, mock_carrier_entry, mock_carrier_client, case: ErrorCase
 ):
     """Test suspend lets typed client errors propagate without wrapping."""
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, mock_carrier_entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(
+        hass, mock_carrier_client, mock_carrier_entry
+    )
     mock_carrier_client.subscribers.suspend.side_effect = case.error_to_raise
 
     valid_id = "11111111-2222-3333-4444-555555555555"
@@ -440,7 +462,9 @@ async def test_coordinator_suspend_write_conflict_retry_exhausted_propagates(
     hass, mock_carrier_entry, mock_carrier_client
 ):
     """Test suspend retries 503 write conflict once, then propagates typed error."""
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, mock_carrier_entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(
+        hass, mock_carrier_client, mock_carrier_entry
+    )
     conflict = UniFiResponseError(
         status_code=503,
         message="Service Unavailable",
@@ -461,7 +485,9 @@ async def test_coordinator_resume_invalid_uuid(
     hass, mock_carrier_entry, mock_carrier_client
 ):
     """Test resume validates UUID before any HTTP call."""
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, mock_carrier_entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(
+        hass, mock_carrier_client, mock_carrier_entry
+    )
     with pytest.raises(HomeAssistantError, match="Invalid subscriber ID format"):
         await coord.async_resume_subscriber("invalid-uuid-format")
     mock_carrier_client.subscribers.resume.assert_not_called()
@@ -471,7 +497,9 @@ async def test_coordinator_resume_success(
     hass, mock_carrier_entry, mock_carrier_client
 ):
     """Test successful resume calls client and refreshes coordinator."""
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, mock_carrier_entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(
+        hass, mock_carrier_client, mock_carrier_entry
+    )
     coord.async_refresh = AsyncMock()
 
     valid_id = "11111111-2222-3333-4444-555555555555"
@@ -486,7 +514,9 @@ async def test_coordinator_resume_typed_errors_propagate(
     hass, mock_carrier_entry, mock_carrier_client, case: ErrorCase
 ):
     """Test resume lets typed client errors propagate without wrapping."""
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, mock_carrier_entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(
+        hass, mock_carrier_client, mock_carrier_entry
+    )
     mock_carrier_client.subscribers.resume.side_effect = case.error_to_raise
 
     valid_id = "11111111-2222-3333-4444-555555555555"
@@ -501,7 +531,9 @@ async def test_coordinator_resume_write_conflict_retry_exhausted_propagates(
     hass, mock_carrier_entry, mock_carrier_client
 ):
     """Test resume retries 503 write conflict once, then propagates typed error."""
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, mock_carrier_entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(
+        hass, mock_carrier_client, mock_carrier_entry
+    )
     conflict = UniFiResponseError(
         status_code=503,
         message="Service Unavailable",
@@ -524,7 +556,7 @@ async def test_coordinator_refresh_unexpected_unifi_error(hass, mock_carrier_cli
         domain=DOMAIN,
         data={CONF_CARRIER_ORG_ID: "org_1"},
     )
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(hass, mock_carrier_client, entry)
     mock_carrier_client.service_plans.get_all.side_effect = UniFiError("odd failure")
 
     with pytest.raises(
@@ -541,7 +573,7 @@ async def test_coordinator_refresh_programming_error_surfaces(
         domain=DOMAIN,
         data={CONF_CARRIER_ORG_ID: "org_1"},
     )
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(hass, mock_carrier_client, entry)
     mock_carrier_client.service_plans.get_all.side_effect = RuntimeError("Disk full")
 
     with pytest.raises(RuntimeError, match="Disk full"):
@@ -557,7 +589,9 @@ async def test_coordinator_matches_data_update_coordinator_contract(
     hass, mock_carrier_entry, mock_carrier_client
 ):
     """Entities and diagnostics rely on config_entry, interval and last_update_*."""
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, mock_carrier_entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(
+        hass, mock_carrier_client, mock_carrier_entry
+    )
 
     assert coord.config_entry is mock_carrier_entry
     assert coord.update_interval == CARRIER_FABRIC_SCAN_INTERVAL
@@ -581,7 +615,7 @@ async def test_coordinator_org_id_fallback_discovery(hass, mock_carrier_client):
         domain=DOMAIN,
         data={CONF_CARRIER_ORG_ID: None},
     )
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(hass, mock_carrier_client, entry)
 
     # 1. From service plan
     mock_carrier_client.service_plans.get_all.return_value = [
@@ -613,7 +647,7 @@ async def test_coordinator_org_id_unknown_when_no_resource_carries_one(
         domain=DOMAIN,
         data={CONF_CARRIER_ORG_ID: None},
     )
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(hass, mock_carrier_client, entry)
 
     # Neither the plan nor the subscribers name an organisation.
     mock_carrier_client.service_plans.get_all.return_value = [
@@ -651,7 +685,7 @@ async def test_coordinator_validate_subscriber_uuid_non_string(
         domain=DOMAIN,
         data={CONF_CARRIER_ORG_ID: "org_1"},
     )
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(hass, mock_carrier_client, entry)
 
     with pytest.raises(
         HomeAssistantError, match=r"Invalid subscriber ID \(UUID string required\)"
@@ -665,7 +699,7 @@ async def test_coordinator_resume_retry_on_write_conflict(hass, mock_carrier_cli
         domain=DOMAIN,
         data={CONF_CARRIER_ORG_ID: "org_1"},
     )
-    coord = UnifiCarrierFabricCoordinator(hass, mock_carrier_client, entry)
+    coord = UnifiInsightsCarrierFabricCoordinator(hass, mock_carrier_client, entry)
 
     valid_id = "11111111-2222-3333-4444-555555555555"
     conflict_err = UniFiResponseError(

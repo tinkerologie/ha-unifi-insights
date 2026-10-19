@@ -47,19 +47,19 @@ from custom_components.unifi_insights.coordinators.access import (
     UnifiInsightsAccessCoordinator,
 )
 from custom_components.unifi_insights.coordinators.carrier_fabric import (
-    UnifiCarrierFabricCoordinator,
+    UnifiInsightsCarrierFabricCoordinator,
 )
 from custom_components.unifi_insights.coordinators.config import (
-    UnifiConfigCoordinator,
+    UnifiInsightsConfigCoordinator,
 )
 from custom_components.unifi_insights.coordinators.device import (
-    UnifiDeviceCoordinator,
+    UnifiInsightsDeviceCoordinator,
 )
 from custom_components.unifi_insights.coordinators.facade import (
-    UnifiFacadeCoordinator,
+    UnifiInsightsFacadeCoordinator,
 )
 from custom_components.unifi_insights.coordinators.protect import (
-    UnifiProtectCoordinator,
+    UnifiInsightsProtectCoordinator,
 )
 from custom_components.unifi_insights.data_transforms import percent_to_led_level
 from custom_components.unifi_insights.service_targets import (
@@ -108,11 +108,11 @@ async def services_ready(hass: HomeAssistant) -> Any:
 
 def _real_protect_owner(
     hass: HomeAssistant, client: UniFiProtectClient
-) -> UnifiProtectCoordinator:
+) -> UnifiInsightsProtectCoordinator:
     """Return a real Protect owner over ``client`` for end-to-end service tests."""
     entry = MockConfigEntry(domain=DOMAIN, data={})
     entry.add_to_hass(hass)
-    return UnifiProtectCoordinator(hass, MagicMock(), client, entry)
+    return UnifiInsightsProtectCoordinator(hass, MagicMock(), client, entry)
 
 
 # --- Handlers: one resolved target, one owner command ----------------------
@@ -137,7 +137,7 @@ _WIRELESS_CLIENT = {
 # resolver name -> (owner class, builder of the typed result around the owner)
 _RESULTS: dict[str, tuple[type, Callable[[Any], Any]]] = {
     "resolve_network_device_call": (
-        UnifiDeviceCoordinator,
+        UnifiInsightsDeviceCoordinator,
         lambda owner: NetworkDeviceTarget(
             entry=MagicMock(),
             cache=_cache(),
@@ -147,25 +147,25 @@ _RESULTS: dict[str, tuple[type, Callable[[Any], Any]]] = {
         ),
     ),
     "resolve_network_site_call": (
-        UnifiFacadeCoordinator,
+        UnifiInsightsFacadeCoordinator,
         lambda owner: NetworkSiteTarget(
             entry=MagicMock(), cache=_cache(), facade_commands=owner, site_id="s1"
         ),
     ),
     "resolve_protect_call": (
-        UnifiProtectCoordinator,
+        UnifiInsightsProtectCoordinator,
         lambda owner: ProtectTarget(
             entry=MagicMock(), cache=_cache(), protect_commands=owner, resource_id="r1"
         ),
     ),
     "resolve_protect_console_call": (
-        UnifiProtectCoordinator,
+        UnifiInsightsProtectCoordinator,
         lambda owner: ProtectConsoleTarget(
             entry=MagicMock(), cache=_cache(), protect_commands=owner
         ),
     ),
     "resolve_chime_pairing_call": (
-        UnifiProtectCoordinator,
+        UnifiInsightsProtectCoordinator,
         lambda owner: ChimePairingTarget(
             entry=MagicMock(),
             cache=_cache(),
@@ -175,7 +175,7 @@ _RESULTS: dict[str, tuple[type, Callable[[Any], Any]]] = {
         ),
     ),
     "resolve_carrier_subscriber_call": (
-        UnifiCarrierFabricCoordinator,
+        UnifiInsightsCarrierFabricCoordinator,
         lambda owner: CarrierSubscriberTarget(
             entry=MagicMock(), carrier_commands=owner, subscriber_id=SUB_ID
         ),
@@ -191,13 +191,13 @@ def _client_result(owner_class: type) -> Callable[[Any], Any]:
     """Build a client result whose other owner must stay untouched."""
 
     def build(owner: Any) -> NetworkClientTarget:
-        device = owner if owner_class is UnifiDeviceCoordinator else None
-        config = owner if owner_class is UnifiConfigCoordinator else None
+        device = owner if owner_class is UnifiInsightsDeviceCoordinator else None
+        config = owner if owner_class is UnifiInsightsConfigCoordinator else None
         return NetworkClientTarget(
             entry=MagicMock(),
             cache=_cache(_WIRELESS_CLIENT),
-            device_commands=device or _owner(UnifiDeviceCoordinator),
-            config_commands=config or _owner(UnifiConfigCoordinator),
+            device_commands=device or _owner(UnifiInsightsDeviceCoordinator),
+            config_commands=config or _owner(UnifiInsightsConfigCoordinator),
             client_id="native",
             site_id="s1",
         )
@@ -505,9 +505,9 @@ def _patched_resolver(resolver: str) -> tuple[str, Any, Any]:
     name, _, client_owner = resolver.partition(":")
     if client_owner:
         owner_class = (
-            UnifiConfigCoordinator
+            UnifiInsightsConfigCoordinator
             if client_owner == "config"
-            else UnifiDeviceCoordinator
+            else UnifiInsightsDeviceCoordinator
         )
         owner = _owner(owner_class)
         return name, owner, _client_result(owner_class)(owner)
@@ -637,12 +637,12 @@ async def test_reconnect_needs_a_connected_wireless_client(
     placeholders: dict[str, str] | None,
 ) -> None:
     """The handler checks the resolved client in the cache before the command."""
-    device = _owner(UnifiDeviceCoordinator)
+    device = _owner(UnifiInsightsDeviceCoordinator)
     target = NetworkClientTarget(
         entry=MagicMock(),
         cache=_cache(cached),
         device_commands=device,
-        config_commands=_owner(UnifiConfigCoordinator),
+        config_commands=_owner(UnifiInsightsConfigCoordinator),
         client_id=client_id,
         site_id="s1",
     )
@@ -691,7 +691,9 @@ async def test_authorize_guest_warns_about_ignored_limits(
 def _refresh_target(title: str) -> ConsoleRefreshTarget:
     """Return one console of a refresh selection with an autospecced facade."""
     return ConsoleRefreshTarget(
-        title=title, entry=MagicMock(), facade_commands=_owner(UnifiFacadeCoordinator)
+        title=title,
+        entry=MagicMock(),
+        facade_commands=_owner(UnifiInsightsFacadeCoordinator),
     )
 
 
@@ -748,8 +750,8 @@ def _removal_console(title: str, *site_ids: str) -> NetworkConsoleTarget:
     return NetworkConsoleTarget(
         title=title,
         entry=MagicMock(),
-        facade_commands=_owner(UnifiFacadeCoordinator),
-        device_commands=_owner(UnifiDeviceCoordinator),
+        facade_commands=_owner(UnifiInsightsFacadeCoordinator),
+        device_commands=_owner(UnifiInsightsDeviceCoordinator),
         site_ids=site_ids,
     )
 
@@ -837,7 +839,7 @@ async def test_export_returns_the_document_redacted_on_request(
     hass: HomeAssistant, *, redact: bool
 ) -> None:
     """The export reads one console's rules and redacts them unless told not to."""
-    owner = _owner(UnifiFacadeCoordinator)
+    owner = _owner(UnifiInsightsFacadeCoordinator)
     document = {"sites": [{"id": "s1"}]}
     owner.async_export_network_rules.return_value = document
     target = RuleExportTarget(
@@ -867,7 +869,7 @@ async def test_export_returns_the_document_redacted_on_request(
 @pytest.mark.usefixtures("services_ready")
 async def test_export_without_sites_is_refused(hass: HomeAssistant) -> None:
     """An export of every site that finds none is a translated validation error."""
-    owner = _owner(UnifiFacadeCoordinator)
+    owner = _owner(UnifiInsightsFacadeCoordinator)
     owner.async_export_network_rules.return_value = {"sites": []}
     target = RuleExportTarget(
         entry=MagicMock(), cache=_cache(), export_commands=owner, site_id=None
@@ -1451,13 +1453,13 @@ class TestServiceCoordinatorContract:
     # Each command field of the service_targets results, and the owner class
     # it holds (ADR-010). ``cache`` is only read, never called.
     _FIELD_CLASSES: ClassVar[dict[str, type]] = {
-        "facade_commands": UnifiFacadeCoordinator,
-        "export_commands": UnifiFacadeCoordinator,
-        "device_commands": UnifiDeviceCoordinator,
-        "config_commands": UnifiConfigCoordinator,
-        "protect_commands": UnifiProtectCoordinator,
+        "facade_commands": UnifiInsightsFacadeCoordinator,
+        "export_commands": UnifiInsightsFacadeCoordinator,
+        "device_commands": UnifiInsightsDeviceCoordinator,
+        "config_commands": UnifiInsightsConfigCoordinator,
+        "protect_commands": UnifiInsightsProtectCoordinator,
         "access_commands": UnifiInsightsAccessCoordinator,
-        "carrier_commands": UnifiCarrierFabricCoordinator,
+        "carrier_commands": UnifiInsightsCarrierFabricCoordinator,
     }
 
     @staticmethod
@@ -1883,7 +1885,7 @@ class TestRemoveClientsService:
         }
         mock_config_coordinator.get_site = mock_config_coordinator.data["sites"].get
         mock_config_coordinator.resolve_legacy_site_name = (
-            UnifiConfigCoordinator.resolve_legacy_site_name.__get__(
+            UnifiInsightsConfigCoordinator.resolve_legacy_site_name.__get__(
                 mock_config_coordinator
             )
         )
@@ -1894,7 +1896,7 @@ class TestRemoveClientsService:
         mock_device_coordinator.network_client = network_client
         mock_device_coordinator.config_coordinator = mock_config_coordinator
         mock_device_coordinator.async_forget_clients_batch = (
-            UnifiDeviceCoordinator.async_forget_clients_batch.__get__(
+            UnifiInsightsDeviceCoordinator.async_forget_clients_batch.__get__(
                 mock_device_coordinator
             )
         )
@@ -1904,7 +1906,7 @@ class TestRemoveClientsService:
         entry.title = "UDM Pro"
         entry.data = {}
 
-        facade = UnifiFacadeCoordinator(
+        facade = UnifiInsightsFacadeCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=None,

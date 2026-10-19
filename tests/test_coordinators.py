@@ -70,13 +70,15 @@ from custom_components.unifi_insights.const import (
 from custom_components.unifi_insights.coordinators import (
     UnifiInsightsInnerSpaceCoordinator,
 )
-from custom_components.unifi_insights.coordinators.base import UnifiBaseCoordinator
+from custom_components.unifi_insights.coordinators.base import (
+    UnifiInsightsBaseCoordinator,
+)
 from custom_components.unifi_insights.coordinators.config import (
     WINDOW_1D_MS,
     WINDOW_1H_MS,
     WINDOW_1M_MS,
     WINDOW_1W_MS,
-    UnifiConfigCoordinator,
+    UnifiInsightsConfigCoordinator,
     aggregate_internet_activity_windows,
 )
 from custom_components.unifi_insights.coordinators.config_sections import (
@@ -93,16 +95,18 @@ from custom_components.unifi_insights.coordinators.config_sections import (
 )
 from custom_components.unifi_insights.coordinators.device import (
     MAX_STATS_REUSE_POLLS,
-    UnifiDeviceCoordinator,
+    UnifiInsightsDeviceCoordinator,
 )
-from custom_components.unifi_insights.coordinators.facade import UnifiFacadeCoordinator
+from custom_components.unifi_insights.coordinators.facade import (
+    UnifiInsightsFacadeCoordinator,
+)
 from custom_components.unifi_insights.coordinators.protect import (
     MAX_CONSECUTIVE_EMPTY_FETCHES,
     MAX_CONSECUTIVE_MISSING_POLLS,
     SIREN_STOP_GUARD_TTL,
     STALE_EVENT_TIMEOUT,
     UNSUPPORTED_RESOURCE_RETRY,
-    UnifiProtectCoordinator,
+    UnifiInsightsProtectCoordinator,
 )
 from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
@@ -397,21 +401,21 @@ def _create_mock_protect_client() -> MagicMock:
 
 
 # ============================================================================
-# UnifiBaseCoordinator Tests
+# UnifiInsightsBaseCoordinator Tests
 # ============================================================================
 
 
 class TestUnifiBaseCoordinator:
-    """Tests for UnifiBaseCoordinator."""
+    """Tests for UnifiInsightsBaseCoordinator."""
 
     @pytest.fixture
     def coordinator(
         self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
-    ) -> UnifiBaseCoordinator:
+    ) -> UnifiInsightsBaseCoordinator:
         """Create a base coordinator for testing."""
         network_client = _create_mock_network_client()
         protect_client = _create_mock_protect_client()
-        return UnifiBaseCoordinator(
+        return UnifiInsightsBaseCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
@@ -420,31 +424,33 @@ class TestUnifiBaseCoordinator:
             update_interval=timedelta(seconds=30),
         )
 
-    def test_initialization(self, coordinator: UnifiBaseCoordinator):
+    def test_initialization(self, coordinator: UnifiInsightsBaseCoordinator):
         """Test coordinator initialization."""
         assert coordinator.name == f"{DOMAIN}_test"
         assert coordinator.update_interval == timedelta(seconds=30)
         assert coordinator._available is True
         assert coordinator.data == {}
 
-    def test_available_property(self, coordinator: UnifiBaseCoordinator):
+    def test_available_property(self, coordinator: UnifiInsightsBaseCoordinator):
         """Test available property."""
         assert coordinator.available is True
         coordinator._available = False
         assert coordinator.available is False
 
-    def test_model_to_dict_with_none(self, coordinator: UnifiBaseCoordinator):
+    def test_model_to_dict_with_none(self, coordinator: UnifiInsightsBaseCoordinator):
         """Test model_to_dict with None input."""
         result = coordinator._model_to_dict(None)
         assert result == {}
 
-    def test_model_to_dict_with_dict(self, coordinator: UnifiBaseCoordinator):
+    def test_model_to_dict_with_dict(self, coordinator: UnifiInsightsBaseCoordinator):
         """Test model_to_dict with dict input."""
         input_dict = {"key": "value"}
         result = coordinator._model_to_dict(input_dict)
         assert result == input_dict
 
-    def test_model_to_dict_with_pydantic_model(self, coordinator: UnifiBaseCoordinator):
+    def test_model_to_dict_with_pydantic_model(
+        self, coordinator: UnifiInsightsBaseCoordinator
+    ):
         """Test model_to_dict with pydantic model."""
         mock_model = MagicMock()
         mock_model.model_dump = MagicMock(return_value={"id": "test", "name": "Test"})
@@ -453,7 +459,7 @@ class TestUnifiBaseCoordinator:
         mock_model.model_dump.assert_called_once_with(by_alias=True, exclude_none=False)
 
     def test_model_to_dict_with_pydantic_model_type_error(
-        self, coordinator: UnifiBaseCoordinator
+        self, coordinator: UnifiInsightsBaseCoordinator
     ):
         """Test model_to_dict fallback when by_alias raises TypeError."""
         mock_model = MagicMock()
@@ -474,7 +480,7 @@ class TestUnifiBaseCoordinator:
     )
     def test_model_to_dict_non_dict_results(
         self,
-        coordinator: UnifiBaseCoordinator,
+        coordinator: UnifiInsightsBaseCoordinator,
         side_effects: list[Any],
         expected_calls: int,
     ) -> None:
@@ -487,7 +493,9 @@ class TestUnifiBaseCoordinator:
         assert result == {}
         assert mock_model.model_dump.call_count == expected_calls
 
-    def test_model_to_dict_with_object_dict(self, coordinator: UnifiBaseCoordinator):
+    def test_model_to_dict_with_object_dict(
+        self, coordinator: UnifiInsightsBaseCoordinator
+    ):
         """Test model_to_dict with object having __dict__."""
 
         class SimpleObject:
@@ -501,33 +509,35 @@ class TestUnifiBaseCoordinator:
         assert result == {"id": "test", "name": "Test Object"}
         assert "_private" not in result
 
-    def test_model_to_dict_with_primitive(self, coordinator: UnifiBaseCoordinator):
+    def test_model_to_dict_with_primitive(
+        self, coordinator: UnifiInsightsBaseCoordinator
+    ):
         """Test model_to_dict with primitive value."""
         result = coordinator._model_to_dict("string")
         assert result == {}
 
-    def test_handle_auth_error(self, coordinator: UnifiBaseCoordinator):
+    def test_handle_auth_error(self, coordinator: UnifiInsightsBaseCoordinator):
         """Test handling authentication error."""
         err = UniFiAuthenticationError("Invalid credentials")
         with pytest.raises(ConfigEntryAuthFailed, match="Authentication failed"):
             coordinator._handle_auth_error(err)
         assert coordinator._available is False
 
-    def test_handle_connection_error(self, coordinator: UnifiBaseCoordinator):
+    def test_handle_connection_error(self, coordinator: UnifiInsightsBaseCoordinator):
         """Test handling connection error."""
         err = UniFiConnectionError("Connection refused")
         with pytest.raises(UpdateFailed, match="Error communicating with API"):
             coordinator._handle_connection_error(err)
         assert coordinator._available is False
 
-    def test_handle_timeout_error(self, coordinator: UnifiBaseCoordinator):
+    def test_handle_timeout_error(self, coordinator: UnifiInsightsBaseCoordinator):
         """Test handling timeout error."""
         err = UniFiTimeoutError("Request timed out")
         with pytest.raises(UpdateFailed, match="Timeout"):
             coordinator._handle_timeout_error(err)
         assert coordinator._available is False
 
-    def test_handle_response_error(self, coordinator: UnifiBaseCoordinator):
+    def test_handle_response_error(self, coordinator: UnifiInsightsBaseCoordinator):
         """Test handling API response error."""
         err = UniFiResponseError("Bad response", status_code=400)
         with pytest.raises(UpdateFailed, match="API error"):
@@ -557,7 +567,7 @@ class TestUnifiBaseCoordinator:
     )
     def test_handlers_leave_outage_logging_to_coordinator(
         self,
-        coordinator: UnifiBaseCoordinator,
+        coordinator: UnifiInsightsBaseCoordinator,
         caplog: pytest.LogCaptureFixture,
         handler: str,
         err: Exception,
@@ -573,7 +583,7 @@ class TestUnifiBaseCoordinator:
 
 
 # ============================================================================
-# UnifiConfigCoordinator Tests
+# UnifiInsightsConfigCoordinator Tests
 # ============================================================================
 
 
@@ -610,23 +620,23 @@ _RULE_SECTION_PARAMS = [
 
 
 class TestUnifiConfigCoordinator:
-    """Tests for UnifiConfigCoordinator."""
+    """Tests for UnifiInsightsConfigCoordinator."""
 
     @pytest.fixture
     def coordinator(
         self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
-    ) -> UnifiConfigCoordinator:
+    ) -> UnifiInsightsConfigCoordinator:
         """Create a config coordinator for testing."""
         network_client = _create_mock_network_client()
         protect_client = _create_mock_protect_client()
-        return UnifiConfigCoordinator(
+        return UnifiInsightsConfigCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
             entry=mock_config_entry,
         )
 
-    def test_initialization(self, coordinator: UnifiConfigCoordinator):
+    def test_initialization(self, coordinator: UnifiInsightsConfigCoordinator):
         """Test coordinator initialization."""
         assert coordinator.name == f"{DOMAIN}_config"
         assert coordinator.update_interval == SCAN_INTERVAL_CONFIG
@@ -637,7 +647,9 @@ class TestUnifiConfigCoordinator:
         assert "network_info" in coordinator.data
 
     @pytest.mark.asyncio
-    async def test_async_update_data_success(self, coordinator: UnifiConfigCoordinator):
+    async def test_async_update_data_success(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
         """Test successful data fetch."""
         result = await coordinator._async_update_data()
 
@@ -664,7 +676,7 @@ class TestUnifiConfigCoordinator:
             options={CONF_SITE_IDS: ["site2"]},
         )
         network_client = _create_mock_network_client()
-        coordinator = UnifiConfigCoordinator(
+        coordinator = UnifiInsightsConfigCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=None,
@@ -685,7 +697,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_prunes_per_site_maps(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ):
         """Per-site config data for a site no longer polled is dropped."""
         for key in ("wifi", "firewall_rules", "policy_based_routes", "vpn_clients"):
@@ -707,7 +719,7 @@ class TestUnifiConfigCoordinator:
             data={CONF_API_KEY: "test_api_key"},
             options={CONF_SITE_IDS: ["removed-site"]},
         )
-        coordinator = UnifiConfigCoordinator(
+        coordinator = UnifiInsightsConfigCoordinator(
             hass=hass,
             network_client=_create_mock_network_client(),
             protect_client=None,
@@ -735,7 +747,10 @@ class TestUnifiConfigCoordinator:
         ids=["404", "400", "403", "200-non-json"],
     )
     async def test_async_update_data_optional_endpoint_unsupported(
-        self, coordinator: UnifiConfigCoordinator, endpoint: str, error: Exception
+        self,
+        coordinator: UnifiInsightsConfigCoordinator,
+        endpoint: str,
+        error: Exception,
     ):
         """A 4xx from WiFi/firewall means the feature is absent, not a failure."""
         namespace, method = endpoint.split(".")
@@ -774,7 +789,7 @@ class TestUnifiConfigCoordinator:
     )
     async def test_async_update_data_optional_section_failure(
         self,
-        coordinator: UnifiConfigCoordinator,
+        coordinator: UnifiInsightsConfigCoordinator,
         endpoint: str,
         section: str,
         other_section: str,
@@ -814,7 +829,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_optional_section_failure_is_per_site(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ):
         """A WiFi failure on one site leaves other sites' WiFi available."""
         working = coordinator.network_client.wifi.get_all
@@ -834,7 +849,7 @@ class TestUnifiConfigCoordinator:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("endpoint", ["wifi.get_all", "firewall.list_rules"])
     async def test_async_update_data_optional_endpoint_auth_failure_reauths(
-        self, coordinator: UnifiConfigCoordinator, endpoint: str
+        self, coordinator: UnifiInsightsConfigCoordinator, endpoint: str
     ):
         """A 401 from WiFi/firewall means revoked credentials and starts reauth."""
         namespace, method = endpoint.split(".")
@@ -851,7 +866,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_enriches_wifi_and_collects_sections(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ):
         """Legacy WiFi enrichment, VPN clients and id-less rules on a good poll."""
         client = coordinator.network_client
@@ -884,7 +899,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_drops_sites_that_disappeared(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ):
         """Per-site sections are rebuilt, so a removed site's data is not kept."""
         coordinator.data["wifi"]["gone"] = {"wifi-x": {"id": "wifi-x"}}
@@ -897,7 +912,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_routes_error(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """Test policy-based routes are optional when the endpoint is unavailable."""
         coordinator.network_client.routes.list_routes = AsyncMock(
@@ -913,7 +928,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_routes_auth_error(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """Test auth error during routes fetch triggers reauth."""
         coordinator.protect_client = None
@@ -926,7 +941,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_vpn_clients_error(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """Test VPN clients are optional when the endpoint is unavailable."""
         coordinator.network_client.vpn_clients.list_vpn_clients = AsyncMock(
@@ -942,7 +957,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_stores_site_to_site_vpns(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """Configured site-to-site tunnels are stored per site by id."""
         tunnel = {
@@ -961,7 +976,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_site_to_site_vpns_error_keeps_last_known(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """A failed tunnel fetch keeps the last known tunnels, not an empty set."""
         tunnel = {
@@ -985,7 +1000,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_site_mapping_error_keeps_site_vpns(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """A failed legacy site mapping keeps the last known tunnels."""
         tunnel = {
@@ -1008,7 +1023,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_site_to_site_vpns_auth_error(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """An auth error on the tunnel fetch triggers reauth, not last-known."""
         coordinator.network_client.vpn_clients.list_site_to_site_vpns = AsyncMock(
@@ -1020,7 +1035,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_vpn_clients_auth_error(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """Test auth error during VPN clients fetch triggers reauth."""
         coordinator.protect_client = None
@@ -1033,7 +1048,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_auth_error(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ):
         """Test data fetch with auth error on network-only setup."""
         coordinator.protect_client = None
@@ -1046,7 +1061,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_protect_only_console(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ):
         """Test fetch succeeds on Protect-only console with empty sites (Issue 93)."""
         coordinator.network_client.sites.get_all = AsyncMock(
@@ -1061,7 +1076,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_protect_only_console_non_json_sites(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """Test fetch succeeds when the sites endpoint returns 200 and no JSON."""
         coordinator.network_client.sites.get_all = AsyncMock(
@@ -1078,7 +1093,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_non_json_sites_without_protect(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """Test a non-JSON sites response still fails when Protect is absent."""
         coordinator.protect_client = None
@@ -1093,7 +1108,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_redirect_sites_still_fails(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """Test only a 200 is tolerated, so a 3xx is not swallowed."""
         coordinator.network_client.sites.get_all = AsyncMock(
@@ -1105,7 +1120,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_server_error_sites_still_fails(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """Test a >=400 response is not swallowed by the non-JSON tolerance."""
         coordinator.network_client.sites.get_all = AsyncMock(
@@ -1117,7 +1132,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_connection_error(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ):
         """Test data fetch with connection error."""
         coordinator.network_client.sites.get_all = AsyncMock(
@@ -1129,7 +1144,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_timeout_error(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ):
         """Test data fetch with timeout error."""
         coordinator.network_client.sites.get_all = AsyncMock(
@@ -1141,7 +1156,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_response_error(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ):
         """Test data fetch with response error."""
         coordinator.network_client.sites.get_all = AsyncMock(
@@ -1153,7 +1168,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_generic_error(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ):
         """Test data fetch with generic error."""
         coordinator.network_client.sites.get_all = AsyncMock(
@@ -1163,23 +1178,25 @@ class TestUnifiConfigCoordinator:
         with pytest.raises(UpdateFailed):
             await coordinator._async_update_data()
 
-    def test_get_site_existing(self, coordinator: UnifiConfigCoordinator):
+    def test_get_site_existing(self, coordinator: UnifiInsightsConfigCoordinator):
         """Test getting existing site."""
         coordinator.data["sites"] = {"default": {"id": "default", "name": "Default"}}
         result = coordinator.get_site("default")
         assert result == {"id": "default", "name": "Default"}
 
-    def test_get_site_missing(self, coordinator: UnifiConfigCoordinator):
+    def test_get_site_missing(self, coordinator: UnifiInsightsConfigCoordinator):
         """Test getting missing site."""
         result = coordinator.get_site("nonexistent")
         assert result is None
 
-    def test_get_site_non_dict_entry(self, coordinator: UnifiConfigCoordinator) -> None:
+    def test_get_site_non_dict_entry(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
         """Test getting site when site entry in data is not a dict."""
         coordinator.data["sites"] = {"site1": "not a dict"}
         assert coordinator.get_site("site1") is None
 
-    def test_get_site_ids(self, coordinator: UnifiConfigCoordinator):
+    def test_get_site_ids(self, coordinator: UnifiInsightsConfigCoordinator):
         """Test getting all site IDs."""
         coordinator.data["sites"] = {
             "default": {"id": "default"},
@@ -1188,7 +1205,7 @@ class TestUnifiConfigCoordinator:
         result = coordinator.get_site_ids()
         assert set(result) == {"default", "site2"}
 
-    def test_get_wifi_networks(self, coordinator: UnifiConfigCoordinator):
+    def test_get_wifi_networks(self, coordinator: UnifiInsightsConfigCoordinator):
         """Test getting WiFi networks for a site."""
         coordinator.data["wifi"] = {
             "default": {"wifi1": {"id": "wifi1", "name": "MainWiFi"}}
@@ -1196,12 +1213,14 @@ class TestUnifiConfigCoordinator:
         result = coordinator.get_wifi_networks("default")
         assert "wifi1" in result
 
-    def test_get_wifi_networks_missing_site(self, coordinator: UnifiConfigCoordinator):
+    def test_get_wifi_networks_missing_site(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
         """Test getting WiFi networks for missing site."""
         result = coordinator.get_wifi_networks("nonexistent")
         assert result == {}
 
-    def test_get_firewall_rules(self, coordinator: UnifiConfigCoordinator):
+    def test_get_firewall_rules(self, coordinator: UnifiInsightsConfigCoordinator):
         """Test getting firewall rules for a site."""
         coordinator.data["firewall_rules"] = {
             "default": {"rule1": {"id": "rule1", "name": "Block Instagram"}}
@@ -1209,12 +1228,14 @@ class TestUnifiConfigCoordinator:
         result = coordinator.get_firewall_rules("default")
         assert "rule1" in result
 
-    def test_get_firewall_rules_missing_site(self, coordinator: UnifiConfigCoordinator):
+    def test_get_firewall_rules_missing_site(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
         """Test getting firewall rules for missing site."""
         result = coordinator.get_firewall_rules("nonexistent")
         assert result == {}
 
-    def test_get_policy_based_routes(self, coordinator: UnifiConfigCoordinator):
+    def test_get_policy_based_routes(self, coordinator: UnifiInsightsConfigCoordinator):
         """Test getting policy-based routes for a site."""
         coordinator.data["policy_based_routes"] = {
             "default": {"route1": {"id": "route1", "description": "Route to VPN"}}
@@ -1223,13 +1244,13 @@ class TestUnifiConfigCoordinator:
         assert "route1" in result
 
     def test_get_policy_based_routes_missing_site(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """Test getting policy-based routes for missing site."""
         result = coordinator.get_policy_based_routes("nonexistent")
         assert result == {}
 
-    def test_get_vpn_clients(self, coordinator: UnifiConfigCoordinator) -> None:
+    def test_get_vpn_clients(self, coordinator: UnifiInsightsConfigCoordinator) -> None:
         """Test getting VPN clients for a site."""
         coordinator.data["vpn_clients"] = {
             "default": {"client1": {"_id": "client1", "name": "Privado VPN"}}
@@ -1238,7 +1259,7 @@ class TestUnifiConfigCoordinator:
         assert "client1" in result
 
     def test_get_vpn_clients_missing_site(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """Test getting VPN clients for missing site."""
         result = coordinator.get_vpn_clients("nonexistent")
@@ -1246,7 +1267,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_skips_none_site_id(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ):
         """Test that WiFi fetch skips None site IDs."""
         # Create a site model that returns None for id
@@ -1268,7 +1289,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_skips_wifi_without_id(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ):
         """Test that WiFi networks without an ID are skipped."""
         # Create WiFi models - one with ID, one without
@@ -1291,7 +1312,7 @@ class TestUnifiConfigCoordinator:
 
     def test_client_links_from_stat_sta(self):
         """Only link fields survive; MACs normalise; untagged has no vlan."""
-        links = UnifiConfigCoordinator._client_links(
+        links = UnifiInsightsConfigCoordinator._client_links(
             [
                 {
                     "mac": "8C:ED:E1:00:00:01",
@@ -1343,7 +1364,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_collects_client_links_without_wifi(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ):
         """Links are built even when the Wi-Fi section is unavailable."""
         client = coordinator.network_client
@@ -1373,7 +1394,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_keeps_client_links_on_failure(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ):
         """A failed /stat/sta keeps the previous links and does not fail."""
         coordinator.data["client_links"] = {
@@ -1389,7 +1410,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_wifi_enrichment_unchanged(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ):
         """The single /stat/sta call still feeds per-SSID client counts."""
         client = coordinator.network_client
@@ -1413,7 +1434,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_clears_client_links_with_no_sites(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ):
         """The no-sites early return blanks client_links like its siblings."""
         coordinator.data["client_links"] = {
@@ -1428,7 +1449,7 @@ class TestUnifiConfigCoordinator:
         assert result["client_links"] == {}
 
     def test_initialization_has_rule_sections(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """Test coordinator initialization includes rule section dictionaries."""
         assert "port_forwards" in coordinator.data
@@ -1437,7 +1458,7 @@ class TestUnifiConfigCoordinator:
         assert coordinator.data["traffic_rules"] == {}
 
     def test_initialization_has_nat_and_static_route_sections(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """Test coordinator initialization includes NAT and static route sections."""
         assert "nat_rules" in coordinator.data
@@ -1504,7 +1525,7 @@ class TestUnifiConfigCoordinator:
     )
     async def test_rule_section_fetched_by_internal_reference(
         self,
-        coordinator: UnifiConfigCoordinator,
+        coordinator: UnifiInsightsConfigCoordinator,
         data_key: str,
         endpoint_attr: str,
         list_method: str,
@@ -1550,7 +1571,7 @@ class TestUnifiConfigCoordinator:
     )
     async def test_rule_section_ignores_fuzzy_legacy_mapping(
         self,
-        coordinator: UnifiConfigCoordinator,
+        coordinator: UnifiInsightsConfigCoordinator,
         data_key: str,
         endpoint_attr: str,
         list_method: str,
@@ -1583,7 +1604,7 @@ class TestUnifiConfigCoordinator:
     )
     async def test_rule_section_without_internal_reference_is_empty_and_available(
         self,
-        coordinator: UnifiConfigCoordinator,
+        coordinator: UnifiInsightsConfigCoordinator,
         data_key: str,
         endpoint_attr: str,
         list_method: str,
@@ -1616,7 +1637,7 @@ class TestUnifiConfigCoordinator:
     )
     async def test_rule_section_unsupported_response_stores_empty(
         self,
-        coordinator: UnifiConfigCoordinator,
+        coordinator: UnifiInsightsConfigCoordinator,
         data_key: str,
         endpoint_attr: str,
         list_method: str,
@@ -1644,7 +1665,7 @@ class TestUnifiConfigCoordinator:
     )
     async def test_rule_section_transient_failure_keeps_previous_data(
         self,
-        coordinator: UnifiConfigCoordinator,
+        coordinator: UnifiInsightsConfigCoordinator,
         data_key: str,
         endpoint_attr: str,
         list_method: str,
@@ -1689,7 +1710,7 @@ class TestUnifiConfigCoordinator:
     )
     async def test_rule_section_failure_is_per_site(
         self,
-        coordinator: UnifiConfigCoordinator,
+        coordinator: UnifiInsightsConfigCoordinator,
         data_key: str,
         endpoint_attr: str,
         list_method: str,
@@ -1730,7 +1751,7 @@ class TestUnifiConfigCoordinator:
     )
     async def test_rule_section_401_triggers_reauth(
         self,
-        coordinator: UnifiConfigCoordinator,
+        coordinator: UnifiInsightsConfigCoordinator,
         data_key: str,
         endpoint_attr: str,
         list_method: str,
@@ -1760,7 +1781,7 @@ class TestUnifiConfigCoordinator:
     )
     async def test_rule_sections_pruned_with_sites(
         self,
-        coordinator: UnifiConfigCoordinator,
+        coordinator: UnifiInsightsConfigCoordinator,
         data_key: str,
         endpoint_attr: str,
         list_method: str,
@@ -1794,7 +1815,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     async def test_rule_sections_fetched_concurrently(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """Port forwards and traffic rules are fetched concurrently with gather."""
         site = _create_mock_model(
@@ -1830,21 +1851,21 @@ class TestUnifiConfigCoordinator:
 
 
 # ============================================================================
-# UnifiDeviceCoordinator Tests
+# UnifiInsightsDeviceCoordinator Tests
 # ============================================================================
 
 
 class TestUnifiDeviceCoordinator:
-    """Tests for UnifiDeviceCoordinator."""
+    """Tests for UnifiInsightsDeviceCoordinator."""
 
     @pytest.fixture
     def config_coordinator(
         self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
-    ) -> UnifiConfigCoordinator:
+    ) -> UnifiInsightsConfigCoordinator:
         """Create a config coordinator."""
         network_client = _create_mock_network_client()
         protect_client = _create_mock_protect_client()
-        coord = UnifiConfigCoordinator(
+        coord = UnifiInsightsConfigCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
@@ -1861,12 +1882,12 @@ class TestUnifiDeviceCoordinator:
         self,
         hass: HomeAssistant,
         mock_config_entry: MockConfigEntry,
-        config_coordinator: UnifiConfigCoordinator,
-    ) -> UnifiDeviceCoordinator:
+        config_coordinator: UnifiInsightsConfigCoordinator,
+    ) -> UnifiInsightsDeviceCoordinator:
         """Create a device coordinator for testing."""
         network_client = _create_mock_network_client()
         protect_client = _create_mock_protect_client()
-        return UnifiDeviceCoordinator(
+        return UnifiInsightsDeviceCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
@@ -1891,7 +1912,7 @@ class TestUnifiDeviceCoordinator:
     )
     async def test_poll_outage_logs_only_transitions(
         self,
-        coordinator: UnifiDeviceCoordinator,
+        coordinator: UnifiInsightsDeviceCoordinator,
         caplog: pytest.LogCaptureFixture,
         error: Exception,
         detail: str,
@@ -1919,7 +1940,7 @@ class TestUnifiDeviceCoordinator:
 
     async def test_legacy_fallback_logs_only_site_transitions(
         self,
-        coordinator: UnifiDeviceCoordinator,
+        coordinator: UnifiInsightsDeviceCoordinator,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Each site reports fallback once, recovery once, and a new outage."""
@@ -1970,7 +1991,7 @@ class TestUnifiDeviceCoordinator:
             == 2
         )
 
-    def test_initialization(self, coordinator: UnifiDeviceCoordinator):
+    def test_initialization(self, coordinator: UnifiInsightsDeviceCoordinator):
         """Test coordinator initialization."""
         assert coordinator.name == f"{DOMAIN}_device"
         assert coordinator.update_interval == SCAN_INTERVAL_DEVICE
@@ -1979,7 +2000,9 @@ class TestUnifiDeviceCoordinator:
         assert "stats" in coordinator.data
 
     @pytest.mark.asyncio
-    async def test_async_update_data_success(self, coordinator: UnifiDeviceCoordinator):
+    async def test_async_update_data_success(
+        self, coordinator: UnifiInsightsDeviceCoordinator
+    ):
         """Test successful data fetch."""
         result = await coordinator._async_update_data()
 
@@ -1992,7 +2015,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_process_site_5xx_fallback_with_client_retry(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """v1 devices 5xx falls back to legacy devices and retries clients.
 
@@ -2078,7 +2101,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_legacy_device_to_v1_dict_up_state_mapping(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Legacy bool ``up`` maps to a string ``state`` is_device_online reads."""
         online = coordinator._legacy_device_to_v1_dict(
@@ -2105,7 +2128,7 @@ class TestUnifiDeviceCoordinator:
         assert is_device_online(int_state)
 
     def test_legacy_device_to_v1_dict_falls_back_to_mac_id(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """No ``_id`` maps id from mac; field_map keys are copied when absent."""
         mapped = coordinator._legacy_device_to_v1_dict(
@@ -2131,7 +2154,7 @@ class TestUnifiDeviceCoordinator:
         assert mapped["ports"][0]["port_idx"] == 1
 
     def test_legacy_device_to_v1_dict_preserves_existing_id_and_mapped_field(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """An existing ``id``/mapped alias is not clobbered by the fallbacks."""
         mapped = coordinator._legacy_device_to_v1_dict(
@@ -2149,7 +2172,7 @@ class TestUnifiDeviceCoordinator:
         assert mapped["firmwareVersion"] == "already-mapped"
 
     def test_legacy_device_to_v1_dict_no_valid_ports_omits_ports_key(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """A port_table with no valid entries leaves ``ports`` unset."""
         mapped = coordinator._legacy_device_to_v1_dict(
@@ -2165,11 +2188,14 @@ class TestUnifiDeviceCoordinator:
 
     def test_normalize_legacy_port_missing_port_idx_returns_none(self):
         """A port_table entry without port_idx cannot be normalized."""
-        assert UnifiDeviceCoordinator._normalize_legacy_port({"name": "no idx"}) is None
+        assert (
+            UnifiInsightsDeviceCoordinator._normalize_legacy_port({"name": "no idx"})
+            is None
+        )
 
     def test_normalize_legacy_port_maps_all_optional_fields(self):
         """Optional identification/SFP fields are copied through when present."""
-        normalized = UnifiDeviceCoordinator._normalize_legacy_port(
+        normalized = UnifiInsightsDeviceCoordinator._normalize_legacy_port(
             {
                 "port_idx": 5,
                 "up": True,
@@ -2198,7 +2224,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_process_site_5xx_fallback_legacy_failure_raises(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """When v1 5xx and the legacy fetch both fail, the v1 error propagates."""
         coordinator.network_client.devices.get_all = AsyncMock(
@@ -2213,7 +2239,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_process_site_5xx_with_empty_legacy_raises(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """A v1 5xx with an empty legacy response fails instead of wiping devices."""
         coordinator.network_client.devices.get_all = AsyncMock(
@@ -2235,7 +2261,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_process_site_5xx_without_legacy_site_raises(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """A v1 5xx without a legacy site name cannot fall back and raises."""
         coordinator.network_client.devices.get_all = AsyncMock(
@@ -2247,7 +2273,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_process_site_4xx_does_not_fall_back(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Only 5xx triggers the legacy fallback; a 4xx error propagates."""
         coordinator.network_client.devices.get_all = AsyncMock(
@@ -2261,7 +2287,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_process_site_clients_4xx_raises_without_fallback(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """A clients failure with healthy v1 devices propagates (no fallback)."""
         coordinator.network_client.clients.get_all = AsyncMock(
@@ -2275,7 +2301,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_uses_legacy_devices_on_v1_5xx(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """End-to-end: a v1 devices 5xx refresh succeeds via legacy devices."""
         coordinator.network_client.devices.get_all = AsyncMock(
@@ -2304,7 +2330,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_merges_legacy_temperature(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Test successful merge of legacy temperature fields into device data."""
         coordinator.network_client.devices.get_legacy_site_devices = AsyncMock(
@@ -2330,7 +2356,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_merges_legacy_outlets(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Test merge of legacy outlet table and power totals into device data."""
         coordinator.network_client.devices.get_legacy_site_devices = AsyncMock(
@@ -2378,7 +2404,7 @@ class TestUnifiDeviceCoordinator:
         assert len(device_data["outlet_overrides"]) == 1
 
     def test_merge_legacy_outlet_data_edge_cases(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Test _merge_legacy_outlet_data edge cases."""
         # 1. Missing MAC in device_dict
@@ -2417,7 +2443,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_legacy_temperature_failure_is_ignored(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Test legacy temperature fetch failure does not drop device data."""
         coordinator.network_client.devices.get_legacy_site_devices = AsyncMock(
@@ -2431,7 +2457,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_no_sites(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Test data fetch with no sites available."""
         coordinator.config_coordinator.data["sites"] = {}
@@ -2444,7 +2470,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_prunes_sites_no_longer_listed(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Data for a site no longer listed is dropped, and its devices go stale."""
         for key in ("devices", "stats", "clients"):
@@ -2461,7 +2487,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_no_sites_clears_data_keeps_registry(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """An empty site list clears stale data but never purges registry devices."""
         for key in ("devices", "stats", "clients"):
@@ -2480,7 +2506,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_process_device_stats_error(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Test device processing with stats error."""
         coordinator.network_client.devices.get_statistics = AsyncMock(
@@ -2496,7 +2522,7 @@ class TestUnifiDeviceCoordinator:
     @pytest.mark.asyncio
     @pytest.mark.asyncio
     async def test_mac_keyed_device_skips_statistics_keeps_legacy_metrics(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """A device keyed on its MAC has no controller id to fetch stats by (#128)."""
         mac = "e0:63:da:00:00:01"
@@ -2535,7 +2561,10 @@ class TestUnifiDeviceCoordinator:
         ids=["connection", "timeout", "502", "400", "unexpected"],
     )
     async def test_site_failure_fails_refresh_and_keeps_snapshot(
-        self, coordinator: UnifiDeviceCoordinator, endpoint: str, error: Exception
+        self,
+        coordinator: UnifiInsightsDeviceCoordinator,
+        endpoint: str,
+        error: Exception,
     ):
         """A site that cannot be fetched fails the refresh; old data is kept."""
         await coordinator._async_update_data()
@@ -2559,7 +2588,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_site_auth_failure_starts_reauth(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """A revoked key on the devices endpoint raises ConfigEntryAuthFailed."""
         coordinator.network_client.devices.get_all = AsyncMock(
@@ -2573,7 +2602,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_one_failed_site_fails_refresh_without_partial_write(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """With several sites, one failure fails the refresh and writes nothing."""
         coordinator.config_coordinator.data["sites"]["site2"] = {"id": "site2"}
@@ -2593,13 +2622,15 @@ class TestUnifiDeviceCoordinator:
         assert coordinator.data["devices"] == {}
         assert coordinator.data["stats"] == {}
 
-    def test_network_facts_start_empty(self, coordinator: UnifiDeviceCoordinator):
+    def test_network_facts_start_empty(
+        self, coordinator: UnifiInsightsDeviceCoordinator
+    ):
         """The facts map exists before the first refresh, so the facade finds it."""
         assert coordinator.data[NETWORK_FACTS_KEY] == {}
 
     @pytest.mark.asyncio
     async def test_network_facts_published_and_replaced_each_refresh(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Each successful refresh publishes a new facts map from final data."""
         await coordinator._async_update_data()
@@ -2619,7 +2650,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_network_facts_kept_on_site_failure(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """A failed refresh keeps the last committed facts of retained sites."""
         await coordinator._async_update_data()
@@ -2635,7 +2666,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_network_facts_pruned_with_their_site(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Facts of a site no longer polled are dropped by replacement."""
         stale = SiteNetworkFacts(gateway_id=None, devices={})
@@ -2650,7 +2681,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_network_facts_cleared_without_sites(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """An empty site list leaves an empty (new) facts map."""
         await coordinator._async_update_data()
@@ -2665,7 +2696,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_network_facts_reflect_legacy_primary_ports(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """With the v1 list failing, facts carry the legacy device's ports."""
         coordinator.network_client.devices.get_all = AsyncMock(
@@ -2698,7 +2729,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_network_facts_have_no_ports_when_legacy_fails(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Ports need legacy data: the v1 overview alone yields none."""
         coordinator.network_client.devices.get_all = AsyncMock(
@@ -2723,7 +2754,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_auth_failure_wins_over_other_site_failures(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """If any site reports revoked credentials, reauth is triggered."""
         coordinator.config_coordinator.data["sites"]["site2"] = {"id": "site2"}
@@ -2742,7 +2773,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_stats_auth_failure_starts_reauth(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Revoked credentials surfacing on the stats endpoint start reauth."""
         coordinator.network_client.devices.get_statistics = AsyncMock(
@@ -2764,7 +2795,7 @@ class TestUnifiDeviceCoordinator:
         ids=["connection", "timeout", "500", "429"],
     )
     async def test_stats_transient_failure_keeps_previous_stats(
-        self, coordinator: UnifiDeviceCoordinator, error: Exception
+        self, coordinator: UnifiInsightsDeviceCoordinator, error: Exception
     ):
         """One device's stats failing keeps its last stats, not the refresh."""
         await coordinator._async_update_data()
@@ -2779,7 +2810,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_refresh_without_legacy_site_mapping(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Sites still refresh when no classic site mapping is published."""
         # What the config coordinator publishes after a first failed lookup.
@@ -2795,7 +2826,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_refresh_reads_the_published_legacy_site_mapping(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """The device poll uses the config mapping and never looks it up itself."""
         coordinator.config_coordinator.data["legacy_site_names"] = {
@@ -2811,7 +2842,9 @@ class TestUnifiDeviceCoordinator:
         )
 
     @pytest.mark.asyncio
-    async def test_stats_reuse_is_capped(self, coordinator: UnifiDeviceCoordinator):
+    async def test_stats_reuse_is_capped(
+        self, coordinator: UnifiInsightsDeviceCoordinator
+    ):
         """A device whose stats keep failing stops reusing them after the cap."""
         await coordinator._async_update_data()
         assert coordinator.data["stats"]["default"]["device1"]
@@ -2828,7 +2861,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_stats_failure_count_resets(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Unsupported responses and vanished devices clear the failure count."""
         await coordinator._async_update_data()
@@ -2851,7 +2884,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_port_rates_skip_reused_stats(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Reused stats don't produce a 0 rate or a doubled rate on recovery."""
         counters = {"bytes": 0}
@@ -2907,7 +2940,7 @@ class TestUnifiDeviceCoordinator:
     @pytest.mark.asyncio
     async def test_site_forbidden_fails_refresh_without_reauth(
         self,
-        coordinator: UnifiDeviceCoordinator,
+        coordinator: UnifiInsightsDeviceCoordinator,
         caplog: pytest.LogCaptureFixture,
     ):
         """A 403 on devices fails the refresh but does not start a reauth loop."""
@@ -2932,7 +2965,7 @@ class TestUnifiDeviceCoordinator:
         ids=["403", "404"],
     )
     async def test_stats_unavailable_for_one_device_is_tolerated(
-        self, coordinator: UnifiDeviceCoordinator, error: Exception
+        self, coordinator: UnifiInsightsDeviceCoordinator, error: Exception
     ):
         """A per-device stats error leaves that device without stats only."""
         coordinator.network_client.devices.get_statistics = AsyncMock(side_effect=error)
@@ -2945,7 +2978,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_refresh_recovers_after_failure(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """last_update_success goes False on failure and True again on recovery."""
         await coordinator.async_refresh()
@@ -2965,7 +2998,7 @@ class TestUnifiDeviceCoordinator:
         assert coordinator.last_update_success is True
         assert coordinator.available is True
 
-    def test_get_device_existing(self, coordinator: UnifiDeviceCoordinator):
+    def test_get_device_existing(self, coordinator: UnifiInsightsDeviceCoordinator):
         """Test getting existing device."""
         coordinator.data["devices"] = {
             "default": {"device1": {"id": "device1", "name": "Switch"}}
@@ -2973,23 +3006,27 @@ class TestUnifiDeviceCoordinator:
         result = coordinator.get_device("default", "device1")
         assert result == {"id": "device1", "name": "Switch"}
 
-    def test_get_device_missing(self, coordinator: UnifiDeviceCoordinator):
+    def test_get_device_missing(self, coordinator: UnifiInsightsDeviceCoordinator):
         """Test getting missing device."""
         result = coordinator.get_device("default", "nonexistent")
         assert result is None
 
-    def test_get_device_stats_existing(self, coordinator: UnifiDeviceCoordinator):
+    def test_get_device_stats_existing(
+        self, coordinator: UnifiInsightsDeviceCoordinator
+    ):
         """Test getting existing device stats."""
         coordinator.data["stats"] = {"default": {"device1": {"cpu": 15.2, "mem": 42.8}}}
         result = coordinator.get_device_stats("default", "device1")
         assert result == {"cpu": 15.2, "mem": 42.8}
 
-    def test_get_device_stats_missing(self, coordinator: UnifiDeviceCoordinator):
+    def test_get_device_stats_missing(
+        self, coordinator: UnifiInsightsDeviceCoordinator
+    ):
         """Test getting missing device stats."""
         result = coordinator.get_device_stats("default", "nonexistent")
         assert result is None
 
-    def test_get_clients(self, coordinator: UnifiDeviceCoordinator):
+    def test_get_clients(self, coordinator: UnifiInsightsDeviceCoordinator):
         """Test getting clients for a site."""
         coordinator.data["clients"] = {
             "default": {"client1": {"id": "client1", "name": "iPhone"}}
@@ -2997,14 +3034,16 @@ class TestUnifiDeviceCoordinator:
         result = coordinator.get_clients("default")
         assert "client1" in result
 
-    def test_get_clients_missing_site(self, coordinator: UnifiDeviceCoordinator):
+    def test_get_clients_missing_site(
+        self, coordinator: UnifiInsightsDeviceCoordinator
+    ):
         """Test getting clients for missing site."""
         result = coordinator.get_clients("nonexistent")
         assert result == {}
 
     @pytest.mark.asyncio
     async def test_cleanup_stale_devices(
-        self, hass: HomeAssistant, coordinator: UnifiDeviceCoordinator
+        self, hass: HomeAssistant, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Test stale device cleanup."""
         # Set up previous device IDs
@@ -3031,7 +3070,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_process_site_empty_devices(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Test site processing with empty devices list."""
         # Return empty list of devices
@@ -3045,7 +3084,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_cleanup_stale_devices_no_registry_match(
-        self, hass: HomeAssistant, coordinator: UnifiDeviceCoordinator
+        self, hass: HomeAssistant, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Test cleanup when stale device is not found in registry."""
         # Set up previous device IDs
@@ -3066,14 +3105,18 @@ class TestUnifiDeviceCoordinator:
             # async_update_device should not be called since device wasn't found
             mock_registry.return_value.async_update_device.assert_not_called()
 
-    def test_get_device_non_dict_value(self, coordinator: UnifiDeviceCoordinator):
+    def test_get_device_non_dict_value(
+        self, coordinator: UnifiInsightsDeviceCoordinator
+    ):
         """Test get_device returns None for non-dict values."""
         coordinator.data["devices"] = {"default": {"device1": "not_a_dict"}}
 
         result = coordinator.get_device("default", "device1")
         assert result is None
 
-    def test_get_device_stats_non_dict_value(self, coordinator: UnifiDeviceCoordinator):
+    def test_get_device_stats_non_dict_value(
+        self, coordinator: UnifiInsightsDeviceCoordinator
+    ):
         """Test get_device_stats returns None for non-dict values."""
         coordinator.data["stats"] = {"default": {"device1": "not_a_dict"}}
 
@@ -3089,7 +3132,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_top_level_auth_error(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Test top-level auth error handling in _async_update_data."""
         # Make get_site_ids raise to trigger top-level handler
@@ -3104,7 +3147,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_top_level_connection_error(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Test top-level connection error handling in _async_update_data."""
         coordinator.config_coordinator.get_site_ids = MagicMock(
@@ -3119,7 +3162,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_top_level_timeout_error(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Test top-level timeout error handling in _async_update_data."""
         coordinator.config_coordinator.get_site_ids = MagicMock(
@@ -3134,7 +3177,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_top_level_response_error(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Test top-level response error handling in _async_update_data."""
         coordinator.config_coordinator.get_site_ids = MagicMock(
@@ -3149,7 +3192,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_top_level_generic_error(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Test top-level generic error handling in _async_update_data."""
         coordinator.config_coordinator.get_site_ids = MagicMock(
@@ -3164,7 +3207,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_stores_vpn_connections(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Live VPN connections are stored per site, keyed by network_id."""
         coordinator.network_client.vpn_clients.list_vpn_connections = AsyncMock(
@@ -3190,7 +3233,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_vpn_connections_failure_is_optional(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """A failing connections call never fails the device refresh."""
         coordinator.network_client.vpn_clients.list_vpn_connections = AsyncMock(
@@ -3205,7 +3248,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_vpn_connections_reused_for_bounded_polls_then_dropped(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """A failing call reuses the last good connections for a few polls."""
         good = {"network_id": "tun1", "type": "ipsec-vpn", "status": "CONNECTED"}
@@ -3234,7 +3277,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_vpn_connections_dropped_for_sites_no_longer_polled(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """VPN state of a site that is no longer polled is purged."""
         coordinator.data["vpn_connections"]["gone"] = {"tun1": {"status": "CONNECTED"}}
@@ -3247,7 +3290,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_legacy_primary_devices_still_get_wans(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """WAN links are merged when legacy devices replace a failing v1 list."""
         coordinator.network_client.devices.get_all = AsyncMock(
@@ -3275,7 +3318,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_vpn_connections_without_legacy_site(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Without a legacy site name the state is unknown, not "no VPNs"."""
         coordinator.network_client.vpn_clients.list_vpn_connections = AsyncMock()
@@ -3283,7 +3326,7 @@ class TestUnifiDeviceCoordinator:
         assert await coordinator._fetch_vpn_connections("default", None) is None
         coordinator.network_client.vpn_clients.list_vpn_connections.assert_not_awaited()
 
-    def test_merge_legacy_wan_data(self, coordinator: UnifiDeviceCoordinator):
+    def test_merge_legacy_wan_data(self, coordinator: UnifiInsightsDeviceCoordinator):
         """The gateway's per-WAN connection state is merged by MAC."""
         device_dict: dict[str, Any] = {"macAddress": "AA:BB:CC:DD:EE:FF"}
         legacy_devices_by_mac: dict[str, dict[str, Any]] = {
@@ -3294,7 +3337,7 @@ class TestUnifiDeviceCoordinator:
             }
         }
 
-        UnifiDeviceCoordinator._merge_legacy_wan_data(
+        UnifiInsightsDeviceCoordinator._merge_legacy_wan_data(
             device_dict, legacy_devices_by_mac
         )
 
@@ -3303,7 +3346,7 @@ class TestUnifiDeviceCoordinator:
         assert device_dict["wans"][0]["name"] == "WAN"
 
     def test_merge_legacy_wan_data_without_wan_blocks(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Devices without WAN blocks, or without legacy data, are untouched."""
         switch: dict[str, Any] = {"macAddress": "AA:BB:CC:DD:EE:FF"}
@@ -3314,14 +3357,14 @@ class TestUnifiDeviceCoordinator:
         }
 
         for device_dict in (switch, unmatched, no_mac):
-            UnifiDeviceCoordinator._merge_legacy_wan_data(
+            UnifiInsightsDeviceCoordinator._merge_legacy_wan_data(
                 device_dict, legacy_devices_by_mac
             )
             assert "wans" not in device_dict
 
     @pytest.mark.asyncio
     async def test_async_update_data_merges_legacy_wans(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Legacy WAN link state reaches the gateway device through a refresh."""
         coordinator.network_client.devices.get_legacy_site_devices = AsyncMock(
@@ -3341,7 +3384,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_wans_reused_for_bounded_polls_then_dropped(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """A failing legacy call keeps the last WAN links for a few polls."""
         # Real models dump a fresh dict per poll; the shared fixture dict
@@ -3381,7 +3424,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_legacy_wan_failures_dropped_for_sites_no_longer_polled(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """The WAN failure count of a site that is no longer polled is purged."""
         coordinator._legacy_wan_failures["gone"] = 1
@@ -3391,7 +3434,7 @@ class TestUnifiDeviceCoordinator:
         assert "gone" not in coordinator._legacy_wan_failures
 
     def test_merge_legacy_storage_data(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ) -> None:
         """The console's per-mount storage data is merged by MAC."""
         device_dict: dict[str, Any] = {"macAddress": "AA:BB:CC:DD:EE:FF"}
@@ -3409,7 +3452,7 @@ class TestUnifiDeviceCoordinator:
             }
         }
 
-        UnifiDeviceCoordinator._merge_legacy_storage_data(
+        UnifiInsightsDeviceCoordinator._merge_legacy_storage_data(
             device_dict, legacy_devices_by_mac
         )
 
@@ -3424,7 +3467,7 @@ class TestUnifiDeviceCoordinator:
         ]
 
     def test_merge_legacy_storage_data_leaves_other_devices_untouched(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ) -> None:
         """Devices without storage, or without legacy data, are untouched."""
         switch: dict[str, Any] = {"macAddress": "AA:BB:CC:DD:EE:FF"}
@@ -3435,26 +3478,28 @@ class TestUnifiDeviceCoordinator:
             "aa:bb:cc:dd:ee:ff": {"port_table": []}
         }
 
-        UnifiDeviceCoordinator._merge_legacy_storage_data(switch, legacy_devices_by_mac)
+        UnifiInsightsDeviceCoordinator._merge_legacy_storage_data(
+            switch, legacy_devices_by_mac
+        )
         assert "storage_mounts" not in switch
 
         legacy_devices_by_mac_empty: dict[str, dict[str, Any]] = {
             "aa:bb:cc:dd:ee:ff": {"storage": []}
         }
-        UnifiDeviceCoordinator._merge_legacy_storage_data(
+        UnifiInsightsDeviceCoordinator._merge_legacy_storage_data(
             empty_storage, legacy_devices_by_mac_empty
         )
         assert "storage_mounts" not in empty_storage
 
         for device_dict in (unmatched, no_mac):
-            UnifiDeviceCoordinator._merge_legacy_storage_data(
+            UnifiInsightsDeviceCoordinator._merge_legacy_storage_data(
                 device_dict, legacy_devices_by_mac
             )
             assert "storage_mounts" not in device_dict
 
     @pytest.mark.asyncio
     async def test_async_update_data_merges_legacy_storage(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ) -> None:
         """Legacy storage reaches console through refresh with zero extra requests."""
         udm_storage = [
@@ -3499,7 +3544,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_legacy_primary_devices_still_get_storage_mounts(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ) -> None:
         """Storage mounts are merged when legacy devices replace a failing v1 list."""
         coordinator.network_client.devices.get_all = AsyncMock(
@@ -3535,7 +3580,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_storage_mounts_reused_for_bounded_polls_then_dropped(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ) -> None:
         """A failing legacy call keeps the last storage mounts for a few polls."""
         for model in coordinator.network_client.devices.get_all.return_value:
@@ -3580,7 +3625,7 @@ class TestUnifiDeviceCoordinator:
         assert coordinator._legacy_wan_failures == {}
 
     def test_merge_legacy_port_data_includes_poe_good(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """Test _merge_legacy_port_data passes through poe_good flag."""
         device_dict: dict[str, Any] = {"macAddress": "AA:BB:CC:DD:EE:FF"}
@@ -3612,7 +3657,7 @@ class TestUnifiDeviceCoordinator:
             }
         }
 
-        UnifiDeviceCoordinator._merge_legacy_port_data(
+        UnifiInsightsDeviceCoordinator._merge_legacy_port_data(
             device_dict, legacy_devices_by_mac
         )
 
@@ -3632,7 +3677,7 @@ class TestUnifiDeviceCoordinator:
         assert "poe" not in port3
 
     def test_merge_legacy_port_data_skips_port_without_port_idx(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """A port_table entry without port_idx is dropped, not appended."""
         device_dict: dict[str, Any] = {"macAddress": "AA:BB:CC:DD:EE:FF"}
@@ -3645,7 +3690,7 @@ class TestUnifiDeviceCoordinator:
             }
         }
 
-        UnifiDeviceCoordinator._merge_legacy_port_data(
+        UnifiInsightsDeviceCoordinator._merge_legacy_port_data(
             device_dict, legacy_devices_by_mac
         )
 
@@ -3655,7 +3700,7 @@ class TestUnifiDeviceCoordinator:
 
     def test_legacy_topology_block_reads_uplink(self):
         """The parent link and legacy type are copied from /stat/device."""
-        block = UnifiDeviceCoordinator._legacy_topology_block(
+        block = UnifiInsightsDeviceCoordinator._legacy_topology_block(
             {
                 "mac": "58:d6:1f:00:00:02",
                 "type": "USW",
@@ -3682,7 +3727,7 @@ class TestUnifiDeviceCoordinator:
 
     def test_legacy_topology_block_falls_back_to_last_uplink(self):
         """An offline device keeps its parent through last_uplink."""
-        block = UnifiDeviceCoordinator._legacy_topology_block(
+        block = UnifiInsightsDeviceCoordinator._legacy_topology_block(
             {
                 "type": "uap",
                 "uplink": {"type": "wire"},
@@ -3701,11 +3746,11 @@ class TestUnifiDeviceCoordinator:
 
     def test_legacy_topology_block_gateway_and_garbage(self):
         """A gateway has a type but no parent; malformed values are dropped."""
-        assert UnifiDeviceCoordinator._legacy_topology_block(
+        assert UnifiInsightsDeviceCoordinator._legacy_topology_block(
             {"type": "udm", "uplink": {"type": "wire", "speed": 2500}}
         ) == {"legacy_type": "udm", "uplink_type": "wire", "uplink_speed": 2500}
         assert (
-            UnifiDeviceCoordinator._legacy_topology_block(
+            UnifiInsightsDeviceCoordinator._legacy_topology_block(
                 {
                     "type": "",
                     "uplink": {
@@ -3727,7 +3772,7 @@ class TestUnifiDeviceCoordinator:
             "uplink": {"uplink_mac": "28:70:4e:00:00:01", "uplink_remote_port": 6},
         }
 
-        UnifiDeviceCoordinator._merge_legacy_uplink_data(
+        UnifiInsightsDeviceCoordinator._merge_legacy_uplink_data(
             device, {"58:d6:1f:00:00:02": legacy}
         )
 
@@ -3738,14 +3783,14 @@ class TestUnifiDeviceCoordinator:
     def test_merge_legacy_uplink_data_without_match_is_noop(self):
         """No legacy record, or an empty block, adds nothing."""
         device = {"id": "uuid-x", "macAddress": "aa:bb:cc:dd:ee:ff"}
-        UnifiDeviceCoordinator._merge_legacy_uplink_data(device, {})
-        UnifiDeviceCoordinator._merge_legacy_uplink_data(
+        UnifiInsightsDeviceCoordinator._merge_legacy_uplink_data(device, {})
+        UnifiInsightsDeviceCoordinator._merge_legacy_uplink_data(
             device, {"aa:bb:cc:dd:ee:ff": {"mac": "aa:bb:cc:dd:ee:ff"}}
         )
         assert "topology" not in device
 
     def test_legacy_device_to_v1_dict_carries_topology(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """The legacy-only fallback produces the same block as the merge path."""
         mapped = coordinator._legacy_device_to_v1_dict(
@@ -3765,7 +3810,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_process_site_merges_legacy_uplink(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """The real refresh path attaches the block to v1 devices."""
         coordinator.network_client.devices.get_all = AsyncMock(
@@ -3806,7 +3851,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_process_device_filters_clients_without_index(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ) -> None:
         """Direct device callers retain filtering, order, and client identity."""
         coordinator.network_client.devices.get_statistics = AsyncMock(
@@ -3845,7 +3890,7 @@ class TestUnifiDeviceCoordinator:
     )
     async def test_process_device_empty_stats_skips_client_assignment(
         self,
-        coordinator: UnifiDeviceCoordinator,
+        coordinator: UnifiInsightsDeviceCoordinator,
         stats_response: Any,
         *,
         use_index: bool,
@@ -3869,7 +3914,7 @@ class TestUnifiDeviceCoordinator:
 
     @pytest.mark.asyncio
     async def test_process_site_groups_clients_by_uplink(
-        self, coordinator: UnifiDeviceCoordinator
+        self, coordinator: UnifiInsightsDeviceCoordinator
     ) -> None:
         """Site processing groups clients by uplink device in a single pass."""
         dev_a = {"id": "a", "name": "Device A"}
@@ -4039,12 +4084,12 @@ class TestUnifiDeviceCoordinator:
 
 
 # ============================================================================
-# UnifiProtectCoordinator Tests
+# UnifiInsightsProtectCoordinator Tests
 # ============================================================================
 
 
 class TestUnifiProtectCoordinator:
-    """Tests for UnifiProtectCoordinator."""
+    """Tests for UnifiInsightsProtectCoordinator."""
 
     @pytest.mark.parametrize(
         "family", ["chimes", "fobs", "link_stations", "alarm_hubs", "sirens"]
@@ -4055,7 +4100,7 @@ class TestUnifiProtectCoordinator:
     )
     async def test_family_poll_outage_logs_only_transitions(
         self,
-        coordinator: UnifiProtectCoordinator,
+        coordinator: UnifiInsightsProtectCoordinator,
         caplog: pytest.LogCaptureFixture,
         family: str,
         error: Exception,
@@ -4114,11 +4159,11 @@ class TestUnifiProtectCoordinator:
     @pytest.fixture
     async def coordinator(
         self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
-    ) -> AsyncGenerator[UnifiProtectCoordinator]:
+    ) -> AsyncGenerator[UnifiInsightsProtectCoordinator]:
         """Create a protect coordinator for testing, shut down on teardown.
 
         Was a plain (non-yield) fixture with no teardown at all - this
-        class constructs `UnifiProtectCoordinator` directly rather than
+        class constructs `UnifiInsightsProtectCoordinator` directly rather than
         going through config-entry setup/unload, so nothing ever cancelled
         the sensor-reconcile timer, the three tracked sensor background
         tasks (`_sensor_refresh_task`/`_sensor_reconcile_task`/
@@ -4137,7 +4182,7 @@ class TestUnifiProtectCoordinator:
         """
         network_client = _create_mock_network_client()
         protect_client = _create_mock_protect_client()
-        coord = UnifiProtectCoordinator(
+        coord = UnifiInsightsProtectCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
@@ -4148,7 +4193,7 @@ class TestUnifiProtectCoordinator:
 
     async def test_protect_poll_outage_logs_only_transitions(
         self,
-        coordinator: UnifiProtectCoordinator,
+        coordinator: UnifiInsightsProtectCoordinator,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Absorption and escalation do not add warnings before UpdateFailed."""
@@ -4175,14 +4220,14 @@ class TestUnifiProtectCoordinator:
     @pytest.fixture
     async def coordinator_no_protect(
         self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
-    ) -> AsyncGenerator[UnifiProtectCoordinator]:
+    ) -> AsyncGenerator[UnifiInsightsProtectCoordinator]:
         """Create a protect coordinator without protect client, shut down on teardown.
 
         See `coordinator` above - same per-test cleanup, this fixture just
         omits the `protect_client`.
         """
         network_client = _create_mock_network_client()
-        coord = UnifiProtectCoordinator(
+        coord = UnifiInsightsProtectCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=None,
@@ -4191,7 +4236,7 @@ class TestUnifiProtectCoordinator:
         yield coord
         await coord.async_shutdown()
 
-    def test_initialization(self, coordinator: UnifiProtectCoordinator):
+    def test_initialization(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test coordinator initialization."""
         assert coordinator.name == f"{DOMAIN}_protect"
         assert coordinator.update_interval == SCAN_INTERVAL_PROTECT
@@ -4204,14 +4249,16 @@ class TestUnifiProtectCoordinator:
         assert "liveviews" in coordinator.data
         assert "events" in coordinator.data
 
-    def test_websocket_state_initialized(self, coordinator: UnifiProtectCoordinator):
+    def test_websocket_state_initialized(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ):
         """Test WebSocket state is initialized but not started at construction."""
         assert coordinator.websocket_task is None
         assert coordinator.events_websocket_task is None
         assert coordinator._protect_websocket is coordinator.protect_client.websocket
 
     def test_websocket_state_without_client(
-        self, coordinator_no_protect: UnifiProtectCoordinator
+        self, coordinator_no_protect: UnifiInsightsProtectCoordinator
     ):
         """Test WebSocket state without a protect client."""
         assert coordinator_no_protect.protect_client is None
@@ -4221,7 +4268,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_start_websocket_without_client(
-        self, coordinator_no_protect: UnifiProtectCoordinator
+        self, coordinator_no_protect: UnifiInsightsProtectCoordinator
     ):
         """Test async_start_websocket returns early without a protect client."""
         await coordinator_no_protect.async_start_websocket()
@@ -4229,7 +4276,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_start_websocket_success(
-        self, hass: HomeAssistant, coordinator: UnifiProtectCoordinator
+        self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test async_start_websocket resolves host_id and starts both the
         devices and events subscriptions (see task 1: the missing events
@@ -4271,7 +4318,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_start_websocket_already_running(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test async_start_websocket is a no-op if already running."""
         existing_task = asyncio.get_event_loop().create_future()
@@ -4286,7 +4333,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_start_websocket_host_id_failure(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test async_start_websocket swallows host_id resolution failures."""
         coordinator.protect_client.get_host_id = AsyncMock(
@@ -4299,7 +4346,9 @@ class TestUnifiProtectCoordinator:
         assert coordinator.websocket_task is None
         assert coordinator.events_websocket_task is None
 
-    def test_on_websocket_message_top_level(self, coordinator: UnifiProtectCoordinator):
+    def test_on_websocket_message_top_level(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ):
         """Test the WS message adapter with fields at the top level."""
         coordinator._on_websocket_message(
             {"modelKey": "sensor", "id": "sensor3", "isOpened": True}
@@ -4308,7 +4357,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["sensors"]["sensor3"]["isOpened"] is True
 
     def test_on_websocket_message_nested_payload(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test the WS message adapter with fields nested under 'payload'."""
         coordinator._on_websocket_message(
@@ -4318,7 +4367,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["sensors"]["sensor4"]["isOpened"] is False
 
     def test_on_websocket_message_item_wrapper(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test the WS message adapter with fields nested under 'item'.
 
@@ -4335,7 +4384,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["sensors"]["sensor9"]["isOpened"] is True
 
     def test_on_websocket_message_snake_case_model_key(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test the WS message adapter accepts snake_case model_key."""
         coordinator._on_websocket_message({"model_key": "light", "id": "light3"})
@@ -4343,7 +4392,9 @@ class TestUnifiProtectCoordinator:
         assert "light3" in coordinator.data["lights"]
 
     def test_on_websocket_message_missing_model_key(
-        self, coordinator: UnifiProtectCoordinator, caplog: pytest.LogCaptureFixture
+        self,
+        coordinator: UnifiInsightsProtectCoordinator,
+        caplog: pytest.LogCaptureFixture,
     ):
         """Test the WS message adapter warns and drops unparseable messages."""
         with caplog.at_level(logging.WARNING):
@@ -4353,7 +4404,9 @@ class TestUnifiProtectCoordinator:
         assert "sensor5" not in coordinator.data["sensors"]
 
     def test_on_websocket_message_not_a_dict(
-        self, coordinator: UnifiProtectCoordinator, caplog: pytest.LogCaptureFixture
+        self,
+        coordinator: UnifiInsightsProtectCoordinator,
+        caplog: pytest.LogCaptureFixture,
     ):
         """Test the WS message adapter warns on non-dict payloads."""
         with caplog.at_level(logging.WARNING):
@@ -4362,7 +4415,7 @@ class TestUnifiProtectCoordinator:
         assert "not a JSON object" in caplog.text
 
     def test_on_websocket_message_action_payload_split(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test the adapter merges a header/payload-split message.
 
@@ -4384,7 +4437,9 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["sensors"]["sensor6"]["isOpened"] is True
 
     def test_on_websocket_message_model_key_without_id(
-        self, coordinator: UnifiProtectCoordinator, caplog: pytest.LogCaptureFixture
+        self,
+        coordinator: UnifiInsightsProtectCoordinator,
+        caplog: pytest.LogCaptureFixture,
     ):
         """Test a resolvable modelKey with no id logs at debug, not silently."""
         with caplog.at_level(logging.DEBUG):
@@ -4394,7 +4449,9 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["sensors"] == {}
 
     def test_on_websocket_message_warning_capped_after_first(
-        self, coordinator: UnifiProtectCoordinator, caplog: pytest.LogCaptureFixture
+        self,
+        coordinator: UnifiInsightsProtectCoordinator,
+        caplog: pytest.LogCaptureFixture,
     ):
         """Test repeated unparseable messages only WARNING once, then DEBUG."""
         with caplog.at_level(logging.DEBUG):
@@ -4408,7 +4465,7 @@ class TestUnifiProtectCoordinator:
         assert any("sensor8" in r.getMessage() for r in debug_records)
 
     def test_on_websocket_message_does_not_clobber_type_with_envelope_verb(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """The envelope's top-level "type" (the action verb) must not
         overwrite a real device "type" field on a partial update frame.
@@ -4442,7 +4499,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["sensors"]["sensor10"]["isOpened"] is True
 
     def test_on_websocket_message_replaces_device_dict_not_mutates_in_place(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """A WS update must produce a new per-device dict, not mutate the
         old one in place - in-place mutation can make HA listeners that
@@ -4461,7 +4518,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_stop_websocket_noop_when_never_started(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test async_stop_websocket is safe when no task was ever started.
 
@@ -4475,7 +4532,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_stop_websocket_stops_and_awaits_real_task(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test async_stop_websocket stops the socket and awaits BOTH real
         tasks (devices and events - task 1 requires both to be stopped and
@@ -4505,7 +4562,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_success(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test successful data fetch."""
         result = await coordinator._async_update_data()
@@ -4528,7 +4585,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_no_protect_client(
-        self, coordinator_no_protect: UnifiProtectCoordinator
+        self, coordinator_no_protect: UnifiInsightsProtectCoordinator
     ):
         """Test data fetch without protect client."""
         result = await coordinator_no_protect._async_update_data()
@@ -4539,7 +4596,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_sensors_error(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test data fetch with sensors error (should not fail)."""
         coordinator.protect_client.sensors.get_all = AsyncMock(
@@ -4554,7 +4611,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_nvr_error(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test data fetch with NVR error (should not fail)."""
         coordinator.protect_client.nvr.get = AsyncMock(
@@ -4569,7 +4626,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_chimes_error(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test data fetch with chimes error (should not fail)."""
         coordinator.protect_client.chimes.get_all = AsyncMock(
@@ -4583,7 +4640,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_viewers_error(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test data fetch with viewers error (should not fail)."""
         coordinator.protect_client.viewers.get_all = AsyncMock(
@@ -4597,7 +4654,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_liveviews_error(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test data fetch with liveviews error (should not fail)."""
         coordinator.protect_client.liveviews.get_all = AsyncMock(
@@ -4611,7 +4668,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_auth_error(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test data fetch with auth error."""
         coordinator.protect_client.cameras.get_all = AsyncMock(
@@ -4623,7 +4680,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_connection_error(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test a sustained connection error eventually fails the poll.
 
@@ -4641,7 +4698,9 @@ class TestUnifiProtectCoordinator:
         with pytest.raises(UpdateFailed):
             await coordinator._async_update_data()
 
-    def test_handle_device_update_camera(self, coordinator: UnifiProtectCoordinator):
+    def test_handle_device_update_camera(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ):
         """Test handling camera device update."""
         coordinator._handle_device_update(
             "camera", {"id": "camera2", "name": "Back Camera"}
@@ -4650,7 +4709,9 @@ class TestUnifiProtectCoordinator:
         assert "camera2" in coordinator.data["cameras"]
         assert coordinator.data["cameras"]["camera2"]["name"] == "Back Camera"
 
-    def test_handle_device_update_light(self, coordinator: UnifiProtectCoordinator):
+    def test_handle_device_update_light(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ):
         """Test handling light device update."""
         coordinator._handle_device_update(
             "light", {"id": "light2", "name": "Porch Light"}
@@ -4658,7 +4719,9 @@ class TestUnifiProtectCoordinator:
 
         assert "light2" in coordinator.data["lights"]
 
-    def test_handle_device_update_sensor(self, coordinator: UnifiProtectCoordinator):
+    def test_handle_device_update_sensor(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ):
         """Test handling sensor device update."""
         coordinator._handle_device_update(
             "sensor", {"id": "sensor2", "name": "Window Sensor"}
@@ -4666,13 +4729,17 @@ class TestUnifiProtectCoordinator:
 
         assert "sensor2" in coordinator.data["sensors"]
 
-    def test_handle_device_update_nvr(self, coordinator: UnifiProtectCoordinator):
+    def test_handle_device_update_nvr(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ):
         """Test handling NVR device update."""
         coordinator._handle_device_update("nvr", {"id": "nvr2", "name": "NVR 2"})
 
         assert "nvr2" in coordinator.data["nvrs"]
 
-    def test_handle_device_update_viewer(self, coordinator: UnifiProtectCoordinator):
+    def test_handle_device_update_viewer(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ):
         """Test handling viewer device update."""
         coordinator._handle_device_update(
             "viewer", {"id": "viewer2", "name": "Viewport 2"}
@@ -4680,13 +4747,17 @@ class TestUnifiProtectCoordinator:
 
         assert "viewer2" in coordinator.data["viewers"]
 
-    def test_handle_device_update_chime(self, coordinator: UnifiProtectCoordinator):
+    def test_handle_device_update_chime(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ):
         """Test handling chime device update."""
         coordinator._handle_device_update("chime", {"id": "chime2", "name": "Chime 2"})
 
         assert "chime2" in coordinator.data["chimes"]
 
-    def test_handle_device_update_no_id(self, coordinator: UnifiProtectCoordinator):
+    def test_handle_device_update_no_id(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ):
         """Test handling device update without ID."""
         coordinator._handle_device_update("camera", {"name": "No ID Camera"})
 
@@ -4694,7 +4765,7 @@ class TestUnifiProtectCoordinator:
         assert len(coordinator.data["cameras"]) == 0
 
     def test_handle_device_update_unknown_model_type(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Test handling unknown device model type notifies listeners and
         preserves collections.
@@ -4740,7 +4811,9 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["viewers"] == snapshot_viewers
         assert coordinator.data["chimes"] == snapshot_chimes
 
-    def test_handle_event_update_motion(self, coordinator: UnifiProtectCoordinator):
+    def test_handle_event_update_motion(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ):
         """Test handling motion event."""
         # First add a camera
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Test"}
@@ -4760,7 +4833,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["cameras"]["camera1"]["lastMotionEnd"] is None
 
     def test_handle_event_update_smart_detect(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling smart detection event."""
         # First add a camera
@@ -4783,7 +4856,7 @@ class TestUnifiProtectCoordinator:
         ]
 
     def test_handle_event_update_doorbell_ring(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling doorbell ring event."""
         # First add a camera
@@ -4803,7 +4876,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["cameras"]["camera1"]["lastRingEnd"] is None
 
     def test_handle_event_update_light_motion(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling light motion event."""
         # First add a light
@@ -4821,7 +4894,9 @@ class TestUnifiProtectCoordinator:
 
         assert coordinator.data["lights"]["light1"]["lastMotionStart"] == 1234567890
 
-    def test_handle_event_update_no_id(self, coordinator: UnifiProtectCoordinator):
+    def test_handle_event_update_no_id(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ):
         """Test handling event without ID."""
         initial_events = dict(coordinator.data["events"])
         coordinator._handle_event_update("motion", {"device": "camera1"})
@@ -4830,7 +4905,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["events"] == initial_events
 
     def test_handle_event_update_event_id_semantics(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Test event ID semantics: missing/empty IDs dropped, distinct IDs accumulate,
         repeated IDs replace, notification count matches accepted events."""
@@ -4886,53 +4961,53 @@ class TestUnifiProtectCoordinator:
                 "end": 400,
             }
 
-    def test_get_camera_existing(self, coordinator: UnifiProtectCoordinator):
+    def test_get_camera_existing(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test getting existing camera."""
         coordinator.data["cameras"] = {"camera1": {"id": "camera1", "name": "Test"}}
         result = coordinator.get_camera("camera1")
         assert result == {"id": "camera1", "name": "Test"}
 
-    def test_get_camera_missing(self, coordinator: UnifiProtectCoordinator):
+    def test_get_camera_missing(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test getting missing camera."""
         result = coordinator.get_camera("nonexistent")
         assert result is None
 
-    def test_get_light_existing(self, coordinator: UnifiProtectCoordinator):
+    def test_get_light_existing(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test getting existing light."""
         coordinator.data["lights"] = {"light1": {"id": "light1", "name": "Test"}}
         result = coordinator.get_light("light1")
         assert result == {"id": "light1", "name": "Test"}
 
-    def test_get_light_missing(self, coordinator: UnifiProtectCoordinator):
+    def test_get_light_missing(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test getting missing light."""
         result = coordinator.get_light("nonexistent")
         assert result is None
 
-    def test_get_sensor_existing(self, coordinator: UnifiProtectCoordinator):
+    def test_get_sensor_existing(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test getting existing sensor."""
         coordinator.data["sensors"] = {"sensor1": {"id": "sensor1", "name": "Test"}}
         result = coordinator.get_sensor("sensor1")
         assert result == {"id": "sensor1", "name": "Test"}
 
-    def test_get_sensor_missing(self, coordinator: UnifiProtectCoordinator):
+    def test_get_sensor_missing(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test getting missing sensor."""
         result = coordinator.get_sensor("nonexistent")
         assert result is None
 
-    def test_get_nvr_existing(self, coordinator: UnifiProtectCoordinator):
+    def test_get_nvr_existing(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test getting existing NVR."""
         coordinator.data["nvrs"] = {"nvr1": {"id": "nvr1", "name": "Test"}}
         result = coordinator.get_nvr("nvr1")
         assert result == {"id": "nvr1", "name": "Test"}
 
-    def test_get_nvr_missing(self, coordinator: UnifiProtectCoordinator):
+    def test_get_nvr_missing(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test getting missing NVR."""
         result = coordinator.get_nvr("nonexistent")
         assert result is None
 
     @pytest.mark.asyncio
     async def test_cleanup_stale_devices(
-        self, hass: HomeAssistant, coordinator: UnifiProtectCoordinator
+        self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test stale device cleanup."""
         # Set up previous device IDs
@@ -4974,7 +5049,7 @@ class TestUnifiProtectCoordinator:
         network_client = _create_mock_network_client()
         protect_client = _create_mock_protect_client()
 
-        coordinator = UnifiProtectCoordinator(
+        coordinator = UnifiInsightsProtectCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
@@ -4983,7 +5058,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.websocket_task is None
 
     def test_handle_event_update_unknown_device(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling event for unknown device - no device_id match."""
         # Don't add any cameras/lights/sensors
@@ -5006,7 +5081,7 @@ class TestUnifiProtectCoordinator:
         assert "event_unknown" in coordinator.data["events"]["motion"]
 
     def test_handle_event_update_no_device_id(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling event without device field."""
         coordinator._handle_event_update(
@@ -5024,7 +5099,7 @@ class TestUnifiProtectCoordinator:
         assert "event_no_device" in coordinator.data["events"]["motion"]
 
     def test_handle_event_update_resolves_camera_id_field(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test device id resolution tolerates "cameraId" (models/event.py's
         actual field name), not just the invented "device" key.
@@ -5045,7 +5120,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["cameras"]["camera1"]["lastMotionStart"] == 111
 
     def test_handle_event_update_smart_detect_type_alias(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test the "smartDetect" event type (models/event.py's
         EventType.SMART_DETECT) is accepted alongside the original
@@ -5072,7 +5147,7 @@ class TestUnifiProtectCoordinator:
     # -- Task 1 / 3: the "events" WebSocket subscription adapter ------------
 
     def test_on_websocket_event_message_item_wrapper(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test the events adapter with fields nested under "item", mirroring
         the confirmed "devices" envelope shape (see _on_websocket_message).
@@ -5097,7 +5172,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["cameras"]["camera1"]["lastMotionEnd"] is None
 
     def test_on_websocket_event_message_flat_frame(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test the events adapter with no item/payload/action wrapper - a
         flat frame's own top-level "type" is the real event type (there is
@@ -5112,7 +5187,9 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["cameras"]["camera1"]["lastMotionStart"] == 777
 
     def test_on_websocket_event_message_not_a_dict(
-        self, coordinator: UnifiProtectCoordinator, caplog: pytest.LogCaptureFixture
+        self,
+        coordinator: UnifiInsightsProtectCoordinator,
+        caplog: pytest.LogCaptureFixture,
     ):
         """Test the events adapter warns and drops non-dict payloads instead
         of raising (task 3: never raise into the WS callback).
@@ -5123,7 +5200,9 @@ class TestUnifiProtectCoordinator:
         assert "not a JSON object" in caplog.text
 
     def test_on_websocket_event_message_missing_type_warns_once_then_debug(
-        self, coordinator: UnifiProtectCoordinator, caplog: pytest.LogCaptureFixture
+        self,
+        coordinator: UnifiInsightsProtectCoordinator,
+        caplog: pytest.LogCaptureFixture,
     ):
         """Test an unparseable (missing event type) frame logs WARNING once,
         then DEBUG on repeat - mirrors the devices adapter's existing cap.
@@ -5153,7 +5232,7 @@ class TestUnifiProtectCoordinator:
     )
     def test_on_websocket_event_rate_limit_defers_without_warning(
         self,
-        coordinator: UnifiProtectCoordinator,
+        coordinator: UnifiInsightsProtectCoordinator,
         caplog: pytest.LogCaptureFixture,
         window_ms: Any,
         expected_delay: float,
@@ -5179,7 +5258,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator._ws_event_error_warned is False
 
     def test_on_websocket_event_rate_limit_in_nested_error(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """An error object can carry its own rate-limit fields."""
         coordinator._on_websocket_event_message(
@@ -5196,7 +5275,7 @@ class TestUnifiProtectCoordinator:
 
     def test_on_websocket_event_rate_limit_without_protect_client(
         self,
-        coordinator_no_protect: UnifiProtectCoordinator,
+        coordinator_no_protect: UnifiInsightsProtectCoordinator,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """A late rate-limit frame is harmless after the Protect client is gone."""
@@ -5214,7 +5293,9 @@ class TestUnifiProtectCoordinator:
         assert not any(r.levelno == logging.WARNING for r in caplog.records)
 
     def test_on_websocket_event_message_error_frame_warns_once_then_debug(
-        self, coordinator: UnifiProtectCoordinator, caplog: pytest.LogCaptureFixture
+        self,
+        coordinator: UnifiInsightsProtectCoordinator,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Other console errors still warn once, then log at DEBUG."""
         frame: dict[str, Any] = {
@@ -5242,7 +5323,9 @@ class TestUnifiProtectCoordinator:
         coordinator.protect_client._defer_after_rate_limit.assert_not_called()
 
     def test_on_websocket_event_message_error_frame_keeps_parse_warning(
-        self, coordinator: UnifiProtectCoordinator, caplog: pytest.LogCaptureFixture
+        self,
+        coordinator: UnifiInsightsProtectCoordinator,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Test an error frame does not spend the unparseable-frame warning.
 
@@ -5267,7 +5350,9 @@ class TestUnifiProtectCoordinator:
         assert any("missing event type" in r.getMessage() for r in warnings)
 
     def test_on_websocket_event_message_missing_id_is_dropped(
-        self, coordinator: UnifiProtectCoordinator, caplog: pytest.LogCaptureFixture
+        self,
+        coordinator: UnifiInsightsProtectCoordinator,
+        caplog: pytest.LogCaptureFixture,
     ):
         """Test a resolvable type with no id logs at debug and is dropped."""
         with caplog.at_level(logging.DEBUG):
@@ -5277,7 +5362,9 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["events"] == {}
 
     def test_on_websocket_event_message_never_raises_on_handler_error(
-        self, coordinator: UnifiProtectCoordinator, caplog: pytest.LogCaptureFixture
+        self,
+        coordinator: UnifiInsightsProtectCoordinator,
+        caplog: pytest.LogCaptureFixture,
     ):
         """Test an exception from `_handle_event_update` is logged and
         swallowed, not propagated into the WS callback (task 3: the events
@@ -5301,7 +5388,7 @@ class TestUnifiProtectCoordinator:
     # -- Task 2: bounded auto-off for the motion/smart-detect/ring latch ----
 
     def test_motion_latch_survives_within_timeout(
-        self, coordinator: UnifiProtectCoordinator, freezer
+        self, coordinator: UnifiInsightsProtectCoordinator, freezer
     ):
         """Test reconciliation does not clear a latch that is still young."""
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Test"}
@@ -5316,7 +5403,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["cameras"]["camera1"]["lastMotionEnd"] is None
 
     def test_motion_latch_auto_clears_after_stale_timeout(
-        self, coordinator: UnifiProtectCoordinator, freezer
+        self, coordinator: UnifiInsightsProtectCoordinator, freezer
     ):
         """CRITICAL regression test: a dropped "end" frame must not latch
         `camera_motion` ON forever - it must self-clear after
@@ -5337,7 +5424,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["cameras"]["camera1"]["lastMotionEnd"] is not None
 
     def test_smart_detect_latch_auto_clears_and_resets_types(
-        self, coordinator: UnifiProtectCoordinator, freezer
+        self, coordinator: UnifiInsightsProtectCoordinator, freezer
     ):
         """Test a stale smart-detect latch clears lastMotionEnd AND resets
         lastSmartDetectTypes, so person/vehicle/animal detection sensors
@@ -5362,7 +5449,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["cameras"]["camera1"]["lastSmartDetectTypes"] == []
 
     def test_smart_detect_event_tolerates_non_list_smart_detect_types(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test a non-list smartDetectTypes value (unconfirmed real shape -
         see class docstring) degrades to an empty list instead of storing
@@ -5384,7 +5471,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["cameras"]["camera1"]["lastSmartDetectTypes"] == []
 
     def test_light_motion_latch_auto_clears_after_stale_timeout(
-        self, coordinator: UnifiProtectCoordinator, freezer
+        self, coordinator: UnifiInsightsProtectCoordinator, freezer
     ):
         """Test the same bounded auto-off applies to light motion latches."""
         coordinator.data["lights"]["light1"] = {"id": "light1", "name": "Test"}
@@ -5399,7 +5486,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["lights"]["light1"]["lastMotionEnd"] is not None
 
     def test_ring_latch_auto_clears_after_stale_timeout(
-        self, coordinator: UnifiProtectCoordinator, freezer
+        self, coordinator: UnifiInsightsProtectCoordinator, freezer
     ):
         """Test the doorbell ring latch is bounded the same way as motion -
         it is exposed to the identical dropped-end-frame risk once the
@@ -5417,7 +5504,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["cameras"]["camera1"]["lastRingEnd"] is not None
 
     def test_ring_latch_normal_end_event_clears_tracker(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test a normal paired ring "end" event pops the ring tracker
         immediately, mirroring the motion latch's normal-clear path.
@@ -5438,7 +5525,7 @@ class TestUnifiProtectCoordinator:
         assert "camera1" not in coordinator._camera_ring_started
 
     def test_reconcile_stale_events_skips_tracker_for_removed_device(
-        self, coordinator: UnifiProtectCoordinator, freezer
+        self, coordinator: UnifiInsightsProtectCoordinator, freezer
     ):
         """Test reconciliation for a stale tracker entry whose device has
         since disappeared (e.g. removed by a REST poll rebuild) just drops
@@ -5462,7 +5549,7 @@ class TestUnifiProtectCoordinator:
         assert "camera1" not in coordinator.data["cameras"]
 
     def test_motion_latch_normal_end_event_clears_without_reconciliation(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test a normal paired "end" event clears the latch immediately -
         reconciliation is a safety net, not the primary clearing path.
@@ -5484,7 +5571,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_reconcile_stale_events_runs_on_periodic_poll(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test the periodic REST poll also reconciles stale latches,
         rather than relying solely on event pairing.
@@ -5495,7 +5582,7 @@ class TestUnifiProtectCoordinator:
         mock_reconcile.assert_called_once()
 
     def test_reconcile_stale_events_runs_on_websocket_reconnect(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test a WS (re)connect triggers reconciliation - a missed "end"
         frame during the outage would otherwise wait for the next poll.
@@ -5520,7 +5607,9 @@ class TestUnifiProtectCoordinator:
 
     # -- Task 5: WebSocket health signal -------------------------------------
 
-    def test_websocket_health_initial_state(self, coordinator: UnifiProtectCoordinator):
+    def test_websocket_health_initial_state(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ):
         """Test the WS health signal starts unconnected/unknown, per stream
         and in the top-level roll-up.
         """
@@ -5534,7 +5623,7 @@ class TestUnifiProtectCoordinator:
         }
 
     def test_websocket_health_updates_on_devices_frame(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test an inbound devices frame marks only the devices stream
         connected - even an unparseable one, since receiving anything is
@@ -5556,7 +5645,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.websocket_health["last_message_at"] is not None
 
     def test_websocket_health_updates_on_events_frame(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test an inbound events frame marks only the events stream
         connected, mirroring the devices case above.
@@ -5571,7 +5660,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator._last_ws_message is not None
 
     def test_websocket_health_reflects_connection_state_changes(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test the connection-state callback drives per-stream state, and
         the top-level roll-up only reports connected once BOTH streams are.
@@ -5590,7 +5679,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator._ws_connected is False
 
     def test_on_devices_connection_state_change_updates_devices_stream_only(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test the bound wrapper registered as the devices subscription's
         `on_connection_state_change` callback (see `async_start_websocket`)
@@ -5602,7 +5691,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.websocket_health["events"]["connected"] is False
 
     def test_on_events_connection_state_change_updates_events_stream_only(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test the bound wrapper registered as the events subscription's
         `on_connection_state_change` callback updates only the events
@@ -5614,7 +5703,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.websocket_health["devices"]["connected"] is False
 
     def test_websocket_health_detects_half_dead_pair(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """CRITICAL regression test (review finding 1, Major): a chatty
         devices subscription must never mask a hung/disconnected events
@@ -5666,7 +5755,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator._ws_connected is False
 
     def test_cleanup_stale_devices_no_match(
-        self, hass: HomeAssistant, coordinator: UnifiProtectCoordinator
+        self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test stale device cleanup when device not found in registry."""
         # Set up previous device IDs
@@ -5703,7 +5792,9 @@ class TestUnifiProtectCoordinator:
             ).called
 
     @pytest.mark.asyncio
-    async def test_fetch_sensors_error(self, coordinator: UnifiProtectCoordinator):
+    async def test_fetch_sensors_error(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ):
         """Test sensor fetch handles errors gracefully."""
         coordinator.protect_client.sensors.get_all = AsyncMock(
             side_effect=Exception("Sensors error")
@@ -5717,7 +5808,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_sensors_preserves_cache_on_empty(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test sensor fetch preserves cached sensors across transient empty polls."""
         cached = {"sensor1": {"id": "sensor1", "state": "CONNECTED"}}
@@ -5731,7 +5822,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_sensors_clears_cache_after_max_consecutive_empty(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test sensor cache is cleared after MAX_CONSECUTIVE_EMPTY_FETCHES polls."""
         cached = {"sensor1": {"id": "sensor1", "state": "CONNECTED"}}
@@ -5746,7 +5837,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_sensors_preserves_cache_on_404(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test sensor fetch preserves cached sensors across transient 404s."""
         cached = {"sensor1": {"id": "sensor1", "state": "CONNECTED"}}
@@ -5761,7 +5852,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_sensors_clears_cache_after_max_consecutive_404(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test sensor cache is cleared after consecutive 404s exceed threshold."""
         cached = {"sensor1": {"id": "sensor1", "state": "CONNECTED"}}
@@ -5777,7 +5868,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_sensors_404_when_no_sensors_configured(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test sensor fetch 404 leaves dict empty without error."""
         coordinator.data["sensors"] = {}
@@ -5789,7 +5880,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["sensors"] == {}
 
     def test_update_device_collection_handles_non_dict_existing(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test _update_device_collection handles existing data being non-dict."""
         coordinator.data["cameras"] = None  # type: ignore[assignment]
@@ -5809,7 +5900,7 @@ class TestUnifiProtectCoordinator:
     )
     async def test_fetch_endpoints_preserve_cache_on_404(
         self,
-        coordinator: UnifiProtectCoordinator,
+        coordinator: UnifiInsightsProtectCoordinator,
         collection: str,
         client_attr: str,
         client_method: str,
@@ -5832,7 +5923,7 @@ class TestUnifiProtectCoordinator:
     async def test_fetch_preserves_cache_across_persistent_errors(
         self,
         hass: HomeAssistant,
-        coordinator: UnifiProtectCoordinator,
+        coordinator: UnifiInsightsProtectCoordinator,
         collection: str,
     ):
         """Test a persistent fetch error never evicts devices or registry entries.
@@ -5881,7 +5972,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_nvr_missing_id_clears_cache_after_max_consecutive(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test NVR response without id is treated as empty."""
         cached = {"nvr1": {"id": "nvr1", "name": "NVR"}}
@@ -5908,7 +5999,7 @@ class TestUnifiProtectCoordinator:
         ids=["none", "empty_dict", "id_less_record"],
     )
     async def test_fetch_nvr_empty_responses_preserve_then_clear_cache(
-        self, coordinator: UnifiProtectCoordinator, empty_response: Any
+        self, coordinator: UnifiInsightsProtectCoordinator, empty_response: Any
     ) -> None:
         """Test NVR responses with None, empty dict, or ID-less record preserve
         cache for MAX_CONSECUTIVE_EMPTY_FETCHES polls and then clear it,
@@ -5928,7 +6019,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_cameras_preserves_cache_on_transient_empty(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test camera fetch preserves cache across transient empty polls."""
         cached = {"camera1": {"id": "camera1", "state": "CONNECTED"}}
@@ -5940,7 +6031,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_cameras_clears_cache_after_max_consecutive_empty(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test camera cache is cleared after consecutive empty polls."""
         cached = {"camera1": {"id": "camera1", "state": "CONNECTED"}}
@@ -5954,7 +6045,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_lights_preserves_cache_on_transient_empty(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test light fetch preserves cached lights across transient empty responses."""
         cached = {"light1": {"id": "light1", "state": "CONNECTED"}}
@@ -5978,7 +6069,7 @@ class TestUnifiProtectCoordinator:
         ],
     )
     async def test_fetch_cameras_preserves_cache_on_transient_error(
-        self, coordinator: UnifiProtectCoordinator, err: Exception
+        self, coordinator: UnifiInsightsProtectCoordinator, err: Exception
     ):
         """A transient camera fetch error must not fail the whole Protect poll.
 
@@ -5996,7 +6087,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_lights_preserves_cache_on_transient_error(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """A transient light fetch error must not fail the whole Protect poll."""
         cached = {"light1": {"id": "light1", "state": "CONNECTED"}}
@@ -6011,7 +6102,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_cameras_transient_error_does_not_advance_eviction(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """A fetch error is not evidence a camera was removed, unlike an empty poll.
 
@@ -6036,7 +6127,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_sustained_camera_fetch_errors_fail_the_poll(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Preservation is bounded: a lasting outage must mark Protect unavailable.
 
@@ -6057,7 +6148,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_camera_fetch_error_counter_resets_on_handled_404(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """A 404 is a healthy answer, so it breaks the transient-error streak.
 
@@ -6085,7 +6176,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_light_fetch_error_counter_resets_on_handled_404(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """See the camera case: a handled 404 resets the light error streak."""
         coordinator.data["lights"] = {"light1": {"id": "light1"}}
@@ -6107,7 +6198,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_camera_fetch_error_counter_resets_on_success(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """A recovered poll re-arms the full preservation window."""
         coordinator.data["cameras"] = {"camera1": {"id": "camera1"}}
@@ -6133,7 +6224,7 @@ class TestUnifiProtectCoordinator:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("method", ["_fetch_cameras", "_fetch_lights"])
     async def test_fetch_propagates_auth_error(
-        self, coordinator: UnifiProtectCoordinator, method: str
+        self, coordinator: UnifiInsightsProtectCoordinator, method: str
     ):
         """An expired key must still reach the reauth flow, not be swallowed."""
         collection = "cameras" if method == "_fetch_cameras" else "lights"
@@ -6146,7 +6237,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_cleanup_stale_devices_preserves_devices_on_transient_empty(
-        self, hass: HomeAssistant, coordinator: UnifiProtectCoordinator
+        self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test stale device cleanup preserves devices during transient empty poll."""
         coordinator._previous_protect_device_ids = {
@@ -6174,7 +6265,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_cleanup_stale_devices_removes_device_after_max_consecutive_empty(
-        self, hass: HomeAssistant, coordinator: UnifiProtectCoordinator
+        self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test stale device cleanup removes devices after max empty polls."""
         coordinator._previous_protect_device_ids = {
@@ -6207,7 +6298,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_cameras_preserves_camera_skipped_by_validation(
-        self, hass: HomeAssistant, coordinator: UnifiProtectCoordinator
+        self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test a camera dropped on a ValidationError keeps its cached entry.
 
@@ -6246,7 +6337,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_cameras_still_refreshes_data_when_result_incomplete(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test preserving a skipped camera does not stall the others' data.
 
@@ -6274,7 +6365,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_cameras_replaces_collection_when_result_complete(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test a complete response still drops cameras removed from Protect.
 
@@ -6299,7 +6390,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_cameras_preserves_cache_when_every_camera_fails_parsing(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test a schema break that drops every camera does not purge the cache.
 
@@ -6322,7 +6413,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_cleanup_stale_devices_defers_removal_on_brief_absence(
-        self, hass: HomeAssistant, coordinator: UnifiProtectCoordinator
+        self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test a device missing from one poll is not purged from the registry.
 
@@ -6345,7 +6436,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_cleanup_stale_devices_removes_device_after_sustained_absence(
-        self, hass: HomeAssistant, coordinator: UnifiProtectCoordinator
+        self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test a device absent past the grace window is still evicted.
 
@@ -6372,7 +6463,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_cleanup_stale_devices_resets_absence_counter_on_return(
-        self, hass: HomeAssistant, coordinator: UnifiProtectCoordinator
+        self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test a device that reappears restarts its grace window.
 
@@ -6404,7 +6495,7 @@ class TestUnifiProtectCoordinator:
             mock_registry.return_value.async_update_device.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_fetch_nvr_error(self, coordinator: UnifiProtectCoordinator):
+    async def test_fetch_nvr_error(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test NVR fetch handles errors gracefully."""
         coordinator.protect_client.nvr.get = AsyncMock(
             side_effect=Exception("NVR error")
@@ -6418,7 +6509,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_cameras_processes_smart_detect_types(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test camera fetch extracts smartDetectTypes from featureFlags."""
         mock_camera = MagicMock()
@@ -6472,7 +6563,7 @@ class TestUnifiProtectCoordinator:
         ],
     )
     async def test_fetch_cameras_non_dict_feature_flags(
-        self, coordinator: UnifiProtectCoordinator, payload: dict[str, Any]
+        self, coordinator: UnifiInsightsProtectCoordinator, payload: dict[str, Any]
     ) -> None:
         """Test camera fetch handles non-dict featureFlags and
         snake-case feature_flags.
@@ -6498,7 +6589,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_cameras_valid_snake_case_feature_flags(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Test camera fetch normalises valid snake-case feature_flags into
         featureFlags.
@@ -6525,7 +6616,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_cameras_no_feature_flags(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test camera fetch handles missing featureFlags."""
         mock_camera = MagicMock()
@@ -6548,7 +6639,7 @@ class TestUnifiProtectCoordinator:
     @pytest.mark.asyncio
     async def test_fetch_cameras_rebuild_drops_motion_tracker_for_fieldless_camera(
         self,
-        coordinator: UnifiProtectCoordinator,
+        coordinator: UnifiInsightsProtectCoordinator,
         freezer,
         caplog: pytest.LogCaptureFixture,
     ):
@@ -6598,7 +6689,7 @@ class TestUnifiProtectCoordinator:
     @pytest.mark.asyncio
     async def test_fetch_cameras_rebuild_drops_ring_tracker_for_fieldless_camera(
         self,
-        coordinator: UnifiProtectCoordinator,
+        coordinator: UnifiInsightsProtectCoordinator,
         freezer,
         caplog: pytest.LogCaptureFixture,
     ):
@@ -6628,7 +6719,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_response_error(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test a sustained response error eventually fails the poll.
 
@@ -6648,7 +6739,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_timeout_error(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test a sustained timeout error eventually fails the poll.
 
@@ -6668,7 +6759,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_update_data_generic_error(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test data fetch with generic error."""
         coordinator.protect_client.cameras.get_all = AsyncMock(
@@ -6680,7 +6771,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_lights_no_protect_client(
-        self, coordinator_no_protect: UnifiProtectCoordinator
+        self, coordinator_no_protect: UnifiInsightsProtectCoordinator
     ):
         """Test light fetch returns early without protect client."""
         await coordinator_no_protect._fetch_lights()
@@ -6689,7 +6780,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_sensors_no_protect_client(
-        self, coordinator_no_protect: UnifiProtectCoordinator
+        self, coordinator_no_protect: UnifiInsightsProtectCoordinator
     ):
         """Test sensor fetch returns early without protect client."""
         await coordinator_no_protect._fetch_sensors()
@@ -6697,7 +6788,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_nvr_no_protect_client(
-        self, coordinator_no_protect: UnifiProtectCoordinator
+        self, coordinator_no_protect: UnifiInsightsProtectCoordinator
     ):
         """Test NVR fetch returns early without protect client."""
         await coordinator_no_protect._fetch_nvr()
@@ -6705,7 +6796,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_chimes_no_protect_client(
-        self, coordinator_no_protect: UnifiProtectCoordinator
+        self, coordinator_no_protect: UnifiInsightsProtectCoordinator
     ):
         """Test chime fetch returns early without protect client."""
         await coordinator_no_protect._fetch_chimes()
@@ -6713,7 +6804,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_viewers_no_protect_client(
-        self, coordinator_no_protect: UnifiProtectCoordinator
+        self, coordinator_no_protect: UnifiInsightsProtectCoordinator
     ):
         """Test viewer fetch returns early without protect client."""
         await coordinator_no_protect._fetch_viewers()
@@ -6721,7 +6812,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_liveviews_no_protect_client(
-        self, coordinator_no_protect: UnifiProtectCoordinator
+        self, coordinator_no_protect: UnifiInsightsProtectCoordinator
     ):
         """Test liveview fetch returns early without protect client."""
         await coordinator_no_protect._fetch_liveviews()
@@ -6729,7 +6820,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_cameras_no_protect_client(
-        self, coordinator_no_protect: UnifiProtectCoordinator
+        self, coordinator_no_protect: UnifiInsightsProtectCoordinator
     ):
         """Test camera fetch returns early without protect client."""
         await coordinator_no_protect._fetch_cameras()
@@ -6737,7 +6828,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_stop_websocket_no_protect_websocket(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test async_stop_websocket when _protect_websocket is None."""
         coordinator._protect_websocket = None
@@ -6748,7 +6839,9 @@ class TestUnifiProtectCoordinator:
         assert coordinator._sensor_reconcile_task is None
         assert coordinator._sensor_reconnect_task is None
 
-    def test_handle_device_update_doorlock(self, coordinator: UnifiProtectCoordinator):
+    def test_handle_device_update_doorlock(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ):
         """Test handling doorlock device raw dictionary merge."""
         coordinator.data["doorlocks"] = {
             "lock1": {"id": "lock1", "name": "Front Door", "state": "LOCKED"}
@@ -6768,7 +6861,9 @@ class TestUnifiProtectCoordinator:
         }
         listener.assert_called_once()
 
-    def test_handle_device_update_viewport(self, coordinator: UnifiProtectCoordinator):
+    def test_handle_device_update_viewport(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ):
         """Test handling viewport device raw dictionary merge."""
         coordinator.data["viewports"] = {
             "vp1": {"id": "vp1", "name": "Viewport 1", "state": "ONLINE"}
@@ -6788,7 +6883,7 @@ class TestUnifiProtectCoordinator:
         listener.assert_called_once()
 
     def test_normalize_camera_data_sparse_defensive_fallbacks(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Cover smart-detect and PTZ fallback arms with sparse dictionaries."""
         # 1. Sparse camera dictionary with legacy snake_case fields (defensive fallback)
@@ -6821,7 +6916,7 @@ class TestUnifiProtectCoordinator:
         assert normalized_real["isPtz"] is False
 
     def test_prune_rebuilt_trackers_motion_and_ring(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Cover REST rebuild tracker pruning branches for motion and ring."""
         now = datetime.now(tz=UTC)
@@ -6859,7 +6954,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_lights_unabsorbed_error_raises(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test _fetch_lights raises when errors exceed threshold."""
         protect_client = coordinator.protect_client
@@ -6879,7 +6974,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_fetch_collections_skip_records_without_id(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test Protect collection fetches skip ID-less records."""
         protect_client = coordinator.protect_client
@@ -6969,7 +7064,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_refresh_sensors_task_cleared_mid_execution(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test _sensor_refresh_task cleared by production helper mid-execution."""
         entered_fetch = asyncio.Event()
@@ -7004,7 +7099,7 @@ class TestUnifiProtectCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_refresh_sensors_completed_fetch_shutdown_race(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Test completed-fetch shutdown race preserves newer fetch owner.
 
@@ -7125,20 +7220,20 @@ class TestUnifiProtectCoordinator:
 
 
 # ============================================================================
-# UnifiFacadeCoordinator Tests
+# UnifiInsightsFacadeCoordinator Tests
 # ============================================================================
 
 
 class TestUnifiFacadeCoordinator:
-    """Tests for UnifiFacadeCoordinator."""
+    """Tests for UnifiInsightsFacadeCoordinator."""
 
     @pytest.fixture
     def config_coordinator(
         self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
-    ) -> UnifiConfigCoordinator:
+    ) -> UnifiInsightsConfigCoordinator:
         """Create a config coordinator."""
         network_client = _create_mock_network_client()
-        coord = UnifiConfigCoordinator(
+        coord = UnifiInsightsConfigCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=None,
@@ -7159,11 +7254,11 @@ class TestUnifiFacadeCoordinator:
         self,
         hass: HomeAssistant,
         mock_config_entry: MockConfigEntry,
-        config_coordinator: UnifiConfigCoordinator,
-    ) -> UnifiDeviceCoordinator:
+        config_coordinator: UnifiInsightsConfigCoordinator,
+    ) -> UnifiInsightsDeviceCoordinator:
         """Create a device coordinator."""
         network_client = _create_mock_network_client()
-        coord = UnifiDeviceCoordinator(
+        coord = UnifiInsightsDeviceCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=None,
@@ -7182,11 +7277,11 @@ class TestUnifiFacadeCoordinator:
     @pytest.fixture
     def protect_coordinator(
         self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
-    ) -> UnifiProtectCoordinator:
+    ) -> UnifiInsightsProtectCoordinator:
         """Create a protect coordinator."""
         network_client = _create_mock_network_client()
         protect_client = _create_mock_protect_client()
-        coord = UnifiProtectCoordinator(
+        coord = UnifiInsightsProtectCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
@@ -7211,14 +7306,14 @@ class TestUnifiFacadeCoordinator:
         self,
         hass: HomeAssistant,
         mock_config_entry: MockConfigEntry,
-        config_coordinator: UnifiConfigCoordinator,
-        device_coordinator: UnifiDeviceCoordinator,
-        protect_coordinator: UnifiProtectCoordinator,
-    ) -> AsyncGenerator[UnifiFacadeCoordinator]:
+        config_coordinator: UnifiInsightsConfigCoordinator,
+        device_coordinator: UnifiInsightsDeviceCoordinator,
+        protect_coordinator: UnifiInsightsProtectCoordinator,
+    ) -> AsyncGenerator[UnifiInsightsFacadeCoordinator]:
         """Create a facade coordinator."""
         network_client = _create_mock_network_client()
         protect_client = _create_mock_protect_client()
-        coordinator = UnifiFacadeCoordinator(
+        coordinator = UnifiInsightsFacadeCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
@@ -7240,12 +7335,12 @@ class TestUnifiFacadeCoordinator:
         self,
         hass: HomeAssistant,
         mock_config_entry: MockConfigEntry,
-        config_coordinator: UnifiConfigCoordinator,
-        device_coordinator: UnifiDeviceCoordinator,
-    ) -> AsyncGenerator[UnifiFacadeCoordinator]:
+        config_coordinator: UnifiInsightsConfigCoordinator,
+        device_coordinator: UnifiInsightsDeviceCoordinator,
+    ) -> AsyncGenerator[UnifiInsightsFacadeCoordinator]:
         """Create a facade coordinator without protect."""
         network_client = _create_mock_network_client()
-        coordinator = UnifiFacadeCoordinator(
+        coordinator = UnifiInsightsFacadeCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=None,
@@ -7259,12 +7354,12 @@ class TestUnifiFacadeCoordinator:
         await config_coordinator.async_shutdown()
         await device_coordinator.async_shutdown()
 
-    def test_initialization(self, facade_coordinator: UnifiFacadeCoordinator):
+    def test_initialization(self, facade_coordinator: UnifiInsightsFacadeCoordinator):
         """Test facade coordinator initialization."""
         assert facade_coordinator.name == f"{DOMAIN}_facade"
 
     def test_aggregate_without_protect_has_security_device_keys(
-        self, facade_coordinator_no_protect: UnifiFacadeCoordinator
+        self, facade_coordinator_no_protect: UnifiInsightsFacadeCoordinator
     ):
         """The empty Protect fallback carries every collection entities index."""
         facade_coordinator_no_protect._aggregate_data()
@@ -7273,7 +7368,7 @@ class TestUnifiFacadeCoordinator:
         for collection in ("fobs", "link_stations", "alarm_hubs", "sirens"):
             assert protect[collection] == {}
 
-    def test_aggregate_data(self, facade_coordinator: UnifiFacadeCoordinator):
+    def test_aggregate_data(self, facade_coordinator: UnifiInsightsFacadeCoordinator):
         """Test data aggregation."""
         facade_coordinator._aggregate_data()
 
@@ -7301,7 +7396,7 @@ class TestUnifiFacadeCoordinator:
         assert "last_update" in facade_coordinator.data
 
     def test_aggregate_data_no_protect(
-        self, facade_coordinator_no_protect: UnifiFacadeCoordinator
+        self, facade_coordinator_no_protect: UnifiInsightsFacadeCoordinator
     ):
         """Test data aggregation without protect."""
         facade_coordinator_no_protect._aggregate_data()
@@ -7312,45 +7407,51 @@ class TestUnifiFacadeCoordinator:
 
     def test_aggregate_data_includes_rule_changes(
         self,
-        facade_coordinator: UnifiFacadeCoordinator,
-        config_coordinator: UnifiConfigCoordinator,
+        facade_coordinator: UnifiInsightsFacadeCoordinator,
+        config_coordinator: UnifiInsightsConfigCoordinator,
     ) -> None:
         """Rule change records in config data are included in facade data."""
         config_coordinator.data["rule_changes"] = {"site1": [{"sequence": 1}]}
         facade_coordinator._aggregate_data()
         assert facade_coordinator.data["rule_changes"] == {"site1": [{"sequence": 1}]}
 
-    def test_get_site(self, facade_coordinator: UnifiFacadeCoordinator):
+    def test_get_site(self, facade_coordinator: UnifiInsightsFacadeCoordinator):
         """Test get_site delegation to config coordinator."""
         facade_coordinator._aggregate_data()
         result = facade_coordinator.get_site("default")
         assert result == {"id": "default", "name": "Default"}
 
-    def test_get_device(self, facade_coordinator: UnifiFacadeCoordinator):
+    def test_get_device(self, facade_coordinator: UnifiInsightsFacadeCoordinator):
         """Test get_device."""
         facade_coordinator._aggregate_data()
         result = facade_coordinator.get_device("default", "device1")
         assert result == {"id": "device1"}
 
-    def test_get_device_missing(self, facade_coordinator: UnifiFacadeCoordinator):
+    def test_get_device_missing(
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
+    ):
         """Test get_device for missing device."""
         facade_coordinator._aggregate_data()
         result = facade_coordinator.get_device("default", "nonexistent")
         assert result is None
 
-    def test_get_device_stats(self, facade_coordinator: UnifiFacadeCoordinator):
+    def test_get_device_stats(self, facade_coordinator: UnifiInsightsFacadeCoordinator):
         """Test get_device_stats."""
         facade_coordinator._aggregate_data()
         result = facade_coordinator.get_device_stats("default", "device1")
         assert result == {"cpu": 10}
 
-    def test_get_device_stats_missing(self, facade_coordinator: UnifiFacadeCoordinator):
+    def test_get_device_stats_missing(
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
+    ):
         """Test get_device_stats for missing device."""
         facade_coordinator._aggregate_data()
         result = facade_coordinator.get_device_stats("default", "nonexistent")
         assert result is None
 
-    def test_available_all_success(self, facade_coordinator: UnifiFacadeCoordinator):
+    def test_available_all_success(
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
+    ):
         """Test available property when all coordinators succeed."""
         # Replace coordinators with mocks that have last_update_success attribute
         mock_config = MagicMock()
@@ -7367,7 +7468,7 @@ class TestUnifiFacadeCoordinator:
         assert facade_coordinator.available is True
 
     def test_available_config_fails_decoupled(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """Test available property when config coordinator fails."""
         mock_config = MagicMock()
@@ -7387,7 +7488,7 @@ class TestUnifiFacadeCoordinator:
         assert facade_coordinator.protect_available is True
 
     def test_available_device_fails_decoupled(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """Test available property when device coordinator fails."""
         mock_config = MagicMock()
@@ -7407,7 +7508,7 @@ class TestUnifiFacadeCoordinator:
         assert facade_coordinator.protect_available is True
 
     def test_available_protect_fails_decoupled(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """Test available property when protect coordinator fails."""
         mock_config = MagicMock()
@@ -7427,7 +7528,7 @@ class TestUnifiFacadeCoordinator:
         assert facade_coordinator.config_available is True
 
     def test_available_all_coordinators_fail(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """Test available property when all coordinators fail."""
         mock_config = MagicMock()
@@ -7447,7 +7548,7 @@ class TestUnifiFacadeCoordinator:
         assert facade_coordinator.protect_available is False
 
     def test_available_no_protect(
-        self, facade_coordinator_no_protect: UnifiFacadeCoordinator
+        self, facade_coordinator_no_protect: UnifiInsightsFacadeCoordinator
     ):
         """Test available property without protect coordinator."""
         mock_config = MagicMock()
@@ -7463,7 +7564,9 @@ class TestUnifiFacadeCoordinator:
         assert facade_coordinator_no_protect.protect_available is True
 
     @pytest.mark.asyncio
-    async def test_async_update_data(self, facade_coordinator: UnifiFacadeCoordinator):
+    async def test_async_update_data(
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
+    ):
         """Test async update data."""
         result = await facade_coordinator._async_update_data()
 
@@ -7473,7 +7576,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_request_refresh(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """
         Test async_request_refresh forces a genuine refresh on each
@@ -7492,7 +7595,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_refresh_or_raise_is_quiet_when_children_succeed(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """A clean refresh raises nothing and still notifies listeners."""
         listener_calls = 0
@@ -7516,7 +7619,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_refresh_or_raise_reports_recorded_failure(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """
         A child that failed is reported even though nothing was raised.
@@ -7544,7 +7647,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_refresh_or_raise_reports_escaped_exception(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """An exception that escapes a child refresh is reported, not lost."""
         for child in (
@@ -7567,7 +7670,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_refresh_or_raise_propagates_cancellation(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """Cancellation is teardown, not a console failure - it must propagate.
 
@@ -7591,7 +7694,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_refresh_or_raise_can_skip_protect(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """A site-scoped refresh is a Network concern and skips Protect."""
         for child in (
@@ -7610,7 +7713,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_refresh_or_raise_without_protect_console(
-        self, facade_coordinator_no_protect: UnifiFacadeCoordinator
+        self, facade_coordinator_no_protect: UnifiInsightsFacadeCoordinator
     ):
         """A Network-only console refreshes cleanly with no Protect child."""
         for child in (
@@ -7626,7 +7729,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_request_refresh_no_protect(
-        self, facade_coordinator_no_protect: UnifiFacadeCoordinator
+        self, facade_coordinator_no_protect: UnifiInsightsFacadeCoordinator
     ):
         """Test async request refresh without protect."""
         facade_coordinator_no_protect._config_coordinator.async_refresh = AsyncMock()
@@ -7639,7 +7742,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_request_refresh_waits_for_fresh_data_and_notifies(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """
         Regression test for the async_request_refresh contract violation.
@@ -7697,7 +7800,7 @@ class TestUnifiFacadeCoordinator:
         assert listener_calls >= 1
 
     def test_handle_coordinator_update(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """Test handling coordinator updates."""
         # Track if listeners were called
@@ -7714,7 +7817,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_get_historical_clients_verified_site(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """Test async_get_historical_clients uses verified site mapping."""
         facade_coordinator._config_coordinator.data = {
@@ -7731,7 +7834,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_get_historical_clients_unmapped_site_raises(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """Unmapped site raises HomeAssistantError and does NOT fall back to default."""
         facade_coordinator._config_coordinator.data = {"sites": {}}
@@ -7746,7 +7849,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_get_historical_clients_api_error_wrapped(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """API error in async_get_historical_clients is wrapped."""
         facade_coordinator._config_coordinator.data = {
@@ -7762,7 +7865,7 @@ class TestUnifiFacadeCoordinator:
             await facade_coordinator.async_get_historical_clients("site1")
 
     def test_facade_network_usability_accessors(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """Test network_available and is_network_usable accessors on facade."""
         assert facade_coordinator.network_available is True
@@ -7779,7 +7882,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_generate_voucher(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """Test async_generate_voucher delegates correctly."""
         facade_coordinator.network_client.vouchers.create = AsyncMock()
@@ -7804,7 +7907,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_delete_voucher(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
         """Test async_delete_voucher delegates correctly."""
         facade_coordinator.network_client.vouchers.delete = AsyncMock()
@@ -7816,10 +7919,10 @@ class TestUnifiFacadeCoordinator:
     @pytest.mark.asyncio
     async def test_async_shutdown_releases_sub_coordinator_listeners(
         self,
-        facade_coordinator: UnifiFacadeCoordinator,
-        config_coordinator: UnifiConfigCoordinator,
-        device_coordinator: UnifiDeviceCoordinator,
-        protect_coordinator: UnifiProtectCoordinator,
+        facade_coordinator: UnifiInsightsFacadeCoordinator,
+        config_coordinator: UnifiInsightsConfigCoordinator,
+        device_coordinator: UnifiInsightsDeviceCoordinator,
+        protect_coordinator: UnifiInsightsProtectCoordinator,
     ):
         """
         Regression test for the sub-coordinator listener leak.
@@ -7848,7 +7951,7 @@ class TestUnifiFacadeCoordinator:
 
     async def test_async_shutdown_is_idempotent(
         self,
-        facade_coordinator: UnifiFacadeCoordinator,
+        facade_coordinator: UnifiInsightsFacadeCoordinator,
     ):
         """
         Shutting the facade down twice must be safe.
@@ -7880,7 +7983,7 @@ class TestUnifiFacadeCoordinator:
         assert facade_coordinator._sub_coordinator_unsubs == []
 
     def test_aggregate_data_includes_rule_sections(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ) -> None:
         """Test aggregate data includes port_forwards and traffic_rules."""
         facade_coordinator._config_coordinator.data["port_forwards"] = {
@@ -7896,7 +7999,7 @@ class TestUnifiFacadeCoordinator:
         assert facade_coordinator.data["traffic_rules"] == {"site1": {"tr1": {}}}
 
     def test_aggregate_data_includes_nat_and_static_route_sections(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ) -> None:
         """Test aggregated data includes NAT and static route sections."""
         facade_coordinator._config_coordinator.data["nat_rules"] = {
@@ -7917,7 +8020,7 @@ class TestUnifiFacadeCoordinator:
     )
     def test_rule_section_availability_passthrough(
         self,
-        facade_coordinator: UnifiFacadeCoordinator,
+        facade_coordinator: UnifiInsightsFacadeCoordinator,
         data_key: str,
         endpoint_attr: str,
         list_method: str,
@@ -7937,7 +8040,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_export_network_rules_passes_console_and_sites(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ) -> None:
         """The facade hands its client, sites and console identity to the builder."""
         sites = {"s": {"id": "s", "internalReference": "default"}}
@@ -7969,7 +8072,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_export_network_rules_without_a_config_entry(
-        self, facade_coordinator: UnifiFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ) -> None:
         """Without a config entry the console identity is exported as unknown."""
         facade_coordinator._config_coordinator.data = {"sites": {}}
@@ -8003,14 +8106,14 @@ class TestCoordinatorDataFlow:
         protect_client = _create_mock_protect_client()
 
         # Create coordinators
-        config_coord = UnifiConfigCoordinator(
+        config_coord = UnifiInsightsConfigCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
             entry=mock_config_entry,
         )
 
-        device_coord = UnifiDeviceCoordinator(
+        device_coord = UnifiInsightsDeviceCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
@@ -8018,14 +8121,14 @@ class TestCoordinatorDataFlow:
             config_coordinator=config_coord,
         )
 
-        protect_coord = UnifiProtectCoordinator(
+        protect_coord = UnifiInsightsProtectCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
             entry=mock_config_entry,
         )
 
-        facade_coord = UnifiFacadeCoordinator(
+        facade_coord = UnifiInsightsFacadeCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
@@ -8054,16 +8157,16 @@ class TestCoordinatorDataFlow:
 
 
 class TestProtectCoordinatorEdgeCases:
-    """Tests for edge cases in UnifiProtectCoordinator."""
+    """Tests for edge cases in UnifiInsightsProtectCoordinator."""
 
     @pytest.fixture
     def coordinator(
         self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
-    ) -> UnifiProtectCoordinator:
+    ) -> UnifiInsightsProtectCoordinator:
         """Create a protect coordinator for testing."""
         network_client = _create_mock_network_client()
         protect_client = _create_mock_protect_client()
-        return UnifiProtectCoordinator(
+        return UnifiInsightsProtectCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
@@ -8077,7 +8180,7 @@ class TestProtectCoordinatorEdgeCases:
         network_client = _create_mock_network_client()
         protect_client = _create_mock_protect_client()
 
-        coordinator = UnifiProtectCoordinator(
+        coordinator = UnifiInsightsProtectCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
@@ -8093,7 +8196,7 @@ class TestProtectCoordinatorEdgeCases:
         network_client = _create_mock_network_client()
         protect_client = _create_mock_protect_client()
 
-        coordinator = UnifiProtectCoordinator(
+        coordinator = UnifiInsightsProtectCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
@@ -8127,7 +8230,7 @@ class TestProtectCoordinatorEdgeCases:
         protect_client.liveviews = MagicMock()
         protect_client.liveviews.get_all = AsyncMock(return_value=[])
 
-        coordinator = UnifiProtectCoordinator(
+        coordinator = UnifiInsightsProtectCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
@@ -8163,7 +8266,7 @@ class TestProtectCoordinatorEdgeCases:
         # Remove liveviews attribute
         del protect_client.liveviews
 
-        coordinator = UnifiProtectCoordinator(
+        coordinator = UnifiInsightsProtectCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
@@ -8177,7 +8280,7 @@ class TestProtectCoordinatorEdgeCases:
 
     @pytest.mark.asyncio
     async def test_fetch_cameras_feature_flags_not_dict(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test camera fetch when featureFlags is not a dict."""
         camera_mock = MagicMock()
@@ -8201,7 +8304,9 @@ class TestProtectCoordinatorEdgeCases:
         # Should still work, smartDetectTypes should be empty list
         assert result["cameras"]["camera1"]["smartDetectTypes"] == []
 
-    def test_handle_event_unknown_type(self, coordinator: UnifiProtectCoordinator):
+    def test_handle_event_unknown_type(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ):
         """Test handling event with unknown type."""
         # Add camera first
         coordinator.data["cameras"]["camera1"] = {"id": "camera1"}
@@ -8215,7 +8320,9 @@ class TestProtectCoordinatorEdgeCases:
         # Event should be stored but no device update
         assert "unknown_event" in coordinator.data["events"]
 
-    def test_handle_event_device_not_found(self, coordinator: UnifiProtectCoordinator):
+    def test_handle_event_device_not_found(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ):
         """Test handling event when device not in data."""
         coordinator._handle_event_update(
             "motion",
@@ -8583,7 +8690,7 @@ class TestUnifiInsightsInnerSpaceCoordinator:
                 }
             ]
         )
-        coord = UnifiConfigCoordinator(
+        coord = UnifiInsightsConfigCoordinator(
             hass=hass,
             network_client=mock_network_client,
             protect_client=mock_protect_client,
@@ -8725,12 +8832,16 @@ class TestUnifiInsightsInnerSpaceCoordinator:
         facade_with_cfg.config_available = True
         facade_with_cfg._config_coordinator = coord
         assert (
-            UnifiFacadeCoordinator.internet_activity_available(facade_with_cfg, "site1")
+            UnifiInsightsFacadeCoordinator.internet_activity_available(
+                facade_with_cfg, "site1"
+            )
             is True
         )
         facade_with_cfg._config_coordinator = None
         assert (
-            UnifiFacadeCoordinator.internet_activity_available(facade_with_cfg, "site1")
+            UnifiInsightsFacadeCoordinator.internet_activity_available(
+                facade_with_cfg, "site1"
+            )
             is True
         )
 
@@ -8741,11 +8852,11 @@ class TestUnifiInsightsInnerSpaceCoordinator:
         mock_network_client: MagicMock,
         mock_config_entry: MockConfigEntry,
     ) -> None:
-        """Test UnifiConfigCoordinator suppresses Network 404 when InnerSpace used."""
+        """The config coordinator suppresses a Network 404 when InnerSpace is used."""
         mock_network_client.sites.get_all.side_effect = UniFiNotFoundError(
             "Not found", status_code=404
         )
-        config_coord = UnifiConfigCoordinator(
+        config_coord = UnifiInsightsConfigCoordinator(
             hass=hass,
             network_client=mock_network_client,
             protect_client=None,
@@ -8857,9 +8968,9 @@ class TestProtectSecurityDeviceFamilies:
     @pytest.fixture
     async def coordinator(
         self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
-    ) -> AsyncGenerator[UnifiProtectCoordinator]:
+    ) -> AsyncGenerator[UnifiInsightsProtectCoordinator]:
         """Create a protect coordinator, shut down on teardown."""
-        coord = UnifiProtectCoordinator(
+        coord = UnifiInsightsProtectCoordinator(
             hass=hass,
             network_client=_create_mock_network_client(),
             protect_client=_create_mock_protect_client(),
@@ -8869,7 +8980,7 @@ class TestProtectSecurityDeviceFamilies:
         await coord.async_shutdown()
 
     def test_collections_are_initialised(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Each family has a data key named device_type + "s" from the start.
 
@@ -8886,7 +8997,7 @@ class TestProtectSecurityDeviceFamilies:
     )
     async def test_fetch_populates_collection_with_camelcase_dicts(
         self,
-        coordinator: UnifiProtectCoordinator,
+        coordinator: UnifiInsightsProtectCoordinator,
         collection: str,
         fetch_method: str,
         model: type,
@@ -8912,7 +9023,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_scheduled_poll_fetches_every_family(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """The 30s poll includes the three new families."""
         client = coordinator.protect_client
@@ -8950,7 +9061,7 @@ class TestProtectSecurityDeviceFamilies:
     )
     async def test_unsupported_answer_marks_family_unsupported_and_logs_once(
         self,
-        coordinator: UnifiProtectCoordinator,
+        coordinator: UnifiInsightsProtectCoordinator,
         caplog: pytest.LogCaptureFixture,
         *,
         collection: str,
@@ -8993,7 +9104,9 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_non_json_after_success_warns_and_keeps_polling(
-        self, coordinator: UnifiProtectCoordinator, caplog: pytest.LogCaptureFixture
+        self,
+        coordinator: UnifiInsightsProtectCoordinator,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """A family that answered before is not written off on an HTML page.
 
@@ -9023,7 +9136,9 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_http_400_before_first_answer_is_not_unsupported(
-        self, coordinator: UnifiProtectCoordinator, caplog: pytest.LogCaptureFixture
+        self,
+        coordinator: UnifiInsightsProtectCoordinator,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """A 400 is a request problem, not a missing endpoint: warn, keep polling."""
         endpoint = coordinator.protect_client.fobs
@@ -9040,7 +9155,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_unsupported_family_recovers_once_endpoint_answers(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A Protect upgrade is picked up at the next hourly re-probe."""
         endpoint = coordinator.protect_client.fobs
@@ -9066,7 +9181,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_404_after_success_keeps_cache_and_keeps_polling(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A family that answered before is not written off on one 404.
 
@@ -9087,7 +9202,9 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_fetch_error_keeps_cached_devices(
-        self, coordinator: UnifiProtectCoordinator, caplog: pytest.LogCaptureFixture
+        self,
+        coordinator: UnifiInsightsProtectCoordinator,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Any other error preserves the cache and is logged."""
         coordinator.data["link_stations"] = {"ls1": {"id": "ls1"}}
@@ -9102,7 +9219,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_incomplete_response_is_merged_over_cache(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A device the endpoint dropped on a parse error is not treated as gone."""
         coordinator.data["fobs"] = {"fob_old": {"id": "fob_old"}}
@@ -9129,7 +9246,7 @@ class TestProtectSecurityDeviceFamilies:
     async def test_stale_cleanup_removes_vanished_device(
         self,
         hass: HomeAssistant,
-        coordinator: UnifiProtectCoordinator,
+        coordinator: UnifiInsightsProtectCoordinator,
         collection: str,
         identifier: str,
     ) -> None:
@@ -9163,14 +9280,14 @@ class TestProtectSecurityDeviceFamilies:
 
     # -- WebSocket device frames ------------------------------------------
 
-    def _seed_hub(self, coordinator: UnifiProtectCoordinator) -> dict[str, Any]:
+    def _seed_hub(self, coordinator: UnifiInsightsProtectCoordinator) -> dict[str, Any]:
         hub = copy.deepcopy(SAMPLE_ALARM_HUB)
         hub["alarmHub"]["armed"] = "on"
         coordinator.data["alarm_hubs"] = {"alarm_hub_1": hub}
         return hub
 
     def test_linkstation_frame_for_known_alarm_hub_updates_alarm_hubs(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Alarm hubs and link stations share modelKey "linkstation".
 
@@ -9201,7 +9318,7 @@ class TestProtectSecurityDeviceFamilies:
     )
     def test_linkstation_frame_for_new_device_uses_is_alarm_hub(
         self,
-        coordinator: UnifiProtectCoordinator,
+        coordinator: UnifiInsightsProtectCoordinator,
         *,
         is_alarm_hub: bool,
         collection: str,
@@ -9214,7 +9331,7 @@ class TestProtectSecurityDeviceFamilies:
         assert "new1" in coordinator.data[collection]
 
     def test_linkstation_frame_for_unknown_device_is_dropped(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Without an id match or isAlarmHub there is no safe target."""
         coordinator._handle_device_update(
@@ -9225,7 +9342,7 @@ class TestProtectSecurityDeviceFamilies:
         assert "mystery" not in coordinator.data["link_stations"]
 
     def test_partial_nested_frame_keeps_sibling_fields(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A partial alarmHub frame must not wipe armed/battery until next poll."""
         self._seed_hub(coordinator)
@@ -9245,7 +9362,7 @@ class TestProtectSecurityDeviceFamilies:
         }
 
     def test_partial_thread_network_frame_keeps_sibling_fields(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Merging recurses through threadState.network."""
         coordinator.data["link_stations"] = {
@@ -9268,7 +9385,7 @@ class TestProtectSecurityDeviceFamilies:
         assert network["channel"] == 15
 
     def test_explicit_null_in_frame_replaces_nested_value(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Only dict-over-dict merges; a null network is a real state change."""
         coordinator.data["link_stations"] = {
@@ -9284,7 +9401,7 @@ class TestProtectSecurityDeviceFamilies:
         assert state["network"] is None
 
     def test_merge_never_mutates_the_previous_dicts(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Listeners holding the old dict must see it unchanged."""
         hub = self._seed_hub(coordinator)
@@ -9303,7 +9420,7 @@ class TestProtectSecurityDeviceFamilies:
         assert new_hub["alarmHub"] is not old_alarm_hub
 
     def test_fob_frame_deep_merges_keypad_settings(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Fob frames ("fob" modelKey) deep-merge into fobs."""
         coordinator.data["fobs"] = {"fob_1": copy.deepcopy(SAMPLE_KEYPAD_FOB)}
@@ -9316,7 +9433,7 @@ class TestProtectSecurityDeviceFamilies:
         assert keypad == {"beepEnabled": True, "beepVolume": 20}
 
     def test_siren_frame_deep_merges_siren_status(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A partial siren frame keeps the nested siblings it does not carry.
 
@@ -9361,7 +9478,7 @@ class TestProtectSecurityDeviceFamilies:
         listener.assert_called()
 
     def test_siren_frame_for_unpolled_siren_creates_entry(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A frame for a siren the poll has not seen yet creates its entry."""
         coordinator._handle_device_update(
@@ -9374,7 +9491,7 @@ class TestProtectSecurityDeviceFamilies:
         }
 
     def test_mark_siren_stopped_clears_is_active_and_notifies(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A manual stop shows off in the cache and notifies listeners once."""
         active = copy.deepcopy(SAMPLE_SIREN)
@@ -9398,7 +9515,7 @@ class TestProtectSecurityDeviceFamilies:
         listener.assert_called_once()
 
     def test_mark_siren_stopped_with_null_status_sets_status(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A siren whose status was null still ends up with an explicit off."""
         siren = copy.deepcopy(SAMPLE_SIREN)
@@ -9412,7 +9529,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.parametrize("record", [None, "not-a-dict"], ids=["absent", "garbage"])
     def test_mark_siren_stopped_ignores_unknown_siren(
-        self, coordinator: UnifiProtectCoordinator, record: Any
+        self, coordinator: UnifiInsightsProtectCoordinator, record: Any
     ) -> None:
         """A stop for a siren the cache has no usable record of changes nothing."""
         if record is not None:
@@ -9428,7 +9545,7 @@ class TestProtectSecurityDeviceFamilies:
         listener.assert_not_called()
 
     def test_mark_siren_stopped_leaves_poll_state_alone(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Nothing was polled, so the poll is neither marked good nor pushed back."""
         active = copy.deepcopy(SAMPLE_SIREN)
@@ -9452,7 +9569,7 @@ class TestProtectSecurityDeviceFamilies:
         return siren
 
     async def _poll_sirens(
-        self, coordinator: UnifiProtectCoordinator, siren: dict[str, Any]
+        self, coordinator: UnifiInsightsProtectCoordinator, siren: dict[str, Any]
     ) -> dict[str, Any]:
         """Run one siren poll that answers with ``siren`` and return its record."""
         coordinator.protect_client.sirens.get_all = AsyncMock(
@@ -9463,7 +9580,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_poll_in_flight_during_a_stop_cannot_switch_the_siren_back_on(
-        self, coordinator: UnifiProtectCoordinator, freezer: Any
+        self, coordinator: UnifiInsightsProtectCoordinator, freezer: Any
     ) -> None:
         """A reading of the run that was just stopped does not resurrect it."""
         freezer.move_to("2026-10-06 12:00:00+00:00")
@@ -9490,7 +9607,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_run_started_after_the_stop_is_believed(
-        self, coordinator: UnifiProtectCoordinator, freezer: Any
+        self, coordinator: UnifiInsightsProtectCoordinator, freezer: Any
     ) -> None:
         """A poll showing a run that began after the stop is a new run."""
         freezer.move_to("2026-10-06 12:00:00+00:00")
@@ -9510,7 +9627,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_active_siren_without_a_start_time_is_believed(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """With no start time to compare, an active reading is taken as it is."""
         coordinator.data["sirens"] = {"siren_1": self._siren_with_status()}
@@ -9525,7 +9642,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_stop_guard_is_dropped_for_a_siren_that_is_gone(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A siren the console no longer lists leaves no guard behind."""
         coordinator.data["sirens"] = {"siren_1": self._siren_with_status()}
@@ -9539,7 +9656,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_console_clock_ahead_cannot_resurrect_the_stopped_run(
-        self, coordinator: UnifiProtectCoordinator, freezer: Any
+        self, coordinator: UnifiInsightsProtectCoordinator, freezer: Any
     ) -> None:
         """The run is recognised by its own start time, not Home Assistant's clock.
 
@@ -9560,7 +9677,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_home_assistant_clock_ahead_does_not_hide_a_new_run(
-        self, coordinator: UnifiProtectCoordinator, freezer: Any
+        self, coordinator: UnifiInsightsProtectCoordinator, freezer: Any
     ) -> None:
         """A new run is later than the stopped one on the console's own clock.
 
@@ -9585,7 +9702,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_siren_without_a_cached_start_falls_back_to_the_wall_clock(
-        self, coordinator: UnifiProtectCoordinator, freezer: Any
+        self, coordinator: UnifiInsightsProtectCoordinator, freezer: Any
     ) -> None:
         """With no start time cached at the stop, the clocks are all there is."""
         freezer.move_to("2026-10-06 12:00:00+00:00")
@@ -9608,7 +9725,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_stop_guard_expires_after_two_poll_intervals(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """The guard cannot linger: after its TTL a reading is taken as it is."""
         clock = [5000.0]
@@ -9632,7 +9749,7 @@ class TestProtectSecurityDeviceFamilies:
         assert coordinator._siren_stopped_at == {}
 
     def test_late_frame_of_the_stopped_run_does_not_switch_the_siren_back_on(
-        self, coordinator: UnifiProtectCoordinator, freezer: Any
+        self, coordinator: UnifiInsightsProtectCoordinator, freezer: Any
     ) -> None:
         """The guard covers WebSocket frames as well as polls."""
         freezer.move_to("2026-10-06 12:00:00+00:00")
@@ -9654,7 +9771,7 @@ class TestProtectSecurityDeviceFamilies:
 
     async def _read_in_flight_while_a_frame_lands(
         self,
-        coordinator: UnifiProtectCoordinator,
+        coordinator: UnifiInsightsProtectCoordinator,
         *,
         collection: str,
         fetch: Any,
@@ -9689,7 +9806,7 @@ class TestProtectSecurityDeviceFamilies:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("path", ["poll", "reconcile"])
     async def test_older_read_does_not_overwrite_a_siren_frame_that_landed_meanwhile(
-        self, coordinator: UnifiProtectCoordinator, path: str
+        self, coordinator: UnifiInsightsProtectCoordinator, path: str
     ) -> None:
         """A WebSocket frame that lands while a read is out is newer than the read.
 
@@ -9723,7 +9840,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_read_started_after_a_siren_frame_is_applied(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Only a frame that lands after the request started makes it stale."""
         coordinator.data["sirens"] = {"siren_1": self._siren_with_status(isActive=True)}
@@ -9742,7 +9859,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_families_without_a_counter_are_fetched_as_before(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """The check applies to the families that have a generation, no others."""
         coordinator.data["fobs"] = {"fob_1": {"id": "fob_1"}}
@@ -9760,7 +9877,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_reconcile_refreshes_sirens_and_notifies_only_on_change(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """The independent timer re-reads sirens, and stays quiet when nothing moved."""
         coordinator.data["sirens"] = {"siren_1": self._siren_with_status()}
@@ -9782,7 +9899,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_reconcile_timer_refresh_includes_sirens(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """The sensor reconcile tick also reconciles the sirens."""
         with (
@@ -9795,7 +9912,7 @@ class TestProtectSecurityDeviceFamilies:
         sirens.assert_awaited_once()
 
     def test_real_envelope_linkstation_frame_reaches_alarm_hubs(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """End to end through the confirmed {"type", "item"} envelope."""
         self._seed_hub(coordinator)
@@ -9822,7 +9939,7 @@ class TestProtectSecurityDeviceFamilies:
     # -- alarmHubDeviceTamper events --------------------------------------
 
     def test_tamper_event_sets_status_user_and_time(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """status is a {text} wrapper; userName is a plain string."""
         hub = self._seed_hub(coordinator)
@@ -9845,7 +9962,7 @@ class TestProtectSecurityDeviceFamilies:
     )
     def test_tamper_event_user_name_shapes(
         self,
-        coordinator: UnifiProtectCoordinator,
+        coordinator: UnifiInsightsProtectCoordinator,
         user_name: Any,
         expected: str | None,
     ) -> None:
@@ -9861,7 +9978,7 @@ class TestProtectSecurityDeviceFamilies:
         )
 
     def test_tamper_event_without_status_keeps_reported_status(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """An unreadable status never overwrites the hub's reported one."""
         self._seed_hub(coordinator)
@@ -9875,7 +9992,7 @@ class TestProtectSecurityDeviceFamilies:
         assert hub["_lastTamperAt"] == 1759628100000
 
     def test_tamper_event_without_metadata_records_time_only(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A frame missing metadata changes no status and names no user."""
         self._seed_hub(coordinator)
@@ -9890,7 +10007,7 @@ class TestProtectSecurityDeviceFamilies:
         assert hub["_lastTamperAt"] == 1759628100000
 
     def test_tamper_event_for_unknown_device_is_ignored(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """An event for a hub no poll has seen changes nothing."""
         event = copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
@@ -9903,7 +10020,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_tamper_details_survive_the_next_poll(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """The REST poll rebuilds each hub dict; the event details persist.
 
@@ -9926,7 +10043,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_event_status_survives_poll_without_rest_status(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Protect 7.2.x has the tamper event but no REST deviceTamperStatus.
 
@@ -9952,7 +10069,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_event_during_in_flight_poll_beats_the_stale_snapshot(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A REST snapshot taken before the tamper must not read as clear.
 
@@ -9982,7 +10099,7 @@ class TestProtectSecurityDeviceFamilies:
         assert hub["alarmHub"]["deviceTamperStatus"] == "restored"
 
     def test_later_frame_of_same_event_keeps_user_and_time(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """An update frame of the same event (e.g. its end) fills gaps only."""
         self._seed_hub(coordinator)
@@ -10001,7 +10118,7 @@ class TestProtectSecurityDeviceFamilies:
         assert hub["alarmHub"]["deviceTamperStatus"] == "tampered"
 
     def test_new_event_without_user_does_not_inherit_previous_user(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A different event naming nobody must not show the last event's user."""
         self._seed_hub(coordinator)
@@ -10022,7 +10139,7 @@ class TestProtectSecurityDeviceFamilies:
         assert hub["alarmHub"]["deviceTamperStatus"] == "restored"
 
     def test_tamper_event_through_events_stream_envelope(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """End to end: the event's top-level "device" names the hub."""
         self._seed_hub(coordinator)
@@ -10035,7 +10152,7 @@ class TestProtectSecurityDeviceFamilies:
         assert hub["alarmHub"]["deviceTamperStatus"] == "tampered"
 
     def test_stale_cleanup_forgets_tamper_details(
-        self, hass: HomeAssistant, coordinator: UnifiProtectCoordinator
+        self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """An evicted hub's event details must not leak onto a reused id."""
         coordinator._alarm_hub_last_tamper["gone"] = {"_lastTamperUser": "x"}
@@ -10054,7 +10171,7 @@ class TestProtectSecurityDeviceFamilies:
     # -- remaining branches ------------------------------------------------
 
     def test_unrelated_model_key_leaves_security_collections_alone(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A frame for a family this coordinator doesn't track changes nothing."""
         self._seed_hub(coordinator)
@@ -10070,7 +10187,7 @@ class TestProtectSecurityDeviceFamilies:
         listener.assert_called()
 
     def test_later_frame_of_same_event_with_status_replaces_it(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A same-event frame that carries its own values wins over the first."""
         self._seed_hub(coordinator)
@@ -10093,7 +10210,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_poll_skips_tamper_record_of_hub_no_longer_listed(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A record whose hub is not in the collection is not re-added."""
         self._seed_hub(coordinator)
@@ -10117,7 +10234,7 @@ class TestProtectSecurityDeviceFamilies:
         self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
     ) -> None:
         """A coordinator without a Protect client fetches nothing."""
-        coord = UnifiProtectCoordinator(
+        coord = UnifiInsightsProtectCoordinator(
             hass=hass,
             network_client=_create_mock_network_client(),
             protect_client=None,
@@ -10137,7 +10254,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_device_without_id_is_skipped(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """An item the API returns without an id can't be keyed, so it's left out."""
         coordinator.protect_client.fobs.get_all = AsyncMock(
@@ -10150,16 +10267,16 @@ class TestProtectSecurityDeviceFamilies:
 
 
 class TestConfigCoordinatorVouchers:
-    """Tests for voucher polling in UnifiConfigCoordinator."""
+    """Tests for voucher polling in UnifiInsightsConfigCoordinator."""
 
     @pytest.fixture
     async def coordinator(
         self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
-    ) -> AsyncGenerator[UnifiConfigCoordinator]:
+    ) -> AsyncGenerator[UnifiInsightsConfigCoordinator]:
         """Create a config coordinator for testing."""
         network_client = _create_mock_network_client()
         protect_client = _create_mock_protect_client()
-        coordinator = UnifiConfigCoordinator(
+        coordinator = UnifiInsightsConfigCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=protect_client,
@@ -10192,7 +10309,7 @@ class TestConfigCoordinatorVouchers:
                 )
             ]
         )
-        coordinator = UnifiConfigCoordinator(
+        coordinator = UnifiInsightsConfigCoordinator(
             hass=hass,
             network_client=network_client,
             protect_client=None,
@@ -10222,7 +10339,7 @@ class TestConfigCoordinatorVouchers:
         ids=["404", "400", "403", "200-non-json"],
     )
     async def test_vouchers_unsupported_endpoint_gives_empty_inventory(
-        self, coordinator: UnifiConfigCoordinator, error: Exception
+        self, coordinator: UnifiInsightsConfigCoordinator, error: Exception
     ) -> None:
         """A 4xx / non-JSON error gives empty inventory and stays available."""
         coordinator.network_client.vouchers.get_all_pages = AsyncMock(side_effect=error)
@@ -10243,7 +10360,7 @@ class TestConfigCoordinatorVouchers:
         ids=["500", "429", "connection", "timeout", "unexpected"],
     )
     async def test_vouchers_transient_failure_keeps_inventory_and_flags_section(
-        self, coordinator: UnifiConfigCoordinator, error: Exception
+        self, coordinator: UnifiInsightsConfigCoordinator, error: Exception
     ) -> None:
         """Transient error keeps inventory and marks section unavailable."""
         coordinator.network_client.vouchers.get_all_pages = AsyncMock(
@@ -10266,7 +10383,7 @@ class TestConfigCoordinatorVouchers:
 
     @pytest.mark.asyncio
     async def test_vouchers_recover_after_failure(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """Section flags as recovered and available after transient failure resolves."""
         coordinator.network_client.vouchers.get_all_pages = AsyncMock(
@@ -10284,7 +10401,7 @@ class TestConfigCoordinatorVouchers:
 
     @pytest.mark.asyncio
     async def test_vouchers_authentication_failure_raises_auth_failed(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """A 401 error from vouchers endpoint raises ConfigEntryAuthFailed."""
         coordinator.network_client.vouchers.get_all_pages = AsyncMock(
@@ -10296,7 +10413,7 @@ class TestConfigCoordinatorVouchers:
 
     @pytest.mark.asyncio
     async def test_vouchers_pruned_when_site_deselected(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """Vouchers for deselected sites are pruned from coordinator data."""
         coordinator.data["vouchers"]["stale_site"] = {"v1": {"id": "v1"}}
@@ -10314,7 +10431,7 @@ class TestConfigCoordinatorVouchers:
             data={CONF_API_KEY: "test_api_key"},
             options={CONF_SITE_IDS: ["nonexistent"]},
         )
-        coordinator = UnifiConfigCoordinator(
+        coordinator = UnifiInsightsConfigCoordinator(
             hass=hass,
             network_client=_create_mock_network_client(),
             protect_client=None,
@@ -10325,7 +10442,7 @@ class TestConfigCoordinatorVouchers:
 
     @pytest.mark.asyncio
     async def test_async_refresh_vouchers_updates_only_that_site(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """async_refresh_vouchers refreshes only target site and notifies listeners."""
         await coordinator.async_refresh()
@@ -10366,7 +10483,7 @@ class TestConfigCoordinatorVouchers:
 
     @pytest.mark.asyncio
     async def test_vouchers_available_follows_last_update_success(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """vouchers_available returns False when last_update_success is False."""
         await coordinator.async_refresh()
@@ -10376,7 +10493,7 @@ class TestConfigCoordinatorVouchers:
 
     @pytest.mark.asyncio
     async def test_vouchers_incomplete_listing_keeps_inventory_and_flags_section(
-        self, coordinator: UnifiConfigCoordinator
+        self, coordinator: UnifiInsightsConfigCoordinator
     ) -> None:
         """Incomplete voucher listing keeps inventory and marks unavailable."""
         coordinator.network_client.vouchers.get_all_pages = AsyncMock(
@@ -10397,7 +10514,7 @@ class TestConfigCoordinatorVouchers:
 
     async def test_vouchers_validation_error_does_not_leak_code_in_logs(
         self,
-        coordinator: UnifiConfigCoordinator,
+        coordinator: UnifiInsightsConfigCoordinator,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Pydantic validation error during polling does not log the voucher code."""

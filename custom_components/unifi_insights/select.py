@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
     from . import UnifiInsightsConfigEntry
-    from .coordinators import UnifiFacadeCoordinator
+    from .coordinators import UnifiInsightsFacadeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up select entities for UniFi Protect integration."""
     _ = hass
-    coordinator: UnifiFacadeCoordinator = entry.runtime_data.coordinator
+    coordinator: UnifiInsightsFacadeCoordinator = entry.runtime_data.coordinator
 
     # Skip if Protect API is not available
     if not coordinator.protect_client:
@@ -236,7 +236,7 @@ class UnifiProtectHDRModeSelect(UnifiProtectEntity, SelectEntity):
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         camera_id: str,
     ) -> None:
         """Initialize the select entity."""
@@ -287,7 +287,7 @@ class UnifiProtectVideoModeSelect(UnifiProtectEntity, SelectEntity):
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         camera_id: str,
     ) -> None:
         """Initialize the select entity."""
@@ -331,7 +331,7 @@ class UnifiProtectChimeRingtoneSelect(UnifiProtectEntity, SelectEntity):
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         chime_id: str,
     ) -> None:
         """Initialize the select entity."""
@@ -389,7 +389,7 @@ class UnifiProtectPTZPresetSelect(UnifiProtectEntity, SelectEntity):
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         camera_id: str,
     ) -> None:
         """Initialize the select entity."""
@@ -437,7 +437,7 @@ class UnifiProtectViewerLiveviewSelect(UnifiProtectEntity, SelectEntity):
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         viewer_id: str,
     ) -> None:
         """Initialize the select entity."""

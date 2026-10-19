@@ -43,7 +43,7 @@ from custom_components.unifi_insights.coordinators.protect import (
     MAX_CONSECUTIVE_MISSING_POLLS,
     MAX_DOOR_STATE_PRESERVE_POLLS,
     MAX_WS_RECENCY_PRESERVE_POLLS,
-    UnifiProtectCoordinator,
+    UnifiInsightsProtectCoordinator,
     _normalize_epoch_seconds,
 )
 from tests.conftest import set_mock_device_lookup
@@ -152,10 +152,10 @@ async def coordinator(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
     mock_protect_client: MagicMock,
-) -> AsyncGenerator[UnifiProtectCoordinator]:
+) -> AsyncGenerator[UnifiInsightsProtectCoordinator]:
     """Create a test Protect coordinator with automatic cleanup."""
     mock_network_client = MagicMock()
-    coord = UnifiProtectCoordinator(
+    coord = UnifiInsightsProtectCoordinator(
         hass=hass,
         entry=mock_config_entry,
         network_client=mock_network_client,
@@ -178,7 +178,7 @@ class TestRapidTransitionsPreservation:
 
     @pytest.mark.asyncio
     async def test_rapid_transitions_interleaved_with_rest_preserve_latest(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """WS open->close->open during an in-flight REST fetch keeps the latest."""
         coordinator.data["sensors"] = {
@@ -237,7 +237,7 @@ class TestIndependentSensorRecovery:
 
     @pytest.mark.asyncio
     async def test_camera_traffic_does_not_postpone_sensor_reconcile_timer(
-        self, hass: HomeAssistant, coordinator: UnifiProtectCoordinator
+        self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Continuous camera traffic continually resets coordinator refresh timer,
 
@@ -271,7 +271,7 @@ class TestIndependentSensorRecovery:
 
     @pytest.mark.asyncio
     async def test_devices_websocket_reconnect_triggers_sensor_refresh(
-        self, hass: HomeAssistant, coordinator: UnifiProtectCoordinator
+        self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """When devices WebSocket stream reconnects, sensors refresh immediately."""
         refresh_mock = AsyncMock()
@@ -300,7 +300,7 @@ class TestIndependentSensorRecovery:
 
     @pytest.mark.asyncio
     async def test_refresh_coalescing_single_in_flight_request(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Overlapping sensor refresh calls never run two REST fetches
         concurrently, and a waiter's request is coalesced into exactly one
@@ -370,7 +370,7 @@ class TestIndependentSensorRecovery:
 
     @pytest.mark.asyncio
     async def test_waiter_reraises_error_when_raise_on_error_true(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A waiter awaiting an in-flight owner fetch must see the owner's
         error re-raised when raise_on_error=True.
@@ -423,7 +423,7 @@ class TestIndependentSensorRecovery:
 
     @pytest.mark.asyncio
     async def test_cleanup_on_unload_and_shutdown(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Timers, all three driver tasks, and the debouncer are torn down.
 
@@ -501,7 +501,7 @@ class TestProtectNewerDoorStates:
 
     @pytest.mark.asyncio
     async def test_in_flight_websocket_update_not_overwritten_by_older_rest(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A WebSocket push during in-flight REST fetch must win over REST."""
         # Initial cached state: door is closed
@@ -561,7 +561,7 @@ class TestProtectNewerDoorStates:
 
     @pytest.mark.asyncio
     async def test_ws_recency_wins_when_ws_frame_has_no_timestamp(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Branch 1 (WS-recency) must win even when the WS frame carries no
         `openStatusChangedAt` at all - and REST's own timestamp is
@@ -641,7 +641,7 @@ class TestProtectNewerDoorStates:
 
     @pytest.mark.asyncio
     async def test_rest_response_with_older_timestamp_does_not_overwrite_cache(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """If cached timestamp is newer than REST, cached door state is preserved."""
         coordinator.data["sensors"] = {
@@ -675,7 +675,7 @@ class TestProtectNewerDoorStates:
 
     @pytest.mark.asyncio
     async def test_rest_response_with_newer_timestamp_updates_cache(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """If REST response has newer timestamp, it updates cache."""
         coordinator.data["sensors"] = {
@@ -712,7 +712,7 @@ class TestProtectNewerDoorStates:
 
     @pytest.mark.asyncio
     async def test_transient_fetch_errors_preserve_cache(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Transient network errors absorb and preserve cached sensors up to limit."""
         coordinator.data["sensors"] = {
@@ -748,7 +748,7 @@ class TestProtectNewerDoorStates:
 
     @pytest.mark.asyncio
     async def test_auth_error_triggers_reauth_failure(
-        self, hass: HomeAssistant, coordinator: UnifiProtectCoordinator
+        self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Authentication error raises ConfigEntryAuthFailed on every path:
 
@@ -777,7 +777,7 @@ class TestProtectNewerDoorStates:
 
     @pytest.mark.asyncio
     async def test_websocket_reconnect_auth_error_triggers_reauth(
-        self, hass: HomeAssistant, coordinator: UnifiProtectCoordinator
+        self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A devices-stream reconnect that hits an auth failure must route
         to reauth via `config_entry.async_start_reauth`, not vanish as an
@@ -806,7 +806,7 @@ class TestGateStampDiscriminatesFrameContent:
 
     @pytest.mark.asyncio
     async def test_telemetry_only_frame_does_not_stamp_or_suppress_rest(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A temperature-only WS frame must not gate-stamp any group."""
         coordinator.data["sensors"] = {
@@ -862,7 +862,7 @@ class TestGateStampDiscriminatesFrameContent:
 
     @pytest.mark.asyncio
     async def test_motion_only_frame_does_not_suppress_newer_rest_door_transition(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Round-4 review finding 5 regression guard.
 
@@ -939,7 +939,7 @@ class TestDoorStatePreservationIsBounded:
 
     @pytest.mark.asyncio
     async def test_bounded_when_rest_omits_timestamp(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """REST never reporting a timestamp must not wedge the door forever."""
         coordinator.data["sensors"] = {
@@ -972,7 +972,7 @@ class TestDoorStatePreservationIsBounded:
 
     @pytest.mark.asyncio
     async def test_bounded_when_cached_timestamp_always_compares_newer(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A REST timestamp stuck below the cache must not wedge forever."""
         coordinator.data["sensors"] = {
@@ -1014,7 +1014,7 @@ class TestDoorStatePreservationIsBounded:
 
     @pytest.mark.asyncio
     async def test_preserve_count_resets_when_rest_wins_normally(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A genuine REST win resets the bounded-preservation counter."""
         coordinator.data["sensors"] = {
@@ -1067,7 +1067,7 @@ class TestDoorStatePreservationIsBounded:
 
     @pytest.mark.asyncio
     async def test_ws_recency_cap_latches_instead_of_oscillating(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Round-4 review finding 6: a sustained WS-recency condition must
 
@@ -1183,7 +1183,7 @@ class TestDoorStatePreservationIsBounded:
     @pytest.mark.asyncio
     async def test_preserve_cap_hit_warns_once_then_debug(
         self,
-        coordinator: UnifiProtectCoordinator,
+        coordinator: UnifiInsightsProtectCoordinator,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Round-4 review finding 4: a sensor stuck at the door-state
@@ -1265,7 +1265,7 @@ class TestTimestampNormalization:
 
     @pytest.mark.asyncio
     async def test_millisecond_cache_normalized_against_second_epoch_rest(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A ms-epoch cached value must not out-rank a newer s-epoch REST value.
 
@@ -1309,7 +1309,7 @@ class TestTimestampNormalization:
 
     @pytest.mark.asyncio
     async def test_int_cached_vs_datetime_rest_compares_correctly(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Mismatched timestamp types must still compare correctly.
 
@@ -1355,7 +1355,7 @@ class TestTimestampNormalization:
 
     @pytest.mark.asyncio
     async def test_datetime_cached_vs_str_rest_compares_correctly(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A naive-vs-aware / datetime-vs-str pairing must still compare."""
         newer_dt = datetime.fromtimestamp(1_800_000_000, tz=UTC)
@@ -1448,7 +1448,7 @@ class TestBoundedEscalationPropagatesOnMainPoll:
 
     @pytest.mark.asyncio
     async def test_sustained_sensor_outage_fails_the_poll(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """After the escalation boundary, `_async_update_data` must raise."""
         coordinator.protect_client.sensors.get_all = AsyncMock(
@@ -1465,7 +1465,7 @@ class TestBoundedEscalationPropagatesOnMainPoll:
 
     @pytest.mark.asyncio
     async def test_sustained_sensor_auth_failure_triggers_reauth(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """An auth failure via the main poll's sensors fetch must raise
 
@@ -1490,7 +1490,7 @@ class TestReconnectStormBounded:
 
     @pytest.mark.asyncio
     async def test_refresh_loop_caps_iterations_under_sustained_pending(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """The owner loop must stop even if a caller keeps re-marking pending."""
         call_count = 0
@@ -1515,7 +1515,7 @@ class TestReconnectStormBounded:
 
     @pytest.mark.asyncio
     async def test_flapping_devices_reconnect_is_debounced(
-        self, hass: HomeAssistant, coordinator: UnifiProtectCoordinator
+        self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A flapping devices stream must not trigger unbounded REST calls."""
         call_count = 0
@@ -1557,7 +1557,7 @@ class TestSensorTrackerCleanup:
 
     @pytest.mark.asyncio
     async def test_stale_sensor_removal_prunes_ws_and_preserve_trackers(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Evicting a sensor from the registry must prune ALL its trackers,
 
@@ -1619,7 +1619,7 @@ class TestSensorTrackerCleanup:
 
     @pytest.mark.asyncio
     async def test_cancelled_refresh_task_ref_is_nulled(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Stop/shutdown must null `_sensor_refresh_task` after cancelling it."""
         mock_task = MagicMock()
@@ -1637,7 +1637,7 @@ class TestRefreshWaiterPaths:
 
     @pytest.mark.asyncio
     async def test_waiter_propagates_auth_failure_from_in_flight_fetch(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """An auth failure must reach a waiter, not be swallowed as a blip.
 
@@ -1669,7 +1669,7 @@ class TestRefreshWaiterPaths:
 
     @pytest.mark.asyncio
     async def test_waiter_with_notify_false_does_not_notify_listeners(
-        self, coordinator: UnifiProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """`notify=False` must hold on the waiter branch too.
 
@@ -1725,7 +1725,7 @@ class TestGroupStateAgreement:
         preservation against a controller that never confirmed the state.
         """
         assert (
-            UnifiProtectCoordinator._group_state_agrees(cached, rest, "door")
+            UnifiInsightsProtectCoordinator._group_state_agrees(cached, rest, "door")
             is expected
         )
 
@@ -1775,7 +1775,7 @@ class TestGroupStateAgreement:
     ) -> None:
         """Leak group uses explicit flags when available, or timestamps otherwise."""
         assert (
-            UnifiProtectCoordinator._group_state_agrees(cached, rest, "leak")
+            UnifiInsightsProtectCoordinator._group_state_agrees(cached, rest, "leak")
             is expected
         )
 

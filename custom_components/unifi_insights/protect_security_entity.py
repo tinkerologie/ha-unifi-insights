@@ -54,7 +54,7 @@ if TYPE_CHECKING:
 
     from homeassistant.helpers.typing import StateType
 
-    from .coordinators import UnifiFacadeCoordinator
+    from .coordinators import UnifiInsightsFacadeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -335,7 +335,7 @@ class UnifiProtectSecurityBinarySensor(UnifiProtectEntity, BinarySensorEntity):
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         description: UnifiProtectSecurityBinarySensorEntityDescription,
         device_type: str,
         device_id: str,
@@ -366,7 +366,7 @@ class UnifiProtectSecuritySensor(UnifiProtectEntity, SensorEntity):
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         description: UnifiProtectSecuritySensorEntityDescription,
         device_type: str,
         device_id: str,
@@ -391,7 +391,7 @@ class UnifiProtectSecuritySensor(UnifiProtectEntity, SensorEntity):
 
 
 def _security_devices(
-    coordinator: UnifiFacadeCoordinator,
+    coordinator: UnifiInsightsFacadeCoordinator,
 ) -> list[tuple[str, str, dict[str, Any]]]:
     """Return (device_type, device_id, data) for every security device."""
     if not coordinator.protect_client:
@@ -417,7 +417,7 @@ def _security_devices(
 
 
 def discover_protect_security_binary_sensors(
-    coordinator: UnifiFacadeCoordinator,
+    coordinator: UnifiInsightsFacadeCoordinator,
     known_keys: set[tuple[Any, ...]],
 ) -> list[BinarySensorEntity]:
     """
@@ -446,7 +446,7 @@ def discover_protect_security_binary_sensors(
 
 
 def discover_protect_security_sensors(
-    coordinator: UnifiFacadeCoordinator,
+    coordinator: UnifiInsightsFacadeCoordinator,
     known_keys: set[tuple[Any, ...]],
 ) -> list[SensorEntity]:
     """Return sensors for security devices not yet in ``known_keys``."""

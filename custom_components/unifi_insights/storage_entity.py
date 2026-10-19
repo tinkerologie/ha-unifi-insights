@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
     from homeassistant.helpers.typing import StateType
 
-    from .coordinators import UnifiFacadeCoordinator
+    from .coordinators import UnifiInsightsFacadeCoordinator
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -177,7 +177,7 @@ class UnifiStorageSensor(UnifiInsightsEntity, SensorEntity):
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         description: UnifiStorageSensorEntityDescription,
         site_id: str,
         device_id: str,
@@ -232,7 +232,7 @@ class UnifiStorageNearlyFullBinarySensor(UnifiInsightsEntity, BinarySensorEntity
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         site_id: str,
         device_id: str,
     ) -> None:
@@ -266,7 +266,7 @@ class UnifiStorageNearlyFullBinarySensor(UnifiInsightsEntity, BinarySensorEntity
 
 
 def discover_storage_sensors(
-    coordinator: UnifiFacadeCoordinator,
+    coordinator: UnifiInsightsFacadeCoordinator,
     site_id: str,
     device_id: str,
     device_data: dict[str, Any],
@@ -299,7 +299,7 @@ def discover_storage_sensors(
 
 
 def discover_storage_binary_sensors(
-    coordinator: UnifiFacadeCoordinator,
+    coordinator: UnifiInsightsFacadeCoordinator,
     site_id: str,
     device_id: str,
     device_data: dict[str, Any],

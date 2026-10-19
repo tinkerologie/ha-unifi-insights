@@ -38,7 +38,9 @@ from custom_components.unifi_insights.const import (
     VIDEO_MODE_DEFAULT,
     VIDEO_MODE_HIGH_FPS,
 )
-from custom_components.unifi_insights.coordinators.base import UnifiBaseCoordinator
+from custom_components.unifi_insights.coordinators.base import (
+    UnifiInsightsBaseCoordinator,
+)
 from custom_components.unifi_insights.data_transforms import get_site_gateway_id
 from custom_components.unifi_insights.switch import (
     PARALLEL_UPDATES,
@@ -1639,7 +1641,9 @@ class TestUnifiPolicyBasedRouteSwitch:
                 **route_kwargs,
             }
         )
-        route_data = UnifiBaseCoordinator._model_to_dict(mock_coordinator, route)
+        route_data = UnifiInsightsBaseCoordinator._model_to_dict(
+            mock_coordinator, route
+        )
 
         # Guard the premise: both alias keys really are present in the dump.
         assert "killSwitchEnabled" in route_data
@@ -1669,7 +1673,7 @@ class TestUnifiPolicyBasedRouteSwitch:
             }
         )
         mock_coordinator.data["policy_based_routes"]["site1"]["route4"] = (
-            UnifiBaseCoordinator._model_to_dict(mock_coordinator, route)
+            UnifiInsightsBaseCoordinator._model_to_dict(mock_coordinator, route)
         )
         switch = UnifiPolicyBasedRouteSwitch(
             coordinator=mock_coordinator,

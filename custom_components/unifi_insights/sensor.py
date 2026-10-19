@@ -50,7 +50,7 @@ from .const import (
     DOMAIN,
     MANUFACTURER,
 )
-from .coordinators import UnifiFacadeCoordinator
+from .coordinators import UnifiInsightsFacadeCoordinator
 from .data_transforms import (
     NetworkDeviceFacts,
     bytes_to_bits_per_second,
@@ -840,7 +840,7 @@ def _migrate_sensor_units(
 
 
 def _discover_device_sensors(
-    coordinator: UnifiFacadeCoordinator,
+    coordinator: UnifiInsightsFacadeCoordinator,
     site_id: str,
     device_id: str,
     device_data: dict[str, Any],
@@ -949,7 +949,7 @@ def _discover_device_sensors(
 
 
 def _discover_port_sensors(
-    coordinator: UnifiFacadeCoordinator,
+    coordinator: UnifiInsightsFacadeCoordinator,
     site_id: str,
     device_id: str,
     device_data: dict[str, Any],
@@ -1078,7 +1078,7 @@ def _discover_port_sensors(
 
 
 def _create_port_stats_fallback(
-    coordinator: UnifiFacadeCoordinator,
+    coordinator: UnifiInsightsFacadeCoordinator,
     stats: dict[str, Any],
     site_id: str,
     device_id: str,
@@ -1139,7 +1139,7 @@ def _create_port_stats_fallback(
 
 
 def _discover_outlet_sensors(
-    coordinator: UnifiFacadeCoordinator,
+    coordinator: UnifiInsightsFacadeCoordinator,
     site_id: str,
     device_id: str,
     device_data: dict[str, Any],
@@ -1186,7 +1186,7 @@ def _discover_outlet_sensors(
 
 
 def _discover_protect_sensors(
-    coordinator: UnifiFacadeCoordinator,
+    coordinator: UnifiInsightsFacadeCoordinator,
     known_sensor_keys: set[tuple[Any, ...]],
     entities: list[SensorEntity],
 ) -> None:
@@ -1297,7 +1297,7 @@ async def async_setup_entry(
     # Migrate existing entities to pick up new suggested_unit_of_measurement
     _migrate_sensor_units(hass, config_entry)
 
-    coordinator: UnifiFacadeCoordinator = config_entry.runtime_data.coordinator
+    coordinator: UnifiInsightsFacadeCoordinator = config_entry.runtime_data.coordinator
     known_sensor_keys: set[tuple[Any, ...]] = set()
     initial_entities: list[SensorEntity] = []
     # Only the first pass feeds the stale-entity sweep below. Without this the
@@ -1490,7 +1490,7 @@ class UnifiInsightsSensor(UnifiInsightsEntity, SensorEntity):
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         description: UnifiInsightsSensorEntityDescription,
         site_id: str,
         device_id: str,
@@ -1572,7 +1572,7 @@ class UnifiPortSensor(UnifiInsightsEntity, SensorEntity):
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         description: UnifiInsightsSensorEntityDescription,
         site_id: str,
         device_id: str,
@@ -1830,7 +1830,7 @@ class UnifiOutletSensor(UnifiInsightsEntity, SensorEntity):
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         description: UnifiInsightsSensorEntityDescription,
         site_id: str,
         device_id: str,
@@ -1919,7 +1919,7 @@ class UnifiProtectSensor(UnifiProtectEntity, SensorEntity):
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         description: UnifiProtectSensorEntityDescription,
         device_id: str,
     ) -> None:
@@ -2016,7 +2016,7 @@ class UnifiProtectNVRSensor(UnifiProtectEntity, SensorEntity):
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         description: UnifiProtectSensorEntityDescription,
         device_id: str,
     ) -> None:
@@ -2098,7 +2098,9 @@ class UnifiProtectNVRSensor(UnifiProtectEntity, SensorEntity):
         }
 
 
-class UnifiSiteClientSensor(CoordinatorEntity[UnifiFacadeCoordinator], SensorEntity):
+class UnifiSiteClientSensor(
+    CoordinatorEntity[UnifiInsightsFacadeCoordinator], SensorEntity
+):
     """Representation of a site-level client count sensor."""
 
     _attr_has_entity_name = True
@@ -2106,7 +2108,7 @@ class UnifiSiteClientSensor(CoordinatorEntity[UnifiFacadeCoordinator], SensorEnt
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         description: UnifiInsightsSensorEntityDescription,
         site_id: str,
         *,
@@ -2139,7 +2141,7 @@ class UnifiSiteClientSensor(CoordinatorEntity[UnifiFacadeCoordinator], SensorEnt
 
 
 class UnifiWifiClientCountSensor(
-    CoordinatorEntity[UnifiFacadeCoordinator], SensorEntity
+    CoordinatorEntity[UnifiInsightsFacadeCoordinator], SensorEntity
 ):
     """Number of clients connected to a specific WiFi network (SSID)."""
 
@@ -2149,7 +2151,7 @@ class UnifiWifiClientCountSensor(
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         site_id: str,
         wifi_id: str,
     ) -> None:

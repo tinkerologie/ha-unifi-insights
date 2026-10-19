@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from unifi_official_api.protect.talkback import TalkbackStream
 
     from . import UnifiInsightsConfigEntry
-    from .coordinators import UnifiFacadeCoordinator
+    from .coordinators import UnifiInsightsFacadeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up media player entities for UniFi Protect integration."""
     _ = hass
-    coordinator: UnifiFacadeCoordinator = entry.runtime_data.coordinator
+    coordinator: UnifiInsightsFacadeCoordinator = entry.runtime_data.coordinator
 
     # Skip if Protect API is not available
     if not coordinator.protect_client:
@@ -103,7 +103,7 @@ class UnifiProtectCameraSpeaker(UnifiProtectEntity, MediaPlayerEntity):
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         camera_id: str,
     ) -> None:
         """Initialize the camera speaker media player."""

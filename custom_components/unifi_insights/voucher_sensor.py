@@ -24,7 +24,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .console_identity import async_migrate_site_entity
-from .coordinators import UnifiFacadeCoordinator
+from .coordinators import UnifiInsightsFacadeCoordinator
 from .data_transforms import (
     _field,
     count_active_vouchers,
@@ -158,7 +158,9 @@ VOUCHER_SENSOR_TYPES: tuple[UnifiVoucherSensorEntityDescription, ...] = (
 )
 
 
-class UnifiVoucherSensor(CoordinatorEntity[UnifiFacadeCoordinator], SensorEntity):
+class UnifiVoucherSensor(
+    CoordinatorEntity[UnifiInsightsFacadeCoordinator], SensorEntity
+):
     """Representation of a UniFi hotspot voucher sensor."""
 
     _attr_has_entity_name = True
@@ -166,7 +168,7 @@ class UnifiVoucherSensor(CoordinatorEntity[UnifiFacadeCoordinator], SensorEntity
 
     def __init__(
         self,
-        coordinator: UnifiFacadeCoordinator,
+        coordinator: UnifiInsightsFacadeCoordinator,
         description: UnifiVoucherSensorEntityDescription,
         site_id: str,
         *,
@@ -203,7 +205,7 @@ class UnifiVoucherSensor(CoordinatorEntity[UnifiFacadeCoordinator], SensorEntity
 
 
 def discover_voucher_sensors(
-    coordinator: UnifiFacadeCoordinator,
+    coordinator: UnifiInsightsFacadeCoordinator,
     known_sensor_keys: set[tuple[str, ...]],
     *,
     hass: HomeAssistant,

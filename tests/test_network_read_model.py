@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 import dataclasses
 import logging
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,10 +20,10 @@ from custom_components.unifi_insights.console_identity import (
     normalize_mac as console_normalize_mac,
 )
 from custom_components.unifi_insights.coordinators.device import (
-    UnifiDeviceCoordinator,
+    UnifiInsightsDeviceCoordinator,
 )
 from custom_components.unifi_insights.coordinators.protect import (
-    UnifiProtectCoordinator,
+    UnifiInsightsProtectCoordinator,
 )
 from custom_components.unifi_insights.dashboard_snapshots import bits_per_second_to_int
 from custom_components.unifi_insights.data_transforms import (
@@ -70,7 +72,7 @@ _LEGACY_PORT_TABLE: list[dict[str, Any]] = [
 _LEGACY_PORTS = [
     port
     for row in _LEGACY_PORT_TABLE
-    if (port := UnifiDeviceCoordinator._normalize_legacy_port(row)) is not None
+    if (port := UnifiInsightsDeviceCoordinator._normalize_legacy_port(row)) is not None
 ]
 
 # Constructed: the captured overview after a successful legacy merge
@@ -82,7 +84,7 @@ UDM_PRO_LEGACY_ENRICHED: dict[str, Any] = {
 }
 
 # Constructed: a legacy-only device, as the v1-5xx fallback maps it.
-LEGACY_ONLY_SWITCH = UnifiDeviceCoordinator._legacy_device_to_v1_dict(
+LEGACY_ONLY_SWITCH = UnifiInsightsDeviceCoordinator._legacy_device_to_v1_dict(
     {
         "_id": "60a1b2c3d4e5f67890123456",
         "mac": "AA:BB:CC:00:00:E1",
@@ -123,6 +125,39 @@ MALFORMED_STATS: dict[str, Any] = {
 # --- Shared primitives ----------------------------------------------------
 
 
+# ADR-011: data_transforms may import Home Assistant's pure utilities and the
+# pure integration modules only, so coordinators and builders can use it
+# without an import cycle.
+_TRANSFORMS_ALLOWED_INTEGRATION_IMPORTS = frozenset({"const", "innerspace_transforms"})
+
+
+def _transforms_imports() -> list[tuple[str, int]]:
+    """Return (module, level) for every import in data_transforms.py."""
+    path = (
+        Path(__file__).parents[1]
+        / "custom_components/unifi_insights/data_transforms.py"
+    )
+    found: list[tuple[str, int]] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.ImportFrom):
+            found.append((node.module or "", node.level))
+        elif isinstance(node, ast.Import):
+            found.extend((alias.name, 0) for alias in node.names)
+    return found
+
+
+def test_data_transforms_imports_only_pure_modules() -> None:
+    """Home Assistant imports are limited to homeassistant.util.*."""
+    for module, level in _transforms_imports():
+        if level:
+            assert level == 1, module
+            assert module in _TRANSFORMS_ALLOWED_INTEGRATION_IMPORTS, module
+        elif module.startswith("homeassistant"):
+            assert module.startswith("homeassistant.util"), module
+        else:
+            assert not module.startswith("custom_components"), module
+
+
 @pytest.mark.parametrize(
     ("data", "keys", "kwargs", "expected"),
     [
@@ -160,8 +195,8 @@ def test_field_helpers_delegate_to_one_implementation() -> None:
     assert topology.first_present(record, "a", "b") == 0
     assert _field(record, "a", "b") == 0
     assert _field(record, "a") is None
-    assert UnifiProtectCoordinator._get_field(record, "a", default=3) == 3
-    assert UnifiProtectCoordinator._get_field(record, "a", "b") == 0
+    assert UnifiInsightsProtectCoordinator._get_field(record, "a", default=3) == 3
+    assert UnifiInsightsProtectCoordinator._get_field(record, "a", "b") == 0
 
 
 @pytest.mark.parametrize(
@@ -204,7 +239,7 @@ def test_converters_delegate_to_the_shared_primitive() -> None:
 _MAC_POLICIES = (
     normalize_mac,
     console_normalize_mac,
-    UnifiDeviceCoordinator._normalize_mac,
+    UnifiInsightsDeviceCoordinator._normalize_mac,
     _normalize_innerspace_mac,
     _mac_key,
 )
