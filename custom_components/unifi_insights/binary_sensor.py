@@ -41,14 +41,17 @@ from .const import (
     SMART_DETECT_PACKAGE,
     SMART_DETECT_PERSON,
     SMART_DETECT_VEHICLE,
+    STORAGE_NEARLY_FULL_PERCENT,
 )
 from .data_transforms import (
     NetworkDeviceFacts,
     NetworkPortFacts,
     device_facts,
+    fullest_persistent_storage_mount,
     get_port_label,
     is_doorbell_camera_model,
     normalize_nvr_storage,
+    persistent_storage_mounts,
 )
 from .entity import (
     UnifiInsightsEntity,
@@ -58,7 +61,6 @@ from .entity import (
     get_field,
 )
 from .protect_security_entity import discover_protect_security_binary_sensors
-from .storage_entity import discover_storage_binary_sensors
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1103,3 +1105,66 @@ def async_setup_mobility_binary_sensors(
             )
         ],
     )
+
+
+# --- Storage -----------------------------------------------------------------
+
+STORAGE_NEARLY_FULL_DESCRIPTION = BinarySensorEntityDescription(
+    key="storage_nearly_full",
+    translation_key="storage_nearly_full",
+    device_class=BinarySensorDeviceClass.PROBLEM,
+    entity_category=EntityCategory.DIAGNOSTIC,
+)
+
+
+class UnifiStorageNearlyFullBinarySensor(UnifiInsightsEntity, BinarySensorEntity):
+    """On when a persistent filesystem of a UniFi device is nearly full."""
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsFacadeCoordinator,
+        site_id: str,
+        device_id: str,
+    ) -> None:
+        """Initialize the binary sensor."""
+        super().__init__(
+            coordinator, STORAGE_NEARLY_FULL_DESCRIPTION, site_id, device_id
+        )
+
+    @property
+    def available(self) -> bool:
+        """Return False when the device reports no persistent storage."""
+        return bool(super().available and persistent_storage_mounts(self.device_data))
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return True when the fullest persistent mount reaches the threshold."""
+        fullest = fullest_persistent_storage_mount(self.device_data)
+        if fullest is None:
+            return None
+        return fullest[1] >= STORAGE_NEARLY_FULL_PERCENT
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the threshold and the fullest persistent mount."""
+        attributes: dict[str, Any] = {"threshold_percent": STORAGE_NEARLY_FULL_PERCENT}
+        fullest = fullest_persistent_storage_mount(self.device_data)
+        if fullest is not None:
+            attributes["fullest_mount"] = fullest[0]["mount_point"]
+            attributes["fullest_used_percent"] = fullest[1]
+        return attributes
+
+
+def discover_storage_binary_sensors(
+    coordinator: UnifiInsightsFacadeCoordinator,
+    site_id: str,
+    device_id: str,
+    device_data: dict[str, Any],
+    known_keys: set[tuple[Any, ...]],
+) -> list[BinarySensorEntity]:
+    """Return the nearly-full sensor for a device with persistent storage."""
+    key = (site_id, device_id, STORAGE_NEARLY_FULL_DESCRIPTION.key)
+    if key in known_keys or not persistent_storage_mounts(device_data):
+        return []
+    known_keys.add(key)
+    return [UnifiStorageNearlyFullBinarySensor(coordinator, site_id, device_id)]

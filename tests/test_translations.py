@@ -19,7 +19,10 @@ from typing import Any, Final, cast
 import pytest
 import yaml
 
-from custom_components.unifi_insights.binary_sensor import BINARY_SENSOR_TYPES
+from custom_components.unifi_insights.binary_sensor import (
+    BINARY_SENSOR_TYPES,
+    STORAGE_NEARLY_FULL_DESCRIPTION,
+)
 from custom_components.unifi_insights.coordinators.rule_audit import (
     RULE_CHANGE_TYPES,
 )
@@ -31,13 +34,13 @@ from custom_components.unifi_insights.protect_security_entity import (
     SECURITY_BINARY_SENSOR_TYPES,
     SECURITY_SENSOR_TYPES,
 )
-from custom_components.unifi_insights.sensor import ROUTER_SENSORS, WORKSPACE_SENSORS
+from custom_components.unifi_insights.sensor import (
+    ROUTER_SENSORS,
+    STORAGE_SENSOR_TYPES,
+    WORKSPACE_SENSORS,
+)
 from custom_components.unifi_insights.site_internet_activity_sensor import (
     SITE_INTERNET_ACTIVITY_SENSOR_TYPES,
-)
-from custom_components.unifi_insights.storage_entity import (
-    STORAGE_NEARLY_FULL_DESCRIPTION,
-    STORAGE_SENSOR_TYPES,
 )
 
 _INTEGRATION_DIR = Path(__file__).parent.parent / "custom_components" / "unifi_insights"

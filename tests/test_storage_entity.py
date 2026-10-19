@@ -17,19 +17,23 @@ from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfInformation
 
 from custom_components.unifi_insights import binary_sensor, sensor
-from custom_components.unifi_insights.const import STORAGE_NEARLY_FULL_PERCENT
-from custom_components.unifi_insights.storage_entity import (
+from custom_components.unifi_insights.binary_sensor import (
     STORAGE_NEARLY_FULL_DESCRIPTION,
-    STORAGE_SENSOR_TYPES,
     UnifiStorageNearlyFullBinarySensor,
-    UnifiStorageSensor,
-    _fullest_persistent_mount,
-    _persistent_mounts,
     discover_storage_binary_sensors,
-    discover_storage_sensors,
+)
+from custom_components.unifi_insights.const import STORAGE_NEARLY_FULL_PERCENT
+from custom_components.unifi_insights.data_transforms import (
     find_storage_mount,
+    fullest_persistent_storage_mount,
     get_storage_mounts,
+    persistent_storage_mounts,
     storage_mount_labels,
+)
+from custom_components.unifi_insights.sensor import (
+    STORAGE_SENSOR_TYPES,
+    UnifiStorageSensor,
+    discover_storage_sensors,
 )
 
 UDM_STORAGE: list[dict[str, Any]] = [
@@ -522,8 +526,8 @@ def test_helpers_tolerate_bad_shapes() -> None:
     assert get_storage_mounts(bad_device) == [{"mount_point": "/valid"}]
     assert find_storage_mount(bad_device, "/valid") == {"mount_point": "/valid"}
     assert find_storage_mount(bad_device, "/missing") is None
-    assert _persistent_mounts(bad_device) == [{"mount_point": "/valid"}]
-    assert _fullest_persistent_mount(bad_device) is None
+    assert persistent_storage_mounts(bad_device) == [{"mount_point": "/valid"}]
+    assert fullest_persistent_storage_mount(bad_device) is None
 
 
 @pytest.fixture

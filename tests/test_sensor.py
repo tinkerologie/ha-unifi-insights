@@ -31,8 +31,6 @@ if TYPE_CHECKING:
 
     from custom_components.unifi_insights.sensor import (
         UnifiInsightsSensorEntityDescription,
-    )
-    from custom_components.unifi_insights.storage_entity import (
         UnifiStorageSensorEntityDescription,
     )
 
@@ -61,6 +59,7 @@ from custom_components.unifi_insights.sensor import (
     SFP_SENSOR_TYPES,
     SITE_CLIENT_SENSOR_TYPES,
     SITE_INTERNET_ACTIVITY_SENSOR_TYPES,
+    STORAGE_SENSOR_TYPES,
     UnifiInsightsSensor,
     UnifiOutletSensor,
     UnifiPortSensor,
@@ -69,6 +68,7 @@ from custom_components.unifi_insights.sensor import (
     UnifiProtectSensorEntityDescription,
     UnifiSiteClientSensor,
     UnifiSiteInternetActivitySensor,
+    UnifiStorageSensor,
     UnifiWifiClientCountSensor,
     _bytes_to_gb,
     _calculate_storage_available,
@@ -88,10 +88,6 @@ from custom_components.unifi_insights.sensor import (
     bytes_to_megabits,
     format_uptime,
     get_network_device_temperature,
-)
-from custom_components.unifi_insights.storage_entity import (
-    STORAGE_SENSOR_TYPES,
-    UnifiStorageSensor,
 )
 from custom_components.unifi_insights.voucher_sensor import UnifiVoucherSensor
 from tests.fixtures.library_responses import (

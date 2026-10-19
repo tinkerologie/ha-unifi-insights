@@ -62,7 +62,12 @@ from .data_transforms import (
     NetworkDeviceFacts,
     bytes_to_bits_per_second,
     device_facts,
+    find_storage_mount,
+    get_storage_mounts,
+    is_volatile_storage_mount,
     normalize_nvr_storage,
+    storage_mount_labels,
+    storage_used_percent,
 )
 from .data_transforms import get_port_label as _get_port_label
 from .entity import (
@@ -86,7 +91,6 @@ from .protect_security_entity import discover_protect_security_sensors
 from .site_internet_activity_sensor import (
     _discover_site_internet_activity_sensors,
 )
-from .storage_entity import discover_storage_sensors, is_storage_unique_id
 from .voucher_sensor import discover_voucher_sensors
 
 if TYPE_CHECKING:
@@ -2524,3 +2528,163 @@ def async_setup_mobility_sensors(
             for description in ROUTER_SENSORS
         ],
     )
+
+
+# --- Storage -----------------------------------------------------------------
+
+# Per-mount storage entities for UniFi consoles.
+#
+# A console that runs the Network application lists its filesystems in the
+# classic ``stat/device`` record. The device coordinator normalises that list
+# into ``storage_mounts`` (see ``normalize_legacy_storage``) from the response it
+# already fetches; nothing here makes a request.
+#
+# Capacity only: the classic record carries no disk health, SMART or RAID data,
+# and the official Integration API has no storage fields at all.
+
+
+@dataclass(frozen=True, kw_only=True)
+class UnifiStorageSensorEntityDescription(SensorEntityDescription):
+    """Describes a per-mount storage sensor."""
+
+    value_fn: Callable[[dict[str, Any]], StateType]
+
+
+STORAGE_SENSOR_TYPES: tuple[UnifiStorageSensorEntityDescription, ...] = (
+    UnifiStorageSensorEntityDescription(
+        key="used_percent",
+        translation_key="storage_mount_used_percent",
+        native_unit_of_measurement=PERCENTAGE,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=storage_used_percent,
+    ),
+    UnifiStorageSensorEntityDescription(
+        key="used",
+        translation_key="storage_mount_used",
+        native_unit_of_measurement=UnitOfInformation.BYTES,
+        suggested_unit_of_measurement=UnitOfInformation.GIBIBYTES,
+        suggested_display_precision=2,
+        device_class=SensorDeviceClass.DATA_SIZE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda mount: mount.get("used"),
+    ),
+    UnifiStorageSensorEntityDescription(
+        key="total",
+        translation_key="storage_mount_total",
+        native_unit_of_measurement=UnitOfInformation.BYTES,
+        suggested_unit_of_measurement=UnitOfInformation.GIBIBYTES,
+        suggested_display_precision=2,
+        device_class=SensorDeviceClass.DATA_SIZE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda mount: mount.get("size"),
+    ),
+)
+
+
+# Every storage sensor unique ID contains this marker before the mount path.
+STORAGE_UNIQUE_ID_MARKER = "_storage_"
+
+
+def is_storage_unique_id(unique_id: str) -> bool:
+    """
+    Return True for a storage sensor unique ID.
+
+    A mount path can contain "_port_" (for example "/mnt/usb_port_1"), so the
+    stale port sweep in sensor.py uses this to leave storage rows alone.
+    """
+    return STORAGE_UNIQUE_ID_MARKER in unique_id
+
+
+class UnifiStorageSensor(UnifiInsightsEntity, SensorEntity):
+    """One capacity reading of one filesystem of a UniFi device."""
+
+    entity_description: UnifiStorageSensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsFacadeCoordinator,
+        description: UnifiStorageSensorEntityDescription,
+        site_id: str,
+        device_id: str,
+        *,
+        mount_point: str,
+        mount_label: str,
+        volatile: bool,
+    ) -> None:
+        """Initialize the storage sensor."""
+        super().__init__(coordinator, description, site_id, device_id)
+        self._mount_point = mount_point
+        self._attr_translation_placeholders = {"mount_name": mount_label}
+        # The mount path is the stable key; the label can change with the
+        # console's volume name without moving the entity.
+        self._attr_unique_id = (
+            f"{site_id}_{device_id}{STORAGE_UNIQUE_ID_MARKER}"
+            f"{mount_point}_{description.key}"
+        )
+        if volatile:
+            self._attr_entity_registry_enabled_default = False
+
+    def _mount(self) -> dict[str, Any] | None:
+        """Return this sensor's mount from coordinator data, if it still exists."""
+        return find_storage_mount(self.device_data, self._mount_point)
+
+    @property
+    def available(self) -> bool:
+        """Return False once the mount is gone from the console's report."""
+        return bool(super().available and self._mount() is not None)
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the reading; None (unknown) when the console gave no number."""
+        mount = self._mount()
+        return None if mount is None else self.entity_description.value_fn(mount)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return which filesystem this is."""
+        mount = self._mount()
+        if mount is None:
+            return None
+        attributes = {
+            "mount_point": mount.get("mount_point"),
+            "storage_type": mount.get("type"),
+        }
+        return {key: value for key, value in attributes.items() if value is not None}
+
+
+def discover_storage_sensors(
+    coordinator: UnifiInsightsFacadeCoordinator,
+    site_id: str,
+    device_id: str,
+    device_data: dict[str, Any],
+    known_keys: set[tuple[Any, ...]],
+) -> list[SensorEntity]:
+    """Return storage sensors for mounts of this device not yet in ``known_keys``."""
+    mounts = get_storage_mounts(device_data)
+    labels = storage_mount_labels(mounts)
+    entities: list[SensorEntity] = []
+    for mount in mounts:
+        mount_point = mount["mount_point"]
+        volatile = is_volatile_storage_mount(mount)
+        for description in STORAGE_SENSOR_TYPES:
+            key = (site_id, device_id, "storage", mount_point, description.key)
+            if key in known_keys:
+                continue
+            known_keys.add(key)
+            entities.append(
+                UnifiStorageSensor(
+                    coordinator,
+                    description,
+                    site_id,
+                    device_id,
+                    mount_point=mount_point,
+                    mount_label=labels[mount_point],
+                    volatile=volatile,
+                )
+            )
+    return entities

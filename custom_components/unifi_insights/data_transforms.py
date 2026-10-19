@@ -29,6 +29,7 @@ import ipaddress
 import logging
 import math
 import re
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -1342,3 +1343,72 @@ def is_doorbell_camera_model(camera_data: dict[str, Any]) -> bool:
             "aidoorbell",
         )
     )
+
+
+# --- Storage mounts ----------------------------------------------------------
+
+
+def get_storage_mounts(device_data: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Return the usable normalised mounts of a device (empty when none)."""
+    mounts = device_data.get("storage_mounts") if device_data else None
+    if not isinstance(mounts, list):
+        return []
+    return [
+        mount
+        for mount in mounts
+        if isinstance(mount, dict)
+        and isinstance(mount.get("mount_point"), str)
+        and mount["mount_point"]
+    ]
+
+
+def find_storage_mount(
+    device_data: dict[str, Any] | None, mount_point: str
+) -> dict[str, Any] | None:
+    """Return the mount with this mount point, or None when it is gone."""
+    for mount in get_storage_mounts(device_data):
+        if mount["mount_point"] == mount_point:
+            return mount
+    return None
+
+
+def storage_mount_labels(mounts: list[dict[str, Any]]) -> dict[str, str]:
+    """
+    Return a display label per mount point, unique within the device.
+
+    The label is the console's ``name`` ("eMMC", "Backup") or the mount path
+    when it has none. Labels that two mounts share (compared case-insensitively)
+    get the mount path appended so entity names never repeat.
+    """
+    bases = {
+        mount["mount_point"]: mount.get("name") or mount["mount_point"]
+        for mount in mounts
+    }
+    counts = Counter(base.casefold() for base in bases.values())
+    return {
+        mount_point: f"{base} ({mount_point})" if counts[base.casefold()] > 1 else base
+        for mount_point, base in bases.items()
+    }
+
+
+def persistent_storage_mounts(
+    device_data: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Return the mounts that count towards "storage nearly full"."""
+    return [
+        mount
+        for mount in get_storage_mounts(device_data)
+        if not is_volatile_storage_mount(mount)
+    ]
+
+
+def fullest_persistent_storage_mount(
+    device_data: dict[str, Any] | None,
+) -> tuple[dict[str, Any], float] | None:
+    """Return the persistent mount with the highest valid fill level."""
+    scored = [
+        (mount, percent)
+        for mount in persistent_storage_mounts(device_data)
+        if (percent := storage_used_percent(mount)) is not None
+    ]
+    return max(scored, key=lambda item: item[1]) if scored else None
