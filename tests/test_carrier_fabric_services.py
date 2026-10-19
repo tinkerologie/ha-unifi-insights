@@ -271,49 +271,53 @@ async def test_rejection_no_target(hass, setup_carrier_services):
 async def test_rejection_multiple_targets(hass, setup_carrier_services):
     """Test rejection when multiple targets are specified."""
     sub_device = setup_carrier_services["sub_device"]
-    with pytest.raises(ServiceValidationError, match="Multiple targets specified"):
+    with pytest.raises(ServiceValidationError) as raised:
         await hass.services.async_call(
             DOMAIN,
             SERVICE_CARRIER_SUSPEND_SUBSCRIBER,
             {"device_id": [sub_device.id, "extra_device_id"]},
             blocking=True,
         )
+    assert raised.value.translation_key == "carrier_multiple_targets"
 
 
 async def test_rejection_console_device_target(hass, setup_carrier_services):
     """Test rejection when target is a console device."""
     console_device = setup_carrier_services["console_device"]
-    with pytest.raises(ServiceValidationError, match="not a Carrier Fabric subscriber"):
+    with pytest.raises(ServiceValidationError) as raised:
         await hass.services.async_call(
             DOMAIN,
             SERVICE_CARRIER_SUSPEND_SUBSCRIBER,
             {"device_id": console_device.id},
             blocking=True,
         )
+    assert raised.value.translation_key == "carrier_target_not_subscriber"
 
 
 async def test_rejection_console_entity_target(hass, setup_carrier_services):
     """Test rejection when target is a console entity."""
     console_entity = setup_carrier_services["console_entity"]
-    with pytest.raises(ServiceValidationError, match="not a Carrier Fabric subscriber"):
+    with pytest.raises(ServiceValidationError) as raised:
         await hass.services.async_call(
             DOMAIN,
             SERVICE_CARRIER_SUSPEND_SUBSCRIBER,
             {"entity_id": console_entity.entity_id},
             blocking=True,
         )
+    assert raised.value.translation_key == "carrier_target_not_subscriber"
 
 
 async def test_rejection_organisation_device_target(hass, setup_carrier_services):
     """Test rejection when target is the organisation-level device."""
     org_device = setup_carrier_services["org_device"]
-    with pytest.raises(ServiceValidationError, match="not a Carrier Fabric subscriber"):
+    with pytest.raises(ServiceValidationError) as raised:
         await hass.services.async_call(
             DOMAIN,
             SERVICE_CARRIER_SUSPEND_SUBSCRIBER,
             {"device_id": org_device.id},
             blocking=True,
         )
+    assert raised.value.translation_key == "carrier_target_not_subscriber"
 
 
 async def test_rejection_unloaded_entry(hass, setup_carrier_services):

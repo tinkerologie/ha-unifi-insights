@@ -424,10 +424,11 @@ async def test_missing_chime_raises(
     """A chime no console has is refused before any doorbell is looked at."""
     await _setup(hass, mock_config_entry, protect_client)
 
-    with pytest.raises(ServiceValidationError, match="not found on any configured"):
+    with pytest.raises(ServiceValidationError) as raised:
         await _call(
             hass, chime_id="no_such_chime", doorbells={"entity_id": _ring(hass)}
         )
+    assert raised.value.translation_key == "protect_resource_not_found"
 
     protect_client.chimes.update.assert_not_awaited()
 
@@ -438,8 +439,9 @@ async def test_chime_target_is_required(
     """Without a chime id or a target there is nothing to pair."""
     await _setup(hass, mock_config_entry, protect_client)
 
-    with pytest.raises(ServiceValidationError, match="Chime ID or target is required"):
+    with pytest.raises(ServiceValidationError) as raised:
         await _call(hass, doorbells={"entity_id": _ring(hass)})
+    assert raised.value.translation_key == "protect_target_required"
 
     protect_client.chimes.update.assert_not_awaited()
 
