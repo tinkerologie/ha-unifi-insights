@@ -90,6 +90,18 @@ All coordinators inherit `UnifiBaseCoordinator` (`coordinators/base.py`) for sha
 
 The facade coordinator has no update interval. It subscribes to the specialized coordinators, aggregates their snapshots into one `data` mapping, and fans out a single listener notification. Entities and services read from the facade so they do not need to know which coordinator owns a field.
 
+### Network device read model
+
+`data_transforms.py` owns one rule for each network device fact: the online state, the device kind, the site gateway, the ports, the CPU, memory, uptime and uplink metrics, and a client's connection type. The device coordinator builds `SiteNetworkFacts` (one frozen `NetworkDeviceFacts` per device, plus the site's `gateway_id`) once per successful refresh, after the legacy merge, stats reuse and port rates. It publishes them under `network_facts` by replacing the map, never by mutating it. The facts are pruned and cleared with the other site maps, and a failed refresh keeps the last committed facts. The facade passes the map through by reference.
+
+- **Reading the facts.** `site_network_facts(data, site_id)` and `device_facts(data, site_id, device_id)` return the published objects. They build from the raw `devices` and `stats` only when the key was never published (mock data in tests), and log that at debug level. The facade's `get_device_facts` and `get_site_gateway_id` call the same accessors. Entities read `device_facts` on `UnifiInsightsEntity`. The dashboard builders read the site facts, and WebSocket change detection includes their identity.
+- **Online state.** The rule follows the Network API spec: only `ONLINE` is online. `OFFLINE`, `CONNECTION_INTERRUPTED`, `ISOLATED` and `U5G_INCORRECT_TOPOLOGY` are offline. Every other value is unknown, including `CONNECTED`, `UP`, `DISCONNECTED` and `DOWN`, which are not network device states. Protect `CONNECTED`, tracker `connected` and WAN `connected` keep their own rules.
+- **Gateway.** The gateway checks (legacy type, v1 type, model prefix or "GATEWAY" in the model, a `gateway` or `router` feature) run before the switching check. A UDM Pro with a null `type` that advertises only `switching` is therefore a gateway even without legacy data. The site gateway is the first gateway in the site's device map order.
+- **Throughput units.** `uplink.txRateBps` and `rxRateBps` (and `tx_rate_bps`/`rx_rate_bps`) are already bits/s. Only the explicit `*_bytes_per_sec` fallbacks are multiplied by 8. Evidence on #337: same-moment samples on a UDM Pro SE and a USW Pro Max 24 read the v1 rates at 8× the legacy uplink bytes/s, and a UCG-Fiber sample agreed. The facts keep float bits/s, and the performance and internet activity payloads convert them to integers.
+- **Ports need legacy data.** The coordinator fetches only the v1 device overview, whose `interfaces` is a list of names. Port records come from the legacy `/stat/device` merge, so when that fetch fails, port sensors and SFP presence sensors lose their ports together. Each port keeps its raw index for unique IDs (SFP presence IDs use the raw spelling) and a normalized integer index for lookups.
+- **Diagnostics.** Diagnostics drop `network_facts` before redaction, because the section repeats `devices` and `stats` as frozen records that the MAC pass cannot walk.
+- **MAC policies.** `data_transforms.normalize_mac` is the canonical, validating parser and the topology HMAC input. Four identity-specific policies stay separate on purpose, because they feed stored or user-facing identities: `console_identity.normalize_mac`, `UnifiDeviceCoordinator._normalize_mac`, `innerspace_transforms._normalize_innerspace_mac` and `services._mac_key`.
+
 ### Runtime data
 
 ```python
@@ -118,7 +130,7 @@ Stored in `entry.runtime_data`. Carrier Fabric entries use a separate `CarrierFa
 ```text
 CoordinatorEntity[UnifiFacadeCoordinator]
   ├── UnifiInsightsEntity           # Network devices; available when coordinator.device_available
-  │                                 # and is_device_online(device_data)
+  │                                 # and the published online fact is "online"
   └── UnifiProtectEntity            # Protect devices; available when coordinator.protect_available
                                     # and state == "CONNECTED"
 CoordinatorEntity[UnifiInsightsAccessCoordinator]
