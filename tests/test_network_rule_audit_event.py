@@ -19,10 +19,10 @@ from custom_components.unifi_insights.const import (
     CONF_CONSOLE_ID,
     DOMAIN,
 )
-from custom_components.unifi_insights.event import async_setup_entry
-from custom_components.unifi_insights.network_rule_audit_event import (
+from custom_components.unifi_insights.event import (
     EVENT_ATTRIBUTE_KEYS,
     UnifiInsightsNetworkRuleChangeEvent,
+    async_setup_entry,
     discover_network_rule_change_events,
 )
 

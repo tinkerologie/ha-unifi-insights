@@ -67,6 +67,7 @@ from custom_components.unifi_insights.sensor import (
     UnifiSiteClientSensor,
     UnifiSiteInternetActivitySensor,
     UnifiStorageSensor,
+    UnifiVoucherSensor,
     UnifiWifiClientCountSensor,
     _bytes_to_gb,
     _calculate_storage_available,
@@ -87,7 +88,6 @@ from custom_components.unifi_insights.sensor import (
     format_uptime,
     get_network_device_temperature,
 )
-from custom_components.unifi_insights.voucher_sensor import UnifiVoucherSensor
 from tests.fixtures.library_responses import (
     SAMPLE_KEYPAD_FOB,
     SAMPLE_THREAD_LINK_STATION,

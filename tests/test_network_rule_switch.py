@@ -12,7 +12,7 @@ from homeassistant.exceptions import HomeAssistantError
 from unifi_official_api.network.models import NatRule, StaticRoute
 
 from custom_components.unifi_insights.const import DOMAIN
-from custom_components.unifi_insights.network_rule_switch import (
+from custom_components.unifi_insights.switch import (
     NAT_RULE_SWITCH,
     NETWORK_RULE_SWITCH_TYPES,
     PORT_FORWARD_SWITCH,
@@ -20,9 +20,9 @@ from custom_components.unifi_insights.network_rule_switch import (
     TRAFFIC_RULE_SWITCH,
     UnifiInsightsNetworkRuleSwitch,
     UnifiInsightsNetworkRuleSwitchEntityDescription,
+    async_setup_entry,
     discover_network_rule_switches,
 )
-from custom_components.unifi_insights.switch import async_setup_entry
 from tests.fixtures.command_owners import autospec_command_owners
 from tests.fixtures.network_rule_responses import (
     nat_rule_record,

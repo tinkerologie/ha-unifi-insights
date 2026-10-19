@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, cast
 
@@ -25,13 +26,13 @@ from homeassistant.const import (
     UnitOfTemperature,
     UnitOfTime,
 )
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import CarrierFabricData, site_internet_activity_sensor
-from .carrier_fabric_sensor import async_setup_carrier_fabric_sensors
+from . import CarrierFabricData
 from .console_identity import async_migrate_site_entity, resolve_console_namespace
 from .const import (
     ATTR_ARM_PROFILE_ID,
@@ -54,6 +55,8 @@ from .const import (
     ATTR_THREAD_EXTENDED_PAN_ID,
     ATTR_THREAD_NETWORK_NAME,
     ATTR_THREAD_PAN_ID,
+    CONF_TRACK_SUBSCRIBERS,
+    DEFAULT_TRACK_SUBSCRIBERS,
     DEVICE_TYPE_FOB,
     DEVICE_TYPE_NVR,
     DEVICE_TYPE_SENSOR,
@@ -68,8 +71,10 @@ from .coordinators.mobility import UnifiInsightsMobilityCoordinator
 from .data_transforms import (
     THREAD_DEVICE_TYPES,
     NetworkDeviceFacts,
+    _field,
     always_true,
     bytes_to_bits_per_second,
+    count_active_vouchers,
     device_facts,
     find_storage_mount,
     get_storage_mounts,
@@ -78,13 +83,18 @@ from .data_transforms import (
     is_volatile_storage_mount,
     nested_dict,
     normalize_nvr_storage,
+    parse_timestamp,
     present_attributes,
     storage_mount_labels,
     storage_used_percent,
     thread_network,
+    voucher_site_ids,
 )
 from .data_transforms import get_port_label as _get_port_label
 from .entity import (
+    UnifiCarrierFabricEntity,
+    UnifiCarrierFabricSubscriberEntity,
+    UnifiInnerSpaceEntity,
     UnifiInsightsEntity,
     UnifiMobilityRouterEntity,
     UnifiProtectEntity,
@@ -99,16 +109,10 @@ from .entity import (
 from .entity import (
     get_client_type as _get_client_type,
 )
-from .innerspace_entity import (
-    _discover_innerspace_sensors,
-)
-from .site_internet_activity_sensor import (
-    _discover_site_internet_activity_sensors,
-)
-from .voucher_sensor import discover_voucher_sensors
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable
+    from datetime import datetime
 
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
@@ -117,18 +121,8 @@ if TYPE_CHECKING:
     from homeassistant.helpers.typing import StateType
 
     from . import CarrierFabricConfigEntry, UnifiInsightsConfigEntry
+    from .coordinators.carrier_fabric import UnifiInsightsCarrierFabricCoordinator
 
-
-# Preserve these public sensor-module exports without redundant import aliases.
-SITE_INTERNET_ACTIVITY_SENSOR_TYPES = (
-    site_internet_activity_sensor.SITE_INTERNET_ACTIVITY_SENSOR_TYPES
-)
-UnifiSiteInternetActivitySensor = (
-    site_internet_activity_sensor.UnifiSiteInternetActivitySensor
-)
-UnifiSiteInternetActivitySensorEntityDescription = (
-    site_internet_activity_sensor.UnifiSiteInternetActivitySensorEntityDescription
-)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -2908,3 +2902,947 @@ def discover_protect_security_sensors(
                 )
             )
     return entities
+
+
+# --- Vouchers ----------------------------------------------------------------
+
+# Voucher sensor platform for UniFi Insights.
+
+
+@dataclass(frozen=True, kw_only=True)
+class UnifiVoucherSensorEntityDescription(SensorEntityDescription):
+    """Class describing UniFi voucher sensor entities."""
+
+    value_fn: Callable[[Any, str], StateType | datetime]
+    attrs_fn: Callable[[Any, str], dict[str, Any]] | None = None
+
+
+def _get_latest_record(data: object, site_id: str) -> dict[str, Any] | None:
+    """Safely return latest voucher record for a site."""
+    if not isinstance(data, Mapping):
+        return None
+    latest_vouchers = data.get("latest_vouchers")
+    if not isinstance(latest_vouchers, Mapping):
+        return None
+    record = latest_vouchers.get(site_id)
+    if not isinstance(record, Mapping):
+        return None
+    return dict(record)
+
+
+def _latest_code_value(data: object, site_id: str) -> StateType:
+    """Return latest voucher code as string, or None."""
+    record = _get_latest_record(data, site_id)
+    if record is None:
+        return None
+    code = record.get("code")
+    return str(code) if code is not None else None
+
+
+def _latest_expiration_value(data: object, site_id: str) -> datetime | None:
+    """Return latest voucher expiration datetime, or None."""
+    record = _get_latest_record(data, site_id)
+    if record is None:
+        return None
+    exp = _field(record, "expiresAt", "expires_at")
+    return parse_timestamp(exp)
+
+
+def _active_vouchers_value(data: object, site_id: str) -> int:
+    """Return active vouchers count for a site."""
+    if not isinstance(data, Mapping):
+        return 0
+    vouchers = data.get("vouchers")
+    if not isinstance(vouchers, Mapping):
+        return 0
+    site_vouchers = vouchers.get(site_id)
+    return count_active_vouchers(site_vouchers)
+
+
+def _latest_attributes(data: object, site_id: str) -> dict[str, Any]:
+    """Return attributes of the latest generated voucher."""
+    record = _get_latest_record(data, site_id)
+    if record is None:
+        return {}
+
+    attrs: dict[str, Any] = {}
+
+    mappings: list[tuple[str, tuple[str, ...], bool]] = [
+        ("voucher_id", ("id",), False),
+        ("created_at", ("createdAt", "created_at"), True),
+        ("activated_at", ("activatedAt", "activated_at"), True),
+        ("expires_at", ("expiresAt", "expires_at"), True),
+        ("expired", ("expired",), False),
+        (
+            "duration_minutes",
+            ("timeLimitMinutes", "time_limit_minutes", "duration_minutes"),
+            False,
+        ),
+        ("guest_limit", ("authorizedGuestLimit", "authorized_guest_limit"), False),
+        ("guest_count", ("authorizedGuestCount", "authorized_guest_count"), False),
+        (
+            "data_limit_mb",
+            ("dataUsageLimitMBytes", "data_usage_limit_mbytes", "data_limit_mb"),
+            False,
+        ),
+        (
+            "download_limit_kbps",
+            ("rxRateLimitKbps", "rx_rate_limit_kbps", "download_limit_kbps"),
+            False,
+        ),
+        (
+            "upload_limit_kbps",
+            ("txRateLimitKbps", "tx_rate_limit_kbps", "upload_limit_kbps"),
+            False,
+        ),
+    ]
+
+    for attr_key, source_keys, is_ts in mappings:
+        val = _field(record, *source_keys)
+        if val is None:
+            continue
+        if is_ts:
+            parsed = parse_timestamp(val)
+            if parsed is not None:
+                attrs[attr_key] = parsed.isoformat()
+        else:
+            attrs[attr_key] = val
+
+    return attrs
+
+
+VOUCHER_SENSOR_TYPES: tuple[UnifiVoucherSensorEntityDescription, ...] = (
+    UnifiVoucherSensorEntityDescription(
+        key="latest_voucher_code",
+        translation_key="latest_voucher_code",
+        value_fn=_latest_code_value,
+        attrs_fn=_latest_attributes,
+    ),
+    UnifiVoucherSensorEntityDescription(
+        key="latest_voucher_expiration",
+        translation_key="latest_voucher_expiration",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_fn=_latest_expiration_value,
+    ),
+    UnifiVoucherSensorEntityDescription(
+        key="active_vouchers",
+        translation_key="active_vouchers",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=_active_vouchers_value,
+    ),
+)
+
+
+class UnifiVoucherSensor(
+    CoordinatorEntity[UnifiInsightsFacadeCoordinator], SensorEntity
+):
+    """Representation of a UniFi hotspot voucher sensor."""
+
+    _attr_has_entity_name = True
+    entity_description: UnifiVoucherSensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsFacadeCoordinator,
+        description: UnifiVoucherSensorEntityDescription,
+        site_id: str,
+        *,
+        unique_id: str,
+    ) -> None:
+        """Initialize the voucher sensor."""
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._site_id = site_id
+        self._attr_unique_id = unique_id
+        self._attr_device_info = DeviceInfo(
+            **build_site_device_info(coordinator.data, site_id)  # type: ignore[typeddict-item]
+        )
+
+    @property
+    def available(self) -> bool:
+        """Return True if vouchers are available for this site."""
+        return bool(self.coordinator.vouchers_available(self._site_id))
+
+    @property
+    def native_value(self) -> StateType | datetime:
+        """Return the value reported by the description value_fn."""
+        return self.entity_description.value_fn(self.coordinator.data, self._site_id)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return extra state attributes if attrs_fn is defined."""
+        if self.entity_description.attrs_fn is not None:
+            attrs = self.entity_description.attrs_fn(
+                self.coordinator.data, self._site_id
+            )
+            return attrs or None
+        return None
+
+
+def discover_voucher_sensors(
+    coordinator: UnifiInsightsFacadeCoordinator,
+    known_sensor_keys: set[tuple[str, ...]],
+    *,
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    namespace: str | None,
+) -> list[SensorEntity]:
+    """Discover and instantiate voucher sensors for each configured site."""
+    entities: list[SensorEntity] = []
+    for site_id in voucher_site_ids(coordinator.data):
+        for description in VOUCHER_SENSOR_TYPES:
+            key = (site_id, description.key)
+            if key in known_sensor_keys:
+                continue
+            unique_id = async_migrate_site_entity(
+                hass, entry, "sensor", namespace, site_id, suffix=description.key
+            )
+            if unique_id is None:
+                continue
+            entity = UnifiVoucherSensor(
+                coordinator, description, site_id, unique_id=unique_id
+            )
+            known_sensor_keys.add(key)
+            entities.append(entity)
+    return entities
+
+
+# --- Site internet activity --------------------------------------------------
+
+# Site-level historical internet activity sensors for UniFi Insights.
+
+
+@dataclass
+class UnifiSiteInternetActivitySensorEntityDescription(  # type: ignore[misc]
+    SensorEntityDescription
+):
+    """Class describing UniFi site-level internet activity sensor entities."""
+
+    window: str = "1h"
+    metric: str = "rx_bytes"
+    period_label: str = "Last Hour"
+    unifi_window: str = "1H"
+    direction: str = "download"
+    report_interval: str = "5minutes"
+
+
+SITE_INTERNET_ACTIVITY_SENSOR_TYPES: tuple[
+    UnifiSiteInternetActivitySensorEntityDescription, ...
+] = (
+    UnifiSiteInternetActivitySensorEntityDescription(
+        key="internet_download_1h",
+        translation_key="internet_download_1h",
+        window="1h",
+        metric="rx_bytes",
+        period_label="Last Hour",
+        unifi_window="1H",
+        direction="download",
+        report_interval="5minutes",
+        device_class=SensorDeviceClass.DATA_SIZE,
+        native_unit_of_measurement=UnitOfInformation.BYTES,
+        suggested_unit_of_measurement=UnitOfInformation.GIGABYTES,
+        suggested_display_precision=2,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    UnifiSiteInternetActivitySensorEntityDescription(
+        key="internet_upload_1h",
+        translation_key="internet_upload_1h",
+        window="1h",
+        metric="tx_bytes",
+        period_label="Last Hour",
+        unifi_window="1H",
+        direction="upload",
+        report_interval="5minutes",
+        device_class=SensorDeviceClass.DATA_SIZE,
+        native_unit_of_measurement=UnitOfInformation.BYTES,
+        suggested_unit_of_measurement=UnitOfInformation.GIGABYTES,
+        suggested_display_precision=2,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    UnifiSiteInternetActivitySensorEntityDescription(
+        key="internet_download_1d",
+        translation_key="internet_download_1d",
+        window="1d",
+        metric="rx_bytes",
+        period_label="Last 24 Hours",
+        unifi_window="1D",
+        direction="download",
+        report_interval="hourly",
+        device_class=SensorDeviceClass.DATA_SIZE,
+        native_unit_of_measurement=UnitOfInformation.BYTES,
+        suggested_unit_of_measurement=UnitOfInformation.GIGABYTES,
+        suggested_display_precision=2,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    UnifiSiteInternetActivitySensorEntityDescription(
+        key="internet_upload_1d",
+        translation_key="internet_upload_1d",
+        window="1d",
+        metric="tx_bytes",
+        period_label="Last 24 Hours",
+        unifi_window="1D",
+        direction="upload",
+        report_interval="hourly",
+        device_class=SensorDeviceClass.DATA_SIZE,
+        native_unit_of_measurement=UnitOfInformation.BYTES,
+        suggested_unit_of_measurement=UnitOfInformation.GIGABYTES,
+        suggested_display_precision=2,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    UnifiSiteInternetActivitySensorEntityDescription(
+        key="internet_download_1w",
+        translation_key="internet_download_1w",
+        window="1w",
+        metric="rx_bytes",
+        period_label="Last 7 Days",
+        unifi_window="1W",
+        direction="download",
+        report_interval="hourly",
+        device_class=SensorDeviceClass.DATA_SIZE,
+        native_unit_of_measurement=UnitOfInformation.BYTES,
+        suggested_unit_of_measurement=UnitOfInformation.GIGABYTES,
+        suggested_display_precision=2,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    UnifiSiteInternetActivitySensorEntityDescription(
+        key="internet_upload_1w",
+        translation_key="internet_upload_1w",
+        window="1w",
+        metric="tx_bytes",
+        period_label="Last 7 Days",
+        unifi_window="1W",
+        direction="upload",
+        report_interval="hourly",
+        device_class=SensorDeviceClass.DATA_SIZE,
+        native_unit_of_measurement=UnitOfInformation.BYTES,
+        suggested_unit_of_measurement=UnitOfInformation.GIGABYTES,
+        suggested_display_precision=2,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    UnifiSiteInternetActivitySensorEntityDescription(
+        key="internet_download_1m",
+        translation_key="internet_download_1m",
+        window="1m",
+        metric="rx_bytes",
+        period_label="Last 30 Days",
+        unifi_window="1M",
+        direction="download",
+        report_interval="daily",
+        device_class=SensorDeviceClass.DATA_SIZE,
+        native_unit_of_measurement=UnitOfInformation.BYTES,
+        suggested_unit_of_measurement=UnitOfInformation.GIGABYTES,
+        suggested_display_precision=2,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    UnifiSiteInternetActivitySensorEntityDescription(
+        key="internet_upload_1m",
+        translation_key="internet_upload_1m",
+        window="1m",
+        metric="tx_bytes",
+        period_label="Last 30 Days",
+        unifi_window="1M",
+        direction="upload",
+        report_interval="daily",
+        device_class=SensorDeviceClass.DATA_SIZE,
+        native_unit_of_measurement=UnitOfInformation.BYTES,
+        suggested_unit_of_measurement=UnitOfInformation.GIGABYTES,
+        suggested_display_precision=2,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+)
+
+
+class UnifiSiteInternetActivitySensor(
+    CoordinatorEntity[UnifiInsightsFacadeCoordinator], SensorEntity
+):
+    """Sensor showing historical WAN download/upload bytes for a UniFi site."""
+
+    _attr_has_entity_name = True
+    entity_description: UnifiSiteInternetActivitySensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsFacadeCoordinator,
+        description: UnifiSiteInternetActivitySensorEntityDescription,
+        site_id: str,
+        *,
+        unique_id: str,
+    ) -> None:
+        """Initialize the site internet activity sensor."""
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._site_id = site_id
+
+        self._attr_unique_id = unique_id
+        self._attr_device_info = DeviceInfo(**self._build_device_info())  # type: ignore[typeddict-item]
+        self._attr_extra_state_attributes = {
+            "period": description.period_label,
+            "unifi_window": description.unifi_window,
+            "direction": description.direction,
+            "report_interval": description.report_interval,
+        }
+
+    def _build_device_info(self) -> dict[str, Any]:
+        """Build device info for site-level entity grouping."""
+        return build_site_device_info(self.coordinator.data, self._site_id)
+
+    def _get_window_value(self) -> int | None:
+        """Return the current byte total for this sensor's window and metric."""
+        data: Any = self.coordinator.data
+        if not isinstance(data, dict):
+            return None
+        internet_activity = data.get("internet_activity")
+        if not isinstance(internet_activity, dict):
+            return None
+        site_windows = internet_activity.get(self._site_id)
+        if not isinstance(site_windows, dict):
+            return None
+        window_data = site_windows.get(self.entity_description.window)
+        if not isinstance(window_data, dict):
+            return None
+        raw_value = window_data.get(self.entity_description.metric)
+        if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+            return None
+        return round(float(raw_value))
+
+    @property
+    def available(self) -> bool:
+        """Return True if the config refresh and site report section succeeded."""
+        if not self.coordinator.last_update_success:
+            return False
+        if not bool(getattr(self.coordinator, "config_available", True)):
+            return False
+        section_available_fn = getattr(
+            self.coordinator, "internet_activity_available", None
+        )
+        if callable(section_available_fn) and not bool(
+            section_available_fn(self._site_id)
+        ):
+            return False
+        unavailable_sites = self.coordinator.data.get("internet_activity_unavailable")
+        if (
+            isinstance(unavailable_sites, (set, list, tuple))
+            and self._site_id in unavailable_sites
+        ):
+            return False
+        return self._get_window_value() is not None
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the aggregated byte usage for the configured rolling window."""
+        return self._get_window_value()
+
+
+def _discover_site_internet_activity_sensors(
+    coordinator: UnifiInsightsFacadeCoordinator,
+    known_sensor_keys: set[tuple[str, ...]],
+    *,
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    namespace: str | None,
+) -> list[SensorEntity]:
+    """Discover site-level historical internet activity sensors."""
+    entities: list[SensorEntity] = []
+    internet_activity_by_site = coordinator.data.get("internet_activity", {})
+    if not isinstance(internet_activity_by_site, dict):
+        return entities
+
+    for site_id, site_windows in internet_activity_by_site.items():
+        if not isinstance(site_windows, dict) or not site_windows:
+            continue
+        for activity_desc in SITE_INTERNET_ACTIVITY_SENSOR_TYPES:
+            window_data = site_windows.get(activity_desc.window)
+            if (
+                not isinstance(window_data, dict)
+                or window_data.get(activity_desc.metric) is None
+            ):
+                continue
+            activity_key = (site_id, activity_desc.key)
+            if activity_key not in known_sensor_keys:
+                unique_id = async_migrate_site_entity(
+                    hass, entry, "sensor", namespace, site_id, suffix=activity_desc.key
+                )
+                if unique_id is None:
+                    continue
+                entity = UnifiSiteInternetActivitySensor(
+                    coordinator=coordinator,
+                    description=activity_desc,
+                    site_id=site_id,
+                    unique_id=unique_id,
+                )
+                known_sensor_keys.add(activity_key)
+                entities.append(entity)
+
+    return entities
+
+
+# --- InnerSpace --------------------------------------------------------------
+
+# InnerSpace entity base class and placement sensor for UniFi Insights.
+
+INNERSPACE_PLACEMENT_DESCRIPTION = SensorEntityDescription(
+    key="placement",
+    translation_key="innerspace_placement",
+    device_class=SensorDeviceClass.ENUM,
+    options=["placed", "unplaced", "unknown"],
+    entity_category=EntityCategory.DIAGNOSTIC,
+)
+
+
+class UnifiInsightsInnerSpacePlacementSensor(UnifiInnerSpaceEntity, SensorEntity):
+    """Diagnostic placement sensor for a UniFi InnerSpace record."""
+
+    entity_description: SensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsFacadeCoordinator,
+        description: SensorEntityDescription,
+        record_id: str,
+    ) -> None:
+        """Initialize the InnerSpace placement sensor."""
+        super().__init__(coordinator, description, record_id)
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the placement state ('placed', 'unplaced', or 'unknown')."""
+        record = self.innerspace_record
+        if not record:
+            return "unknown"
+        placement = record.get("placement_state")
+        if placement in ("placed", "unplaced"):
+            return str(placement)
+        return "unknown"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return structured InnerSpace placement and correlation attributes."""
+        record = self.innerspace_record or {}
+        attrs: dict[str, Any] = {
+            "innerspace_id": record.get("id") or self._record_id,
+            "placement_state": record.get("placement_state"),
+            "device_type": record.get("device_type"),
+            "floor_plan_id": record.get("floor_plan_id"),
+            "floor_plan_name": record.get("floor_plan_name"),
+            "site_id": record.get("site_id"),
+            "x": record.get("x"),
+            "y": record.get("y"),
+            "height": record.get("height"),
+            "azimuth": record.get("azimuth"),
+            "mount": record.get("mount"),
+            "status": record.get("status"),
+            "model": record.get("model"),
+            "serial": record.get("serial"),
+            "matched_domain": record.get("matched_domain"),
+            "matched_site_id": record.get("matched_site_id"),
+            "matched_device_id": record.get("matched_device_id"),
+        }
+        return {k: v for k, v in attrs.items() if v is not None}
+
+
+def _discover_innerspace_sensors(
+    coordinator: UnifiInsightsFacadeCoordinator,
+    known_sensor_keys: set[tuple[Any, ...]],
+    entities: list[SensorEntity],
+) -> None:
+    """Discover diagnostic placement sensors for UniFi InnerSpace devices."""
+    innerspace = coordinator.data.get("innerspace", {})
+    if not isinstance(innerspace, dict):
+        return
+
+    devices = innerspace.get("devices", {})
+    if not isinstance(devices, dict):
+        return
+
+    for record_id, record in devices.items():
+        if not isinstance(record_id, str) or not isinstance(record, dict):
+            continue
+        key = ("innerspace", record_id, INNERSPACE_PLACEMENT_DESCRIPTION.key)
+        if key in known_sensor_keys:
+            continue
+        known_sensor_keys.add(key)
+        entities.append(
+            UnifiInsightsInnerSpacePlacementSensor(
+                coordinator=coordinator,
+                description=INNERSPACE_PLACEMENT_DESCRIPTION,
+                record_id=record_id,
+            )
+        )
+
+
+# --- Carrier Fabric ----------------------------------------------------------
+
+# Sensor platform for UniFi Carrier Fabric integration.
+
+
+@dataclass(frozen=True, kw_only=True)
+class CarrierFabricAggregateSensorDescription(SensorEntityDescription):
+    """Description for Carrier Fabric aggregate sensor."""
+
+    value_fn: Callable[[dict[str, Any]], int]
+
+
+AGGREGATE_SENSOR_DESCRIPTIONS: tuple[CarrierFabricAggregateSensorDescription, ...] = (
+    CarrierFabricAggregateSensorDescription(
+        key="total_subscribers",
+        translation_key="total_subscribers",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda summary: summary.get("total_subscribers", 0),
+    ),
+    CarrierFabricAggregateSensorDescription(
+        key="suspended_subscribers",
+        translation_key="suspended_subscribers",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda summary: summary.get("suspended_subscribers", 0),
+    ),
+    CarrierFabricAggregateSensorDescription(
+        key="subscribers_pending_assignment",
+        translation_key="subscribers_pending_assignment",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda summary: summary.get("subscribers_by_state", {}).get(
+            "pending_assignment", 0
+        ),
+    ),
+    CarrierFabricAggregateSensorDescription(
+        key="subscribers_provisioned",
+        translation_key="subscribers_provisioned",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda summary: summary.get("subscribers_by_state", {}).get(
+            "provisioned", 0
+        ),
+    ),
+    CarrierFabricAggregateSensorDescription(
+        key="subscribers_installed",
+        translation_key="subscribers_installed",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda summary: summary.get("subscribers_by_state", {}).get(
+            "installed", 0
+        ),
+    ),
+    CarrierFabricAggregateSensorDescription(
+        key="unassigned_subscribers",
+        translation_key="unassigned_subscribers",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda summary: summary.get("unassigned_subscribers", 0),
+    ),
+    CarrierFabricAggregateSensorDescription(
+        key="active_service_plans",
+        translation_key="active_service_plans",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda summary: summary.get("active_service_plans", 0),
+    ),
+)
+
+
+# State attribute name -> key in the coordinator data (always the API's camelCase).
+_PLAN_ATTRIBUTES: Final = (
+    ("status", "status"),
+    ("download_mbps", "downloadMbps"),
+    ("upload_mbps", "uploadMbps"),
+    ("archived_at", "archivedAt"),
+)
+_PLAN_SPEED_ATTRIBUTES: Final = (
+    ("download_mbps", "downloadMbps"),
+    ("upload_mbps", "uploadMbps"),
+)
+_SUBSCRIBER_STATE_ATTRIBUTES: Final = (
+    ("suspended_at", "suspendedAt"),
+    ("activated_at", "activatedAt"),
+)
+
+
+def _attributes(
+    data: dict[str, Any], mapping: tuple[tuple[str, str], ...]
+) -> dict[str, Any]:
+    """Return the set values of ``data`` under their state attribute names."""
+    return {
+        attribute: data[key] for attribute, key in mapping if data.get(key) is not None
+    }
+
+
+class UnifiCarrierFabricAggregateSensor(UnifiCarrierFabricEntity, SensorEntity):
+    """Aggregate organisation-level sensor for UniFi Carrier Fabric."""
+
+    entity_description: CarrierFabricAggregateSensorDescription
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsCarrierFabricCoordinator,
+        entry: CarrierFabricConfigEntry,
+        description: CarrierFabricAggregateSensorDescription,
+    ) -> None:
+        """Initialize the aggregate sensor."""
+        super().__init__(coordinator, entry)
+        self.entity_description = description
+        self._attr_unique_id = f"{self._entry_unique_id}_{description.key}"
+
+    @property
+    def native_value(self) -> int:
+        """Return the sensor value."""
+        summary = self.coordinator.data.get("summary", {})
+        if isinstance(summary, dict):
+            return self.entity_description.value_fn(summary)
+        return 0
+
+
+class UnifiCarrierFabricPlanSubscribersSensor(UnifiCarrierFabricEntity, SensorEntity):
+    """Sensor for subscriber count on a service plan."""
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "plan_subscribers"
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsCarrierFabricCoordinator,
+        entry: CarrierFabricConfigEntry,
+        plan_id: str,
+    ) -> None:
+        """Initialize the plan subscribers sensor."""
+        super().__init__(coordinator, entry)
+        self._plan_id = plan_id
+        self._attr_unique_id = f"{self._entry_unique_id}_plan_{plan_id}_subscribers"
+        self._update_placeholders()
+
+    def _update_placeholders(self) -> None:
+        """Update translation placeholders with plan name."""
+        plan = self._plan_data or {}
+        plan_name = plan.get("name") or self._plan_id
+        self._attr_translation_placeholders = {"plan_name": str(plan_name)}
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from coordinator."""
+        self._update_placeholders()
+        super()._handle_coordinator_update()
+
+    @property
+    def _plan_data(self) -> dict[str, Any] | None:
+        """Get service plan data from coordinator."""
+        plans: dict[str, dict[str, Any]] = self.coordinator.data.get(
+            "service_plans", {}
+        )
+        return plans.get(self._plan_id)
+
+    @property
+    def available(self) -> bool:
+        """Return True if plan is present in coordinator data."""
+        if not super().available:
+            return False
+        plans = self.coordinator.data.get("service_plans", {})
+        return isinstance(plans, dict) and self._plan_id in plans
+
+    @property
+    def entity_registry_enabled_default(self) -> bool:
+        """Default disabled if archived."""
+        plan = self._plan_data
+        return not (
+            plan and (plan.get("status") == "archived" or plan.get("archivedAt"))
+        )
+
+    @property
+    def native_value(self) -> int:
+        """Return the number of subscribers on this plan."""
+        summary = self.coordinator.data.get("summary", {})
+        return int(summary.get("subscribers_by_plan", {}).get(self._plan_id, 0))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return plan attributes."""
+        plan = self._plan_data
+        if not plan:
+            return {}
+        return _attributes(plan, _PLAN_ATTRIBUTES)
+
+
+SUBSCRIBER_STATES: tuple[str, ...] = (
+    "pending_assignment",
+    "provisioned",
+    "installed",
+    "suspended",
+    "unknown",
+)
+
+
+class UnifiCarrierFabricSubscriberStateSensor(
+    UnifiCarrierFabricSubscriberEntity, SensorEntity
+):
+    """Sensor for subscriber service state."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_translation_key = "subscriber_state"
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsCarrierFabricCoordinator,
+        entry: CarrierFabricConfigEntry,
+        subscriber_id: str,
+    ) -> None:
+        """Initialize the subscriber state sensor."""
+        super().__init__(coordinator, entry, subscriber_id)
+        self._attr_options = list(SUBSCRIBER_STATES)
+        self._attr_unique_id = f"carrier_subscriber_{subscriber_id}_state"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the subscriber state."""
+        sub = self._subscriber_data
+        if not sub:
+            return None
+        if sub.get("suspended") is True:
+            return "suspended"
+        state = sub.get("state")
+        if state in SUBSCRIBER_STATES:
+            return str(state)
+        return "unknown"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return attributes excluding private fields."""
+        sub = self._subscriber_data
+        if not sub:
+            return {}
+        return _attributes(sub, _SUBSCRIBER_STATE_ATTRIBUTES)
+
+
+class UnifiCarrierFabricSubscriberPlanSensor(
+    UnifiCarrierFabricSubscriberEntity, SensorEntity
+):
+    """Sensor for subscriber service plan."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "subscriber_service_plan"
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsCarrierFabricCoordinator,
+        entry: CarrierFabricConfigEntry,
+        subscriber_id: str,
+    ) -> None:
+        """Initialize the subscriber plan sensor."""
+        super().__init__(coordinator, entry, subscriber_id)
+        self._attr_unique_id = f"carrier_subscriber_{subscriber_id}_service_plan"
+
+    @property
+    def _plan(self) -> dict[str, Any] | None:
+        """Return the subscriber's plan, or None if unassigned or not visible."""
+        sub = self._subscriber_data
+        plan_id = sub.get("planId") if sub else None
+        if not plan_id:
+            return None
+        plans: dict[str, dict[str, Any]] = self.coordinator.data.get(
+            "service_plans", {}
+        )
+        return plans.get(str(plan_id))
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the plan name, or None when the plan is unknown."""
+        plan = self._plan
+        if plan and plan.get("name"):
+            return str(plan["name"])
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return plan speed attributes."""
+        plan = self._plan
+        if not plan:
+            return {}
+        return _attributes(plan, _PLAN_SPEED_ATTRIBUTES)
+
+
+def reconcile_subscriber_registry(hass: HomeAssistant, entry_id: str) -> None:
+    """Remove subscriber entities and devices when subscriber tracking is disabled."""
+    ent_reg = er.async_get(hass)
+    dev_reg = dr.async_get(hass)
+
+    for entity in er.async_entries_for_config_entry(ent_reg, entry_id):
+        if entity.unique_id and entity.unique_id.startswith("carrier_subscriber_"):
+            ent_reg.async_remove(entity.entity_id)
+
+    for device in dr.async_entries_for_config_entry(dev_reg, entry_id):
+        for domain, identifier in device.identifiers:
+            if domain == DOMAIN and identifier.startswith("carrier_subscriber_"):
+                # Each device has one owning entry, so removing it is safe.
+                dev_reg.async_remove_device(device.id)
+                break
+
+
+async def async_setup_carrier_fabric_sensors(
+    hass: HomeAssistant,
+    config_entry: CarrierFabricConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up Carrier Fabric sensors."""
+    carrier_data = config_entry.runtime_data
+    coordinator = carrier_data.coordinator
+
+    track_subscribers = config_entry.options.get(
+        CONF_TRACK_SUBSCRIBERS, DEFAULT_TRACK_SUBSCRIBERS
+    )
+
+    if not track_subscribers:
+        reconcile_subscriber_registry(hass, config_entry.entry_id)
+
+    known_keys: set[str] = set()
+    initial_entities: list[SensorEntity] = []
+
+    # Ensure organization device is registered first by creating aggregate sensors
+    for desc in AGGREGATE_SENSOR_DESCRIPTIONS:
+        uid = f"{config_entry.unique_id}_{desc.key}"
+        known_keys.add(uid)
+        initial_entities.append(
+            UnifiCarrierFabricAggregateSensor(coordinator, config_entry, desc)
+        )
+
+    setup_complete = False
+
+    @callback
+    def async_discover_sensors() -> None:
+        """Discover and add new plan and subscriber sensors."""
+        new_entities: list[SensorEntity] = []
+        for plan_id in coordinator.data.get("service_plans", {}):
+            plan_uid = f"{config_entry.unique_id}_plan_{plan_id}_subscribers"
+            if plan_uid not in known_keys:
+                known_keys.add(plan_uid)
+                new_entities.append(
+                    UnifiCarrierFabricPlanSubscribersSensor(
+                        coordinator, config_entry, str(plan_id)
+                    )
+                )
+
+        if track_subscribers:
+            for sub_id in coordinator.data.get("subscribers", {}):
+                state_uid = f"carrier_subscriber_{sub_id}_state"
+                if state_uid not in known_keys:
+                    known_keys.add(state_uid)
+                    new_entities.append(
+                        UnifiCarrierFabricSubscriberStateSensor(
+                            coordinator, config_entry, str(sub_id)
+                        )
+                    )
+
+                plan_uid = f"carrier_subscriber_{sub_id}_service_plan"
+                if plan_uid not in known_keys:
+                    known_keys.add(plan_uid)
+                    new_entities.append(
+                        UnifiCarrierFabricSubscriberPlanSensor(
+                            coordinator, config_entry, str(sub_id)
+                        )
+                    )
+
+        if not setup_complete:
+            initial_entities.extend(new_entities)
+        elif new_entities:
+            async_add_entities(new_entities)
+
+    async_discover_sensors()
+    setup_complete = True
+    async_add_entities(initial_entities)
+    config_entry.async_on_unload(coordinator.async_add_listener(async_discover_sensors))

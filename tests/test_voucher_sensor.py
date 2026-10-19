@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from custom_components.unifi_insights.voucher_sensor import (
+from custom_components.unifi_insights.sensor import (
     VOUCHER_SENSOR_TYPES,
     UnifiVoucherSensor,
     _active_vouchers_value,

@@ -28,17 +28,15 @@ from custom_components.unifi_insights.coordinators.rule_audit import (
     RULE_CHANGE_TYPES,
 )
 from custom_components.unifi_insights.device_tracker import LOCATION_DESCRIPTION
-from custom_components.unifi_insights.network_rule_switch import (
-    NETWORK_RULE_SWITCH_TYPES,
-)
 from custom_components.unifi_insights.sensor import (
     ROUTER_SENSORS,
     SECURITY_SENSOR_TYPES,
+    SITE_INTERNET_ACTIVITY_SENSOR_TYPES,
     STORAGE_SENSOR_TYPES,
     WORKSPACE_SENSORS,
 )
-from custom_components.unifi_insights.site_internet_activity_sensor import (
-    SITE_INTERNET_ACTIVITY_SENSOR_TYPES,
+from custom_components.unifi_insights.switch import (
+    NETWORK_RULE_SWITCH_TYPES,
 )
 
 _INTEGRATION_DIR = Path(__file__).parent.parent / "custom_components" / "unifi_insights"
@@ -138,17 +136,6 @@ _DESC_CLASS_TO_PLATFORM: Final = {
     "UnifiInsightsImageEntityDescription": "image",
 }
 
-_MODULE_DEFAULT_PLATFORM: Final = {
-    "carrier_fabric_sensor": "sensor",
-    "mobility_entity": "sensor",
-    "network_rule_switch": "switch",
-    "network_rule_audit_event": "event",
-    "site_internet_activity_sensor": "sensor",
-    "storage_entity": "sensor",
-    "voucher_sensor": "sensor",
-    "innerspace_entity": "sensor",
-}
-
 # Explicit allow-list for finite f-string keys.
 # In switch.py (UnifiAccessEmergencySwitch.__init__):
 #   (constructs access_emergency_lockdown and access_emergency_evacuation)
@@ -179,21 +166,11 @@ def _collect_live_entity_translation_keys() -> tuple[
     inventory: set[tuple[str, str]] = set()
     dynamic_unresolved: list[tuple[str, int, str]] = []
 
-    entity_modules = [
-        f
-        for f in _INTEGRATION_DIR.glob("*.py")
-        if f.stem in _PLATFORMS
-        or f.stem in _MODULE_DEFAULT_PLATFORM
-        or f.stem == "protect_security_entity"
-    ]
+    # ADR-007: every entity lives in its platform module.
+    entity_modules = [f for f in _INTEGRATION_DIR.glob("*.py") if f.stem in _PLATFORMS]
 
     for py_file in entity_modules:
-        module_name = py_file.stem
-        default_platform = (
-            module_name
-            if module_name in _PLATFORMS
-            else _MODULE_DEFAULT_PLATFORM.get(module_name)
-        )
+        default_platform = py_file.stem
         tree = ast.parse(py_file.read_text(encoding="utf-8"))
 
         for node in ast.walk(tree):
@@ -208,11 +185,6 @@ def _collect_live_entity_translation_keys() -> tuple[
                     call_platform = _DESC_CLASS_TO_PLATFORM.get(
                         call_func, default_platform
                     )
-                    if (
-                        call_func == "EntityDescription"
-                        and module_name == "mobility_entity"
-                    ):
-                        call_platform = "device_tracker"
                     for kw in node.keywords:
                         if kw.arg in ("translation_key", "unnamed_translation_key"):
                             if (
@@ -262,7 +234,7 @@ def _collect_live_entity_translation_keys() -> tuple[
                             if plat:
                                 inventory.add((plat, constants[node.value.id]))
                         elif (
-                            module_name == "switch"
+                            default_platform == "switch"
                             and isinstance(node.value, ast.JoinedStr)
                             and ast.unparse(node.value) == "f'access_emergency_{mode}'"
                         ):
@@ -292,7 +264,7 @@ def _switch_translation_keys() -> set[str]:
 def _switch_supplied_placeholders() -> set[str]:
     """Collect every key passed to placeholders in switch modules."""
     placeholders: set[str] = set()
-    for fname in ("switch.py", "network_rule_switch.py"):
+    for fname in ("switch.py",):
         tree = ast.parse((_INTEGRATION_DIR / fname).read_text(encoding="utf-8"))
         placeholders |= {
             key.value

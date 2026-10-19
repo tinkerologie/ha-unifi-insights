@@ -220,7 +220,6 @@ _COMMAND_MODULES = (
     "light.py",
     "lock.py",
     "media_player.py",
-    "network_rule_switch.py",
     "number.py",
     "select.py",
     "siren.py",

@@ -15,14 +15,6 @@ from homeassistant.helpers import (
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.unifi_insights import CarrierFabricData
-from custom_components.unifi_insights.carrier_fabric_sensor import (
-    AGGREGATE_SENSOR_DESCRIPTIONS,
-    UnifiCarrierFabricAggregateSensor,
-    UnifiCarrierFabricPlanSubscribersSensor,
-    UnifiCarrierFabricSubscriberPlanSensor,
-    UnifiCarrierFabricSubscriberStateSensor,
-    reconcile_subscriber_registry,
-)
 from custom_components.unifi_insights.const import (
     CONF_CARRIER_ORG_ID,
     CONF_CONNECTION_TYPE,
@@ -30,7 +22,15 @@ from custom_components.unifi_insights.const import (
     CONNECTION_TYPE_CARRIER_FABRIC,
     DOMAIN,
 )
-from custom_components.unifi_insights.sensor import async_setup_entry
+from custom_components.unifi_insights.sensor import (
+    AGGREGATE_SENSOR_DESCRIPTIONS,
+    UnifiCarrierFabricAggregateSensor,
+    UnifiCarrierFabricPlanSubscribersSensor,
+    UnifiCarrierFabricSubscriberPlanSensor,
+    UnifiCarrierFabricSubscriberStateSensor,
+    async_setup_entry,
+    reconcile_subscriber_registry,
+)
 from tests.conftest import device_config_entry_ids, get_device_by_identifier
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")

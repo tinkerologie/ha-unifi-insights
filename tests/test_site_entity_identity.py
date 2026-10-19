@@ -71,11 +71,9 @@ from custom_components.unifi_insights.sensor import (
     NVR_SENSOR_TYPES,
     PROTECT_SENSOR_TYPES,
     SITE_CLIENT_SENSOR_TYPES,
-)
-from custom_components.unifi_insights.site_internet_activity_sensor import (
     SITE_INTERNET_ACTIVITY_SENSOR_TYPES,
+    VOUCHER_SENSOR_TYPES,
 )
-from custom_components.unifi_insights.voucher_sensor import VOUCHER_SENSOR_TYPES
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry

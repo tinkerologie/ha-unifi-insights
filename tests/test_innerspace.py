@@ -28,12 +28,6 @@ from custom_components.unifi_insights.coordinators import UnifiInsightsFacadeCoo
 from custom_components.unifi_insights.diagnostics import (
     async_get_config_entry_diagnostics,
 )
-from custom_components.unifi_insights.innerspace_entity import (
-    INNERSPACE_PLACEMENT_DESCRIPTION,
-    UnifiInnerSpaceEntity,
-    UnifiInsightsInnerSpacePlacementSensor,
-    _discover_innerspace_sensors,
-)
 from custom_components.unifi_insights.innerspace_transforms import (
     _normalize_innerspace_mac,
     _to_mapping,
@@ -43,6 +37,12 @@ from custom_components.unifi_insights.innerspace_transforms import (
     transform_innerspace_device,
     transform_innerspace_floor_plan,
     transform_innerspace_project,
+)
+from custom_components.unifi_insights.sensor import (
+    INNERSPACE_PLACEMENT_DESCRIPTION,
+    UnifiInnerSpaceEntity,
+    UnifiInsightsInnerSpacePlacementSensor,
+    _discover_innerspace_sensors,
 )
 from custom_components.unifi_insights.sensor import (
     async_setup_entry as async_setup_sensor,
