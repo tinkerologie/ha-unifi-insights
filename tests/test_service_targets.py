@@ -57,6 +57,7 @@ from custom_components.unifi_insights.service_targets import (
     _console_entries,
     _coord_data,
     _coord_section,
+    _device_owner_id,
     _entry_has_client,
     _entry_has_device,
     _entry_owns_client,
@@ -1851,3 +1852,15 @@ async def test_carrier_actions_disabled(hass: HomeAssistant) -> None:
     with pytest.raises(HomeAssistantError) as err:
         resolve_carrier_subscriber_call(hass, _call(hass, "x", device_id=SUB_ID))
     assert err.value.translation_key == "carrier_actions_disabled"
+
+
+async def test_device_owner_id_reads_the_owning_entry(hass: HomeAssistant) -> None:
+    """A registry device's owner is its single config_entry_id."""
+    entry = MockConfigEntry(domain=DOMAIN, entry_id="owner")
+    entry.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "s1_d1")}
+    )
+
+    assert device.config_entry_id == "owner"
+    assert _device_owner_id(device) == "owner"
