@@ -1195,6 +1195,108 @@
     },
     "access_console_required": {
       "message": "More than one UniFi Access console is loaded. Set the console to use."
+    },
+    "target_required": {
+      "message": "At least one target must be specified."
+    },
+    "target_multiple": {
+      "message": "Multiple targets specified for {service}; this action only supports a single target."
+    },
+    "device_target_required": {
+      "message": "Device ID or target is required."
+    },
+    "target_entity_not_found": {
+      "message": "Target entity {target} not found in entity registry."
+    },
+    "target_not_integration_entity": {
+      "message": "Target {target} is not a UniFi Insights entity."
+    },
+    "target_not_integration_device": {
+      "message": "Target {target} is not a UniFi Insights device."
+    },
+    "target_not_protect_resource": {
+      "message": "Target {target} is not a UniFi Protect {resource_type}."
+    },
+    "target_console_not_loaded": {
+      "message": "Target's UniFi console is not loaded."
+    },
+    "target_mobility_unsupported": {
+      "message": "Target {target} is a UniFi Mobility router, which this action does not support."
+    },
+    "network_device_unresolved": {
+      "message": "Could not resolve target {target} to a UniFi network device."
+    },
+    "site_not_found": {
+      "message": "Site {site_id} not found on any configured UniFi console."
+    },
+    "device_other_console": {
+      "message": "Device {device_id} belongs to a different console than site {site_id}."
+    },
+    "device_not_on_site_console": {
+      "message": "Device {device_id} not found on the console for site {site_id}."
+    },
+    "device_not_on_any_console": {
+      "message": "Device {device_id} not found on any configured UniFi console."
+    },
+    "device_site_ambiguous": {
+      "message": "Multiple consoles found for site {site_id} and device {device_id}; the target is ambiguous."
+    },
+    "device_ambiguous": {
+      "message": "Multiple consoles found for device {device_id}; the target is ambiguous."
+    },
+    "client_ambiguous": {
+      "message": "Multiple consoles contain client {client_id}; the target is ambiguous."
+    },
+    "site_ambiguous": {
+      "message": "Multiple consoles contain site {site_id}; the target is ambiguous."
+    },
+    "site_consoles_ambiguous": {
+      "message": "Multiple consoles found for site {site_id}; the target is ambiguous."
+    },
+    "network_console_ambiguous": {
+      "message": "Multiple UniFi Insights consoles are configured; the target is ambiguous."
+    },
+    "console_not_found": {
+      "message": "No configured console matches {console_id}. Configured consoles: {consoles}."
+    },
+    "console_ambiguous": {
+      "message": "{console_id} matches more than one configured console. Use the entry ID of the console."
+    },
+    "protect_console_required": {
+      "message": "Multiple UniFi Protect consoles are configured and this action has no target to route on. Set the console to one of: {consoles}."
+    },
+    "protect_resource_wrong_type": {
+      "message": "Target {target} is a {actual_type}, not a {resource_type}."
+    },
+    "protect_resource_unresolved": {
+      "message": "Could not resolve target {target} to a UniFi Protect {resource_type}."
+    },
+    "protect_resource_not_found": {
+      "message": "UniFi Protect {resource_type} {resource_id} not found on any configured UniFi Protect console."
+    },
+    "protect_resource_other_console": {
+      "message": "UniFi Protect {resource_type} {resource_id} belongs to a different console than the target console."
+    },
+    "protect_resource_ambiguous": {
+      "message": "Multiple UniFi Protect consoles contain {resource_type} {resource_id}; the target is ambiguous."
+    },
+    "protect_resource_owner_unknown": {
+      "message": "Cannot tell which UniFi Protect console owns {resource_type} {resource_id} yet. Try again once the consoles have refreshed."
+    },
+    "protect_secondary_other_console": {
+      "message": "The {secondary_type} {secondary_id} belongs to a different UniFi Protect console than {resource_type} {resource_id}."
+    },
+    "restart_site_required": {
+      "message": "Site ID is required to restart device {device_id}."
+    },
+    "power_cycle_site_required": {
+      "message": "Site ID is required to power-cycle a port on device {device_id}."
+    },
+    "refresh_site_not_found": {
+      "message": "No UniFi Insights console is configured for site {site_id}."
+    },
+    "carrier_target_ambiguous": {
+      "message": "Target {target} matches a device in more than one config entry. Target the subscriber's entity or device instead."
     }
   }
 }

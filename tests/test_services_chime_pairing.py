@@ -40,9 +40,8 @@ from custom_components.unifi_insights.const import (
     SERVICE_SET_CHIME_PAIRED_DOORBELLS,
 )
 from custom_components.unifi_insights.helpers import is_doorbell_camera_model
+from custom_components.unifi_insights.service_targets import _doorbell_camera_id
 from custom_components.unifi_insights.services import (
-    _doorbell_camera_id,
-    _entry_id_for_coordinator,
     async_setup_services,
     async_unload_services,
 )
@@ -171,21 +170,6 @@ def test_doorbell_camera_id_reads_only_this_integrations_ring_sensors() -> None:
     )
     # Nothing between the prefix and the suffix means no camera id.
     assert _doorbell_camera_id(entry(f"{DOMAIN}_camera_{RING_SUFFIX}")) is None
-
-
-def test_entry_id_for_coordinator_finds_the_owner_or_none() -> None:
-    """The console is found by identity, and a stranger matches nothing."""
-    owned = MagicMock()
-    other = MagicMock()
-    hass = MagicMock()
-    hass.config_entries.async_entries.return_value = [
-        MagicMock(entry_id="no_runtime_data", runtime_data=None),
-        MagicMock(entry_id="entry_b", runtime_data=MagicMock(coordinator=other)),
-        MagicMock(entry_id="entry_a", runtime_data=MagicMock(coordinator=owned)),
-    ]
-
-    assert _entry_id_for_coordinator(hass, owned) == "entry_a"
-    assert _entry_id_for_coordinator(hass, MagicMock()) is None
 
 
 async def test_pairs_the_selected_doorbell_with_exact_arguments(

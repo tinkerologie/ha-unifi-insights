@@ -49,7 +49,7 @@ from custom_components.unifi_insights.innerspace_transforms import (
 )
 from custom_components.unifi_insights.performance import bits_per_second_to_int
 from custom_components.unifi_insights.sensor import bytes_to_bits
-from custom_components.unifi_insights.services import _mac_key
+from custom_components.unifi_insights.service_targets import _mac_key
 from tests.fixtures.library_responses import (
     SAMPLE_NETWORK_DEVICE,
     SAMPLE_PDU_DEVICE,

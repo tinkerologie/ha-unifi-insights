@@ -19,11 +19,11 @@ from custom_components.unifi_insights.const import (
 from custom_components.unifi_insights.diagnostics import (
     async_get_config_entry_diagnostics,
 )
-from custom_components.unifi_insights.services import (
+from custom_components.unifi_insights.service_targets import (
+    _console_entries,
     _coord_data,
-    _get_coordinator_for_network_resource,
-    _get_coordinator_for_protect_resource,
-    _get_coordinators,
+    _select_network_entry,
+    _select_protect_entry,
 )
 from custom_components.unifi_insights.websocket_api import (
     ERR_ENTRY_NOT_LOADED,
@@ -80,21 +80,20 @@ def test_services_guards_ignore_carrier_fabric_entry(
     # 1. _coord_data returns None
     assert _coord_data(carrier_entry_with_runtime_data) is None
 
-    # 2. _get_coordinator_for_network_resource ignores CarrierFabricData
+    # 2. _select_network_entry ignores CarrierFabricData
     with pytest.raises(
         ServiceValidationError, match="No UniFi Insights coordinator found"
     ):
-        _get_coordinator_for_network_resource(hass)
+        _select_network_entry(hass)
 
-    # 3. _get_coordinator_for_protect_resource ignores CarrierFabricData
+    # 3. _select_protect_entry ignores CarrierFabricData
     with pytest.raises(
         ServiceValidationError, match="No UniFi Protect coordinator found"
     ):
-        _get_coordinator_for_protect_resource(hass)
+        _select_protect_entry(hass)
 
-    # 4. _get_coordinators excludes carrier entry
-    coordinators = _get_coordinators(hass)
-    assert len(coordinators) == 0
+    # 4. _console_entries excludes carrier entry
+    assert _console_entries(hass) == []
 
 
 async def test_websocket_guards_ignore_carrier_fabric_entry(

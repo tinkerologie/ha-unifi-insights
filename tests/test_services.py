@@ -5,7 +5,7 @@ import ast
 import inspect
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
@@ -25,6 +25,28 @@ from unifi_official_api.protect import UniFiProtectClient
 from yarl import URL
 
 from custom_components.unifi_insights import services
+from custom_components.unifi_insights.service_targets import (
+    _client_records_match,
+    _console_entries,
+    _coord_data,
+    _coord_section,
+    _entry_has_client,
+    _entry_has_device,
+    _entry_has_site,
+    _entry_owns_client,
+    _entry_owns_device,
+    _extract_target_id,
+    _mac_key,
+    _protect_entry_has_resource,
+    _protect_owns_resource,
+    _resolve_network_client_id,
+    _resolve_network_device_id,
+    _resolve_protect_resource_id,
+    _select_console,
+    _select_network_entry,
+    _select_protect_entry,
+    resolve_carrier_subscriber_call,
+)
 from custom_components.unifi_insights.services import (
     SERVICE_AUTHORIZE_GUEST,
     SERVICE_PLAY_CHIME_RINGTONE,
@@ -42,14 +64,8 @@ from custom_components.unifi_insights.services import (
     SERVICE_SET_LIVEVIEW,
     SERVICE_SET_MIC_VOLUME,
     SERVICE_SET_VIDEO_MODE,
-    _extract_target_id,
     _filter_clients_for_removal,
-    _get_coordinator_for_network_resource,
-    _get_coordinator_for_protect_resource,
     _is_wireless_client,
-    _resolve_network_client_id,
-    _resolve_network_device_id,
-    _resolve_protect_resource_id,
 )
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
 
@@ -80,23 +96,32 @@ from custom_components.unifi_insights.coordinators.protect import (
 )
 from custom_components.unifi_insights.services import (
     SERVICE_REFRESH_DATA,
-    _client_records_match,
-    _coord_data,
-    _coord_section,
-    _entry_has_client,
-    _entry_has_device,
-    _entry_has_site,
-    _entry_owns_client,
-    _entry_owns_device,
-    _get_coordinators,
-    _mac_key,
-    _protect_entry_has_resource,
-    _protect_owns_resource,
-    _resolve_carrier_subscriber_target,
-    _select_console,
     async_setup_services,
     async_unload_services,
 )
+
+
+# The routing selectors moved to service_targets.py (#339) and now return the
+# owning config entry; these keep the older routing tests reading the facade.
+def _get_coordinators(hass: HomeAssistant) -> list[Any]:
+    """Return the facade of every console entry."""
+    return [entry.runtime_data.coordinator for entry in _console_entries(hass)]
+
+
+def _get_coordinator_for_network_resource(
+    hass: HomeAssistant, **routing: Any
+) -> tuple[Any, str | None]:
+    """Return the facade and native ID the Network selector picks."""
+    entry, resource_id = _select_network_entry(hass, **routing)
+    return entry.runtime_data.coordinator, resource_id
+
+
+def _get_coordinator_for_protect_resource(
+    hass: HomeAssistant, **routing: Any
+) -> tuple[Any, str | None]:
+    """Return the facade and native ID the Protect selector picks."""
+    entry, resource_id = _select_protect_entry(hass, **routing)
+    return entry.runtime_data.coordinator, resource_id
 
 
 def _protect(facade: Any) -> Any:
@@ -3607,43 +3632,70 @@ class TestConsoleOwnershipRouting:
 class TestServiceCoordinatorContract:
     """Guard the service layer against calling methods a coordinator lacks."""
 
-    @pytest.mark.parametrize(
-        ("variable", "coordinator_class"),
-        [
-            ("coordinator", UnifiFacadeCoordinator),
-            ("carrier_coordinator", UnifiCarrierFabricCoordinator),
-            ("access_coordinator", UnifiInsightsAccessCoordinator),
-        ],
-    )
-    def test_every_coordinator_method_called_by_services_exists(
-        self, variable, coordinator_class
-    ):
-        """Every ``<variable>.<method>()`` in services.py must exist on its class.
+    # Each command field of the service_targets results, and the owner class
+    # it holds (ADR-010). ``cache`` is only read, never called.
+    _FIELD_CLASSES: ClassVar[dict[str, type]] = {
+        "facade_commands": UnifiFacadeCoordinator,
+        "export_commands": UnifiFacadeCoordinator,
+        "device_commands": UnifiDeviceCoordinator,
+        "config_commands": UnifiConfigCoordinator,
+        "protect_commands": UnifiProtectCoordinator,
+        "access_commands": UnifiInsightsAccessCoordinator,
+        "carrier_commands": UnifiCarrierFabricCoordinator,
+    }
 
-        ``coordinator`` is the console facade, ``carrier_coordinator`` the
-        Carrier Fabric coordinator, and ``access_coordinator`` the UniFi Access
-        coordinator used by the admin user services.
-
-        The service tests drive MagicMock coordinators, which happily accept any
-        attribute name. That is how ``async_set_camera_chime_volume`` - a method
-        no coordinator ever defined - shipped green. This test reads the real
-        source instead of a mock.
-        """
+    @staticmethod
+    def _services_tree() -> ast.Module:
         services_py = (
             Path(__file__).parent.parent
             / "custom_components"
             / "unifi_insights"
             / "services.py"
         )
-        tree = ast.parse(services_py.read_text(encoding="utf-8"))
+        return ast.parse(services_py.read_text(encoding="utf-8"))
+
+    def test_every_called_result_field_has_an_owner_class(self):
+        """A call on ``<result>.<field>.<method>()`` must use a mapped field."""
+        unmapped = sorted(
+            {
+                node.func.value.attr
+                for node in ast.walk(self._services_tree())
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Attribute)
+                and node.func.value.attr.endswith("_commands")
+                and node.func.value.attr not in self._FIELD_CLASSES
+            }
+        )
+        assert not unmapped, f"result fields without an owner class: {unmapped}"
+
+    @pytest.mark.parametrize(
+        ("variable", "coordinator_class"),
+        list(_FIELD_CLASSES.items()),
+    )
+    def test_every_coordinator_method_called_by_services_exists(
+        self, variable, coordinator_class
+    ):
+        """Every ``<result>.<field>.<method>()`` in services.py must exist.
+
+        Each command field of a service_targets result holds one owner class
+        (ADR-010): the console facade, the device, config or Protect owner, the
+        UniFi Access coordinator or the Carrier Fabric coordinator.
+
+        The service tests drive MagicMock coordinators, which happily accept any
+        attribute name. That is how ``async_set_camera_chime_volume`` - a method
+        no coordinator ever defined - shipped green. This test reads the real
+        source instead of a mock.
+        """
+        tree = self._services_tree()
 
         calls: list[tuple[str, int, list[str], bool]] = []
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == variable
+                and isinstance(node.func.value, ast.Attribute)
+                and node.func.value.attr == variable
             ):
                 starred = any(isinstance(a, ast.Starred) for a in node.args) or any(
                     kw.arg is None for kw in node.keywords
@@ -6650,7 +6702,7 @@ async def test_resolve_carrier_subscriber_target_foreign_registry_owner(
     with pytest.raises(
         ServiceValidationError, match="Target config entry is not loaded"
     ) as exc_info:
-        _resolve_carrier_subscriber_target(hass, call)
+        resolve_carrier_subscriber_call(hass, call)
 
     assert exc_info.value.translation_key == "carrier_entry_not_loaded"
 

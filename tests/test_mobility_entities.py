@@ -38,7 +38,7 @@ from custom_components.unifi_insights.mobility_entity import (
     UnifiMobilityWorkspaceSensor,
     async_setup_mobility_binary_sensors,
 )
-from custom_components.unifi_insights.services import (
+from custom_components.unifi_insights.service_targets import (
     _resolve_network_client_id,
     _resolve_network_device_id,
 )
