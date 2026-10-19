@@ -33,7 +33,6 @@ from unifi_official_api import (
     UniFiNotFoundError,
     UniFiResponseError,
 )
-from unifi_official_api.network.models.client import ClientType
 
 from .button import get_device_port, port_can_be_power_cycled
 from .carrier_fabric_data import CarrierFabricData
@@ -82,6 +81,7 @@ from .const import (
 )
 from .coordinators.carrier_fabric import InvalidSubscriberIdError
 from .coordinators.rule_audit import RULE_TYPES
+from .data_transforms import client_connection_type
 from .diagnostics import redact_network_rule_export
 from .helpers import is_doorbell_camera_model
 from .led_level import percent_to_led_level
@@ -1906,13 +1906,7 @@ async def _async_handle_power_cycle_port(
 
 def _is_wireless_client(client_record: dict[str, Any]) -> bool:
     """Check if client record represents an exact recognized wireless client."""
-    raw_type = client_record.get("type") or client_record.get("connection_type")
-    if isinstance(raw_type, ClientType):
-        return raw_type == ClientType.WIRELESS
-    if isinstance(raw_type, str):
-        normalized = raw_type.strip().upper()
-        return normalized in {"WIRELESS", "CLIENTTYPE.WIRELESS"}
-    return False
+    return client_connection_type(client_record) == "wireless"
 
 
 async def _async_handle_reconnect_client(

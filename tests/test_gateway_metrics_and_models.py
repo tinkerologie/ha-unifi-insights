@@ -19,7 +19,7 @@ from custom_components.unifi_insights.coordinators.device import (
     _legacy_system_stats,
     _merge_legacy_system_stats,
 )
-from custom_components.unifi_insights.switch import _find_gateway_device_id
+from custom_components.unifi_insights.data_transforms import get_site_gateway_id
 
 
 class TestLegacyDeviceStatsExtraction:
@@ -167,7 +167,7 @@ class TestGatewayModelPrefixes:
             assert prefix in GATEWAY_MODEL_PREFIXES
 
     def test_switch_find_gateway_device_id_ucg(self):
-        """Test _find_gateway_device_id recognizes UCG."""
+        """Test get_site_gateway_id recognizes UCG."""
         coordinator = MagicMock()
         coordinator.data = {
             "devices": {
@@ -177,10 +177,10 @@ class TestGatewayModelPrefixes:
                 }
             }
         }
-        assert _find_gateway_device_id(coordinator, "site1") == "gw1"
+        assert get_site_gateway_id(coordinator.data, "site1") == "gw1"
 
     def test_switch_find_gateway_device_id_uxg(self):
-        """Test _find_gateway_device_id recognizes UXG."""
+        """Test get_site_gateway_id recognizes UXG."""
         coordinator = MagicMock()
         coordinator.data = {
             "devices": {
@@ -190,10 +190,10 @@ class TestGatewayModelPrefixes:
                 }
             }
         }
-        assert _find_gateway_device_id(coordinator, "site1") == "gw1"
+        assert get_site_gateway_id(coordinator.data, "site1") == "gw1"
 
     def test_switch_find_gateway_device_id_udr(self):
-        """Test _find_gateway_device_id recognizes UDR."""
+        """Test get_site_gateway_id recognizes UDR."""
         coordinator = MagicMock()
         coordinator.data = {
             "devices": {
@@ -202,10 +202,10 @@ class TestGatewayModelPrefixes:
                 }
             }
         }
-        assert _find_gateway_device_id(coordinator, "site1") == "gw1"
+        assert get_site_gateway_id(coordinator.data, "site1") == "gw1"
 
     def test_switch_find_gateway_device_id_udw(self):
-        """Test _find_gateway_device_id recognizes UDW."""
+        """Test get_site_gateway_id recognizes UDW."""
         coordinator = MagicMock()
         coordinator.data = {
             "devices": {
@@ -214,7 +214,7 @@ class TestGatewayModelPrefixes:
                 }
             }
         }
-        assert _find_gateway_device_id(coordinator, "site1") == "gw1"
+        assert get_site_gateway_id(coordinator.data, "site1") == "gw1"
 
     def test_legacy_system_stats_fills_empty_stats(self):
         """Legacy sys_stats populate CPU, memory and uptime when v1 gave none."""

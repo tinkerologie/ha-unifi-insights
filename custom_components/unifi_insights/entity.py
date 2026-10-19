@@ -22,13 +22,21 @@ from .const import (
     DEVICE_TYPE_NVR,
     DEVICE_TYPE_SENSOR,
     DOMAIN,
-    GATEWAY_MODEL_PREFIXES,
     MANUFACTURER,
 )
 from .coordinators import UnifiFacadeCoordinator
 
 # Re-exported (see __all__): the platforms import the field helpers from here.
-from .data_transforms import first_not_none, get_field
+from .data_transforms import (
+    NetworkDeviceFacts,
+    client_connection_type,
+    device_facts,
+    device_kind,
+    device_online_state,
+    first_not_none,
+    get_field,
+    get_site_gateway_id,
+)
 from .innerspace_entity import UnifiInnerSpaceEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -56,45 +64,23 @@ def is_gateway_device(device_data: dict[str, Any]) -> bool:
     """
     Return True when a network device is a gateway/router.
 
-    A gateway is recognised by model prefix, by "GATEWAY" anywhere in the
-    model (e.g. "Cloud Gateway Max"), or by an advertised gateway/router
-    feature. "switching" alone is deliberately not enough: plain switches
-    are not gateways.
+    Delegates to the read model's kind rule (``data_transforms.device_kind``),
+    so entities and dashboards agree; a null-``type`` UDM Pro that advertises
+    only ``switching`` is a gateway by its model.
 
-    Merged legacy WAN data (``wans``) is deliberately not a signal here:
-    it is only present when the legacy fetch succeeded, and this check also
-    decides which device site-level entities are grouped under, which must
-    not depend on whether one poll's legacy call happened to work.
+    Merged legacy WAN data (``wans``) is deliberately not a signal: it is only
+    present when the legacy fetch succeeded, and this check also decides which
+    device site-level entities are grouped under, which must not depend on
+    whether one poll's legacy call happened to work.
     """
-    model = device_data.get("model")
-    model_str = model.upper() if isinstance(model, str) else ""
-    return (
-        model_str.startswith(GATEWAY_MODEL_PREFIXES)
-        or "GATEWAY" in model_str
-        or device_has_feature(device_data, "gateway", "router")
-    )
-
-
-def find_site_gateway_device_id(
-    coordinator_data: dict[str, Any], site_id: str
-) -> str | None:
-    """Find the gateway device ID for a site from coordinator data."""
-    site_devices = coordinator_data.get("devices", {}).get(site_id, {})
-    if not isinstance(site_devices, dict):
-        return None
-
-    for device_id, device_data in site_devices.items():
-        if isinstance(device_data, dict) and is_gateway_device(device_data):
-            return str(device_id)
-
-    return None
+    return device_kind(device_data) == "gateway"
 
 
 def build_site_device_info(
     coordinator_data: dict[str, Any], site_id: str
 ) -> dict[str, Any]:
     """Build DeviceInfo dictionary for site-level entity grouping."""
-    gateway_id = find_site_gateway_device_id(coordinator_data, site_id)
+    gateway_id = get_site_gateway_id(coordinator_data, site_id)
     if gateway_id is not None:
         return {"identifiers": {(DOMAIN, f"{site_id}_{gateway_id}")}}
 
@@ -114,35 +100,27 @@ def build_site_device_info(
 
 def is_device_online(data: dict[str, Any]) -> bool:
     """
-    Check if device is online, handling different status field formats.
+    Return True when a network device is online.
 
-    Handles:
-    - state: "ONLINE" / "OFFLINE"
-    - status: "online" / "offline"
+    Delegates to the read model's spec state rule
+    (``data_transforms.device_online_state``): only ``ONLINE`` (any case) is
+    online. ``CONNECTED`` and ``UP`` are not network device states.
     """
-    state = get_field(data, "state", "status", default="")
-    if isinstance(state, str):
-        return state.upper() in ("ONLINE", "CONNECTED", "UP")
-    return False
+    return device_online_state(data) == "online"
 
 
 def get_client_type(client: dict[str, Any]) -> str:
     """
-    Extract client type from client data.
+    Return a client's type as "WIRED", "WIRELESS" or its raw value.
 
-    The `unifi-official-api` package serializes the ClientType enum to string values
-    ("WIRED" or "WIRELESS"). This helper normalizes the value for comparison
-    and handles edge cases.
+    Recognition is the read model's exact rule
+    (``data_transforms.client_connection_type``). Anything it does not
+    recognise comes back upper-cased as is, so displayed attributes keep it.
     """
-    client_type = client.get("type") or client.get("connection_type", "")
-    # Normalize to uppercase string
-    type_str = str(client_type).upper()
-    # Handle both direct values and any legacy enum format
-    if "WIRED" in type_str:
-        return "WIRED"
-    if "WIRELESS" in type_str:
-        return "WIRELESS"
-    return type_str
+    connection = client_connection_type(client)
+    if connection is not None:
+        return connection.upper()
+    return str(client.get("type") or client.get("connection_type", "")).upper()
 
 
 def camera_supports_ptz(camera_data: dict[str, Any]) -> bool:
@@ -303,16 +281,8 @@ class UnifiInsightsEntity(CoordinatorEntity[UnifiFacadeCoordinator]):
         # on the device coordinator's last_update_success.
         if not self.coordinator.device_available:
             return False
-        devices = self.coordinator.data.get("devices", {})
-        if not isinstance(devices, dict):
-            return False
-        site_devices = devices.get(self._site_id, {})
-        if not isinstance(site_devices, dict):
-            return False
-        device_data = site_devices.get(self._device_id)
-        if not isinstance(device_data, dict) or not device_data:
-            return False
-        return is_device_online(device_data)
+        facts = self.device_facts
+        return facts is not None and facts.online_state == "online"
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -325,6 +295,11 @@ class UnifiInsightsEntity(CoordinatorEntity[UnifiFacadeCoordinator]):
         devices = self.coordinator.data["devices"].get(self._site_id, {})
         result = devices.get(self._device_id)
         return result if isinstance(result, dict) else None
+
+    @property
+    def device_facts(self) -> NetworkDeviceFacts | None:
+        """Return the read-model facts the device coordinator published."""
+        return device_facts(self.coordinator.data, self._site_id, self._device_id)
 
     @property
     def device_stats(self) -> dict[str, Any] | None:

@@ -27,6 +27,8 @@ from .const import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
 
@@ -41,7 +43,7 @@ _SUPPORTS_BY_IDENTIFIER = hasattr(dr.DeviceRegistry, "async_get_device_by_identi
 _SUPPORTS_GET_DEVICES = hasattr(dr.DeviceRegistry, "async_get_devices")
 
 
-def get_port_label(port: dict[str, Any], port_idx: int) -> str:
+def get_port_label(port: Mapping[str, Any], port_idx: Any) -> str:
     """Return user-friendly port label based on port type."""
     name = port.get("name")
     if name and name != f"Port {port_idx}":

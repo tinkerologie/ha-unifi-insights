@@ -21,7 +21,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .coordinators import UnifiFacadeCoordinator
-from .entity import build_site_device_info, find_site_gateway_device_id
+from .entity import build_site_device_info
 from .helpers import async_migrate_site_entity
 
 
@@ -194,10 +194,6 @@ class UnifiSiteInternetActivitySensor(
             "direction": description.direction,
             "report_interval": description.report_interval,
         }
-
-    def _find_gateway_device_id(self) -> str | None:
-        """Find the gateway device ID for this site."""
-        return find_site_gateway_device_id(self.coordinator.data, self._site_id)
 
     def _build_device_info(self) -> dict[str, Any]:
         """Build device info for site-level entity grouping."""

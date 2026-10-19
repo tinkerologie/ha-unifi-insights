@@ -42,6 +42,7 @@ from custom_components.unifi_insights.const import (
     VIDEO_MODE_HIGH_FPS,
 )
 from custom_components.unifi_insights.coordinators.base import UnifiBaseCoordinator
+from custom_components.unifi_insights.data_transforms import get_site_gateway_id
 from custom_components.unifi_insights.switch import (
     PARALLEL_UPDATES,
     UnifiClientBlockSwitch,
@@ -53,7 +54,6 @@ from custom_components.unifi_insights.switch import (
     UnifiProtectStatusLightSwitch,
     UnifiVpnClientSwitch,
     UnifiWifiSwitch,
-    _find_gateway_device_id,
     _get_firewall_rule_action,
     _prune_orphaned_switch_entities,
     async_setup_entry,
@@ -4240,7 +4240,7 @@ class TestFindGatewayDeviceId:
         coordinator = self._coordinator(
             {"sw": {"model": "USW-24"}, "gw": {"model": "UCG-Ultra"}}
         )
-        assert _find_gateway_device_id(coordinator, "site1") == "gw"
+        assert get_site_gateway_id(coordinator.data, "site1") == "gw"
 
     def test_wan_data_alone_does_not_regroup_entities(self):
         """Merged WAN data must not move entities onto an unrecognised device.
@@ -4251,13 +4251,13 @@ class TestFindGatewayDeviceId:
         coordinator = self._coordinator(
             {"gw": {"model": "Unknown", "wans": [{"key": "wan1"}]}}
         )
-        assert _find_gateway_device_id(coordinator, "site1") is None
+        assert get_site_gateway_id(coordinator.data, "site1") is None
 
     def test_non_dict_site_devices(self) -> None:
         """Test when site devices is not a dict."""
         coordinator = MagicMock()
         coordinator.data = {"devices": {"site1": None}}
-        assert _find_gateway_device_id(coordinator, "site1") is None
+        assert get_site_gateway_id(coordinator.data, "site1") is None
 
     def test_non_dict_device_entry(self) -> None:
         """Test when site devices has non-dict entry."""
@@ -4270,7 +4270,7 @@ class TestFindGatewayDeviceId:
                 }
             }
         }
-        assert _find_gateway_device_id(coordinator, "site1") == "gw"
+        assert get_site_gateway_id(coordinator.data, "site1") == "gw"
 
 
 class TestProtectSwitchPatchBodies:

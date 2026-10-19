@@ -42,12 +42,11 @@ from .const import (
     SMART_DETECT_PERSON,
     SMART_DETECT_VEHICLE,
 )
+from .data_transforms import NetworkDeviceFacts, NetworkPortFacts, device_facts
 from .entity import (
     UnifiInsightsEntity,
     UnifiProtectEntity,
     get_field,
-    is_device_online,
-    is_gateway_device,
 )
 from .helpers import get_port_label, is_doorbell_camera_model
 from .mobility_entity import async_setup_mobility_binary_sensors
@@ -223,6 +222,8 @@ class UnifiInsightsBinarySensorEntityDescription(BinarySensorEntityDescription):
     """Class describing UniFi Insights binary sensor entities."""
 
     value_fn: Callable[[dict[str, Any]], bool | None] | None = None
+    # Reads the device's published read-model facts instead of a raw record.
+    facts_fn: Callable[[NetworkDeviceFacts], bool | None] | None = None
     device_type: str | None = None
     entity_type: str = "device"  # "device" or "protect"
     capability_fn: Callable[[dict[str, Any]], bool] | None = None
@@ -255,7 +256,7 @@ BINARY_SENSOR_TYPES: tuple[UnifiInsightsBinarySensorEntityDescription, ...] = (
         translation_key="device_status",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=is_device_online,
+        facts_fn=lambda facts: facts.online_state == "online",
         entity_type="device",
     ),
     # WAN status (gateway devices only)
@@ -264,7 +265,7 @@ BINARY_SENSOR_TYPES: tuple[UnifiInsightsBinarySensorEntityDescription, ...] = (
         translation_key="wan_status",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=is_device_online,
+        facts_fn=lambda facts: facts.online_state == "online",
         entity_type="device",
     ),
     # Camera motion detection - uses isMotionDetected from API
@@ -458,6 +459,8 @@ async def async_setup_entry(
                     if not isinstance(device_data, dict):
                         continue
                     device_name = device_data.get("name", device_id)
+                    facts = device_facts(coordinator.data, site_id, device_id)
+                    is_gateway = facts is not None and facts.kind == "gateway"
 
                     _LOGGER.debug(
                         "Creating binary sensors for device %s (%s) in site %s (%s)",
@@ -470,9 +473,7 @@ async def async_setup_entry(
                     for description in BINARY_SENSOR_TYPES:
                         if description.entity_type == "device":
                             # Skip WAN status sensor for non-gateway devices
-                            if description.key == "wan_status" and not (
-                                is_gateway_device(device_data)
-                            ):
+                            if description.key == "wan_status" and not is_gateway:
                                 _LOGGER.debug(
                                     "Skipping WAN status sensor for non-gateway device "
                                     "%s (%s)",
@@ -494,34 +495,28 @@ async def async_setup_entry(
                                 )
                             )
 
-                    # Add SFP module binary sensors for ports with SFP media type
-                    ports = device_data.get("ports", [])
-                    if isinstance(ports, list):
-                        for port in ports:
-                            if not isinstance(port, dict):
-                                continue
-                            media = port.get("media", "")
-                            if not isinstance(media, str) or not media.startswith(
-                                "SFP"
-                            ):
-                                continue
-                            port_idx = port.get("idx") or port.get("port_idx")
-                            if port_idx is None:
-                                continue
-                            sfp_key = (site_id, device_id, port_idx, "sfp_present")
-                            if sfp_key in known_sensor_keys:
-                                continue
-                            known_sensor_keys.add(sfp_key)
-                            port_name = get_port_label(port, port_idx)
-                            entities.append(
-                                UnifiPortBinarySensor(
-                                    coordinator=coordinator,
-                                    site_id=site_id,
-                                    device_id=device_id,
-                                    port_idx=port_idx,
-                                    port_label=port_name,
-                                )
+                    # SFP module binary sensors for ports with SFP media type,
+                    # from the same port source as the port sensors.
+                    for port in facts.ports if facts is not None else ():
+                        media = port.record.get("media", "")
+                        if not isinstance(media, str) or not media.startswith("SFP"):
+                            continue
+                        port_idx = _sfp_port_index(port)
+                        if port_idx is None:
+                            continue
+                        sfp_key = (site_id, device_id, port_idx, "sfp_present")
+                        if sfp_key in known_sensor_keys:
+                            continue
+                        known_sensor_keys.add(sfp_key)
+                        entities.append(
+                            UnifiPortBinarySensor(
+                                coordinator=coordinator,
+                                site_id=site_id,
+                                device_id=device_id,
+                                port_idx=port_idx,
+                                port_label=get_port_label(port.record, port_idx),
                             )
+                        )
 
                     # Per-WAN link connectivity (merged legacy WAN data)
                     wans = device_data.get("wans", [])
@@ -560,9 +555,7 @@ async def async_setup_entry(
                     tunnels = (
                         site_vpns.get(site_id) if isinstance(site_vpns, dict) else None
                     )
-                    if isinstance(tunnels, dict) and (
-                        is_gateway_device(device_data) or wans
-                    ):
+                    if isinstance(tunnels, dict) and (is_gateway or wans):
                         for tunnel_id, tunnel in tunnels.items():
                             if not isinstance(tunnel, dict) or not tunnel.get(
                                 "enabled", True
@@ -752,6 +745,9 @@ class UnifiInsightsBinarySensor(UnifiInsightsEntity, BinarySensorEntity):
             )
             return None
 
+        if self.entity_description.facts_fn is not None:
+            facts = self.device_facts
+            return self.entity_description.facts_fn(facts) if facts else None
         device = self.coordinator.data["devices"][self._site_id][self._device_id]
         if self.entity_description.value_fn is not None:
             return self.entity_description.value_fn(device)
@@ -862,6 +858,17 @@ class UnifiInsightsNVRStorageBinarySensor(UnifiProtectBinarySensor):
         )
 
 
+def _sfp_port_index(port: NetworkPortFacts) -> Any:
+    """
+    Return the raw index an SFP presence sensor is keyed on.
+
+    It is ``idx or port_idx`` exactly as the record spells it, unconverted:
+    it is part of the unique ID (``"03"`` stays ``03``). A falsy ``idx`` falls
+    through to ``port_idx``, so a port whose only index is 0 is not discovered.
+    """
+    return port.record.get("idx") or port.record.get("port_idx")
+
+
 class UnifiPortBinarySensor(UnifiInsightsEntity, BinarySensorEntity):
     """Binary sensor indicating whether an SFP module is inserted."""
 
@@ -870,7 +877,7 @@ class UnifiPortBinarySensor(UnifiInsightsEntity, BinarySensorEntity):
         coordinator: UnifiFacadeCoordinator,
         site_id: str,
         device_id: str,
-        port_idx: int,
+        port_idx: Any,
         port_label: str,
     ) -> None:
         """Initialize the SFP module binary sensor."""
@@ -890,18 +897,11 @@ class UnifiPortBinarySensor(UnifiInsightsEntity, BinarySensorEntity):
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def _find_port_data(self) -> dict[str, Any] | None:
-        """Find port data for this sensor's port index."""
-        device_data = (
-            self.coordinator.data.get("devices", {})
-            .get(self._site_id, {})
-            .get(self._device_id, {})
-        )
-        if not device_data:
-            return None
-        for port in device_data.get("ports", []):
-            idx = port.get("idx") or port.get("port_idx")
-            if idx == self._port_idx:
-                return dict(port)
+        """Find port data for this sensor's raw port index."""
+        facts = self.device_facts
+        for port in facts.ports if facts is not None else ():
+            if _sfp_port_index(port) == self._port_idx:
+                return dict(port.record)
         return None
 
     @property

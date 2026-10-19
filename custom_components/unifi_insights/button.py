@@ -47,7 +47,7 @@ from .const import (
 )
 from .coordinators import UnifiFacadeCoordinator
 from .coordinators.voucher_state import voucher_request_kwargs, voucher_site_ids
-from .data_transforms import current_chime_ringtone_id
+from .data_transforms import current_chime_ringtone_id, device_facts
 from .entity import (
     UnifiInsightsEntity,
     UnifiProtectEntity,
@@ -61,6 +61,8 @@ from .helpers import async_migrate_site_entity
 from .topology_contract import normalize_mac
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -78,56 +80,32 @@ class UnifiInsightsButtonEntityDescription(ButtonEntityDescription):  # type: ig
     """Class describing UniFi Insights button entities."""
 
 
-def get_device_ports(device_data: dict[str, Any]) -> list[dict[str, Any]]:
-    """
-    Return the port dictionaries the coordinator emitted for a device.
-
-    The coordinator publishes ports in two places, both with ``idx`` and a
-    ``poe`` dict carrying ``enabled``: ``ports`` (legacy ``port_table``
-    normalised by ``_normalize_legacy_port``) and ``interfaces["ports"]``
-    (v1 API). ``ports`` is read first, as the sensor pipeline does.
-    """
-    ports = device_data.get("ports")
-    if not isinstance(ports, list) or not ports:
-        interfaces = device_data.get("interfaces")
-        ports = interfaces.get("ports") if isinstance(interfaces, dict) else None
-    if not isinstance(ports, list):
-        return []
-    return [p for p in ports if isinstance(p, dict)]
-
-
 def get_device_port(
     coordinator_data: Any,
     site_id: str | None,
     device_id: str | None,
     port_idx: int,
-) -> dict[str, Any] | None:
-    """Return port dictionary for a device port or None if not found."""
-    if not site_id or not device_id:
+) -> Mapping[str, Any] | None:
+    """
+    Return a device's port record, or None if it is not found.
+
+    Reads the shared port tuple of the published read model and matches the
+    raw index exactly: ``3`` finds ``3``, never ``"03"`` (PoE button and
+    action discovery only accept integer indexes).
+    """
+    if not site_id or not device_id or not isinstance(coordinator_data, dict):
         return None
-    if not isinstance(coordinator_data, dict):
-        return None
-    devices = coordinator_data.get("devices")
-    if not isinstance(devices, dict):
-        return None
-    site_devices = devices.get(site_id)
-    if not isinstance(site_devices, dict):
-        return None
-    device_data = site_devices.get(device_id)
-    if not isinstance(device_data, dict):
-        return None
-    for port in get_device_ports(device_data):
-        if port.get("idx") == port_idx:
-            return port
-    return None
+    facts = device_facts(coordinator_data, site_id, device_id)
+    port = facts.port_by_raw_index(port_idx) if facts is not None else None
+    return port.record if port is not None else None
 
 
-def port_can_be_power_cycled(port: dict[str, Any]) -> bool:
+def port_can_be_power_cycled(port: Mapping[str, Any]) -> bool:
     """Return True if port can be power-cycled (PoE is enabled)."""
     return isinstance(port.get("poe"), dict) and port["poe"].get("enabled") is True
 
 
-def _get_port_label(port: dict[str, Any], port_idx: int) -> str:
+def _get_port_label(port: Mapping[str, Any], port_idx: int) -> str:
     """Return user-friendly port label based on port type."""
     name = port.get("name")
     if name and name != f"Port {port_idx}":
@@ -415,8 +393,10 @@ async def async_setup_entry(
                         )
 
                     # Discover PoE power-cycle buttons for PoE-enabled ports
-                    for port in get_device_ports(device_data):
-                        port_idx = port.get("idx")
+                    facts = device_facts(coordinator.data, site_id, device_id)
+                    for port_facts in facts.ports if facts is not None else ():
+                        port = port_facts.record
+                        port_idx = port_facts.raw_index
                         if not isinstance(port_idx, int):
                             continue
                         if not port_can_be_power_cycled(port):

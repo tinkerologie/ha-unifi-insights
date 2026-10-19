@@ -46,6 +46,7 @@ from custom_components.unifi_insights.const import (
     CONNECTION_TYPE_LOCAL,
     DOMAIN,
 )
+from custom_components.unifi_insights.data_transforms import get_site_gateway_id
 from custom_components.unifi_insights.protect_security_entity import (
     UnifiProtectSecuritySensor,
 )
@@ -396,10 +397,8 @@ class TestUnifiInsightsSensor:
             device_id="device1",
         )
 
-        # Native value should use value_fn
-        stats = mock_coordinator.data["stats"]["site1"]["device1"]
-        value = description.value_fn(stats)
-        assert value == 15.5
+        # Reads the read-model facts built from the stats
+        assert description.value_fn is None
         assert sensor.native_value == 15.5
 
     async def test_sensor_memory_usage(self, hass: HomeAssistant, mock_coordinator):
@@ -440,8 +439,9 @@ class TestUnifiInsightsSensor:
             device_id="device1",
         )
 
-        # 1000000 bytes/sec = 8000000 bits/sec (native unit)
-        assert sensor.native_value == 8000000
+        # The public txRateBps is already bits/s (#337): 1000000 stays 1000000,
+        # it is no longer multiplied by 8.
+        assert sensor.native_value == 1000000
 
     async def test_sensor_firmware_version(self, hass: HomeAssistant, mock_coordinator):
         """Test firmware version sensor."""
@@ -4153,9 +4153,9 @@ class TestUnifiSiteInternetActivitySensor:
         # Non-dict site_devices, non-gateway device, non-dict data/site_windows,
         # and bool value
         coordinator.data["devices"]["site1"] = "not_a_dict"
-        assert sensor._find_gateway_device_id() is None
+        assert get_site_gateway_id(coordinator.data, "site1") is None
         coordinator.data["devices"]["site1"] = {"sw1": {"features": ["switching"]}}
-        assert sensor._find_gateway_device_id() is None
+        assert get_site_gateway_id(coordinator.data, "site1") is None
         coordinator.data["internet_activity"]["site1"] = {"1h": {"rx_bytes": True}}
         assert sensor.native_value is None
         coordinator.data["internet_activity"]["site1"] = "not_a_dict"

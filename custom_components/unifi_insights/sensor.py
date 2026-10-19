@@ -3,10 +3,9 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from homeassistant.components.sensor import (
     EntityCategory,
@@ -52,7 +51,7 @@ from .const import (
     MANUFACTURER,
 )
 from .coordinators import UnifiFacadeCoordinator
-from .data_transforms import bytes_to_bits_per_second
+from .data_transforms import NetworkDeviceFacts, bytes_to_bits_per_second, device_facts
 from .entity import (
     UnifiInsightsEntity,
     UnifiProtectEntity,
@@ -60,7 +59,6 @@ from .entity import (
     device_has_feature,
     first_not_none,
     get_field,
-    is_gateway_device,
 )
 from .entity import (
     get_client_type as _get_client_type,
@@ -80,7 +78,7 @@ from .storage_telemetry import normalize_nvr_storage
 from .voucher_sensor import discover_voucher_sensors
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -111,12 +109,17 @@ _LOGGER = logging.getLogger(__name__)
 # Coordinator handles updates centrally (Gold/Platinum requirement)
 PARALLEL_UPDATES = 0
 
+# A port sensor's stats carry no reading for it (as opposed to a bad one).
+_NO_STATS: Final = object()
+
 
 @dataclass
 class UnifiInsightsSensorEntityDescription(SensorEntityDescription):  # type: ignore[misc]
     """Class describing UniFi Insights sensor entities."""
 
     value_fn: Callable[[dict[str, Any]], StateType] | None = None
+    # Reads the device's published read-model facts instead of a raw record.
+    facts_fn: Callable[[NetworkDeviceFacts], StateType] | None = None
     # Device feature required for this sensor (e.g., 'switching', 'accessPoint')
     # If None, sensor applies to all devices
     required_feature: str | None = None
@@ -147,11 +150,6 @@ def format_uptime(seconds: int | None) -> str | None:
     return f"{minutes}m"
 
 
-def get_stats_field(stats: dict, *keys: str, default: Any = None) -> Any:
-    """Get a field from stats handling both camelCase and snake_case."""
-    return get_field(stats, *keys, default=default)
-
-
 def bytes_to_megabits(bytes_per_sec: float | None) -> float | None:
     """Convert bytes per second to megabits per second."""
     if bytes_per_sec is None:
@@ -162,23 +160,6 @@ def bytes_to_megabits(bytes_per_sec: float | None) -> float | None:
 def bytes_to_bits(bytes_per_sec: float | None) -> float | None:
     """Convert bytes per second to bits per second."""
     return bytes_to_bits_per_second(bytes_per_sec)
-
-
-def _uplink_rate_bps(stats: dict[str, Any], *keys: str) -> Any:
-    """
-    Get an uplink tx/rx rate candidate, preserving a legitimate 0.
-
-    Reads the uplink stats container once, then tries the same key names
-    against it and against the top-level stats dict, keeping the first
-    candidate that is not None. A plain `or` chain here would discard a
-    real `0 B/s` reading (traffic momentarily idle) in favour of a
-    non-existent fallback, flipping the sensor state to `unknown`.
-    """
-    uplink = get_stats_field(stats, "uplink", "uplink_stats", default={})
-    return first_not_none(
-        get_field(uplink, *keys),
-        get_field(stats, *keys),
-    )
 
 
 def _get_temperature_entry_value(
@@ -393,9 +374,7 @@ SENSOR_TYPES: tuple[UnifiInsightsSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda stats: get_stats_field(
-            stats, "cpuUtilizationPct", "cpu_utilization_pct", "cpu_percent", "cpu"
-        ),
+        facts_fn=lambda facts: facts.cpu_pct,
     ),
     UnifiInsightsSensorEntityDescription(
         key="memory_usage",
@@ -403,13 +382,7 @@ SENSOR_TYPES: tuple[UnifiInsightsSensorEntityDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda stats: get_stats_field(
-            stats,
-            "memoryUtilizationPct",
-            "memory_utilization_pct",
-            "memory_percent",
-            "memory",
-        ),
+        facts_fn=lambda facts: facts.memory_pct,
     ),
     UnifiInsightsSensorEntityDescription(
         key="uptime",
@@ -419,11 +392,7 @@ SENSOR_TYPES: tuple[UnifiInsightsSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         # Gold: Disable diagnostic entities by default
         entity_registry_enabled_default=False,
-        value_fn=lambda stats: format_uptime(
-            get_stats_field(
-                stats, "uptimeSec", "uptime_sec", "uptime_seconds", "uptime"
-            )
-        ),
+        facts_fn=lambda facts: format_uptime(facts.uptime_s),
     ),
     UnifiInsightsSensorEntityDescription(
         key="tx_rate",
@@ -433,9 +402,8 @@ SENSOR_TYPES: tuple[UnifiInsightsSensorEntityDescription, ...] = (
         suggested_display_precision=1,
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda stats: bytes_to_bits(
-            _uplink_rate_bps(stats, "txRateBps", "tx_rate_bps", "tx_bytes_per_sec")
-        ),
+        # Already bits/s; see NetworkDeviceFacts for the unit evidence (#337).
+        facts_fn=lambda facts: facts.tx_bps,
     ),
     UnifiInsightsSensorEntityDescription(
         key="rx_rate",
@@ -445,9 +413,7 @@ SENSOR_TYPES: tuple[UnifiInsightsSensorEntityDescription, ...] = (
         suggested_display_precision=1,
         device_class=SensorDeviceClass.DATA_RATE,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda stats: bytes_to_bits(
-            _uplink_rate_bps(stats, "rxRateBps", "rx_rate_bps", "rx_bytes_per_sec")
-        ),
+        facts_fn=lambda facts: facts.rx_bps,
     ),
     UnifiInsightsSensorEntityDescription(
         key="poe_total_power",
@@ -457,7 +423,7 @@ SENSOR_TYPES: tuple[UnifiInsightsSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         # Only show on switch devices (devices with 'switching' feature)
         required_feature="switching",
-        value_fn=lambda stats: get_stats_field(
+        value_fn=lambda stats: get_field(
             stats,
             "poe_total_w",
             "poeTotalW",
@@ -663,9 +629,8 @@ PORT_SENSOR_TYPES: tuple[UnifiInsightsSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.DATA_SIZE,
         state_class=SensorStateClass.TOTAL_INCREASING,
         entity_category=None,  # Changed from DIAGNOSTIC to make visible by default
-        value_fn=lambda port: (
-            get_field(port, "stats", default={}).get("txBytes")
-            or get_field(port, "stats", default={}).get("tx_bytes", 0)
+        value_fn=lambda port: get_field(
+            get_field(port, "stats", default={}), "txBytes", "tx_bytes", default=0
         ),
     ),
     # Port RX
@@ -678,9 +643,8 @@ PORT_SENSOR_TYPES: tuple[UnifiInsightsSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.DATA_SIZE,
         state_class=SensorStateClass.TOTAL_INCREASING,
         entity_category=None,  # Changed from DIAGNOSTIC to make visible by default
-        value_fn=lambda port: (
-            get_field(port, "stats", default={}).get("rxBytes")
-            or get_field(port, "stats", default={}).get("rx_bytes", 0)
+        value_fn=lambda port: get_field(
+            get_field(port, "stats", default={}), "rxBytes", "rx_bytes", default=0
         ),
     ),
 )
@@ -775,9 +739,7 @@ WAN_SENSOR_TYPES: tuple[UnifiInsightsSensorEntityDescription, ...] = (
         # Gold: Disable diagnostic entities by default
         entity_registry_enabled_default=False,
         value_fn=lambda stats: format_uptime(
-            get_stats_field(
-                stats, "uptimeSec", "uptime_sec", "uptime_seconds", "uptime"
-            )
+            get_field(stats, "uptimeSec", "uptime_sec", "uptime_seconds", "uptime")
         ),
     ),
 )
@@ -966,10 +928,10 @@ def _discover_device_sensors(
             )
         )
 
-    # Add WAN sensors for gateway devices
-    # See is_gateway_device: covers the UCG/UXG/UDR/UDW consoles that issue
-    # #151 reported as missing WAN sensors.
-    if is_gateway_device(device_data):
+    # Add WAN sensors for gateway devices. The kind fact covers the
+    # UCG/UXG/UDR/UDW consoles that issue #151 reported as missing WAN sensors.
+    facts = device_facts(coordinator.data, site_id, device_id)
+    if facts is not None and facts.kind == "gateway":
         for wan_desc in WAN_SENSOR_TYPES:
             wan_key = (site_id, device_id, wan_desc.key)
             if wan_key not in known_sensor_keys:
@@ -994,34 +956,29 @@ def _discover_port_sensors(
     entities: list[SensorEntity],
 ) -> None:
     """Discover port sensors for a network device."""
-    ports = device_data.get("ports", [])
-    if not ports:
-        interfaces = get_field(device_data, "interfaces", default={})
-        if isinstance(interfaces, dict):
-            ports = get_field(interfaces, "ports", default=[])
-    if not ports or not isinstance(ports, list):
+    # Ports need legacy data (see data_transforms): without port records no
+    # port sensor is discovered, not even from the stats fallback.
+    facts = device_facts(coordinator.data, site_id, device_id)
+    if facts is None or not facts.ports:
         return
 
     active_port_indices: set[int] = set()
-    for port in ports:
-        if not isinstance(port, dict):
+    seen_port_indices: set[int] = set()
+    for port_facts in facts.ports:
+        # The normalised index: the legacy merge can spell it "03" or " 3 ",
+        # and _create_port_stats_fallback keys its ports on int; both feed the
+        # same UnifiPortSensor unique ID. The first record of an index wins,
+        # as it does for the runtime lookup.
+        port_idx = port_facts.index
+        if port_idx is None or port_idx in seen_port_indices:
             continue
-        port_idx = get_field(port, "idx", "index", "port_idx")
-        if port_idx is None:
-            continue
-        # The legacy device path copies the raw index straight from the
-        # payload, so it can still be a string here. _create_port_stats_fallback
-        # keys its ports on int, and both paths feed the same UnifiPortSensor
-        # unique ID, so normalise before the dedupe keys are built.
-        with contextlib.suppress(ValueError, TypeError):
-            port_idx = int(port_idx)
+        seen_port_indices.add(port_idx)
+        port = port_facts.record
 
         port_state = get_field(port, "state", "status", default="DOWN")
         if str(port_state).upper() != "UP":
             continue
-
-        with contextlib.suppress(ValueError, TypeError):
-            active_port_indices.add(int(port_idx))
+        active_port_indices.add(port_idx)
 
         port_label = _get_port_label(port, port_idx)
         is_sfp = str(port.get("media", "")).startswith("SFP")
@@ -1549,6 +1506,11 @@ class UnifiInsightsSensor(UnifiInsightsEntity, SensorEntity):
     @property
     def native_value(self) -> StateType:
         """Return the state of the sensor."""
+        if self.entity_description.facts_fn is not None:
+            # CPU, memory, uptime and uplink rates: the published read model,
+            # so these sensors and the dashboards report the same numbers.
+            facts = self.device_facts
+            return self.entity_description.facts_fn(facts) if facts else None
         # Special handling for sensors that come from device data (not stats)
         if self.entity_description.key in [
             "firmware_version",
@@ -1640,91 +1602,96 @@ class UnifiPortSensor(UnifiInsightsEntity, SensorEntity):
             site_id,
         )
 
-    @property
-    def native_value(self) -> StateType:
-        """Return the state of the sensor."""
-        # Get device data to access port information
-        device_data = (
-            self.coordinator.data.get("devices", {})
+    def _find_port_data(self) -> Mapping[str, Any] | None:
+        """
+        Return this sensor's port record from the published read model.
+
+        The lookup uses the normalised index, so a port the legacy merge
+        spells "03" or 0 resolves like discovery found it. The first record
+        of a duplicated index wins.
+        """
+        facts = self.device_facts
+        port = facts.port_by_index(self._port_idx) if facts else None
+        return port.record if port else None
+
+    def _stats_section(self, section: str) -> dict[Any, Any] | None:
+        """Return one per-port section of this device's stats, if a dict."""
+        stats = (
+            self.coordinator.data.get("stats", {})
             .get(self._site_id, {})
             .get(self._device_id, {})
         )
+        value = stats.get(section) if isinstance(stats, dict) else None
+        return value if isinstance(value, dict) else None
 
-        if not device_data:
+    def _stats_port_entry(self, section: str) -> Any:
+        """Return this port's entry in a stats section (int key, then str)."""
+        by_port = self._stats_section(section)
+        if by_port is None:
+            return None
+        return by_port.get(self._port_idx) or by_port.get(str(self._port_idx))
+
+    def _stats_poe_watts(self) -> Any:
+        """Return stats PoE watts, None when invalid, _NO_STATS when absent."""
+        poe_ports = self._stats_section("poe_ports")
+        if poe_ports is None:
+            return _NO_STATS
+        # An int-keyed poe_ports (e.g. {3: 0}) must not fall through to the
+        # string-key lookup: `or` would treat a real 0 W reading as absent.
+        watts = poe_ports.get(self._port_idx)
+        if watts is None:
+            watts = poe_ports.get(str(self._port_idx))
+        if isinstance(watts, (int, float)):
+            return float(watts)
+        if isinstance(watts, str):
+            try:
+                return float(watts)
+            except ValueError:
+                return None
+        return _NO_STATS
+
+    def _stats_counter(self, *sections: str) -> int | None:
+        """Return this port's TX or RX byte counter from stats sections."""
+        counter_key = (
+            "tx_bytes" if self.entity_description.key == "port_tx_bytes" else "rx_bytes"
+        )
+        for section in sections:
+            entry = self._stats_port_entry(section)
+            if isinstance(entry, dict):
+                value = entry.get(counter_key)
+                if isinstance(value, (int, float)):
+                    return int(value)
+        return None
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the state of the sensor."""
+        key = self.entity_description.key
+        if self.device_facts is None:
             _LOGGER.debug(
                 "No device data available for port sensor %s (device %s in site %s)",
-                self.entity_description.key,
+                key,
                 self._device_id,
                 self._site_id,
             )
             return None
 
-        # Find the port data
-        # Port data can come from:
-        # 1. device_data["ports"] - merged from legacy port_table by coordinator
-        # 2. device_data["interfaces"]["ports"] - new API format (dict)
-        ports = device_data.get("ports", [])
-        if not ports:
-            interfaces = device_data.get("interfaces", {})
-            ports = interfaces.get("ports", []) if isinstance(interfaces, dict) else []
-        port_data = None
-        for port in ports:
-            idx = port.get("idx") or port.get("port_idx")
-            if idx == self._port_idx:
-                port_data = port
-                break
+        port_data = self._find_port_data()
+        # Rates always come from computed stats; byte counters always come from
+        # stats, and also from upstream port_data when the port record exists.
+        if key in ("port_tx_rate", "port_rx_rate"):
+            return self._get_port_rate_value()
+        if key in ("port_tx_bytes", "port_rx_bytes"):
+            if port_data is None:
+                return self._stats_counter("port_bytes")
+            return self._stats_counter("port_bytes", "port_data")
+        if key == "port_poe_power":
+            # Prefer PoE watts from coordinator stats when available
+            watts = self._stats_poe_watts()
+            if watts is not _NO_STATS:
+                return cast("StateType", watts)
 
-        if not port_data:
-            # PoE power can be sourced from stats when interfaces.ports is unavailable
-            if self.entity_description.key == "port_poe_power":
-                stats = (
-                    self.coordinator.data.get("stats", {})
-                    .get(self._site_id, {})
-                    .get(self._device_id, {})
-                )
-                if isinstance(stats, dict):
-                    poe_ports = stats.get("poe_ports")
-                    if isinstance(poe_ports, dict):
-                        # An int-keyed poe_ports (e.g. {3: 0}) must not fall
-                        # through to the string-key lookup: `or` would treat
-                        # a real 0 W reading as absent.
-                        watts = poe_ports.get(self._port_idx)
-                        if watts is None:
-                            watts = poe_ports.get(str(self._port_idx))
-                        if isinstance(watts, (int, float)):
-                            return float(watts)
-                        if isinstance(watts, str):
-                            try:
-                                return float(watts)
-                            except ValueError:
-                                return None
-
-            # TX/RX bytes can be sourced from stats when interfaces.ports is unavailable
-            if self.entity_description.key in ("port_tx_bytes", "port_rx_bytes"):
-                stats = (
-                    self.coordinator.data.get("stats", {})
-                    .get(self._site_id, {})
-                    .get(self._device_id, {})
-                )
-                if isinstance(stats, dict):
-                    port_bytes = stats.get("port_bytes")
-                    if isinstance(port_bytes, dict):
-                        pb = port_bytes.get(self._port_idx) or port_bytes.get(
-                            str(self._port_idx)
-                        )
-                        if isinstance(pb, dict):
-                            v = (
-                                pb.get("tx_bytes")
-                                if self.entity_description.key == "port_tx_bytes"
-                                else pb.get("rx_bytes")
-                            )
-                            if isinstance(v, (int, float)):
-                                return int(v)
-
-            # TX/RX rate sourced from stats when interfaces.ports is unavailable
-            if self.entity_description.key in ("port_tx_rate", "port_rx_rate"):
-                return self._get_port_rate_value()
-
+        if port_data is None:
             _LOGGER.debug(
                 "No port data available for port %d on device %s",
                 self._port_idx,
@@ -1732,78 +1699,11 @@ class UnifiPortSensor(UnifiInsightsEntity, SensorEntity):
             )
             return None
 
-        # Port TX/RX rate always comes from computed stats, not port data
-        if self.entity_description.key in ("port_tx_rate", "port_rx_rate"):
-            return self._get_port_rate_value()
-
-        # Prefer PoE watts from coordinator stats when available
-        if self.entity_description.key == "port_poe_power":
-            stats = (
-                self.coordinator.data.get("stats", {})
-                .get(self._site_id, {})
-                .get(self._device_id, {})
-            )
-            if isinstance(stats, dict):
-                poe_ports = stats.get("poe_ports")
-                if isinstance(poe_ports, dict):
-                    # An int-keyed poe_ports (e.g. {3: 0}) must not fall
-                    # through to the string-key lookup: `or` would treat
-                    # a real 0 W reading as absent.
-                    watts = poe_ports.get(self._port_idx)
-                    if watts is None:
-                        watts = poe_ports.get(str(self._port_idx))
-                    if isinstance(watts, (int, float)):
-                        return float(watts)
-                    if isinstance(watts, str):
-                        try:
-                            return float(watts)
-                        except ValueError:
-                            return None
-
-        # TX/RX bytes from coordinator stats
-        if self.entity_description.key in ["port_tx_bytes", "port_rx_bytes"]:
-            stats = (
-                self.coordinator.data.get("stats", {})
-                .get(self._site_id, {})
-                .get(self._device_id, {})
-            )
-            if not isinstance(stats, dict):
-                return None
-
-            counter_key = (
-                "tx_bytes"
-                if self.entity_description.key == "port_tx_bytes"
-                else "rx_bytes"
-            )
-
-            # 1) Preferred: legacy-mapped per-port counters
-            port_bytes = stats.get("port_bytes")
-            if isinstance(port_bytes, dict):
-                pb = port_bytes.get(self._port_idx) or port_bytes.get(
-                    str(self._port_idx)
-                )
-                if isinstance(pb, dict):
-                    v = pb.get(counter_key)
-                    if isinstance(v, (int, float)):
-                        return int(v)
-
-            # 2) Optional fallback: upstream per-port counters dict
-            port_data = stats.get("port_data")
-            if isinstance(port_data, dict):
-                pb = port_data.get(self._port_idx) or port_data.get(str(self._port_idx))
-                if isinstance(pb, dict):
-                    v = pb.get(counter_key)
-                    if isinstance(v, (int, float)):
-                        return int(v)
-
-            return None
-
-        # Use value_fn to extract the value
-        value = self.entity_description.value_fn(port_data)  # type: ignore[misc]
+        value = self.entity_description.value_fn(dict(port_data))  # type: ignore[misc]
 
         _LOGGER.debug(
             "Port sensor %s for port %d on device %s updated to %s %s",
-            self.entity_description.key,
+            key,
             self._port_idx,
             self._device_id,
             value,
@@ -1815,104 +1715,32 @@ class UnifiPortSensor(UnifiInsightsEntity, SensorEntity):
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        # PoE power availability based on coordinator stats
-        if self.entity_description.key == "port_poe_power":
-            if not self.coordinator.device_available:
-                return False
-            stats = (
-                self.coordinator.data.get("stats", {})
-                .get(self._site_id, {})
-                .get(self._device_id, {})
-            )
-            if isinstance(stats, dict):
-                poe_ports = stats.get("poe_ports")
-                if isinstance(poe_ports, dict):
-                    # If the device provides poe_ports at all,
-                    # keep PoE power sensors available
-                    # (link state may be DOWN while PoE is
-                    # disabled or idle).
-                    return True
-            # Fall through to standard port-state availability logic
-
-        # TX/RX availability based on coordinator stats
-        if self.entity_description.key in ("port_tx_bytes", "port_rx_bytes"):
-            if not self.coordinator.device_available:
-                return False
-            stats = (
-                self.coordinator.data.get("stats", {})
-                .get(self._site_id, {})
-                .get(self._device_id, {})
-            )
-            if isinstance(stats, dict):
-                port_bytes = stats.get("port_bytes")
-                if isinstance(port_bytes, dict):
-                    pb = port_bytes.get(self._port_idx) or port_bytes.get(
-                        str(self._port_idx)
-                    )
-                    if isinstance(pb, dict):
-                        return True
-            # Fall through to standard port-state availability logic
-
-        # TX/RX rate availability based on computed port_rates
-        if self.entity_description.key in ("port_tx_rate", "port_rx_rate"):
-            if not self.coordinator.device_available:
-                return False
-            stats = (
-                self.coordinator.data.get("stats", {})
-                .get(self._site_id, {})
-                .get(self._device_id, {})
-            )
-            if isinstance(stats, dict):
-                port_rates = stats.get("port_rates")
-                if isinstance(port_rates, dict):
-                    pr = port_rates.get(self._port_idx) or port_rates.get(
-                        str(self._port_idx)
-                    )
-                    if isinstance(pr, dict):
-                        return True
-            # Fall through to standard port-state availability logic
-
-        # Port sensors are available if the device is available AND the port is UP
         if not self.coordinator.device_available:
             return False
+        key = self.entity_description.key
+        # Stats-backed metrics stay available while stats carry this port,
+        # even when the link is DOWN (PoE disabled or idle). If the device
+        # provides poe_ports at all, keep PoE power sensors available.
+        if key == "port_poe_power" and self._stats_section("poe_ports") is not None:
+            return True
+        if key in ("port_tx_bytes", "port_rx_bytes") and isinstance(
+            self._stats_port_entry("port_bytes"), dict
+        ):
+            return True
+        if key in ("port_tx_rate", "port_rx_rate") and isinstance(
+            self._stats_port_entry("port_rates"), dict
+        ):
+            return True
 
-        # Get device data
-        devices = self.coordinator.data.get("devices", {})
-        if not isinstance(devices, dict):
-            return False
-        site_devices = devices.get(self._site_id, {})
-        if not isinstance(site_devices, dict):
-            return False
-        device_data = site_devices.get(self._device_id, {})
-        if not device_data or not isinstance(device_data, dict):
-            return False
-
-        # Find the port data
-        # Check device_data["ports"] first (from legacy merge),
-        # fall back to interfaces["ports"]
-        port_list = device_data.get("ports", [])
-        if not port_list:
-            interfaces = device_data.get("interfaces", {})
-            if isinstance(interfaces, dict):
-                port_list = interfaces.get("ports", [])
-        if not isinstance(port_list, list):
-            return False
-
-        port_data = None
-        for port in port_list:
-            idx = port.get("idx") or port.get("port_idx")
-            if idx == self._port_idx:
-                port_data = port
-                break
-
-        if not port_data:
+        # Otherwise the port must exist and be UP
+        port_data = self._find_port_data()
+        if port_data is None:
             return False
 
         # SFP info sensors stay available regardless of port state
-        if self.entity_description.key.startswith("port_sfp_"):
+        if key.startswith("port_sfp_"):
             return True
 
-        # Port sensor is only available if port state is UP
         port_state = port_data.get("state", "DOWN")
         return isinstance(port_state, str) and port_state == "UP"
 
@@ -1945,26 +1773,6 @@ class UnifiPortSensor(UnifiInsightsEntity, SensorEntity):
 
         # Convert bytes/sec to bits/sec (native unit)
         return round(float(bytes_per_sec) * 8)
-
-    def _find_port_data(self) -> dict[str, Any] | None:
-        """Find port data for this sensor's port index."""
-        device_data = (
-            self.coordinator.data.get("devices", {})
-            .get(self._site_id, {})
-            .get(self._device_id, {})
-        )
-        if not device_data:
-            return None
-        ports = device_data.get("ports", [])
-        if not ports:
-            interfaces = device_data.get("interfaces", {})
-            if isinstance(interfaces, dict):
-                ports = interfaces.get("ports", [])
-        for port in ports:
-            idx = port.get("idx") or port.get("port_idx")
-            if idx == self._port_idx:
-                return dict(port)
-        return None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:

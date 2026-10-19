@@ -364,6 +364,16 @@ def _port_facts(port: Mapping[str, Any]) -> NetworkPortFacts:
     )
 
 
+def device_ports(device: Mapping[str, Any]) -> tuple[NetworkPortFacts, ...]:
+    """
+    Return the port facts of one raw device record, in source order.
+
+    This is the one port source: the published facts use it, and so do the
+    pure helpers that only hold a raw device record (topology port numbers).
+    """
+    return tuple(_port_facts(port) for port in _port_records(device))
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class NetworkDeviceFacts:
     """
@@ -492,7 +502,7 @@ def _device_facts(
         online_state=device_online_state(device),
         kind=kind,
         is_site_gateway=is_site_gateway,
-        ports=tuple(_port_facts(port) for port in _port_records(device)),
+        ports=device_ports(device),
         cpu_pct=_metric(stats, device, CPU_STAT_KEYS),
         memory_pct=_metric(stats, device, MEMORY_STAT_KEYS),
         uptime_s=int(uptime) if uptime is not None else None,
@@ -564,6 +574,18 @@ def device_facts(
     if site_facts is None:
         return None
     return site_facts.devices.get(device_id)
+
+
+def get_site_gateway_id(data: Mapping[str, Any], site_id: str) -> str | None:
+    """
+    Return the ID of a site's gateway device from coordinator data, or None.
+
+    The facade's ``get_site_gateway_id`` is this function on its own data;
+    code that holds only coordinator data (entity setup, tests with mock
+    coordinators) calls it directly, so the fact has one name.
+    """
+    site_facts = site_network_facts(data, site_id)
+    return site_facts.gateway_id if site_facts is not None else None
 
 
 def current_chime_ringtone_id(chime_data: Any) -> str | None:
@@ -759,8 +781,10 @@ __all__ = [
     "device_facts",
     "device_kind",
     "device_online_state",
+    "device_ports",
     "first_not_none",
     "get_field",
+    "get_site_gateway_id",
     "is_volatile_storage_mount",
     "normalize_innerspace_snapshot",
     "normalize_legacy_storage",

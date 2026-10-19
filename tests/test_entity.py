@@ -125,14 +125,14 @@ class TestIsDeviceOnline:
         assert is_device_online(data) is True
 
     def test_is_device_online_state_connected(self):
-        """Test device is online with state CONNECTED."""
+        """CONNECTED is not a network device state, so it is not online (#337)."""
         data = {"state": "CONNECTED"}
-        assert is_device_online(data) is True
+        assert is_device_online(data) is False
 
     def test_is_device_online_state_up(self):
-        """Test device is online with state UP."""
+        """UP is not a network device state, so it is not online (#337)."""
         data = {"state": "UP"}
-        assert is_device_online(data) is True
+        assert is_device_online(data) is False
 
     def test_is_device_online_status_online(self):
         """Test device is online with status online."""

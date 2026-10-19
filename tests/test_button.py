@@ -35,7 +35,6 @@ from custom_components.unifi_insights.button import (
     _registered_wake_macs,
     async_setup_entry,
     get_device_port,
-    get_device_ports,
     port_can_be_power_cycled,
 )
 from custom_components.unifi_insights.client_wake import select_wake_history
@@ -48,6 +47,7 @@ from custom_components.unifi_insights.coordinators.facade import (
     UnifiFacadeCoordinator,
 )
 from custom_components.unifi_insights.coordinators.voucher_state import VoucherSettings
+from custom_components.unifi_insights.data_transforms import device_ports
 from tests.fixtures.http_fakes import FakeJsonResponse, FakeQueuedSession
 
 if TYPE_CHECKING:
@@ -1612,18 +1612,22 @@ class TestSetupEntryPoeButtons:
             is None
         )
 
-        # get_device_ports non-dict interfaces and non-list ports
-        assert get_device_ports({}) == []
-        assert get_device_ports({"interfaces": "invalid", "ports": "invalid"}) == []
+        # The shared port source (data_transforms.device_ports): non-dict
+        # interfaces and non-list ports have none
+        def records(device: dict) -> list[dict]:
+            return [dict(port.record) for port in device_ports(device)]
+
+        assert records({}) == []
+        assert records({"interfaces": "invalid", "ports": "invalid"}) == []
 
         # Top-level (legacy-merged) ports win; interfaces["ports"] is the fallback
         legacy = [{"idx": 1, "poe": {"enabled": True}}]
         v1 = [{"idx": 2, "poe": {"enabled": True}}]
         both = {"ports": legacy, "interfaces": {"ports": v1}}
-        assert get_device_ports(both) == legacy
-        assert get_device_ports({"ports": legacy, "interfaces": {}}) == legacy
-        assert get_device_ports({"ports": [], "interfaces": {"ports": v1}}) == v1
-        assert get_device_ports({"interfaces": {"ports": [None, *v1]}}) == v1
+        assert records(both) == legacy
+        assert records({"ports": legacy, "interfaces": {}}) == legacy
+        assert records({"ports": [], "interfaces": {"ports": v1}}) == v1
+        assert records({"interfaces": {"ports": [None, *v1]}}) == v1
 
         # Successful port lookup and power-cycle capability checks
         data = {

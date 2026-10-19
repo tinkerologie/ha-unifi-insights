@@ -39,12 +39,12 @@ from .coordinators.config_sections import (
 from .coordinators.config_sections import (
     is_predefined_nat_rule,
 )
+from .data_transforms import get_site_gateway_id
 from .entity import (
     UnifiProtectEntity,
     async_call_coordinator_action,
     get_field,
     is_device_online,
-    is_gateway_device,
 )
 from .network_rule_switch import discover_network_rule_switches
 
@@ -71,24 +71,6 @@ def _get_firewall_rule_action(rule_data: dict[str, Any]) -> str | None:
         action_type = action.get("type")
         return str(action_type) if action_type is not None else None
     return str(action) if action is not None else None
-
-
-def _find_gateway_device_id(
-    coordinator: UnifiFacadeCoordinator, site_id: str
-) -> str | None:
-    """Return the gateway-like device ID for the site if one exists."""
-    site_devices = coordinator.data.get("devices", {}).get(site_id, {})
-    if not isinstance(site_devices, dict):
-        return None
-
-    for device_id, device_data in site_devices.items():
-        if not isinstance(device_data, dict):
-            continue
-
-        if is_gateway_device(device_data):
-            return str(device_id)
-
-    return None
 
 
 def _resolve_site_name(coordinator: UnifiFacadeCoordinator, site_id: str) -> str:
@@ -694,7 +676,7 @@ class UnifiFirewallRuleSwitch(
 
     def _build_device_info(self) -> DeviceInfo:
         """Build device info for firewall rule grouping."""
-        gateway_device_id = _find_gateway_device_id(self.coordinator, self._site_id)
+        gateway_device_id = get_site_gateway_id(self.coordinator.data, self._site_id)
         if gateway_device_id is not None:
             return DeviceInfo(
                 identifiers={(DOMAIN, f"{self._site_id}_{gateway_device_id}")}
@@ -832,7 +814,7 @@ class UnifiInsightsPolicyBasedRouteSwitch(
 
     def _build_device_info(self) -> DeviceInfo:
         """Build device info for policy-based route grouping."""
-        gateway_device_id = _find_gateway_device_id(self.coordinator, self._site_id)
+        gateway_device_id = get_site_gateway_id(self.coordinator.data, self._site_id)
         if gateway_device_id is not None:
             return DeviceInfo(
                 identifiers={(DOMAIN, f"{self._site_id}_{gateway_device_id}")}
@@ -1015,7 +997,7 @@ class UnifiInsightsVpnClientSwitch(
 
     def _build_device_info(self) -> DeviceInfo:
         """Build device info for VPN client grouping."""
-        gateway_device_id = _find_gateway_device_id(self.coordinator, self._site_id)
+        gateway_device_id = get_site_gateway_id(self.coordinator.data, self._site_id)
         if gateway_device_id is not None:
             return DeviceInfo(
                 identifiers={(DOMAIN, f"{self._site_id}_{gateway_device_id}")}

@@ -61,8 +61,8 @@ from custom_components.unifi_insights.data_transforms import (
     NetworkDeviceFacts,
     correlate_innerspace_devices,
     device_facts,
+    get_site_gateway_id,
     normalize_innerspace_snapshot,
-    site_network_facts,
 )
 from custom_components.unifi_insights.topology_contract import (
     first_present,
@@ -435,8 +435,7 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def get_site_gateway_id(self, site_id: str) -> str | None:
         """Return the ID of a site's gateway device, or None."""
-        site_facts = site_network_facts(self.data, site_id)
-        return site_facts.gateway_id if site_facts is not None else None
+        return get_site_gateway_id(self.data, site_id)
 
     @property
     def available(self) -> bool:
