@@ -1,9 +1,10 @@
 # Copyright 2026 UniFi Insights contributors
 """Tests for helper utilities in UniFi Insights."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
+from homeassistant.helpers import device_registry as dr
 
 from custom_components.unifi_insights.helpers import async_get_device_entry
 
@@ -12,8 +13,8 @@ IDENTIFIER = ("unifi_insights", "dev1")
 
 @pytest.fixture
 def registry() -> MagicMock:
-    """Return a registry double exposing all three lookup methods."""
-    return MagicMock()
+    """Return a registry double that enforces DeviceRegistry signatures."""
+    return create_autospec(dr.DeviceRegistry, instance=True)
 
 
 def test_uses_by_identifier_with_config_entry_id(registry):
