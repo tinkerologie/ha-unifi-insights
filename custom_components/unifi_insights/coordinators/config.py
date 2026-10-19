@@ -7,15 +7,17 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.event import async_call_later
 from pydantic import ValidationError
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiNotFoundError,
     UniFiResponseError,
+    UniFiRuleNotEditableError,
     UniFiTimeoutError,
 )
 from unifi_official_api.validation import sanitized_validation_fields
@@ -26,7 +28,7 @@ from custom_components.unifi_insights.const import (
     SCAN_INTERVAL_CONFIG,
 )
 
-from .base import UnifiBaseCoordinator
+from .base import CommandFailure, UnifiBaseCoordinator, async_execute_command
 from .config_sections import (
     SECTION_OUTCOME_FAILED,
     SECTION_OUTCOME_OK,
@@ -41,6 +43,7 @@ from .config_sections import (
     client_links,
     enrich_wifi,
     map_legacy_site_names,
+    rule_display_name,
     verified_legacy_site_name,
     wifi_qr_payload,
 )
@@ -69,7 +72,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from homeassistant.config_entries import ConfigEntry
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import CALLBACK_TYPE, HomeAssistant
     from unifi_official_api.network import UniFiNetworkClient
     from unifi_official_api.protect import UniFiProtectClient
 
@@ -82,6 +85,11 @@ _RULE_SECTIONS: tuple[str, ...] = (
     "nat_rules",
     "static_routes",
 )
+
+# A console that is still applying a rule change can reject the list request
+# for a few seconds (seen right after static route writes on a UDM). Seconds
+# to wait before reading the rules one more time.
+RULE_REFRESH_RETRY_DELAY: Final = 15
 
 
 class UnifiConfigCoordinator(UnifiBaseCoordinator):
@@ -141,6 +149,8 @@ class UnifiConfigCoordinator(UnifiBaseCoordinator):
         self._failed_sections: set[tuple[str, str]] = set()
         self._voucher_site_request_seq: dict[str, int] = {}
         self._voucher_site_committed_seq: dict[str, int] = {}
+        # Pending one-shot rule refresh retries, keyed by (section, site_id).
+        self._rule_refresh_retries: dict[tuple[str, str], CALLBACK_TYPE] = {}
 
     def _section_available(self, section: str, site_id: str) -> bool:
         """Return True if the last refresh fetched the given section for a site."""
@@ -576,12 +586,316 @@ class UnifiConfigCoordinator(UnifiBaseCoordinator):
             if isinstance(mapped, str) and mapped.strip():
                 site_name = mapped
         if site_name is None:
+            msg = f"No verified classic site name found for site {site_id}"
             raise HomeAssistantError(
+                msg,
                 translation_domain=DOMAIN,
                 translation_key="legacy_site_not_found",
                 translation_placeholders={"site_id": site_id},
             )
         return site_name
+
+    async def async_set_firewall_rule_enabled(
+        self,
+        site_id: str,
+        rule_id: str,
+        *,
+        enabled: bool,
+    ) -> None:
+        """Enable or disable a firewall rule."""
+        await async_execute_command(
+            CommandFailure(
+                translation_key="command_failed",
+                message=f"Unable to update firewall rule {rule_id}",
+            ),
+            self.network_client.firewall.update_rule,
+            site_id,
+            rule_id,
+            enabled=enabled,
+        )
+        await self._async_after_rule_write(
+            "firewall_rules", site_id, rule_id, enabled=enabled
+        )
+
+    async def async_set_policy_based_route_enabled(
+        self,
+        site_id: str,
+        route_id: str,
+        *,
+        enabled: bool,
+    ) -> None:
+        """Enable or disable a policy-based route (traffic route)."""
+        site_name = self.resolve_legacy_site_name(site_id, verified_only=False)
+        await async_execute_command(
+            CommandFailure(
+                translation_key="command_failed",
+                message=f"Unable to update policy-based route {route_id}",
+            ),
+            self.network_client.routes.update_route,
+            site_name,
+            route_id,
+            enabled=enabled,
+        )
+        await self._async_after_rule_write(
+            "policy_based_routes", site_id, route_id, enabled=enabled
+        )
+
+    async def async_set_vpn_client_enabled(
+        self,
+        site_id: str,
+        client_id: str,
+        *,
+        enabled: bool,
+    ) -> None:
+        """Enable or disable a VPN client configuration."""
+        site_name = self.resolve_legacy_site_name(site_id, verified_only=False)
+        await async_execute_command(
+            CommandFailure(
+                translation_key="command_failed",
+                message=f"Unable to update VPN client {client_id}",
+            ),
+            self.network_client.vpn_clients.update_vpn_client,
+            site_name,
+            client_id,
+            enabled=enabled,
+        )
+        await self._async_after_rule_write(
+            "vpn_clients", site_id, client_id, enabled=enabled
+        )
+
+    async def async_set_port_forward_enabled(
+        self, site_id: str, rule_id: str, *, enabled: bool
+    ) -> None:
+        """Enable or disable a port forwarding rule."""
+        await self._async_set_legacy_rule_enabled(
+            site_id,
+            rule_id,
+            enabled=enabled,
+            data_key="port_forwards",
+            name_field="name",
+            label="port forward",
+            update=self.network_client.port_forwards.update_port_forward,
+            keep_message=True,
+        )
+
+    async def async_set_traffic_rule_enabled(
+        self, site_id: str, rule_id: str, *, enabled: bool
+    ) -> None:
+        """Enable or disable a traffic rule."""
+        await self._async_set_legacy_rule_enabled(
+            site_id,
+            rule_id,
+            enabled=enabled,
+            data_key="traffic_rules",
+            name_field="description",
+            label="traffic rule",
+            update=self.network_client.traffic_rules.update_traffic_rule,
+            keep_message=True,
+        )
+
+    async def async_set_nat_rule_enabled(
+        self, site_id: str, rule_id: str, *, enabled: bool
+    ) -> None:
+        """Enable or disable a NAT rule."""
+        await self._async_set_legacy_rule_enabled(
+            site_id,
+            rule_id,
+            enabled=enabled,
+            data_key="nat_rules",
+            name_field="description",
+            label="NAT rule",
+            update=self.network_client.nat_rules.update_nat_rule,
+        )
+
+    async def async_set_static_route_enabled(
+        self, site_id: str, rule_id: str, *, enabled: bool
+    ) -> None:
+        """Enable or disable a static route."""
+        await self._async_set_legacy_rule_enabled(
+            site_id,
+            rule_id,
+            enabled=enabled,
+            data_key="static_routes",
+            name_field="name",
+            label="static route",
+            update=self.network_client.static_routes.update_static_route,
+        )
+
+    async def _async_set_legacy_rule_enabled(
+        self,
+        site_id: str,
+        rule_id: str,
+        *,
+        enabled: bool,
+        data_key: str,
+        name_field: str,
+        label: str,
+        update: Callable[..., Awaitable[Any]],
+        keep_message: bool = False,
+    ) -> None:
+        """
+        Toggle one rule of a classic or v2 rule family by full-record PUT.
+
+        A rule that no longer exists or that the console manages gets one
+        reconciliation refresh, so its switch drops out, and then raises.
+        Port forwards and traffic rules keep their established English
+        message (``keep_message``).
+        """
+        rule_data = self.data.get(data_key, {}).get(site_id, {}).get(rule_id, {})
+        display_name = rule_display_name(rule_data, rule_id, name_field)
+        site_name = self.resolve_legacy_site_name(site_id, verified_only=True)
+        msg = f"Unable to update {label} {display_name}"
+        placeholders = {"rule_type": label, "rule_name": display_name}
+        args = (msg,) if keep_message else ()
+        try:
+            await update(site_name, rule_id, enabled=enabled)
+        except (UniFiNotFoundError, UniFiRuleNotEditableError) as err:
+            not_found = isinstance(err, UniFiNotFoundError)
+            _LOGGER.warning(
+                "%s: %s",
+                msg,
+                "it no longer exists on the console"
+                if not_found
+                else "it is managed by the console",
+            )
+            await self.async_refresh()
+            raise HomeAssistantError(
+                *args,
+                translation_domain=DOMAIN,
+                translation_key="network_rule_not_found"
+                if not_found
+                else "network_rule_console_managed",
+                translation_placeholders=placeholders,
+            ) from err
+        except HomeAssistantError:
+            raise
+        except Exception as err:
+            _LOGGER.exception("%s", msg)
+            raise HomeAssistantError(
+                *args,
+                translation_domain=DOMAIN,
+                translation_key="network_rule_update_failed",
+                translation_placeholders=placeholders,
+            ) from err
+        await self._async_after_rule_write(data_key, site_id, rule_id, enabled=enabled)
+
+    async def _async_after_rule_write(
+        self, section: str, site_id: str, rule_id: str, *, enabled: bool
+    ) -> None:
+        """
+        Publish a successful rule toggle, then reconcile it (ADR-010).
+
+        The ``enabled`` overlay is copy-on-write: the data root, the section,
+        the site map and the rule record are replaced, never mutated, so
+        older snapshots keep their contents. Listeners are notified without
+        ``async_set_updated_data()``. A poll that started before the write
+        may briefly restore the old value until the next refresh.
+
+        The awaited refresh that follows does not fail the write: a recorded
+        failure is logged, and an authentication failure starts reauth in
+        ``DataUpdateCoordinator``. When the family is still unavailable
+        afterwards, one more refresh is scheduled.
+        """
+        section_data = self.data.get(section)
+        site_rules = (
+            section_data.get(site_id) if isinstance(section_data, dict) else None
+        )
+        record = site_rules.get(rule_id) if isinstance(site_rules, dict) else None
+        if (
+            isinstance(section_data, dict)
+            and isinstance(site_rules, dict)
+            and isinstance(record, dict)
+        ):
+            self.data = {
+                **self.data,
+                section: {
+                    **section_data,
+                    site_id: {**site_rules, rule_id: {**record, "enabled": enabled}},
+                },
+            }
+            self.async_update_listeners()
+
+        await self.async_refresh()
+        if not self.last_update_success:
+            _LOGGER.debug(
+                "Config coordinator: refresh after a %s write failed: %s",
+                section,
+                self.last_exception,
+            )
+        if not self._section_available(section, site_id):
+            self._schedule_rule_refresh_retry(section, site_id)
+
+    def _schedule_rule_refresh_retry(self, section: str, site_id: str) -> None:
+        """
+        Refresh once more shortly after a refresh that could not read a family.
+
+        Without the second attempt every switch of that family in the site
+        stays unavailable until the next scheduled poll, although the change
+        itself was applied. A newer retry for the same family and site
+        replaces a pending one, and the retry never reschedules itself.
+        """
+        key = (section, site_id)
+        if (cancel := self._rule_refresh_retries.pop(key, None)) is not None:
+            cancel()
+
+        async def _async_retry(_now: datetime) -> None:
+            self._rule_refresh_retries.pop(key, None)
+            await self.async_refresh()
+
+        self._rule_refresh_retries[key] = async_call_later(
+            self.hass, RULE_REFRESH_RETRY_DELAY, _async_retry
+        )
+
+    async def async_update_wifi_network(
+        self,
+        site_id: str,
+        wifi_id: str,
+        *,
+        enabled: bool,
+    ) -> None:
+        """Enable or disable a WiFi network, then request a deferred refresh."""
+        await async_execute_command(
+            CommandFailure(
+                translation_key="command_failed",
+                message=f"Unable to update WiFi network {wifi_id}",
+            ),
+            self.network_client.wifi.update,
+            site_id,
+            wifi_id,
+            enabled=enabled,
+        )
+        await self.async_request_refresh()
+
+    async def async_authorize_guest(self, site_id: str, client_id: str) -> None:
+        """Authorize guest access for a network client."""
+        await async_execute_command(
+            CommandFailure(
+                translation_key="command_failed",
+                message=f"Unable to authorize guest client {client_id}",
+            ),
+            self.network_client.clients.authorize_guest,
+            site_id,
+            client_id,
+        )
+
+    async def async_unauthorize_guest(self, site_id: str, client_id: str) -> None:
+        """Remove guest authorization for a network client."""
+        await async_execute_command(
+            CommandFailure(
+                translation_key="command_failed",
+                message=f"Unable to unauthorize guest client {client_id}",
+            ),
+            self.network_client.clients.unauthorize_guest,
+            site_id,
+            client_id,
+        )
+
+    async def async_shutdown(self) -> None:
+        """Cancel pending rule refresh retries, then shut down."""
+        for cancel in self._rule_refresh_retries.values():
+            cancel()
+        self._rule_refresh_retries.clear()
+        await super().async_shutdown()
 
     def _filter_selected_sites(
         self, sites: dict[str, dict[str, Any]]
