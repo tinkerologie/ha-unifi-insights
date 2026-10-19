@@ -330,7 +330,7 @@ See `.github/instructions/service_actions.instructions.md` for service patterns.
 **Coordinator (`coordinators/`):**
 
 - Entities → Coordinator → API Client (never skip layers)
-- One owner per write command (ADR-010): the coordinator that owns the data runs the call through `async_execute_command`, raises translated errors, publishes a copy-on-write overlay and reconciles. Entities and service actions call it directly (`coordinator.config_coordinator`, `coordinator.device_coordinator`, `coordinator.require_protect_coordinator()`, or the Access and Carrier Fabric coordinators); never look a command up by name, fall back to an API client, mutate cached data, or refresh from an entity
+- One owner per write command (ADR-010): the coordinator that owns the data runs the call through `async_execute_command` (Access keeps `_command_error` and Carrier Fabric its conflict retry and typed errors), raises translated errors, publishes a copy-on-write overlay and reconciles. Entities and service actions call it directly (`coordinator.config_coordinator`, `coordinator.device_coordinator`, `coordinator.require_protect_coordinator()`, or the Access and Carrier Fabric coordinators); never look a command up by name, fall back to an API client, mutate cached data, or refresh from an entity
 - Raise `ConfigEntryAuthFailed` (triggers reauth) or `UpdateFailed` (retry; `DataUpdateCoordinator` automatically logs once when unavailable and once when restored, satisfying `log-when-unavailable`)
 - Use `async_config_entry_first_refresh()` for first update
 

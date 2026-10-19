@@ -1065,3 +1065,8 @@ class TestNameAndRingtoneResolution:
         assert resolve_liveview_id(liveviews, "All") == "lv2"
         with pytest.raises(ServiceValidationError):
             resolve_liveview_id(None, "All")
+
+    def test_resolve_liveview_id_matches_unnamed_by_id(self) -> None:
+        """An unnamed liveview is offered by its ID, so its ID resolves too."""
+        liveviews = {"lv3": {"id": "lv3"}, "lv2": {"name": "All"}}
+        assert resolve_liveview_id(liveviews, "lv3") == "lv3"

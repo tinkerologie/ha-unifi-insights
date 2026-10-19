@@ -87,7 +87,8 @@ def resolve_liveview_id(liveviews: Any, name: str) -> str:
     """
     items = liveviews.items() if isinstance(liveviews, dict) else ()
     for liveview_id, liveview in items:
-        if isinstance(liveview, dict) and liveview.get("name") == name:
+        # Same fallback as the options: an unnamed liveview is offered by ID.
+        if isinstance(liveview, dict) and liveview.get("name", liveview_id) == name:
             return str(liveview_id)
     msg = f"Liveview not found: {name}"
     raise ServiceValidationError(
