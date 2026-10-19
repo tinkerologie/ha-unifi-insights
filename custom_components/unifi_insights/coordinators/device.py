@@ -37,6 +37,7 @@ from custom_components.unifi_insights.data_transforms import (
 from custom_components.unifi_insights.helpers import async_get_device_entry
 
 from .base import UnifiBaseCoordinator
+from .config_sections import map_legacy_site_names
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -657,54 +658,19 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
         site_ids: list[str],
         legacy_sites: list[dict[str, Any]],
     ) -> dict[str, str]:
-        """Map integration site IDs to legacy site names used by `/api/s/{site}`."""
-        mappings: dict[str, str] = {}
+        """
+        Map integration site IDs to legacy site names used by `/api/s/{site}`.
 
-        def _match_string(value: Any) -> str | None:
-            if not isinstance(value, str):
-                return None
-            stripped = value.strip().lower()
-            return stripped or None
-
-        normalized_legacy_sites: list[tuple[str, set[str]]] = []
-        for legacy_site in legacy_sites:
-            legacy_name = legacy_site.get("name")
-            if not isinstance(legacy_name, str) or not legacy_name:
-                continue
-
-            candidates = {
-                candidate
-                for candidate in {
-                    _match_string(legacy_name),
-                    _match_string(legacy_site.get("desc")),
-                    _match_string(legacy_site.get("description")),
-                }
-                if candidate is not None
-            }
-            normalized_legacy_sites.append((legacy_name, candidates))
-
-        for site_id in site_ids:
-            site_data = self.config_coordinator.get_site(site_id) or {}
-            site_candidates = {
-                candidate
-                for candidate in {
-                    _match_string(site_id),
-                    _match_string(site_data.get("name")),
-                    _match_string(site_data.get("description")),
-                    _match_string(site_data.get("desc")),
-                }
-                if candidate is not None
-            }
-
-            for legacy_name, legacy_candidates in normalized_legacy_sites:
-                if site_candidates & legacy_candidates:
-                    mappings[site_id] = legacy_name
-                    break
-
-            if site_id not in mappings and len(normalized_legacy_sites) == 1:
-                mappings[site_id] = normalized_legacy_sites[0][0]
-
-        return mappings
+        Uses the config coordinator's single mapping rule
+        (``config_sections.map_legacy_site_names``) so the two can never drift.
+        """
+        return map_legacy_site_names(
+            {
+                site_id: self.config_coordinator.get_site(site_id) or {}
+                for site_id in site_ids
+            },
+            legacy_sites,
+        )
 
     async def _process_device(
         self,

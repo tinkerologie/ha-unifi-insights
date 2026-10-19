@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.exceptions import HomeAssistantError
 from pydantic import ValidationError
 from unifi_official_api import (
     UniFiAuthenticationError,
@@ -19,7 +20,11 @@ from unifi_official_api import (
 )
 from unifi_official_api.validation import sanitized_validation_fields
 
-from custom_components.unifi_insights.const import CONF_SITE_IDS, SCAN_INTERVAL_CONFIG
+from custom_components.unifi_insights.const import (
+    CONF_SITE_IDS,
+    DOMAIN,
+    SCAN_INTERVAL_CONFIG,
+)
 
 from .base import UnifiBaseCoordinator
 from .config_sections import (
@@ -125,6 +130,10 @@ class UnifiConfigCoordinator(UnifiBaseCoordinator):
             "internet_activity": {},
             "internet_activity_unavailable": set(),
             "rule_changes": {},
+            # Integration site ID -> classic site name, published for every
+            # owner that needs it (ADR-010). Last-good on lookup failure.
+            "legacy_site_names": {},
+            "legacy_mapping_failed": False,
         }
         self._rule_audit = RuleAuditTracker()
         self.available_sites: dict[str, str] = {}
@@ -320,6 +329,8 @@ class UnifiConfigCoordinator(UnifiBaseCoordinator):
                     client_links={},
                     internet_activity={},
                     internet_activity_unavailable=set(),
+                    legacy_site_names={},
+                    legacy_mapping_failed=False,
                     last_update=datetime.now(tz=UTC),
                 )
                 self._update_rule_changes({})
@@ -352,6 +363,19 @@ class UnifiConfigCoordinator(UnifiBaseCoordinator):
                 _LOGGER.debug(
                     "Config coordinator: Unable to fetch legacy site mapping: %s", err
                 )
+            # The section fetches below use only this cycle's mapping (empty
+            # after a failed lookup); the published mapping keeps the last
+            # good names of the still-selected sites for command owners and
+            # device telemetry.
+            published_legacy_site_names = (
+                {
+                    site_id: name
+                    for site_id, name in self.data.get("legacy_site_names", {}).items()
+                    if site_id in sites
+                }
+                if legacy_mapping_failed
+                else dict(legacy_site_names)
+            )
 
             wifi_by_site: dict[str, dict[str, Any]] = {}
             firewall_by_site: dict[str, dict[str, Any]] = {}
@@ -469,6 +493,8 @@ class UnifiConfigCoordinator(UnifiBaseCoordinator):
                 **rule_sections_by_site,
                 site_vpns=site_vpns_by_site,
                 client_links=client_links_by_site,
+                legacy_site_names=published_legacy_site_names,
+                legacy_mapping_failed=legacy_mapping_failed,
             )
             for section, site_id in self._failed_sections - failed_sections:
                 _LOGGER.info(
@@ -530,6 +556,32 @@ class UnifiConfigCoordinator(UnifiBaseCoordinator):
         sites = self.data.get("sites", {})
         result = sites.get(site_id)
         return result if isinstance(result, dict) else None
+
+    def resolve_legacy_site_name(self, site_id: str, *, verified_only: bool) -> str:
+        """
+        Return the classic site name for an integration site ID.
+
+        The single legacy site-name rule (ADR-010), in a fixed order: the
+        site's verified ``internalReference``, then (unless ``verified_only``)
+        the published ``legacy_site_names`` mapping, then a translated
+        ``legacy_site_not_found`` error. It never guesses ``"default"``; a
+        real ``"default"`` from either source is returned as is.
+
+        ``verified_only`` is for writes that must not land on a fuzzy match,
+        such as the rule families, historical clients and batch forget.
+        """
+        site_name = verified_legacy_site_name(self.get_site(site_id))
+        if site_name is None and not verified_only:
+            mapped = self.data.get("legacy_site_names", {}).get(site_id)
+            if isinstance(mapped, str) and mapped.strip():
+                site_name = mapped
+        if site_name is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="legacy_site_not_found",
+                translation_placeholders={"site_id": site_id},
+            )
+        return site_name
 
     def _filter_selected_sites(
         self, sites: dict[str, dict[str, Any]]
