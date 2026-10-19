@@ -210,7 +210,7 @@ This integration uses the following identifiers consistently:
 - `console_identity.py` — Console identity resolution and namespace normalization
 - `probe.py` — Service availability probing (Network, Protect, Access, InnerSpace, Carrier Fabric)
 - `entity.py` — Core base entity classes (`UnifiInsightsEntity`, `UnifiProtectEntity`) and field helpers (`get_field`, `first_not_none`)
-- Specialized entity modules: `access_entity.py`, `carrier_fabric_entity.py`, `carrier_fabric_sensor.py`, `innerspace_entity.py`, `mobility_entity.py`, `protect_security_entity.py`, `storage_entity.py`, `site_internet_activity_sensor.py`, `voucher_sensor.py`, `network_rule_switch.py`, `network_rule_audit_event.py`
+- Every entity lives in its platform module (`sensor.py`, `binary_sensor.py`, `switch.py`, ...), in one section per data source; every base entity lives in `entity.py` (ADR-007, ADR-011)
 - `data_transforms.py` & `innerspace_transforms.py` — API response to internal data mapping
 - `services.py` & `services.yaml` — Service action implementations and schema definitions
 - `websocket_api.py`, `topology.py`, `dashboard_snapshots.py`, `frontend.py` — WebSocket commands, card snapshot builders and Lovelace card bundle registration
@@ -236,7 +236,7 @@ This integration uses the following identifiers consistently:
 **Code organization principles:**
 
 - Keep files focused (200-400 lines per file where practical)
-- Split large domain features into dedicated modules (e.g., `storage_entity.py`, `mobility_entity.py`) when needed
+- Add a new feature on an existing platform as a new `EntityDescription` table and class in that platform module, not as a new module (ADR-007)
 
 ### Multi-Coordinator Architecture
 
@@ -299,7 +299,7 @@ The integration supports three connection modes:
 
 ### Entity Base Classes
 
-Primary base classes in `entity.py` (plus domain-specific bases in `access_entity.py`, `innerspace_entity.py`, `mobility_entity.py`, `carrier_fabric_entity.py`):
+All base classes live in `entity.py` (`UnifiAccessEntity`, `UnifiInnerSpaceEntity`, `UnifiMobilityRouterEntity`, `UnifiCarrierFabricEntity` and `UnifiSiteEntity` beside the two below):
 
 - **`UnifiInsightsEntity`** — Network devices; availability gated on `coordinator.device_available` and `is_device_online(device_data)`
 - **`UnifiProtectEntity`** — Protect devices; availability gated on `coordinator.protect_available` and `state == "CONNECTED"`

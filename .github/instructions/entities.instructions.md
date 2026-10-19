@@ -1,5 +1,5 @@
 ---
-applyTo: "custom_components/unifi_insights/alarm_control_panel.py, custom_components/unifi_insights/binary_sensor.py, custom_components/unifi_insights/button.py, custom_components/unifi_insights/camera.py, custom_components/unifi_insights/cover.py, custom_components/unifi_insights/device_tracker.py, custom_components/unifi_insights/event.py, custom_components/unifi_insights/image.py, custom_components/unifi_insights/light.py, custom_components/unifi_insights/lock.py, custom_components/unifi_insights/media_player.py, custom_components/unifi_insights/number.py, custom_components/unifi_insights/select.py, custom_components/unifi_insights/sensor.py, custom_components/unifi_insights/siren.py, custom_components/unifi_insights/switch.py, custom_components/unifi_insights/update.py, custom_components/unifi_insights/entity.py, custom_components/unifi_insights/access_entity.py, custom_components/unifi_insights/carrier_fabric_entity.py, custom_components/unifi_insights/carrier_fabric_sensor.py, custom_components/unifi_insights/innerspace_entity.py, custom_components/unifi_insights/mobility_entity.py, custom_components/unifi_insights/network_rule_audit_event.py, custom_components/unifi_insights/network_rule_switch.py, custom_components/unifi_insights/protect_security_entity.py, custom_components/unifi_insights/site_internet_activity_sensor.py, custom_components/unifi_insights/storage_entity.py, custom_components/unifi_insights/voucher_sensor.py"
+applyTo: "custom_components/unifi_insights/alarm_control_panel.py, custom_components/unifi_insights/binary_sensor.py, custom_components/unifi_insights/button.py, custom_components/unifi_insights/camera.py, custom_components/unifi_insights/cover.py, custom_components/unifi_insights/device_tracker.py, custom_components/unifi_insights/event.py, custom_components/unifi_insights/image.py, custom_components/unifi_insights/light.py, custom_components/unifi_insights/lock.py, custom_components/unifi_insights/media_player.py, custom_components/unifi_insights/number.py, custom_components/unifi_insights/select.py, custom_components/unifi_insights/sensor.py, custom_components/unifi_insights/siren.py, custom_components/unifi_insights/switch.py, custom_components/unifi_insights/update.py, custom_components/unifi_insights/entity.py"
 ---
 
 # Entity Instructions
@@ -10,10 +10,11 @@ applyTo: "custom_components/unifi_insights/alarm_control_panel.py, custom_compon
 
 - **`UnifiInsightsEntity`** (`entity.py`) — Network devices; availability via `is_device_online` helper.
 - **`UnifiProtectEntity`** (`entity.py`) — Protect devices; availability via `state == CONNECTED`.
-- **`UnifiAccessEntity` / `UnifiAccessDoorEntity`** (`access_entity.py`) — UniFi Access doors, readers, and hubs.
-- **`UnifiInnerSpaceEntity`** (`innerspace_entity.py`) — UniFi InnerSpace floor plans and spatial sensors.
-- **`UnifiCarrierFabricEntity` / `UnifiCarrierFabricSubscriberEntity`** (`carrier_fabric_entity.py`) — UniFi Carrier Fabric OLTs, ONUs, and subscribers.
-- **Specialized Entity Mixins/Helpers:** `mobility_entity.py`, `protect_security_entity.py`, `storage_entity.py`, `site_internet_activity_sensor.py`, `voucher_sensor.py`, `network_rule_switch.py`, `network_rule_audit_event.py`.
+- **`UnifiAccessEntity` / `UnifiAccessDoorEntity`** (`entity.py`) — UniFi Access doors, readers, and hubs.
+- **`UnifiInnerSpaceEntity`** (`entity.py`) — UniFi InnerSpace floor plans and spatial sensors.
+- **`UnifiCarrierFabricEntity` / `UnifiCarrierFabricSubscriberEntity`** (`entity.py`) — UniFi Carrier Fabric OLTs, ONUs, and subscribers.
+- **`UnifiMobilityRouterEntity`** (`entity.py`) — UniFi Mobility routers, grouped under their workspace device.
+- **`UnifiSiteEntity`** (`entity.py`) — Site-level entities (vouchers, client counts, internet activity, network rules, rule change events), grouped under the site's gateway or site device. Each subclass decides availability.
 
 All base classes handle camelCase/snake_case field mapping via `get_field()` and `first_not_none()` (`data_transforms.py`).
 

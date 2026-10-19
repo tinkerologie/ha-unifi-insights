@@ -7,7 +7,7 @@
 
 ADR-007 moves every entity into its standard platform module and sets a budget of about 2,000 lines for every module. ADR-009 amended it for the deepening issues #337, #338 and #339. After those issues landed, the #341 design review measured the moves again on `main`:
 
-- **`sensor.py` cannot fit the budget.** It is already 2,200 lines. The seven sensor satellites (vouchers, site internet activity, Carrier Fabric, InnerSpace, storage, Protect security and Mobility) add about 1,450 lines of sensor code. Unifying the same-shape site and Protect sensor classes and moving pure value functions into `data_transforms.py` brings the merged module to about 3,250 lines, not under 2,000. ADR-007 forbids splitting it into satellites.
+- **`sensor.py` cannot fit the budget.** It is already 2,200 lines. The seven sensor satellites (vouchers, site internet activity, Carrier Fabric, InnerSpace, storage, Protect security and Mobility) add about 1,450 lines of sensor code. Unifying the same-shape site and Protect sensor classes and moving pure value functions into `data_transforms.py` was estimated to bring the merged module to about 3,250 lines; after the merge it is 3,724 lines, so well over 2,000 either way. ADR-007 forbids splitting it into satellites.
 - **Every other merge fits.** Estimated sizes: `binary_sensor.py` about 1,450 lines, `switch.py` about 1,300 after the rule switch and outlet unification, `entity.py` about 950, `data_transforms.py` about 1,400, `dashboard_snapshots.py` about 950 and `topology.py` about 800.
 - **`async_get_device_entry()` cannot live in `entity.py`.** ADR-007 sends it there, but `coordinators/device.py`, `coordinators/protect.py` and `coordinators/innerspace.py` call it, and `entity.py` imports the coordinators. Putting it in `entity.py` creates an import cycle.
 - **`data_transforms.py` and Home Assistant imports.** ADR-009 says `data_transforms.py` stays free of Home Assistant imports so that coordinators and dashboard builders can use it. `coordinators/voucher_state.py`, which ADR-007 merges into it, uses `homeassistant.util.dt` to parse and compare timestamps. That module imports nothing from the integration and cannot create a cycle.
@@ -44,7 +44,7 @@ Amend ADR-007 and ADR-009 as follows. Everything else in them is unchanged.
 ### Option D: Exempt platform modules and bound them by role (chosen)
 
 - Pros: matches Home Assistant's file structure and Core practice. Every sensor is in `sensor.py`. The role bound (descriptions, classes and setup only, one section per source) keeps logic out of platform files.
-- Cons: `sensor.py` is about 3,250 lines.
+- Cons: `sensor.py` is about 3,700 lines.
 
 ## Consequences
 

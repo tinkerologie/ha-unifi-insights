@@ -15,13 +15,12 @@ custom_components/unifi_insights/
 ├── console_identity.py         # Stable console identity, site entity identity migration, device registry lookups
 ├── probe.py                    # Capability probing (Network, Protect, Access, InnerSpace, Carrier Fabric)
 ├── const.py                    # Domain, intervals, config keys, attribute names
-├── entity.py                   # UnifiInsightsEntity, UnifiProtectEntity, get_field(), first_not_none()
-├── *_entity.py                 # Per-feature base entities (access, innerspace, mobility, carrier_fabric)
-├── *_sensor.py, storage_entity.py, protect_security_entity.py, network_rule_*.py
-│                               # Feature-specific entity satellites (merged into platforms by ADR-007)
+├── entity.py                   # Every base entity (network, Protect, Access, InnerSpace, Mobility router,
+│                               # Carrier Fabric, site) and the shared discovery helpers
 ├── <platform>.py               # 17 platforms: alarm_control_panel, binary_sensor, button, camera, cover,
 │                               # device_tracker, event, image, light, lock, media_player, number, select,
-│                               # sensor, siren, switch, update
+│                               # sensor, siren, switch, update. Each holds every entity of its platform,
+│                               # in one section per data source (ADR-007, ADR-011)
 ├── data_transforms.py          # Pure transforms: field and MAC primitives, network device read model,
 │                               # LED level, NVR storage telemetry, voucher state, port labels
 ├── innerspace_transforms.py    # InnerSpace floor plan and MAC correlation transforms
@@ -139,8 +138,10 @@ Stored in `entry.runtime_data`. Carrier Fabric entries use a separate `CarrierFa
 CoordinatorEntity[UnifiInsightsFacadeCoordinator]
   ├── UnifiInsightsEntity           # Network devices; available when coordinator.device_available
   │                                 # and the published online fact is "online"
-  └── UnifiProtectEntity            # Protect devices; available when coordinator.protect_available
-                                    # and state == "CONNECTED"
+  ├── UnifiProtectEntity            # Protect devices; available when coordinator.protect_available
+  │                                 # and state == "CONNECTED"
+  └── UnifiSiteEntity               # One site, under its gateway or site device; each subclass
+                                    # decides availability
 CoordinatorEntity[UnifiInsightsAccessCoordinator]
   └── UnifiAccessEntity → UnifiAccessDoorEntity
 CoordinatorEntity[UnifiInsightsFacadeCoordinator]
@@ -151,7 +152,7 @@ CoordinatorEntity[UnifiInsightsCarrierFabricCoordinator]
   └── UnifiCarrierFabricEntity → UnifiCarrierFabricSubscriberEntity
 ```
 
-Platform entities use the MRO `UnifiInsightsEntity, SensorEntity` (custom base first). Static metadata lives in frozen, keyword-only `EntityDescription` dataclasses. Field access goes through `get_field()` (camelCase and snake_case tolerant) and `first_not_none()` (keeps legitimate `0` and `False`).
+All base classes live in `entity.py`. Platform entities use the MRO `UnifiInsightsEntity, SensorEntity` (custom base first). Same-shape entities share one class driven by its description: `UnifiInsightsNetworkRuleSwitch` serves all seven network rule families (firewall policies, policy-based routes, VPN clients, port forwards, traffic rules, NAT rules, static routes), `UnifiOutletSwitch` the outlet relay and power-cycle switches, and `UnifiProtectSensor` / `UnifiProtectBinarySensor` every Protect device, NVRs and security devices included. Static metadata lives in frozen, keyword-only `EntityDescription` dataclasses. Field access goes through `get_field()` (camelCase and snake_case tolerant) and `first_not_none()` (keeps legitimate `0` and `False`).
 
 ### Config flow
 

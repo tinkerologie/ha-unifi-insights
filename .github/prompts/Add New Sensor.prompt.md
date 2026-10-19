@@ -6,7 +6,7 @@ description: "Add a new sensor entity to the UniFi Insights integration"
 
 # Add New Sensor
 
-Your goal is to add a new sensor entity to the UniFi Insights integration (`sensor.py`, `carrier_fabric_sensor.py`, `site_internet_activity_sensor.py`, or `voucher_sensor.py`).
+Your goal is to add a new sensor entity to the UniFi Insights integration (`sensor.py`, in the section for its data source).
 
 If not provided, ask for:
 
