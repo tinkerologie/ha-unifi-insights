@@ -1,6 +1,8 @@
 # Copyright 2026 UniFi Insights contributors
 """Sample library response data for testing."""
 
+from unifi_official_api.network.models.device import Device
+
 # Network API responses
 SAMPLE_SITE = {
     "id": "default",
@@ -80,6 +82,69 @@ SAMPLE_PDU_LEGACY_DEVICE = {
         },
     ],
 }
+
+# --- Network device read model (#337) ---
+#
+# Constructed (not a capture): a switch in the compatibility snake_case shape
+# (``mac``, ``status``, ``firmware_version``, ``site_id``) that older code
+# paths and hand-written test data use.
+SAMPLE_NETWORK_DEVICE = {
+    "id": "network_device_1",
+    "mac": "00:11:22:33:44:66",
+    "model": "USW Pro 24 PoE",
+    "name": "Core Switch",
+    "status": "online",
+    "adopted": True,
+    "features": ["switching"],
+    "firmware_version": "7.1.26",
+    "site": "default",
+    "site_id": "default",
+}
+
+# Built from issue evidence, not a verbatim capture. The live UDM Pro on #337
+# (diagnostics, 2026-10-17) reported model "UDM Pro", no v1 ``type``,
+# ``features: ["switching"]``, a list-shaped ``interfaces`` and, with the
+# legacy fetch failing, no legacy block. Those values are as reported; the id,
+# MAC, IP, firmware and the interface names (the spec's overview enum) are
+# placeholders. This is the raw v1 overview item; SAMPLE_UDM_PRO_OVERVIEW is
+# what the coordinator stores from it (``model_dump(by_alias=True)``, which
+# adds ``type: None`` and an empty ``ports``).
+SAMPLE_UDM_PRO_OVERVIEW_API = {
+    "id": "00000000-0000-4000-8000-0000000000d1",
+    "macAddress": "aa:bb:cc:00:00:d1",
+    "ipAddress": "192.168.1.1",
+    "name": "UDM-Pro",
+    "model": "UDM Pro",
+    "state": "ONLINE",
+    "supported": True,
+    "firmwareVersion": "4.3.6",
+    "firmwareUpdatable": False,
+    "features": ["switching"],
+    "interfaces": ["ports"],
+}
+SAMPLE_UDM_PRO_OVERVIEW = Device.model_validate(SAMPLE_UDM_PRO_OVERVIEW_API).model_dump(
+    by_alias=True
+)
+
+# Built from issue evidence, not a verbatim capture. The key set is the one
+# the live UDM Pro on #337 reported (2026-10-17), minus the keys the
+# coordinator adds itself (clients, poe_*, port_*); ``uplink`` carries only
+# txRateBps/rxRateBps there. The two rates are the first same-moment v1
+# sample of the UDM Pro SE on #337 (2026-10-19), in bits/s. Every other value
+# is a placeholder.
+SAMPLE_UDM_PRO_STATS = {
+    "uptimeSec": 864000,
+    "lastHeartbeatAt": "2026-10-17T12:00:00Z",
+    "nextHeartbeatAt": "2026-10-17T12:00:10Z",
+    "loadAverage1Min": 0.42,
+    "loadAverage5Min": 0.38,
+    "loadAverage15Min": 0.35,
+    "cpuUtilizationPct": 12.5,
+    "memoryUtilizationPct": 63.2,
+    "uplink": {"txRateBps": 93688, "rxRateBps": 144528},
+    "interfaces": {"radios": []},
+}
+
 
 # Protect API responses
 SAMPLE_USL_ENTRY_SENSOR = {

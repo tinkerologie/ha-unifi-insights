@@ -26,41 +26,12 @@ from .const import (
     MANUFACTURER,
 )
 from .coordinators import UnifiFacadeCoordinator
+
+# Re-exported (see __all__): the platforms import the field helpers from here.
+from .data_transforms import first_not_none, get_field
 from .innerspace_entity import UnifiInnerSpaceEntity
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def get_field(data: dict[str, Any], *keys: str, default: Any = None) -> Any:
-    """
-    Get a field from data using multiple possible key names.
-
-    Handles both camelCase and snake_case field names from different API versions.
-    Skips keys whose value is None so that fallback keys are still checked.
-    """
-    for key in keys:
-        if key in data and data[key] is not None:
-            return data[key]
-    return default
-
-
-def first_not_none(*values: Any, default: Any = None) -> Any:
-    """
-    Return the first value that is not None.
-
-    This is the value-level companion to `get_field`'s key-level None-skip:
-    `get_field` already skips a candidate *key* whose value is None, but
-    callers that then chain the resulting *values* together with `or` are
-    falsy-based, not None-based, and `or` silently discards a legitimate
-    `0` (or `False`/`""`) in favour of the next candidate. Use this helper
-    wherever multiple candidate values for a numeric measurement or counter
-    (rate, power, bytes, temperature, percentage, count) are combined, so a
-    real `0` reading is preserved instead of being coerced into `None`.
-    """
-    for value in values:
-        if value is not None:
-            return value
-    return default
 
 
 def device_has_feature(device_data: dict[str, Any], *features_to_match: str) -> bool:
@@ -579,6 +550,7 @@ __all__ = [
     "UnifiInsightsEntity",
     "UnifiProtectEntity",
     "camera_supports_speaker",
+    "first_not_none",
     "get_field",
     "is_device_online",
 ]

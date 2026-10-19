@@ -257,6 +257,9 @@ def _mac_key(value: Any) -> str | None:
     builds lookup keys from raw API values. Here the input is whatever a user
     typed in an action call, so ``aa:bb``, ``AA-BB`` and ``aabb`` must all
     compare equal.
+
+    Identity policy: user-input matching. It does not validate the length or
+    hex digits; the canonical ``data_transforms.normalize_mac`` does.
     """
     if not isinstance(value, str):
         return None

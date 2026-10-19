@@ -52,6 +52,7 @@ from .const import (
     MANUFACTURER,
 )
 from .coordinators import UnifiFacadeCoordinator
+from .data_transforms import bytes_to_bits_per_second
 from .entity import (
     UnifiInsightsEntity,
     UnifiProtectEntity,
@@ -160,9 +161,7 @@ def bytes_to_megabits(bytes_per_sec: float | None) -> float | None:
 
 def bytes_to_bits(bytes_per_sec: float | None) -> float | None:
     """Convert bytes per second to bits per second."""
-    if bytes_per_sec is None:
-        return None
-    return bytes_per_sec * 8
+    return bytes_to_bits_per_second(bytes_per_sec)
 
 
 def _uplink_rate_bps(stats: dict[str, Any], *keys: str) -> Any:

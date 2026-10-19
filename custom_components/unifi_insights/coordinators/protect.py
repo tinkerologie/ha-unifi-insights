@@ -45,6 +45,7 @@ from custom_components.unifi_insights.const import (
     MODEL_KEY_LINKSTATION,
     SCAN_INTERVAL_PROTECT,
 )
+from custom_components.unifi_insights.data_transforms import get_field
 from custom_components.unifi_insights.helpers import async_get_device_entry
 
 from .base import UnifiBaseCoordinator
@@ -2635,10 +2636,7 @@ class UnifiProtectCoordinator(UnifiBaseCoordinator):
     @staticmethod
     def _get_field(data: dict[str, Any], *keys: str, default: Any = None) -> Any:
         """Get a field from data using multiple possible key names."""
-        for key in keys:
-            if key in data and data[key] is not None:
-                return data[key]
-        return default
+        return get_field(data, *keys, default=default)
 
     async def _fetch_nvr(self) -> None:
         """Fetch NVR data."""

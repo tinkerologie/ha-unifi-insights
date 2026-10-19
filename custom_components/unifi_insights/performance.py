@@ -4,10 +4,10 @@
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from .dashboard_contract_utils import as_dict, content_revision
+from .data_transforms import bytes_to_bits_per_second
 from .topology_contract import (
     device_kind,
     device_state,
@@ -19,15 +19,8 @@ from .topology_contract import (
 # Keep conversion in one place and reuse in snapshots.
 def bytes_per_second_to_bits_per_second(value: Any) -> int | None:
     """Convert bytes/s to bits/s while preserving explicit zero values."""
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):  # fmt: skip
-        return None
-    if not math.isfinite(numeric):
-        return None
-    return int(numeric * 8)
+    bits = bytes_to_bits_per_second(value)
+    return int(bits) if bits is not None else None
 
 
 def _metric_rate(stats: dict[str, Any], direction: str) -> int | None:

@@ -7,17 +7,19 @@ The TypedDicts here are the payload the topology WebSocket commands send, and
 the helpers are the per-field normalisers the graph builder runs every device,
 client and port through: MAC parsing, opaque node ids, device kind and state,
 display and site names, link medium, client connection and port details.
-Like ``topology``, this module is pure (no I/O, no Home Assistant or
-integration imports), so ``coordinators/config.py`` can use
-``normalize_mac`` without an import cycle.
+Like ``topology``, this module is pure (no I/O, no Home Assistant imports).
+Its only integration import is the equally pure ``data_transforms``, which
+owns the shared field and MAC primitives, so ``coordinators/config.py`` can
+use ``normalize_mac`` without an import cycle.
 """
 
 from __future__ import annotations
 
 import hashlib
 import hmac
-import re
 from typing import TYPE_CHECKING, Any, Final, Literal, NotRequired, TypedDict
+
+from .data_transforms import get_field, normalize_mac
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -114,27 +116,11 @@ class SiteTopology(TypedDict):
 _GATEWAY_LEGACY_TYPES: Final = frozenset({"udm", "uxg", "ugw", "udr", "ucg"})
 _ONLINE_STATES: Final = frozenset({"ONLINE", "CONNECTED", "UP"})
 _OFFLINE_STATES: Final = frozenset({"OFFLINE", "DISCONNECTED", "DOWN"})
-_MAC_RE: Final = re.compile(r"[0-9a-f]{2}(?:[:-]?[0-9a-f]{2}){5}")
 
 
 def first_present(data: Mapping[str, Any], *keys: str) -> Any:
     """Return the first non-None value among ``keys`` (get_field semantics)."""
-    for key in keys:
-        value = data.get(key)
-        if value is not None:
-            return value
-    return None
-
-
-def normalize_mac(value: Any) -> str | None:
-    """Return ``value`` as a lower-case colon MAC, or None if it is not one."""
-    if not isinstance(value, str):
-        return None
-    candidate = value.strip().lower()
-    if not _MAC_RE.fullmatch(candidate):
-        return None
-    digits = candidate.replace(":", "").replace("-", "")
-    return ":".join(digits[index : index + 2] for index in range(0, 12, 2))
+    return get_field(data, *keys)
 
 
 def opaque_node_id(prefix: str, key: bytes, raw_id: str) -> str:

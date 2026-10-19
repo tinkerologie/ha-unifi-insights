@@ -46,7 +46,14 @@ def is_console_device(dev_data: dict[str, Any]) -> bool:
 
 
 def normalize_mac(mac: Any) -> str | None:
-    """Return a MAC in the one form stored as a console id, or None."""
+    """
+    Return a MAC in the one form stored as a console id, or None.
+
+    Identity policy: persisted console ids (config entry unique IDs). It only
+    lowercases and turns dashes into colons, without validating, and must not
+    change or existing entries stop matching. It is deliberately not the
+    canonical ``data_transforms.normalize_mac``.
+    """
     if not isinstance(mac, str) or not mac:
         return None
     return mac.lower().replace("-", ":")

@@ -26,7 +26,13 @@ _VALID_HEX = frozenset("0123456789abcdef")
 
 
 def _normalize_innerspace_mac(mac: Any) -> str | None:
-    """Normalize a MAC address to lowercase colon-separated form (aa:bb:cc:dd:ee:ff)."""
+    """
+    Normalize a MAC address to lowercase colon-separated form (aa:bb:cc:dd:ee:ff).
+
+    Identity policy: InnerSpace correlation. Unlike the canonical
+    ``data_transforms.normalize_mac`` it also accepts dotted (``aabb.ccdd.eeff``)
+    and mixed separators, because InnerSpace records spell MACs that way.
+    """
     if not isinstance(mac, str):
         return None
     cleaned = mac.strip().lower().replace("-", "").replace(":", "").replace(".", "")

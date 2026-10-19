@@ -11,6 +11,8 @@ from typing import Any, Final
 
 from homeassistant.util import dt as dt_util
 
+from custom_components.unifi_insights.data_transforms import get_field
+
 TIME_LIMIT_MINUTES_RANGE: Final = (1, 1_000_000)  # spec timeLimitMinutes
 GUEST_LIMIT_MIN: Final = 1  # spec authorizedGuestLimit (no spec max)
 DATA_LIMIT_MBYTES_RANGE: Final = (1, 1_048_576)  # spec dataUsageLimitMBytes
@@ -173,16 +175,8 @@ def parse_timestamp(value: object) -> datetime | None:
 
 
 def _field(record: Mapping[str, Any], *keys: str) -> Any:
-    """
-    Return the first non-None value among keys in record, or None.
-
-    Duplicated locally from data_transforms.get_field to avoid import cycle
-    with entity/coordinators.
-    """
-    for key in keys:
-        if key in record and record[key] is not None:
-            return record[key]
-    return None
+    """Return the first non-None value among keys in record, or None."""
+    return get_field(record, *keys)
 
 
 def is_voucher_active(record: Mapping[str, Any], now: datetime) -> bool:
