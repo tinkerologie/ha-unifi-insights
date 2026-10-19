@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import logging
-from copy import deepcopy
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -58,6 +57,7 @@ from custom_components.unifi_insights.switch import (
     _prune_orphaned_switch_entities,
     async_setup_entry,
 )
+from tests.fixtures.command_owners import autospec_command_owners
 
 
 class TestParallelUpdates:
@@ -74,7 +74,7 @@ class TestAsyncSetupEntry:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
@@ -340,7 +340,7 @@ class TestPruneOrphanedSwitchEntities:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Coordinator with all three collections populated and available."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.config_available = True
         coordinator.firewall_available = MagicMock(return_value=True)
         coordinator.port_forwards_available = MagicMock(return_value=True)
@@ -601,7 +601,7 @@ class TestPruneOrphanedSwitchEntities:
         """The prune runs once during setup, after the first discovery pass
         -- not on every coordinator update (dynamic discovery fires on every
         tick; re-running the prune there would be wasted work at best)."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = None
         coordinator.config_available = True
         coordinator.firewall_available = MagicMock(return_value=True)
@@ -740,7 +740,7 @@ class TestUnifiClientBlockSwitch:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.network_client = MagicMock()
         coordinator.network_client.clients = MagicMock()
         coordinator.network_client.clients.block = AsyncMock()
@@ -863,10 +863,9 @@ class TestUnifiClientBlockSwitch:
 
         await switch.async_turn_on()
 
-        mock_coordinator.async_unblock_client.assert_called_once_with(
-            "site1", "client1"
-        )
-        mock_coordinator.async_request_refresh.assert_called_once()
+        device = mock_coordinator.device_coordinator
+        device.async_unblock_client.assert_awaited_once_with("site1", "client1")
+        mock_coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_turn_off_blocks_client(self, mock_coordinator) -> None:
@@ -879,8 +878,9 @@ class TestUnifiClientBlockSwitch:
 
         await switch.async_turn_off()
 
-        mock_coordinator.async_block_client.assert_called_once_with("site1", "client1")
-        mock_coordinator.async_request_refresh.assert_called_once()
+        device = mock_coordinator.device_coordinator
+        device.async_block_client.assert_awaited_once_with("site1", "client1")
+        mock_coordinator.async_request_refresh.assert_not_awaited()
 
 
 class TestUnifiWifiSwitch:
@@ -889,7 +889,7 @@ class TestUnifiWifiSwitch:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.network_client = MagicMock()
         coordinator.network_client.wifi = MagicMock()
         coordinator.network_client.wifi.update = AsyncMock()
@@ -1020,10 +1020,12 @@ class TestUnifiWifiSwitch:
 
         await switch.async_turn_on()
 
-        mock_coordinator.network_client.wifi.update.assert_called_once_with(
+        config = mock_coordinator.config_coordinator
+        config.async_update_wifi_network.assert_awaited_once_with(
             "site1", "wifi1", enabled=True
         )
-        mock_coordinator.async_request_refresh.assert_called_once()
+        mock_coordinator.network_client.wifi.update.assert_not_called()
+        mock_coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_turn_off_disables_wifi(self, mock_coordinator) -> None:
@@ -1039,10 +1041,12 @@ class TestUnifiWifiSwitch:
 
         await switch.async_turn_off()
 
-        mock_coordinator.network_client.wifi.update.assert_called_once_with(
+        config = mock_coordinator.config_coordinator
+        config.async_update_wifi_network.assert_awaited_once_with(
             "site1", "wifi1", enabled=False
         )
-        mock_coordinator.async_request_refresh.assert_called_once()
+        mock_coordinator.network_client.wifi.update.assert_not_called()
+        mock_coordinator.async_request_refresh.assert_not_awaited()
 
     def test_available_when_wifi_data_exists(self, mock_coordinator) -> None:
         """Test switch is available when WiFi data exists."""
@@ -1078,7 +1082,7 @@ class TestUnifiFirewallRuleSwitch:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator with firewall rules."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.network_client = MagicMock()
         coordinator.network_client.firewall = MagicMock()
         coordinator.network_client.firewall.update_rule = AsyncMock()
@@ -1215,14 +1219,13 @@ class TestUnifiFirewallRuleSwitch:
 
         await switch.async_turn_on()
 
-        mock_coordinator.network_client.firewall.update_rule.assert_called_once_with(
+        config = mock_coordinator.config_coordinator
+        config.async_set_firewall_rule_enabled.assert_awaited_once_with(
             "site1", "rule1", enabled=True
         )
-        assert (
-            mock_coordinator.data["firewall_rules"]["site1"]["rule1"]["enabled"] is True
-        )
-        switch.async_write_ha_state.assert_called_once()
-        mock_coordinator.async_request_refresh.assert_called_once()
+        mock_coordinator.network_client.firewall.update_rule.assert_not_called()
+        switch.async_write_ha_state.assert_not_called()
+        mock_coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_turn_off_updates_rule(self, mock_coordinator) -> None:
@@ -1236,15 +1239,13 @@ class TestUnifiFirewallRuleSwitch:
 
         await switch.async_turn_off()
 
-        mock_coordinator.network_client.firewall.update_rule.assert_called_once_with(
+        config = mock_coordinator.config_coordinator
+        config.async_set_firewall_rule_enabled.assert_awaited_once_with(
             "site1", "rule1", enabled=False
         )
-        assert (
-            mock_coordinator.data["firewall_rules"]["site1"]["rule1"]["enabled"]
-            is False
-        )
-        switch.async_write_ha_state.assert_called_once()
-        mock_coordinator.async_request_refresh.assert_called_once()
+        mock_coordinator.network_client.firewall.update_rule.assert_not_called()
+        switch.async_write_ha_state.assert_not_called()
+        mock_coordinator.async_request_refresh.assert_not_awaited()
 
     def test_fallback_device_info_without_gateway(self, mock_coordinator) -> None:
         """Test fallback device registry entry when no gateway device is found."""
@@ -1263,9 +1264,10 @@ class TestUnifiFirewallRuleSwitch:
 
     @pytest.mark.asyncio
     async def test_turn_on_error_does_not_write_state(self, mock_coordinator) -> None:
-        """Test firewall update failures do not write optimistic state."""
-        mock_coordinator.network_client.firewall.update_rule.side_effect = Exception(
-            "API error"
+        """Test firewall update failures propagate without writing state."""
+        config = mock_coordinator.config_coordinator
+        config.async_set_firewall_rule_enabled.side_effect = HomeAssistantError(
+            "Unable to update firewall rule rule1"
         )
         mock_coordinator.data["firewall_rules"]["site1"]["rule1"]["enabled"] = False
 
@@ -1285,19 +1287,6 @@ class TestUnifiFirewallRuleSwitch:
             is False
         )
 
-    def test_update_local_state_rule_not_dict(
-        self, mock_coordinator: MagicMock
-    ) -> None:
-        """Test _update_local_state when rule data is absent or not a dict."""
-        switch = UnifiFirewallRuleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            rule_id="nonexistent_rule",
-        )
-        original_data = deepcopy(mock_coordinator.data)
-        switch._update_local_state(enabled=False)
-        assert mock_coordinator.data == original_data
-
 
 class TestAsyncSetupEntryFirewallRules:
     """Tests firewall rule discovery in switch platform setup."""
@@ -1305,7 +1294,7 @@ class TestAsyncSetupEntryFirewallRules:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator with firewall rule data."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = None
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
@@ -1420,11 +1409,10 @@ class TestUnifiPolicyBasedRouteSwitch:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator with policy-based routes."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.network_client = MagicMock()
         coordinator.network_client.routes = MagicMock()
         coordinator.network_client.routes.update_route = AsyncMock()
-        coordinator.resolve_legacy_site_name = MagicMock(return_value="default")
         coordinator.async_request_refresh = AsyncMock()
         coordinator.data = {
             "sites": {"site1": {"id": "site1", "name": "Default"}},
@@ -1737,15 +1725,13 @@ class TestUnifiPolicyBasedRouteSwitch:
 
         await switch.async_turn_on()
 
-        mock_coordinator.network_client.routes.update_route.assert_called_once_with(
-            "default", "route1", enabled=True
+        config = mock_coordinator.config_coordinator
+        config.async_set_policy_based_route_enabled.assert_awaited_once_with(
+            "site1", "route1", enabled=True
         )
-        assert (
-            mock_coordinator.data["policy_based_routes"]["site1"]["route1"]["enabled"]
-            is True
-        )
-        switch.async_write_ha_state.assert_called_once()
-        mock_coordinator.async_request_refresh.assert_called_once()
+        mock_coordinator.network_client.routes.update_route.assert_not_called()
+        switch.async_write_ha_state.assert_not_called()
+        mock_coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_turn_off_updates_route(self, mock_coordinator: MagicMock) -> None:
@@ -1759,37 +1745,13 @@ class TestUnifiPolicyBasedRouteSwitch:
 
         await switch.async_turn_off()
 
-        mock_coordinator.network_client.routes.update_route.assert_called_once_with(
-            "default", "route1", enabled=False
+        config = mock_coordinator.config_coordinator
+        config.async_set_policy_based_route_enabled.assert_awaited_once_with(
+            "site1", "route1", enabled=False
         )
-        assert (
-            mock_coordinator.data["policy_based_routes"]["site1"]["route1"]["enabled"]
-            is False
-        )
-        switch.async_write_ha_state.assert_called_once()
-        mock_coordinator.async_request_refresh.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_turn_on_fallback_uses_resolved_site_name(
-        self, mock_coordinator: MagicMock
-    ) -> None:
-        """Test the fallback path resolves the real site name on multi-site."""
-        mock_coordinator.resolve_legacy_site_name = MagicMock(return_value="mysite")
-        mock_coordinator.data["policy_based_routes"]["site1"]["route1"]["enabled"] = (
-            False
-        )
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="route1",
-        )
-        switch.async_write_ha_state = MagicMock()
-
-        await switch.async_turn_on()
-
-        mock_coordinator.network_client.routes.update_route.assert_called_once_with(
-            "mysite", "route1", enabled=True
-        )
+        mock_coordinator.network_client.routes.update_route.assert_not_called()
+        switch.async_write_ha_state.assert_not_called()
+        mock_coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_turn_off_warns_when_kill_switch_enabled(
@@ -1851,8 +1813,9 @@ class TestUnifiPolicyBasedRouteSwitch:
         self, mock_coordinator: MagicMock
     ) -> None:
         """Test route update failures do not write optimistic state."""
-        mock_coordinator.network_client.routes.update_route.side_effect = Exception(
-            "API error"
+        config = mock_coordinator.config_coordinator
+        config.async_set_policy_based_route_enabled.side_effect = HomeAssistantError(
+            "Unable to update policy-based route route1"
         )
         mock_coordinator.data["policy_based_routes"]["site1"]["route1"]["enabled"] = (
             False
@@ -1881,8 +1844,9 @@ class TestUnifiPolicyBasedRouteSwitch:
         self, mock_coordinator: MagicMock
     ) -> None:
         """Test route disable failures do not write optimistic state."""
-        mock_coordinator.network_client.routes.update_route.side_effect = Exception(
-            "API error"
+        config = mock_coordinator.config_coordinator
+        config.async_set_policy_based_route_enabled.side_effect = HomeAssistantError(
+            "Unable to update policy-based route route1"
         )
         mock_coordinator.data["policy_based_routes"]["site1"]["route1"]["enabled"] = (
             True
@@ -1921,19 +1885,6 @@ class TestUnifiPolicyBasedRouteSwitch:
         assert entity.translation_key == "policy_based_route_unnamed"
         assert entity.translation_placeholders == {"route_id": "route_unnamed"}
 
-    def test_update_local_state_route_not_dict(
-        self, mock_coordinator: MagicMock
-    ) -> None:
-        """Test _update_local_state when route data is absent or not a dict."""
-        switch = UnifiPolicyBasedRouteSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            route_id="nonexistent_route",
-        )
-        original_data = deepcopy(mock_coordinator.data)
-        switch._update_local_state(enabled=False)
-        assert mock_coordinator.data == original_data
-
 
 class TestAsyncSetupEntryPolicyBasedRoutes:
     """Tests policy-based route discovery in switch platform setup."""
@@ -1941,13 +1892,12 @@ class TestAsyncSetupEntryPolicyBasedRoutes:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator with policy-based route data."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = None
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
         coordinator.network_client.routes = MagicMock()
         coordinator.network_client.routes.update_route = AsyncMock()
-        coordinator.resolve_legacy_site_name = MagicMock(return_value="default")
         coordinator.data = {
             "sites": {"site1": {"id": "site1", "name": "Default"}},
             "devices": {},
@@ -2048,13 +1998,12 @@ class TestUnifiVpnClientSwitch:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator with VPN client data."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = None
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
         coordinator.network_client.vpn_clients = MagicMock()
         coordinator.network_client.vpn_clients.update_vpn_client = AsyncMock()
-        coordinator.resolve_legacy_site_name = MagicMock(return_value="default")
         coordinator.async_request_refresh = AsyncMock()
         coordinator.data = {
             "sites": {"site1": {"id": "site1", "name": "Default"}},
@@ -2191,11 +2140,13 @@ class TestUnifiVpnClientSwitch:
 
         await switch.async_turn_on()
 
-        mock_update = mock_coordinator.network_client.vpn_clients.update_vpn_client
-        mock_update.assert_called_once_with("default", "vpn1", enabled=True)
-        assert mock_coordinator.data["vpn_clients"]["site1"]["vpn1"]["enabled"] is True
-        switch.async_write_ha_state.assert_called_once()
-        mock_coordinator.async_request_refresh.assert_called_once()
+        config = mock_coordinator.config_coordinator
+        config.async_set_vpn_client_enabled.assert_awaited_once_with(
+            "site1", "vpn1", enabled=True
+        )
+        mock_coordinator.network_client.vpn_clients.update_vpn_client.assert_not_called()
+        switch.async_write_ha_state.assert_not_called()
+        mock_coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_turn_off_updates_vpn_client(
@@ -2211,31 +2162,13 @@ class TestUnifiVpnClientSwitch:
 
         await switch.async_turn_off()
 
-        mock_update = mock_coordinator.network_client.vpn_clients.update_vpn_client
-        mock_update.assert_called_once_with("default", "vpn1", enabled=False)
-        assert mock_coordinator.data["vpn_clients"]["site1"]["vpn1"]["enabled"] is False
-        switch.async_write_ha_state.assert_called_once()
-        mock_coordinator.async_request_refresh.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_turn_on_fallback_uses_resolved_site_name(
-        self, mock_coordinator: MagicMock
-    ) -> None:
-        """Test the fallback path resolves the real site name on multi-site."""
-        mock_coordinator.resolve_legacy_site_name = MagicMock(return_value="mysite")
-        mock_coordinator.data["vpn_clients"]["site1"]["vpn1"]["enabled"] = False
-        switch = UnifiVpnClientSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            client_id="vpn1",
+        config = mock_coordinator.config_coordinator
+        config.async_set_vpn_client_enabled.assert_awaited_once_with(
+            "site1", "vpn1", enabled=False
         )
-        switch.async_write_ha_state = MagicMock()
-
-        await switch.async_turn_on()
-
-        mock_update = mock_coordinator.network_client.vpn_clients.update_vpn_client
-        mock_update.assert_called_once_with("mysite", "vpn1", enabled=True)
-        mock_coordinator.async_request_refresh.assert_called_once()
+        mock_coordinator.network_client.vpn_clients.update_vpn_client.assert_not_called()
+        switch.async_write_ha_state.assert_not_called()
+        mock_coordinator.async_request_refresh.assert_not_awaited()
 
     def test_fallback_device_info_without_gateway(
         self, mock_coordinator: MagicMock
@@ -2259,8 +2192,9 @@ class TestUnifiVpnClientSwitch:
         self, mock_coordinator: MagicMock
     ) -> None:
         """Test VPN client update failures do not write optimistic state."""
-        mock_coordinator.network_client.vpn_clients.update_vpn_client.side_effect = (
-            Exception("API error")
+        config = mock_coordinator.config_coordinator
+        config.async_set_vpn_client_enabled.side_effect = HomeAssistantError(
+            "Unable to update VPN client vpn1"
         )
         mock_coordinator.data["vpn_clients"]["site1"]["vpn1"]["enabled"] = False
 
@@ -2282,8 +2216,9 @@ class TestUnifiVpnClientSwitch:
         self, mock_coordinator: MagicMock
     ) -> None:
         """Test VPN client disable failures do not write optimistic state."""
-        mock_coordinator.network_client.vpn_clients.update_vpn_client.side_effect = (
-            Exception("API error")
+        config = mock_coordinator.config_coordinator
+        config.async_set_vpn_client_enabled.side_effect = HomeAssistantError(
+            "Unable to update VPN client vpn1"
         )
         mock_coordinator.data["vpn_clients"]["site1"]["vpn1"]["enabled"] = True
 
@@ -2312,19 +2247,6 @@ class TestUnifiVpnClientSwitch:
         )
         assert entity.translation_key == "vpn_client_unnamed"
 
-    def test_update_local_state_client_not_in_site(
-        self, mock_coordinator: MagicMock
-    ) -> None:
-        """Test _update_local_state when client_id is not in site_vpn_clients."""
-        switch = UnifiVpnClientSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            client_id="nonexistent_vpn",
-        )
-        original_data = deepcopy(mock_coordinator.data)
-        switch._update_local_state(enabled=False)
-        assert mock_coordinator.data == original_data
-
 
 class TestAsyncSetupEntryVpnClients:
     """Tests VPN client discovery in switch platform setup."""
@@ -2332,13 +2254,12 @@ class TestAsyncSetupEntryVpnClients:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator with VPN client data."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = None
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
         coordinator.network_client.vpn_clients = MagicMock()
         coordinator.network_client.vpn_clients.update_vpn_client = AsyncMock()
-        coordinator.resolve_legacy_site_name = MagicMock(return_value="default")
         coordinator.async_request_refresh = AsyncMock()
         coordinator.data = {
             "sites": {"site1": {"id": "site1", "name": "Default"}},
@@ -2511,7 +2432,7 @@ class TestUnifiProtectStatusLightSwitch:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
         coordinator.protect_client.base_url = "https://192.168.1.1"
         coordinator.protect_client.cameras = MagicMock()
@@ -2689,7 +2610,7 @@ class TestUnifiProtectHighFPSSwitch:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
         coordinator.protect_client.base_url = "https://192.168.1.1"
         coordinator.protect_client.cameras = MagicMock()
@@ -2868,7 +2789,7 @@ class TestAsyncSetupEntryWithNewSwitches:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
@@ -2960,7 +2881,7 @@ class TestAsyncSetupEntryEdgeCases:
     @pytest.mark.asyncio
     async def test_camera_with_high_fps_capability(self, hass) -> None:
         """Test High FPS switch created for cameras with hasHighFpsCapability."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
@@ -3008,7 +2929,7 @@ class TestAsyncSetupEntryEdgeCases:
     @pytest.mark.asyncio
     async def test_camera_without_high_fps_capability(self, hass) -> None:
         """Test no High FPS switch for cameras without hasHighFpsCapability."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
@@ -3056,7 +2977,7 @@ class TestAsyncSetupEntryEdgeCases:
     @pytest.mark.asyncio
     async def test_camera_with_feature_flags_not_dict(self, hass) -> None:
         """Test camera with featureFlags not being a dict."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
@@ -3104,7 +3025,7 @@ class TestAsyncSetupEntryEdgeCases:
     @pytest.mark.asyncio
     async def test_client_name_fallback_to_hostname(self, hass) -> None:
         """Test client name fallback from name to hostname (line 163)."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = None
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
@@ -3152,7 +3073,7 @@ class TestAsyncSetupEntryEdgeCases:
     @pytest.mark.asyncio
     async def test_client_name_fallback_to_mac(self, hass) -> None:
         """Test client name fallback from name/hostname to mac (lines 163-166)."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = None
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
@@ -3198,7 +3119,7 @@ class TestAsyncSetupEntryEdgeCases:
     @pytest.mark.asyncio
     async def test_wifi_name_fallback_to_ssid(self, hass) -> None:
         """Test WiFi name fallback from name to ssid (lines 182-183)."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = None
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
@@ -3249,7 +3170,7 @@ class TestUnifiClientBlockSwitchEdgeCases:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator with client."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.network_client = MagicMock()
         coordinator.network_client.clients = MagicMock()
         coordinator.network_client.clients.block = AsyncMock()
@@ -3287,8 +3208,9 @@ class TestUnifiClientBlockSwitchEdgeCases:
     @pytest.mark.asyncio
     async def test_turn_on_handles_error(self, mock_coordinator) -> None:
         """Test async_turn_on handles errors gracefully (lines 863-864)."""
-        mock_coordinator.async_unblock_client = AsyncMock(
-            side_effect=Exception("API Error")
+        device = mock_coordinator.device_coordinator
+        device.async_unblock_client.side_effect = HomeAssistantError(
+            "Unable to unblock client client1"
         )
 
         switch = UnifiClientBlockSwitch(
@@ -3297,16 +3219,17 @@ class TestUnifiClientBlockSwitchEdgeCases:
             client_id="client1",
         )
 
-        with pytest.raises(HomeAssistantError, match="Unable to allow client"):
+        with pytest.raises(HomeAssistantError, match="Unable to unblock client"):
             await switch.async_turn_on()
 
-        mock_coordinator.async_unblock_client.assert_called_once()
+        device.async_unblock_client.assert_awaited_once_with("site1", "client1")
 
     @pytest.mark.asyncio
     async def test_turn_off_handles_error(self, mock_coordinator) -> None:
         """Test async_turn_off handles errors gracefully (lines 884-885)."""
-        mock_coordinator.async_block_client = AsyncMock(
-            side_effect=Exception("API Error")
+        device = mock_coordinator.device_coordinator
+        device.async_block_client.side_effect = HomeAssistantError(
+            "Unable to block client client1"
         )
 
         switch = UnifiClientBlockSwitch(
@@ -3318,7 +3241,7 @@ class TestUnifiClientBlockSwitchEdgeCases:
         with pytest.raises(HomeAssistantError, match="Unable to block client"):
             await switch.async_turn_off()
 
-        mock_coordinator.async_block_client.assert_called_once()
+        device.async_block_client.assert_awaited_once_with("site1", "client1")
 
 
 class TestUnifiWifiSwitchEdgeCases:
@@ -3327,7 +3250,7 @@ class TestUnifiWifiSwitchEdgeCases:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator with WiFi."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.network_client = MagicMock()
         coordinator.network_client.wifi = MagicMock()
         coordinator.network_client.wifi.update = AsyncMock()
@@ -3365,8 +3288,9 @@ class TestUnifiWifiSwitchEdgeCases:
     @pytest.mark.asyncio
     async def test_turn_on_handles_error(self, mock_coordinator) -> None:
         """Test async_turn_on handles errors gracefully (lines 975-976)."""
-        mock_coordinator.network_client.wifi.update = AsyncMock(
-            side_effect=Exception("API Error")
+        config = mock_coordinator.config_coordinator
+        config.async_update_wifi_network.side_effect = HomeAssistantError(
+            "Unable to update WiFi network wifi1"
         )
 
         switch = UnifiWifiSwitch(
@@ -3376,16 +3300,19 @@ class TestUnifiWifiSwitchEdgeCases:
             wifi_data=mock_coordinator.data["wifi"]["site1"]["wifi1"],
         )
 
-        with pytest.raises(HomeAssistantError, match="Unable to enable WiFi"):
+        with pytest.raises(HomeAssistantError, match="Unable to update WiFi"):
             await switch.async_turn_on()
 
-        mock_coordinator.network_client.wifi.update.assert_called_once()
+        config.async_update_wifi_network.assert_awaited_once_with(
+            "site1", "wifi1", enabled=True
+        )
 
     @pytest.mark.asyncio
     async def test_turn_off_handles_error(self, mock_coordinator) -> None:
         """Test async_turn_off handles errors gracefully (lines 1000-1001)."""
-        mock_coordinator.network_client.wifi.update = AsyncMock(
-            side_effect=Exception("API Error")
+        config = mock_coordinator.config_coordinator
+        config.async_update_wifi_network.side_effect = HomeAssistantError(
+            "Unable to update WiFi network wifi1"
         )
 
         switch = UnifiWifiSwitch(
@@ -3395,10 +3322,12 @@ class TestUnifiWifiSwitchEdgeCases:
             wifi_data=mock_coordinator.data["wifi"]["site1"]["wifi1"],
         )
 
-        with pytest.raises(HomeAssistantError, match="Unable to disable WiFi"):
+        with pytest.raises(HomeAssistantError, match="Unable to update WiFi"):
             await switch.async_turn_off()
 
-        mock_coordinator.network_client.wifi.update.assert_called_once()
+        config.async_update_wifi_network.assert_awaited_once_with(
+            "site1", "wifi1", enabled=False
+        )
 
     def test_get_wifi_data_fallback_to_initial_data(self, mock_coordinator) -> None:
         """Test _get_wifi_data falls back to initial wifi_data."""
@@ -3429,7 +3358,7 @@ class TestUnifiOutletSwitch:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator with PDU device data."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.available = True
         coordinator.device_available = True
         coordinator.data = {
@@ -3485,9 +3414,8 @@ class TestUnifiOutletSwitch:
         coordinator.network_client.devices.set_outlet_state = AsyncMock(
             return_value=True
         )
-        coordinator.async_set_outlet_state = AsyncMock(return_value=True)
+        coordinator.device_coordinator.async_set_outlet_state.return_value = True
         coordinator.async_request_refresh = AsyncMock()
-        coordinator.resolve_legacy_site_name = MagicMock(return_value="default")
         return coordinator
 
     @pytest.mark.asyncio
@@ -3612,11 +3540,11 @@ class TestUnifiOutletSwitch:
 
         await switch.async_turn_on()
 
-        mock_coordinator.async_set_outlet_state.assert_awaited_once_with(
+        mock_coordinator.device_coordinator.async_set_outlet_state.assert_awaited_once_with(
             "site1", "pdu1", 2, state=True
         )
-        mock_coordinator.async_request_refresh.assert_awaited_once()
-        assert switch.is_on is True
+        mock_coordinator.async_request_refresh.assert_not_awaited()
+        switch.async_write_ha_state.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_outlet_switch_turn_off(self, mock_coordinator) -> None:
@@ -3635,38 +3563,11 @@ class TestUnifiOutletSwitch:
 
         await switch.async_turn_off()
 
-        mock_coordinator.async_set_outlet_state.assert_awaited_once_with(
+        mock_coordinator.device_coordinator.async_set_outlet_state.assert_awaited_once_with(
             "site1", "pdu1", 1, state=False
         )
-        mock_coordinator.async_request_refresh.assert_awaited_once()
-        assert switch.is_on is False
-
-    @pytest.mark.asyncio
-    async def test_outlet_switch_turn_on_fallback(self, mock_coordinator) -> None:
-        """Test turning on uses fallback when coordinator method is not present."""
-        del mock_coordinator.async_set_outlet_state
-        outlet_data = mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][
-            1
-        ]
-        switch = UnifiOutletSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
-            outlet_index=2,
-            outlet_data=outlet_data,
-        )
-        switch.async_write_ha_state = MagicMock()
-
-        await switch.async_turn_on()
-
-        set_outlet = mock_coordinator.network_client.devices.set_outlet_state
-        set_outlet.assert_awaited_once_with(
-            "default",
-            "pdu1",
-            2,
-            state=True,
-            current_device=mock_coordinator.data["devices"]["site1"]["pdu1"],
-        )
+        mock_coordinator.async_request_refresh.assert_not_awaited()
+        switch.async_write_ha_state.assert_not_called()
 
     def test_outlet_switch_unavailable_when_device_offline(
         self, mock_coordinator
@@ -3705,14 +3606,6 @@ class TestUnifiOutletSwitch:
             "name": "Outlet 1",
         }
 
-        switch._update_local_state(relay_state=True, cycle_enabled=False)
-        assert (
-            mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][0][
-                "cycle_enabled"
-            ]
-            is False
-        )
-
         mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"] = [
             {
                 "index": 1,
@@ -3743,8 +3636,8 @@ class TestUnifiOutletSwitch:
             outlet_index=2,
             outlet_data=outlet_data,
         )
-        mock_coordinator.async_set_outlet_state.side_effect = HomeAssistantError(
-            "API Error"
+        mock_coordinator.device_coordinator.async_set_outlet_state.side_effect = (
+            HomeAssistantError("API Error")
         )
 
         with (
@@ -3753,7 +3646,7 @@ class TestUnifiOutletSwitch:
         ):
             await switch.async_turn_on()
 
-        mock_coordinator.async_set_outlet_state.assert_awaited_once_with(
+        mock_coordinator.device_coordinator.async_set_outlet_state.assert_awaited_once_with(
             "site1", "pdu1", 2, state=True
         )
         write_state.assert_not_called()
@@ -3776,8 +3669,8 @@ class TestUnifiOutletSwitch:
             outlet_index=1,
             outlet_data=outlet_data,
         )
-        mock_coordinator.async_set_outlet_state.side_effect = HomeAssistantError(
-            "API Error"
+        mock_coordinator.device_coordinator.async_set_outlet_state.side_effect = (
+            HomeAssistantError("API Error")
         )
 
         with (
@@ -3786,54 +3679,12 @@ class TestUnifiOutletSwitch:
         ):
             await switch.async_turn_off()
 
-        mock_coordinator.async_set_outlet_state.assert_awaited_once_with(
+        mock_coordinator.device_coordinator.async_set_outlet_state.assert_awaited_once_with(
             "site1", "pdu1", 1, state=False
         )
         write_state.assert_not_called()
         mock_coordinator.async_request_refresh.assert_not_awaited()
         assert switch.is_on is True
-
-    def test_outlet_switch_find_outlet_and_update_local_state_edges(
-        self, mock_coordinator
-    ) -> None:
-        """Test outlet switch branches for missing index, device, or table."""
-        switch = UnifiOutletSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
-            outlet_index=1,
-            outlet_data={"relay_state": True},
-        )
-
-        # 1) outlet with no index key in table -> line 1573->1567
-        mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"] = [
-            {"name": "No Index Outlet"}
-        ]
-        assert switch._get_outlet_data() is None
-
-        # 2) device not in site_devices -> line 1591->exit
-        mock_coordinator.data["devices"]["site1"].pop("pdu1", None)
-        switch._update_local_state(relay_state=True)
-
-        # 3) outlet_table not a list -> line 1593->exit
-        mock_coordinator.data["devices"]["site1"]["pdu1"] = {"outlet_table": None}
-        switch._update_local_state(relay_state=True)
-
-        # 4) outlet in table has no index key (1600->1594)
-        # and cycle_enabled updated without relay_state (1603->1605)
-        mock_coordinator.data["devices"]["site1"]["pdu1"] = {
-            "outlet_table": [
-                {"name": "No Index"},
-                {"index": 1, "relay_state": True, "cycle_enabled": False},
-            ]
-        }
-        switch._update_local_state(cycle_enabled=True)
-        assert (
-            mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][1][
-                "cycle_enabled"
-            ]
-            is True
-        )
 
 
 class TestUnifiOutletCycleSwitch:
@@ -3842,7 +3693,7 @@ class TestUnifiOutletCycleSwitch:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator with PDU device data."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.available = True
         coordinator.device_available = True
         coordinator.data = {
@@ -3879,9 +3730,8 @@ class TestUnifiOutletCycleSwitch:
         coordinator.network_client.devices.set_outlet_state = AsyncMock(
             return_value=True
         )
-        coordinator.async_set_outlet_state = AsyncMock(return_value=True)
+        coordinator.device_coordinator.async_set_outlet_state.return_value = True
         coordinator.async_request_refresh = AsyncMock()
-        coordinator.resolve_legacy_site_name = MagicMock(return_value="default")
         return coordinator
 
     def test_cycle_switch_properties(self, mock_coordinator) -> None:
@@ -3939,11 +3789,11 @@ class TestUnifiOutletCycleSwitch:
 
         await switch.async_turn_on()
 
-        mock_coordinator.async_set_outlet_state.assert_awaited_once_with(
+        mock_coordinator.device_coordinator.async_set_outlet_state.assert_awaited_once_with(
             "site1", "pdu1", 2, state=False, cycle_enabled=True
         )
-        mock_coordinator.async_request_refresh.assert_awaited_once()
-        assert switch.is_on is True
+        mock_coordinator.async_request_refresh.assert_not_awaited()
+        switch.async_write_ha_state.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cycle_switch_turn_off(self, mock_coordinator) -> None:
@@ -3962,39 +3812,11 @@ class TestUnifiOutletCycleSwitch:
 
         await switch.async_turn_off()
 
-        mock_coordinator.async_set_outlet_state.assert_awaited_once_with(
+        mock_coordinator.device_coordinator.async_set_outlet_state.assert_awaited_once_with(
             "site1", "pdu1", 1, state=True, cycle_enabled=False
         )
-        mock_coordinator.async_request_refresh.assert_awaited_once()
-        assert switch.is_on is False
-
-    @pytest.mark.asyncio
-    async def test_cycle_switch_fallback(self, mock_coordinator) -> None:
-        """Test fallback when coordinator action is absent."""
-        del mock_coordinator.async_set_outlet_state
-        outlet_data = mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][
-            0
-        ]
-        switch = UnifiOutletCycleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
-            outlet_index=1,
-            outlet_data=outlet_data,
-        )
-        switch.async_write_ha_state = MagicMock()
-
-        await switch.async_turn_off()
-
-        set_outlet = mock_coordinator.network_client.devices.set_outlet_state
-        set_outlet.assert_awaited_once_with(
-            "default",
-            "pdu1",
-            1,
-            state=True,
-            cycle_enabled=False,
-            current_device=mock_coordinator.data["devices"]["site1"]["pdu1"],
-        )
+        mock_coordinator.async_request_refresh.assert_not_awaited()
+        switch.async_write_ha_state.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cycle_switch_does_not_default_relay_on(
@@ -4020,7 +3842,7 @@ class TestUnifiOutletCycleSwitch:
 
         await switch.async_turn_on()
 
-        mock_coordinator.async_set_outlet_state.assert_awaited_once_with(
+        mock_coordinator.device_coordinator.async_set_outlet_state.assert_awaited_once_with(
             "site1", "pdu1", 1, state=False, cycle_enabled=True
         )
 
@@ -4054,7 +3876,6 @@ class TestUnifiOutletCycleSwitch:
             }
         }
         assert switch._get_outlet_data() is None
-        switch._update_local_state(relay_state=False)
 
         # 3. Cycle switch with missing/offline data
         cycle_switch = UnifiOutletCycleSwitch(
@@ -4067,18 +3888,6 @@ class TestUnifiOutletCycleSwitch:
         assert cycle_switch._get_outlet_data() is None
         assert cycle_switch.is_on is True
         assert cycle_switch.available is False
-
-        # 4. Cycle switch update local state
-        mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"] = [
-            {"index": 1, "cycle_enabled": False}
-        ]
-        cycle_switch._update_local_state(cycle_enabled=True)
-        assert (
-            mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][0][
-                "cycle_enabled"
-            ]
-            is True
-        )
 
     def test_cycle_switch_more_edge_cases(self, mock_coordinator: MagicMock) -> None:
         """Test cycle switch edge cases for non-list table and offline state."""
@@ -4106,14 +3915,6 @@ class TestUnifiOutletCycleSwitch:
         }
         assert switch._get_outlet_data()["outlet_idx"] == 1
 
-        switch._update_local_state(cycle_enabled=False)
-        assert (
-            mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][2][
-                "cycle_enabled"
-            ]
-            is False
-        )
-
         mock_coordinator.data["devices"]["site1"]["pdu1"]["state"] = "OFFLINE"
         assert switch.available is False
 
@@ -4133,8 +3934,8 @@ class TestUnifiOutletCycleSwitch:
             outlet_index=2,
             outlet_data=outlet_data,
         )
-        mock_coordinator.async_set_outlet_state.side_effect = HomeAssistantError(
-            "API Error"
+        mock_coordinator.device_coordinator.async_set_outlet_state.side_effect = (
+            HomeAssistantError("API Error")
         )
 
         with (
@@ -4143,7 +3944,7 @@ class TestUnifiOutletCycleSwitch:
         ):
             await switch.async_turn_on()
 
-        mock_coordinator.async_set_outlet_state.assert_awaited_once_with(
+        mock_coordinator.device_coordinator.async_set_outlet_state.assert_awaited_once_with(
             "site1", "pdu1", 2, state=False, cycle_enabled=True
         )
         write_state.assert_not_called()
@@ -4166,8 +3967,8 @@ class TestUnifiOutletCycleSwitch:
             outlet_index=1,
             outlet_data=outlet_data,
         )
-        mock_coordinator.async_set_outlet_state.side_effect = HomeAssistantError(
-            "API Error"
+        mock_coordinator.device_coordinator.async_set_outlet_state.side_effect = (
+            HomeAssistantError("API Error")
         )
 
         with (
@@ -4176,54 +3977,12 @@ class TestUnifiOutletCycleSwitch:
         ):
             await switch.async_turn_off()
 
-        mock_coordinator.async_set_outlet_state.assert_awaited_once_with(
+        mock_coordinator.device_coordinator.async_set_outlet_state.assert_awaited_once_with(
             "site1", "pdu1", 1, state=True, cycle_enabled=False
         )
         write_state.assert_not_called()
         mock_coordinator.async_request_refresh.assert_not_awaited()
         assert switch.is_on is True
-
-    def test_cycle_switch_find_outlet_and_update_local_state_edges(
-        self, mock_coordinator
-    ) -> None:
-        """Test cycle switch branches for missing index, device, or table."""
-        switch = UnifiOutletCycleSwitch(
-            coordinator=mock_coordinator,
-            site_id="site1",
-            device_id="pdu1",
-            outlet_index=1,
-            outlet_data={"cycle_enabled": True},
-        )
-
-        # 1) outlet with no index key in table -> line 1783->1777
-        mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"] = [
-            {"name": "No Index Outlet"}
-        ]
-        assert switch._get_outlet_data() is None
-
-        # 2) device not in site_devices -> line 1800->exit
-        mock_coordinator.data["devices"]["site1"].pop("pdu1", None)
-        switch._update_local_state(cycle_enabled=True)
-
-        # 3) outlet_table not a list -> line 1802->exit
-        mock_coordinator.data["devices"]["site1"]["pdu1"] = {"outlet_table": "invalid"}
-        switch._update_local_state(cycle_enabled=True)
-
-        # 4) outlet in table has no index key (1809->1803)
-        # and no outlet matches index 1 (1803->exit)
-        mock_coordinator.data["devices"]["site1"]["pdu1"] = {
-            "outlet_table": [
-                {"name": "No Index"},
-                {"index": 99, "cycle_enabled": False},
-            ]
-        }
-        switch._update_local_state(cycle_enabled=True)
-        assert (
-            mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][1][
-                "cycle_enabled"
-            ]
-            is False
-        )
 
 
 class TestFindGatewayDeviceId:
@@ -4231,7 +3990,7 @@ class TestFindGatewayDeviceId:
 
     @staticmethod
     def _coordinator(devices: dict) -> MagicMock:
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.data = {"devices": {"site1": devices}}
         return coordinator
 
@@ -4255,13 +4014,13 @@ class TestFindGatewayDeviceId:
 
     def test_non_dict_site_devices(self) -> None:
         """Test when site devices is not a dict."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.data = {"devices": {"site1": None}}
         assert get_site_gateway_id(coordinator.data, "site1") is None
 
     def test_non_dict_device_entry(self) -> None:
         """Test when site devices has non-dict entry."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.data = {
             "devices": {
                 "site1": {
@@ -4279,7 +4038,7 @@ class TestProtectSwitchPatchBodies:
     @pytest.mark.asyncio
     async def test_status_light_switch_sends_spec_patch_body(self) -> None:
         """Test status light switch turn on/off sends ledSettings via facade."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         client = UniFiProtectClient(
             auth=ApiKeyAuth(api_key="test-key"),
             base_url="https://192.168.1.1",
@@ -4321,7 +4080,7 @@ class TestProtectSwitchPatchBodies:
     @pytest.mark.asyncio
     async def test_high_fps_switch_sends_spec_patch_body(self) -> None:
         """Test high FPS switch turn on/off sends videoMode via facade."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         client = UniFiProtectClient(
             auth=ApiKeyAuth(api_key="test-key"),
             base_url="https://192.168.1.1",
@@ -4374,3 +4133,27 @@ class TestGetFirewallRuleAction:
         assert _get_firewall_rule_action({"action": "ACCEPT"}) == "ACCEPT"
         assert _get_firewall_rule_action({"action": None}) is None
         assert _get_firewall_rule_action({}) is None
+
+
+@pytest.mark.parametrize("switch_cls", [UnifiOutletSwitch, UnifiOutletCycleSwitch])
+def test_outlet_lookup_skips_outlets_without_an_index(
+    switch_cls: type[UnifiOutletSwitch | UnifiOutletCycleSwitch],
+) -> None:
+    """An outlet without any index alias is skipped, not matched."""
+    coordinator = autospec_command_owners(MagicMock())
+    coordinator.data = {
+        "devices": {
+            "site1": {
+                "pdu1": {
+                    "outlet_table": [
+                        {"name": "No index"},
+                        {"outlet_idx": 2, "name": "Second"},
+                    ]
+                }
+            }
+        }
+    }
+
+    switch = switch_cls(coordinator, "site1", "pdu1", 2)
+
+    assert switch._get_outlet_data() == {"outlet_idx": 2, "name": "Second"}

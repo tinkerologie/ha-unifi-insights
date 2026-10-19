@@ -79,7 +79,6 @@ from .const import (
     VIDEO_MODE_SPORT,
 )
 from .coordinators.carrier_fabric import InvalidSubscriberIdError
-from .coordinators.device import require_power_cyclable_port
 from .coordinators.rule_audit import RULE_TYPES
 from .data_transforms import client_connection_type
 from .diagnostics import redact_network_rule_export
@@ -1849,16 +1848,16 @@ async def _async_handle_power_cycle_port(
 
     port_idx = call.data["port_idx"]
 
-    # Validate against the device's ports where poe.enabled is true
-    require_power_cyclable_port(coordinator.data, site_id, device_id, port_idx)
-
     _LOGGER.info(
         "Power-cycling PoE port %d on device %s in site %s",
         port_idx,
         device_id,
         site_id,
     )
-    await coordinator.async_power_cycle_port(site_id, device_id, port_idx)
+    # The owner checks the device's ports where poe.enabled is true first.
+    await coordinator.device_coordinator.async_power_cycle_port(
+        site_id, device_id, port_idx
+    )
 
 
 def _is_wireless_client(client_record: dict[str, Any]) -> bool:
@@ -1912,7 +1911,7 @@ async def _async_handle_reconnect_client(
             translation_placeholders={"client_id": str(client_id)},
         )
 
-    await coordinator.async_reconnect_client(site_id, client_id)
+    await coordinator.device_coordinator.async_reconnect_client(site_id, client_id)
 
 
 async def _async_handle_remove_clients(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -1937,7 +1936,9 @@ async def _async_handle_remove_clients(hass: HomeAssistant, call: ServiceCall) -
                 )
                 eligible_macs = _filter_clients_for_removal(historical_clients)
                 if eligible_macs:
-                    await coordinator.async_forget_clients_batch(site_id, eligible_macs)
+                    await coordinator.device_coordinator.async_forget_clients_batch(
+                        site_id, eligible_macs
+                    )
                     total_removed_console += len(eligible_macs)
             except HomeAssistantError as err:
                 _LOGGER.debug(
@@ -2233,7 +2234,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             raise ServiceValidationError(msg)
 
         _LOGGER.info("Restarting device %s in site %s", device_id, site_id)
-        await coordinator.async_restart_device(site_id, device_id)
+        await coordinator.device_coordinator.async_restart_device(site_id, device_id)
 
     async def async_handle_power_cycle_port(call: ServiceCall) -> None:
         """Handle the power cycle port service call."""
@@ -2590,7 +2591,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         # native client ID from the selected site's cached client records.
         client_id = _resolve_native_client_id(coordinator, site_id, client_id)
 
-        await coordinator.async_authorize_guest(site_id, client_id)
+        await coordinator.config_coordinator.async_authorize_guest(site_id, client_id)
 
     async def async_handle_reconnect_client(call: ServiceCall) -> None:
         """Handle the reconnect_client service call."""

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from homeassistant.components.switch import (
     SwitchEntity,
@@ -12,24 +12,23 @@ from homeassistant.components.switch import (
 )
 from homeassistant.const import EntityCategory
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .coordinators.config_sections import is_predefined_nat_rule, rule_display_name
-from .entity import async_call_coordinator_action, build_site_device_info
+from .coordinators.config_sections import is_predefined_nat_rule
+from .entity import build_site_device_info
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from datetime import datetime
 
-    from homeassistant.core import CALLBACK_TYPE
-
+    from .coordinators.config import UnifiConfigCoordinator
     from .coordinators.facade import UnifiFacadeCoordinator
 
-# A console that is still applying a rule change can reject the list request for a
-# few seconds (seen right after static route writes on a UDM). Seconds to wait
-# before reading the rules one more time.
-REFRESH_RETRY_DELAY = 15
+
+class RuleToggleCommand(Protocol):
+    """A config-coordinator command that enables or disables one rule."""
+
+    async def __call__(self, site_id: str, rule_id: str, *, enabled: bool) -> None:
+        """Enable or disable the rule."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -43,8 +42,7 @@ class UnifiInsightsNetworkRuleSwitchEntityDescription(
     name_field: str
     unnamed_translation_key: str
     available_fn: Callable[[UnifiFacadeCoordinator, str], bool]
-    action_method: str
-    error_label: str
+    command: Callable[[UnifiConfigCoordinator], RuleToggleCommand]
     attributes_fn: Callable[[dict[str, Any]], dict[str, Any]]
     is_hidden_fn: Callable[[dict[str, Any]], bool] | None = None
 
@@ -98,8 +96,7 @@ PORT_FORWARD_SWITCH = UnifiInsightsNetworkRuleSwitchEntityDescription(
     available_fn=lambda coordinator, site_id: coordinator.port_forwards_available(
         site_id
     ),
-    action_method="async_set_port_forward_enabled",
-    error_label="port forward",
+    command=lambda owner: owner.async_set_port_forward_enabled,
     attributes_fn=_port_forward_attributes,
 )
 
@@ -114,8 +111,7 @@ TRAFFIC_RULE_SWITCH = UnifiInsightsNetworkRuleSwitchEntityDescription(
     available_fn=lambda coordinator, site_id: coordinator.traffic_rules_available(
         site_id
     ),
-    action_method="async_set_traffic_rule_enabled",
-    error_label="traffic rule",
+    command=lambda owner: owner.async_set_traffic_rule_enabled,
     attributes_fn=_traffic_rule_attributes,
 )
 
@@ -128,8 +124,7 @@ NAT_RULE_SWITCH = UnifiInsightsNetworkRuleSwitchEntityDescription(
     unique_id_suffix="nat_rule",
     name_field="description",
     available_fn=lambda coordinator, site_id: coordinator.nat_rules_available(site_id),
-    action_method="async_set_nat_rule_enabled",
-    error_label="NAT rule",
+    command=lambda owner: owner.async_set_nat_rule_enabled,
     attributes_fn=_nat_rule_attributes,
     is_hidden_fn=is_predefined_nat_rule,
 )
@@ -148,8 +143,7 @@ STATIC_ROUTE_SWITCH = UnifiInsightsNetworkRuleSwitchEntityDescription(
     available_fn=lambda coordinator, site_id: coordinator.static_routes_available(
         site_id
     ),
-    action_method="async_set_static_route_enabled",
-    error_label="static route",
+    command=lambda owner: owner.async_set_static_route_enabled,
     attributes_fn=_static_route_attributes,
 )
 
@@ -183,7 +177,6 @@ class UnifiInsightsNetworkRuleSwitch(
         self._site_id = site_id
         self._rule_id = rule_id
         self._attr_unique_id = f"{site_id}_{rule_id}_{description.unique_id_suffix}"
-        self._cancel_refresh_retry: CALLBACK_TYPE | None = None
 
         rule_name = self._get_rule_data().get(description.name_field)
         if isinstance(rule_name, str) and rule_name.strip():
@@ -233,66 +226,10 @@ class UnifiInsightsNetworkRuleSwitch(
             **self.entity_description.attributes_fn(self._get_rule_data()),
         }
 
-    def _update_local_state(self, *, enabled: bool) -> None:
-        """Optimistically update local coordinator state for immediate UI feedback."""
-        data: Any = self.coordinator.data
-        if not isinstance(data, dict):
-            return
-        section = data.setdefault(self.entity_description.data_key, {})
-        if not isinstance(section, dict):
-            return
-        site_rules = section.setdefault(self._site_id, {})
-        if isinstance(site_rules, dict) and self._rule_id in site_rules:
-            site_rules[self._rule_id]["enabled"] = enabled
-
     async def _async_set_enabled(self, *, enabled: bool) -> None:
-        """Enable or disable the network rule."""
-        desc = self.entity_description
-        display_name = rule_display_name(
-            self._get_rule_data(), self._rule_id, desc.name_field
-        )
-        await async_call_coordinator_action(
-            self.coordinator,
-            desc.action_method,
-            f"Unable to update {desc.error_label} {display_name}",
-            self._site_id,
-            self._rule_id,
-            enabled=enabled,
-        )
-        self._update_local_state(enabled=enabled)
-        self.async_write_ha_state()
-        await self.coordinator.async_request_refresh()
-        if not desc.available_fn(self.coordinator, self._site_id):
-            self._schedule_refresh_retry()
-
-    def _schedule_refresh_retry(self) -> None:
-        """
-        Refresh once more shortly after a refresh that could not read the rules.
-
-        Without the second attempt every rule switch of the site stays
-        unavailable until the next scheduled poll, although the change itself
-        was applied.
-        """
-        self._cancel_pending_refresh_retry()
-
-        async def _async_retry(_now: datetime) -> None:
-            self._cancel_refresh_retry = None
-            await self.coordinator.async_request_refresh()
-
-        self._cancel_refresh_retry = async_call_later(
-            self.hass, REFRESH_RETRY_DELAY, _async_retry
-        )
-
-    def _cancel_pending_refresh_retry(self) -> None:
-        """Drop a refresh retry that has not run yet."""
-        if self._cancel_refresh_retry is not None:
-            self._cancel_refresh_retry()
-            self._cancel_refresh_retry = None
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Drop a pending refresh retry when the switch is removed."""
-        self._cancel_pending_refresh_retry()
-        await super().async_will_remove_from_hass()
+        """Enable or disable the network rule through its command owner."""
+        command = self.entity_description.command(self.coordinator.config_coordinator)
+        await command(self._site_id, self._rule_id, enabled=enabled)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Enable the network rule."""

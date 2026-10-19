@@ -7,7 +7,7 @@ import asyncio
 import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from .site_manager import UnifiInsightsSiteManagerCoordinator
 
 from homeassistant.core import callback
-from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 from pydantic import ValidationError
@@ -34,8 +34,6 @@ from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiError,
     UniFiGlobalAlarmManagerError,
-    UniFiNotFoundError,
-    UniFiRuleNotEditableError,
 )
 from unifi_official_api.exceptions import UniFiUnsupportedError
 from unifi_official_api.protect.talkback import (
@@ -46,15 +44,7 @@ from unifi_official_api.protect.talkback import (
 )
 from unifi_official_api.validation import sanitized_validation_fields
 
-from custom_components.unifi_insights.client_wake import (
-    WAKE_ON_LAN_DOMAIN,
-    WAKE_ON_LAN_SERVICE,
-    derive_directed_broadcast,
-    find_client_by_mac,
-    first_non_blank_text,
-    history_network_hint,
-    select_wake_history,
-)
+from custom_components.unifi_insights.client_wake import select_wake_history
 from custom_components.unifi_insights.const import CONF_CONSOLE_ID, DOMAIN
 from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
@@ -64,19 +54,12 @@ from custom_components.unifi_insights.data_transforms import (
     get_site_gateway_id,
     normalize_innerspace_snapshot,
 )
-from custom_components.unifi_insights.topology_contract import (
-    first_present,
-    normalize_mac,
-)
 
 from .base import CommandFailure, async_execute_command
-from .config_sections import rule_display_name, verified_legacy_site_name
 from .rule_export import async_build_rule_export
 from .voucher_state import VoucherSettings, refresh_latest_voucher, voucher_to_record
 
 _LOGGER = logging.getLogger(__name__)
-
-WAKE_BROADCAST_TIMEOUT_SECONDS: Final = 5
 
 
 class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -439,6 +422,25 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return get_site_gateway_id(self.data, site_id)
 
     @property
+    def config_coordinator(self) -> UnifiConfigCoordinator:
+        """Return the owner of the rule, Wi-Fi and guest commands (ADR-010)."""
+        return self._config_coordinator
+
+    @property
+    def device_coordinator(self) -> UnifiDeviceCoordinator:
+        """Return the owner of the device, outlet and client commands (ADR-010)."""
+        return self._device_coordinator
+
+    def require_protect_coordinator(self) -> UnifiProtectCoordinator:
+        """Return the owner of the Protect commands, or raise if not configured."""
+        if self._protect_coordinator is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="no_protect_coordinator",
+            )
+        return self._protect_coordinator
+
+    @property
     def available(self) -> bool:
         """Return combined availability from all sub-coordinators."""
         return (
@@ -668,289 +670,6 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             **kwargs,
         )
 
-    async def async_restart_device(self, site_id: str, device_id: str) -> bool:
-        """Restart a network device."""
-        return await self._async_execute_api_action(
-            f"Unable to restart device {device_id}",
-            self.network_client.devices.restart,
-            site_id,
-            device_id,
-        )
-
-    async def async_power_cycle_port(
-        self, site_id: str, device_id: str, port_idx: int
-    ) -> bool:
-        """Power cycle a PoE port on a network device."""
-        return await self._async_execute_api_action(
-            f"Unable to power-cycle port {port_idx} on device {device_id}",
-            self.network_client.devices.execute_port_action,
-            site_id,
-            device_id,
-            port_idx,
-            "POWER_CYCLE",
-        )
-
-    async def async_set_outlet_state(
-        self,
-        site_id: str,
-        device_id: str,
-        outlet_index: int,
-        *,
-        state: bool,
-        cycle_enabled: bool | None = None,
-    ) -> bool:
-        """Set outlet relay state and/or cycle_enabled on a PDU device."""
-        site_name = self._device_coordinator.get_legacy_site_name(site_id) or "default"
-        device_data = self.get_device(site_id, device_id) or {}
-        target_id = device_data.get("_id") or device_id
-
-        return await self._async_execute_api_action(
-            f"Unable to set outlet {outlet_index} state on device {device_id}",
-            self.network_client.devices.set_outlet_state,
-            site_name,
-            target_id,
-            outlet_index,
-            state=state,
-            cycle_enabled=cycle_enabled,
-            current_device=device_data,
-        )
-
-    async def async_set_firewall_rule_enabled(
-        self,
-        site_id: str,
-        rule_id: str,
-        *,
-        enabled: bool,
-    ) -> None:
-        """Enable or disable a firewall rule."""
-        await self._async_execute_api_action(
-            f"Unable to update firewall rule {rule_id}",
-            self.network_client.firewall.update_rule,
-            site_id,
-            rule_id,
-            enabled=enabled,
-        )
-
-    def resolve_legacy_site_name(self, site_id: str) -> str:
-        """
-        Resolve the classic site name for a facade (integration API) site id.
-
-        Falls back to ``"default"`` (the standard single-site name) when the
-        legacy site mapping has not resolved yet.
-        """
-        return self._device_coordinator.get_legacy_site_name(site_id) or "default"
-
-    async def async_set_policy_based_route_enabled(
-        self,
-        site_id: str,
-        route_id: str,
-        *,
-        enabled: bool,
-    ) -> None:
-        """Enable or disable a policy-based route (traffic route)."""
-        site_name = self.resolve_legacy_site_name(site_id)
-        await self._async_execute_api_action(
-            f"Unable to update policy-based route {route_id}",
-            self.network_client.routes.update_route,
-            site_name,
-            route_id,
-            enabled=enabled,
-        )
-
-    async def async_set_vpn_client_enabled(
-        self,
-        site_id: str,
-        client_id: str,
-        *,
-        enabled: bool,
-    ) -> None:
-        """Enable or disable a VPN client configuration."""
-        site_name = self.resolve_legacy_site_name(site_id)
-        await self._async_execute_api_action(
-            f"Unable to update VPN client {client_id}",
-            self.network_client.vpn_clients.update_vpn_client,
-            site_name,
-            client_id,
-            enabled=enabled,
-        )
-
-    async def async_set_port_forward_enabled(
-        self, site_id: str, rule_id: str, *, enabled: bool
-    ) -> None:
-        """Enable or disable a port forwarding rule."""
-        rule_data = (
-            self._config_coordinator.data.get("port_forwards", {})
-            .get(site_id, {})
-            .get(rule_id, {})
-        )
-        display_name = rule_display_name(rule_data, rule_id, "name")
-        site_name = self._require_verified_legacy_site_name(site_id)
-        try:
-            await self.network_client.port_forwards.update_port_forward(
-                site_name, rule_id, enabled=enabled
-            )
-        except UniFiNotFoundError as err:
-            _LOGGER.warning(
-                "Unable to update port forward %s: it no longer exists on the console",
-                display_name,
-            )
-            await self.async_request_refresh()
-            msg = f"Unable to update port forward {display_name}"
-            raise HomeAssistantError(
-                msg,
-                translation_domain=DOMAIN,
-                translation_key="network_rule_not_found",
-                translation_placeholders={
-                    "rule_type": "port forward",
-                    "rule_name": display_name,
-                },
-            ) from err
-        except HomeAssistantError:
-            raise
-        except Exception as err:
-            _LOGGER.exception("Unable to update port forward %s", display_name)
-            msg = f"Unable to update port forward {display_name}"
-            raise HomeAssistantError(
-                msg,
-                translation_domain=DOMAIN,
-                translation_key="network_rule_update_failed",
-                translation_placeholders={
-                    "rule_type": "port forward",
-                    "rule_name": display_name,
-                },
-            ) from err
-
-    async def async_set_traffic_rule_enabled(
-        self, site_id: str, rule_id: str, *, enabled: bool
-    ) -> None:
-        """Enable or disable a traffic rule."""
-        rule_data = (
-            self._config_coordinator.data.get("traffic_rules", {})
-            .get(site_id, {})
-            .get(rule_id, {})
-        )
-        display_name = rule_display_name(rule_data, rule_id, "description")
-        site_name = self._require_verified_legacy_site_name(site_id)
-        try:
-            await self.network_client.traffic_rules.update_traffic_rule(
-                site_name, rule_id, enabled=enabled
-            )
-        except UniFiNotFoundError as err:
-            _LOGGER.warning(
-                "Unable to update traffic rule %s: it no longer exists on the console",
-                display_name,
-            )
-            await self.async_request_refresh()
-            msg = f"Unable to update traffic rule {display_name}"
-            raise HomeAssistantError(
-                msg,
-                translation_domain=DOMAIN,
-                translation_key="network_rule_not_found",
-                translation_placeholders={
-                    "rule_type": "traffic rule",
-                    "rule_name": display_name,
-                },
-            ) from err
-        except HomeAssistantError:
-            raise
-        except Exception as err:
-            _LOGGER.exception("Unable to update traffic rule %s", display_name)
-            msg = f"Unable to update traffic rule {display_name}"
-            raise HomeAssistantError(
-                msg,
-                translation_domain=DOMAIN,
-                translation_key="network_rule_update_failed",
-                translation_placeholders={
-                    "rule_type": "traffic rule",
-                    "rule_name": display_name,
-                },
-            ) from err
-
-    async def async_set_nat_rule_enabled(
-        self, site_id: str, rule_id: str, *, enabled: bool
-    ) -> None:
-        """Enable or disable a NAT rule."""
-        await self._async_set_legacy_rule_enabled(
-            site_id,
-            rule_id,
-            enabled=enabled,
-            data_key="nat_rules",
-            name_field="description",
-            label="NAT rule",
-            update=self.network_client.nat_rules.update_nat_rule,
-        )
-
-    async def async_set_static_route_enabled(
-        self, site_id: str, rule_id: str, *, enabled: bool
-    ) -> None:
-        """Enable or disable a static route."""
-        await self._async_set_legacy_rule_enabled(
-            site_id,
-            rule_id,
-            enabled=enabled,
-            data_key="static_routes",
-            name_field="name",
-            label="static route",
-            update=self.network_client.static_routes.update_static_route,
-        )
-
-    async def _async_set_legacy_rule_enabled(
-        self,
-        site_id: str,
-        rule_id: str,
-        *,
-        enabled: bool,
-        data_key: str,
-        name_field: str,
-        label: str,
-        update: Callable[..., Awaitable[Any]],
-    ) -> None:
-        """Toggle one rule of a classic or v2 rule family by full-record PUT."""
-        rule_data = (
-            self._config_coordinator.data.get(data_key, {})
-            .get(site_id, {})
-            .get(rule_id, {})
-        )
-        display_name = rule_display_name(rule_data, rule_id, name_field)
-        site_name = self._require_verified_legacy_site_name(site_id)
-        msg = f"Unable to update {label} {display_name}"
-        try:
-            await update(site_name, rule_id, enabled=enabled)
-        except UniFiNotFoundError as err:
-            _LOGGER.warning("%s: it no longer exists on the console", msg)
-            await self.async_request_refresh()
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="network_rule_not_found",
-                translation_placeholders={
-                    "rule_type": label,
-                    "rule_name": display_name,
-                },
-            ) from err
-        except UniFiRuleNotEditableError as err:
-            _LOGGER.warning("%s: it is managed by the console", msg)
-            await self.async_request_refresh()
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="network_rule_console_managed",
-                translation_placeholders={
-                    "rule_type": label,
-                    "rule_name": display_name,
-                },
-            ) from err
-        except HomeAssistantError:
-            raise
-        except Exception as err:
-            _LOGGER.exception("%s", msg)
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="network_rule_update_failed",
-                translation_placeholders={
-                    "rule_type": label,
-                    "rule_name": display_name,
-                },
-            ) from err
-
     async def async_export_network_rules(
         self,
         site_ids: list[str] | None = None,
@@ -988,117 +707,17 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Update camera settings (alias for async_update_camera)."""
         await self.async_update_camera(camera_id, **kwargs)
 
-    def _require_verified_legacy_site_name(self, site_id: str) -> str:
-        """
-        Resolve the verified classic site name for an integration site ID.
-
-        Must resolve ONLY from the integration site's internalReference
-        in the config coordinator. Raises HomeAssistantError if missing or blank.
-        Never falls back to "default" or single-site mapping.
-        """
-        site = self._config_coordinator.get_site(site_id)
-        site_name = verified_legacy_site_name(site)
-        if not site_name:
-            msg = f"No verified classic site name found for site {site_id}"
-            raise HomeAssistantError(
-                msg,
-                translation_domain=DOMAIN,
-                translation_key="legacy_site_not_found",
-                translation_placeholders={"site_id": site_id},
-            )
-        return site_name
-
-    def _resolve_client_action_target(
-        self, site_id: str, client_id: str
-    ) -> tuple[str, str]:
-        """
-        Resolve the classic site name and client MAC for a client action.
-
-        The official Integration API has no block/unblock/reconnect/forget
-        operations, so these are issued against the classic ``cmd/stamgr``
-        endpoint, which is scoped by the classic site name and identifies the
-        client by MAC address rather than the integration client UUID.
-        """
-        clients = self.data.get("clients", {}).get(site_id, {})
-        client_data = clients.get(client_id, {}) if isinstance(clients, dict) else {}
-        mac = (
-            client_data.get("macAddress")
-            or client_data.get("mac_address")
-            or client_data.get("mac")
-        )
-        if not mac:
-            msg = f"Unable to determine MAC address for client {client_id}"
-            raise HomeAssistantError(
-                msg,
-                translation_domain=DOMAIN,
-                translation_key="client_not_resolvable",
-                translation_placeholders={"client_id": client_id},
-            )
-
-        # Fall back to "default" (the standard single-site name) when the
-        # legacy site mapping has not been resolved yet.
-        site_name = self._device_coordinator.get_legacy_site_name(site_id) or "default"
-        return site_name, mac
-
-    async def async_unblock_client(self, site_id: str, client_id: str) -> None:
-        """Unblock a network client."""
-        site_name, mac = self._resolve_client_action_target(site_id, client_id)
-        await self._async_execute_api_action(
-            f"Unable to unblock client {client_id}",
-            self.network_client.clients.unblock,
-            site_name,
-            mac,
-        )
-
-    async def async_block_client(self, site_id: str, client_id: str) -> None:
-        """Block a network client."""
-        site_name, mac = self._resolve_client_action_target(site_id, client_id)
-        await self._async_execute_api_action(
-            f"Unable to block client {client_id}",
-            self.network_client.clients.block,
-            site_name,
-            mac,
-        )
-
-    async def async_reconnect_client(self, site_id: str, client_id: str) -> None:
-        """Reconnect a network client."""
-        site_name, mac = self._resolve_client_action_target(site_id, client_id)
-        await self._async_execute_api_action(
-            f"Unable to reconnect client {client_id}",
-            self.network_client.clients.reconnect,
-            site_name,
-            mac,
-        )
-
-    async def async_forget_client(self, site_id: str, client_id: str) -> None:
-        """Forget/remove a network client."""
-        site_name, mac = self._resolve_client_action_target(site_id, client_id)
-        await self._async_execute_api_action(
-            f"Unable to forget client {client_id}",
-            self.network_client.clients.forget,
-            site_name,
-            mac,
-        )
-
     async def async_get_historical_clients(self, site_id: str) -> list[dict[str, Any]]:
         """Read historical client records for a site from the classic API."""
-        site_name = self._require_verified_legacy_site_name(site_id)
+        site_name = self._config_coordinator.resolve_legacy_site_name(
+            site_id, verified_only=True
+        )
         result = await self._async_execute_api_action(
             f"Unable to read historical clients for site {site_id}",
             self.network_client.clients.get_historical_legacy,
             site_name,
         )
         return result if isinstance(result, list) else []
-
-    async def async_forget_clients_batch(self, site_id: str, macs: list[str]) -> bool:
-        """Forget/remove a list of client MACs for a site."""
-        site_name = self._require_verified_legacy_site_name(site_id)
-        return await self._async_execute_api_action(
-            f"Unable to forget clients for site {site_id}",
-            self.network_client.clients.forget_batch,
-            site_name,
-            macs,
-        )
 
     async def async_get_wake_history(
         self, *, enabled_macs: set[str] | None = None
@@ -1114,7 +733,9 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         history: dict[str, tuple[str, str]] = {}
         for site_id in self._config_coordinator.get_site_ids():
             try:
-                site_name = self._require_verified_legacy_site_name(site_id)
+                site_name = self._config_coordinator.resolve_legacy_site_name(
+                    site_id, verified_only=True
+                )
                 records = await self.network_client.clients.get_historical_legacy(
                     site_name
                 )
@@ -1130,165 +751,6 @@ class UnifiFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ).items():
                 history.setdefault(mac, (name, str(site_id)))
         return history
-
-    def _resolve_wake_client_name(self, mac: str | None) -> str | None:
-        """Resolve a friendly client name for error messages without exposing MAC."""
-        if not mac:
-            return None
-        live = find_client_by_mac((self.data or {}).get("clients"), mac)
-        if live:
-            return first_non_blank_text(live[1], "name", "hostname")
-        return None
-
-    async def _async_derive_wake_broadcast(self, mac: str) -> str | None:
-        """
-        Return the client's subnet directed broadcast address, or None if unknown.
-
-        Never raises: any failure means "unknown", so the packet goes to the
-        default 255.255.255.255. A connected client with an IP needs one request
-        (the site's networks). Any other client also reads the classic history for
-        its last network, which makes it two.
-        """
-        live = find_client_by_mac((self.data or {}).get("clients"), mac)
-        live_site_id = live[0] if live else None
-        live_ip = (
-            first_present(live[1], "ipAddress", "ip_address", "ip") if live else None
-        )
-
-        async def _query_site(site_id: str) -> str | None:
-            try:
-                site_name = self._require_verified_legacy_site_name(site_id)
-                ip: str | None
-                network_id: str | None
-                if isinstance(live_ip, str) and live_ip:
-                    networks = await self.network_client.networks.get_legacy_all(
-                        site_name
-                    )
-                    ip, network_id = live_ip, None
-                else:
-                    networks, records = await asyncio.gather(
-                        self.network_client.networks.get_legacy_all(site_name),
-                        self.network_client.clients.get_historical_legacy(site_name),
-                    )
-                    ip, network_id = history_network_hint(records, mac)
-                return derive_directed_broadcast(networks, ip=ip, network_id=network_id)
-            except Exception:
-                _LOGGER.debug(
-                    "Wake-on-LAN: no broadcast address from site %s",
-                    site_id,
-                )
-                return None
-
-        if live_site_id:
-            return await _query_site(live_site_id)
-
-        site_ids = self._config_coordinator.get_site_ids()
-        results = await asyncio.gather(*(_query_site(s) for s in site_ids))
-        for broadcast in results:
-            if broadcast is not None:
-                return broadcast
-        return None
-
-    async def async_wake_client(
-        self, mac: str, *, client_name: str | None = None
-    ) -> None:
-        """
-        Send a Wake-on-LAN magic packet to a client through Home Assistant core.
-
-        UniFi has no wake action, so this calls ``wake_on_lan.send_magic_packet``
-        (loaded through this integration's manifest dependencies). The packet goes
-        to the client's subnet directed broadcast when UniFi data allows deriving
-        it, otherwise to the default 255.255.255.255.
-        """
-        normalized = normalize_mac(mac)
-        display_name = (
-            client_name
-            or self._resolve_wake_client_name(normalized)
-            or (f"Client {normalized}" if normalized else str(mac))
-        )
-        if normalized is None:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="wake_failed",
-                translation_placeholders={
-                    "client_name": display_name,
-                    "error": "invalid MAC address",
-                },
-            )
-
-        broadcast: str | None = None
-        if self.config_available and self.device_available:
-            try:
-                async with asyncio.timeout(WAKE_BROADCAST_TIMEOUT_SECONDS):
-                    broadcast = await self._async_derive_wake_broadcast(normalized)
-            except TimeoutError:
-                _LOGGER.debug("Wake-on-LAN: broadcast address derivation timed out")
-            except Exception:
-                _LOGGER.debug("Wake-on-LAN: broadcast address derivation failed")
-
-        service_data: dict[str, str] = {"mac": normalized}
-        if broadcast is not None:
-            service_data["broadcast_address"] = broadcast
-        try:
-            await self.hass.services.async_call(
-                WAKE_ON_LAN_DOMAIN,
-                WAKE_ON_LAN_SERVICE,
-                service_data,
-                blocking=True,
-            )
-        except ServiceNotFound as err:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="wake_on_lan_unavailable",
-            ) from err
-        except HomeAssistantError:
-            raise
-        except (OSError, ValueError) as err:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="wake_failed",
-                translation_placeholders={
-                    "client_name": display_name,
-                    "error": str(err),
-                },
-            ) from err
-        _LOGGER.debug(
-            "Sent Wake-on-LAN packet (directed broadcast: %s)", broadcast is not None
-        )
-
-    async def async_authorize_guest(self, site_id: str, client_id: str) -> None:
-        """Authorize guest access for a network client."""
-        await self._async_execute_api_action(
-            f"Unable to authorize guest client {client_id}",
-            self.network_client.clients.authorize_guest,
-            site_id,
-            client_id,
-        )
-
-    async def async_unauthorize_guest(self, site_id: str, client_id: str) -> None:
-        """Remove guest authorization for a network client."""
-        await self._async_execute_api_action(
-            f"Unable to unauthorize guest client {client_id}",
-            self.network_client.clients.unauthorize_guest,
-            site_id,
-            client_id,
-        )
-
-    async def async_update_wifi_network(
-        self,
-        site_id: str,
-        wifi_id: str,
-        *,
-        enabled: bool,
-    ) -> None:
-        """Enable or disable a WiFi network."""
-        await self._async_execute_api_action(
-            f"Unable to update WiFi network {wifi_id}",
-            self.network_client.wifi.update,
-            site_id,
-            wifi_id,
-            enabled=enabled,
-        )
 
     async def async_play_chime(self, chime_id: str) -> None:
         """Report the official API's chime playback limitation."""

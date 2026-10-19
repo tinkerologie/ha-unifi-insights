@@ -225,6 +225,20 @@ def build_seeded_owners(hass: HomeAssistant) -> SeededOwners:
     )
 
 
+def autospec_command_owners(facade: Any) -> Any:
+    """
+    Give a mock facade strict autospecs of its Network command owners.
+
+    For entity and service tests that only check the typed owner call: every
+    owner command is an ``AsyncMock`` with the real signature, so calling a
+    command that does not exist, or with arguments it does not take, fails.
+    Returns the facade for chaining.
+    """
+    facade.config_coordinator = create_autospec(UnifiConfigCoordinator, instance=True)
+    facade.device_coordinator = create_autospec(UnifiDeviceCoordinator, instance=True)
+    return facade
+
+
 async def async_refresh_owners(owners: SeededOwners) -> None:
     """Refresh the owners in setup order: config first, then the others."""
     await owners.config.async_refresh()

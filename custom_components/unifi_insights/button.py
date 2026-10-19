@@ -524,20 +524,9 @@ class UnifiInsightsButton(UnifiInsightsEntity, ButtonEntity):
             self._site_id,
         )
 
-        success = await async_call_coordinator_action(
-            self.coordinator,
-            "async_restart_device",
-            f"Unable to restart device {self._device_id}",
-            self._site_id,
-            self._device_id,
-            fallback_factory=lambda: self.coordinator.network_client.devices.restart(
-                self._site_id,
-                self._device_id,
-            ),
+        await self.coordinator.device_coordinator.async_restart_device(
+            self._site_id, self._device_id
         )
-        if not success:
-            msg = "Unable to restart device"
-            raise HomeAssistantError(msg)
 
         _LOGGER.info(
             "Successfully initiated restart for device %s in site %s",
@@ -599,24 +588,8 @@ class UnifiInsightsPoePowerCycleButton(UnifiInsightsEntity, ButtonEntity):
             self._port_idx,
             self._device_id,
         )
-        err_msg = (
-            f"Unable to power cycle PoE port {self._port_idx} on device"
-            f" {self._device_id}"
-        )
-        devices_api = self.coordinator.network_client.devices
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_power_cycle_port",
-            err_msg,
-            self._site_id,
-            self._device_id,
-            self._port_idx,
-            fallback_factory=lambda: devices_api.execute_port_action(
-                self._site_id,
-                self._device_id,
-                self._port_idx,
-                "POWER_CYCLE",
-            ),
+        await self.coordinator.device_coordinator.async_power_cycle_port(
+            self._site_id, self._device_id, self._port_idx
         )
 
 
@@ -742,12 +715,8 @@ class UnifiClientReconnectButton(
             "Reconnecting client %s in site %s", self._client_id, self._site_id
         )
 
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_reconnect_client",
-            f"Unable to reconnect client {self._client_id}",
-            self._site_id,
-            self._client_id,
+        await self.coordinator.device_coordinator.async_reconnect_client(
+            self._site_id, self._client_id
         )
         _LOGGER.info(
             "Successfully reconnected client %s in site %s",
@@ -817,12 +786,8 @@ class UnifiClientWakeButton(CoordinatorEntity[UnifiFacadeCoordinator], ButtonEnt
     async def async_press(self) -> None:
         """Send the Wake-on-LAN magic packet."""
         _LOGGER.debug("Sending Wake-on-LAN packet from a Wake button")
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_wake_client",
-            f"Unable to wake client {self._client_name}",
-            self._mac,
-            client_name=self._client_name,
+        await self.coordinator.device_coordinator.async_wake_client(
+            self._mac, client_name=self._client_name
         )
 
 

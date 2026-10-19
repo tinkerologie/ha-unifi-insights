@@ -3,16 +3,12 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from homeassistant.const import EntityCategory
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
-from unifi_official_api.exceptions import UniFiConnectionError
 from unifi_official_api.network.models import NatRule, StaticRoute
 
 from custom_components.unifi_insights.const import DOMAIN
@@ -20,7 +16,6 @@ from custom_components.unifi_insights.network_rule_switch import (
     NAT_RULE_SWITCH,
     NETWORK_RULE_SWITCH_TYPES,
     PORT_FORWARD_SWITCH,
-    REFRESH_RETRY_DELAY,
     STATIC_ROUTE_SWITCH,
     TRAFFIC_RULE_SWITCH,
     UnifiInsightsNetworkRuleSwitch,
@@ -28,6 +23,7 @@ from custom_components.unifi_insights.network_rule_switch import (
     discover_network_rule_switches,
 )
 from custom_components.unifi_insights.switch import async_setup_entry
+from tests.fixtures.command_owners import autospec_command_owners
 from tests.fixtures.network_rule_responses import (
     nat_rule_record,
     port_forward_record,
@@ -334,81 +330,56 @@ def test_traffic_rule_attributes(mock_coordinator: MagicMock) -> None:
 )
 @pytest.mark.parametrize("turn_on", [True, False])
 @pytest.mark.asyncio
-async def test_turn_on_off_calls_facade_then_refreshes(
+async def test_turn_on_off_calls_the_config_owner(
     mock_coordinator: MagicMock,
     desc: UnifiInsightsNetworkRuleSwitchEntityDescription,
     rule_id: str,
     method_name: str,
     turn_on: bool,  # noqa: FBT001
 ) -> None:
-    """turn_on / turn_off invokes facade method, updates local state and refreshes."""
-    setattr(mock_coordinator, method_name, AsyncMock())
+    """turn_on / turn_off await the typed config-owner command and nothing else."""
+    autospec_command_owners(mock_coordinator)
     mock_coordinator.async_request_refresh = AsyncMock()
-
     if desc.data_key not in mock_coordinator.data:
         mock_coordinator.data[desc.data_key] = {"site1": {rule_id: {"enabled": True}}}
-
     mock_coordinator.data[desc.data_key]["site1"][rule_id]["enabled"] = not turn_on
 
     switch = UnifiInsightsNetworkRuleSwitch(mock_coordinator, desc, "site1", rule_id)
-    switch.async_write_ha_state = MagicMock()
 
     if turn_on:
         await switch.async_turn_on()
     else:
         await switch.async_turn_off()
 
-    handler = getattr(mock_coordinator, method_name)
+    handler = getattr(mock_coordinator.config_coordinator, method_name)
     handler.assert_awaited_once_with("site1", rule_id, enabled=turn_on)
-    assert mock_coordinator.data[desc.data_key]["site1"][rule_id]["enabled"] is turn_on
-    switch.async_write_ha_state.assert_called_once()
-    mock_coordinator.async_request_refresh.assert_awaited_once()
+    # The owner publishes the overlay and refreshes; the entity does neither.
+    assert (
+        mock_coordinator.data[desc.data_key]["site1"][rule_id]["enabled"] is not turn_on
+    )
+    mock_coordinator.async_request_refresh.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_turn_on_failure_raises_and_keeps_state(
+async def test_turn_on_failure_propagates_the_owner_error(
     mock_coordinator: MagicMock,
 ) -> None:
-    """Facade failure raises HomeAssistantError without state change or refresh."""
-    err_msg = "Connection failed"
-    mock_coordinator.async_set_port_forward_enabled = AsyncMock(
-        side_effect=UniFiConnectionError(err_msg)
+    """The owner's translated error reaches the caller unchanged."""
+    autospec_command_owners(mock_coordinator)
+    error = HomeAssistantError(
+        translation_domain=DOMAIN, translation_key="network_rule_update_failed"
     )
-    mock_coordinator.async_request_refresh = AsyncMock()
-
-    mock_coordinator.data["port_forwards"]["site1"]["pf1"]["enabled"] = False
+    mock_coordinator.config_coordinator.async_set_port_forward_enabled.side_effect = (
+        error
+    )
     switch = UnifiInsightsNetworkRuleSwitch(
         mock_coordinator, PORT_FORWARD_SWITCH, "site1", "pf1"
     )
 
-    with pytest.raises(HomeAssistantError, match="Unable to update port forward Plex"):
+    with pytest.raises(HomeAssistantError) as caught:
         await switch.async_turn_on()
 
-    assert mock_coordinator.data["port_forwards"]["site1"]["pf1"]["enabled"] is False
-    mock_coordinator.async_request_refresh.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_missing_facade_action_raises_without_fallback() -> None:
-    """Coordinator missing action method raises HomeAssistantError without fallback."""
-
-    class FakeCoordinator:
-        data: ClassVar[dict[str, Any]] = {
-            "port_forwards": {"site1": {"pf1": {"enabled": False}}}
-        }
-
-        def port_forwards_available(self, site_id: str) -> bool:
-            return True
-
-    coord = FakeCoordinator()
-    switch = UnifiInsightsNetworkRuleSwitch(
-        coord,
-        PORT_FORWARD_SWITCH,
-        "site1",
-        "pf1",  # type: ignore[arg-type]
-    )
-    with pytest.raises(HomeAssistantError, match="Unable to update port forward pf1"):
-        await switch.async_turn_on()
+    assert caught.value is error
 
 
 def test_entity_category_is_config_and_has_entity_name(
@@ -449,24 +420,6 @@ def test_get_rule_data_guards_against_non_dict_data(
     assert switch._get_rule_data() == {}
 
     mock_coordinator.data = {"port_forwards": {"site1": "not-a-dict"}}
-    assert switch._get_rule_data() == {}
-
-
-def test_update_local_state_guards_against_non_dict_data(
-    mock_coordinator: MagicMock,
-) -> None:
-    """_update_local_state handles non-dict data and missing rule cleanly."""
-    switch = UnifiInsightsNetworkRuleSwitch(
-        mock_coordinator, PORT_FORWARD_SWITCH, "site1", "pf1"
-    )
-    mock_coordinator.data = "not-a-dict"
-    switch._update_local_state(enabled=True)
-
-    mock_coordinator.data = {"port_forwards": "not-a-dict"}
-    switch._update_local_state(enabled=True)
-
-    mock_coordinator.data = {"port_forwards": {"site1": {}}}
-    switch._update_local_state(enabled=True)
     assert switch._get_rule_data() == {}
 
 
@@ -693,103 +646,3 @@ def test_rule_switch_availability_follows_its_own_section(
     for d in NETWORK_RULE_SWITCH_TYPES:
         getattr(mock_coordinator, avail_attrs[d.key]).return_value = d.key == desc.key
     assert switch.available is True
-
-
-def _static_route_switch_for_retry(
-    hass: HomeAssistant,
-    mock_coordinator: MagicMock,
-    *,
-    readable_after_write: bool,
-) -> UnifiInsightsNetworkRuleSwitch:
-    """Build a static route switch whose post-write refresh can or cannot read."""
-    mock_coordinator.async_set_static_route_enabled = AsyncMock()
-    mock_coordinator.async_request_refresh = AsyncMock()
-    mock_coordinator.static_routes_available = MagicMock(
-        return_value=readable_after_write
-    )
-    mock_coordinator.data["static_routes"] = {"site1": {"sr1": {"enabled": False}}}
-    switch = UnifiInsightsNetworkRuleSwitch(
-        mock_coordinator, STATIC_ROUTE_SWITCH, "site1", "sr1"
-    )
-    switch.hass = hass
-    switch.async_write_ha_state = MagicMock()
-    return switch
-
-
-async def _async_pass_seconds(hass: HomeAssistant, seconds: float) -> None:
-    """Move the clock forward and let due timers run."""
-    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=seconds))
-    await hass.async_block_till_done()
-
-
-@pytest.mark.asyncio
-async def test_write_retries_refresh_once_when_rules_cannot_be_read(
-    hass: HomeAssistant, mock_coordinator: MagicMock
-) -> None:
-    """A refresh that could not read the rules is repeated once after the delay."""
-    switch = _static_route_switch_for_retry(
-        hass, mock_coordinator, readable_after_write=False
-    )
-
-    await switch.async_turn_on()
-    assert mock_coordinator.async_request_refresh.await_count == 1
-
-    await _async_pass_seconds(hass, REFRESH_RETRY_DELAY - 1)
-    assert mock_coordinator.async_request_refresh.await_count == 1
-
-    await _async_pass_seconds(hass, REFRESH_RETRY_DELAY + 1)
-    assert mock_coordinator.async_request_refresh.await_count == 2
-
-    await _async_pass_seconds(hass, 10 * REFRESH_RETRY_DELAY)
-    assert mock_coordinator.async_request_refresh.await_count == 2
-
-
-@pytest.mark.asyncio
-async def test_write_does_not_retry_refresh_when_rules_were_read(
-    hass: HomeAssistant, mock_coordinator: MagicMock
-) -> None:
-    """A refresh that read the rules is not repeated."""
-    switch = _static_route_switch_for_retry(
-        hass, mock_coordinator, readable_after_write=True
-    )
-
-    await switch.async_turn_on()
-    await _async_pass_seconds(hass, 10 * REFRESH_RETRY_DELAY)
-
-    mock_coordinator.static_routes_available.assert_called_with("site1")
-    assert mock_coordinator.async_request_refresh.await_count == 1
-
-
-@pytest.mark.asyncio
-async def test_second_write_replaces_the_pending_refresh_retry(
-    hass: HomeAssistant, mock_coordinator: MagicMock
-) -> None:
-    """Two writes inside the delay leave one retry, not two."""
-    switch = _static_route_switch_for_retry(
-        hass, mock_coordinator, readable_after_write=False
-    )
-
-    await switch.async_turn_on()
-    await switch.async_turn_off()
-    assert mock_coordinator.async_request_refresh.await_count == 2
-
-    await _async_pass_seconds(hass, 10 * REFRESH_RETRY_DELAY)
-    assert mock_coordinator.async_request_refresh.await_count == 3
-
-
-@pytest.mark.asyncio
-async def test_removed_switch_drops_the_pending_refresh_retry(
-    hass: HomeAssistant, mock_coordinator: MagicMock
-) -> None:
-    """A switch that is removed does not refresh afterwards."""
-    switch = _static_route_switch_for_retry(
-        hass, mock_coordinator, readable_after_write=False
-    )
-
-    await switch.async_turn_on()
-    await switch.async_will_remove_from_hass()
-    await _async_pass_seconds(hass, 10 * REFRESH_RETRY_DELAY)
-    assert mock_coordinator.async_request_refresh.await_count == 1
-
-    # Removing a switch with nothing pending is a no-op.
-    await switch.async_will_remove_from_hass()

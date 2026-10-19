@@ -51,6 +51,7 @@ from custom_components.unifi_insights.services import (
     _resolve_network_device_id,
     _resolve_protect_resource_id,
 )
+from tests.fixtures.command_owners import autospec_command_owners
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -64,6 +65,12 @@ from custom_components.unifi_insights.coordinators.access import (
 )
 from custom_components.unifi_insights.coordinators.carrier_fabric import (
     UnifiCarrierFabricCoordinator,
+)
+from custom_components.unifi_insights.coordinators.config import (
+    UnifiConfigCoordinator,
+)
+from custom_components.unifi_insights.coordinators.device import (
+    UnifiDeviceCoordinator,
 )
 from custom_components.unifi_insights.coordinators.facade import (
     UnifiFacadeCoordinator,
@@ -445,7 +452,7 @@ class TestRestartDeviceService:
     async def test_restart_device_success(self, hass: HomeAssistant):
         """Test restart device success."""
         mock_coordinator = MagicMock()
-        mock_coordinator.async_restart_device = AsyncMock()
+        mock_coordinator.device_coordinator.async_restart_device = AsyncMock()
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -464,7 +471,7 @@ class TestRestartDeviceService:
                 blocking=True,
             )
 
-        mock_coordinator.async_restart_device.assert_called_once_with(
+        mock_coordinator.device_coordinator.async_restart_device.assert_called_once_with(
             "site1", "device1"
         )
 
@@ -473,7 +480,7 @@ class TestRestartDeviceService:
     async def test_restart_device_failure(self, hass: HomeAssistant):
         """Test restart device failure raises error."""
         mock_coordinator = MagicMock()
-        mock_coordinator.async_restart_device = AsyncMock(
+        mock_coordinator.device_coordinator.async_restart_device = AsyncMock(
             side_effect=HomeAssistantError("Failed to restart device device1")
         )
         mock_entry = MagicMock()
@@ -512,13 +519,16 @@ class _PowerCycleTestContext:
         self.coordinator = MagicMock()
         self.coordinator.network_client = _network_client()
         self.coordinator.network_client._post = AsyncMock(return_value=None)
-        self.coordinator._async_execute_api_action = (
-            UnifiFacadeCoordinator._async_execute_api_action.__get__(self.coordinator)
-        )
-        self.coordinator.async_power_cycle_port = (
-            UnifiFacadeCoordinator.async_power_cycle_port.__get__(self.coordinator)
-        )
         self.coordinator.data = coordinator_data
+        # The real device owner command, which runs the PoE eligibility check
+        # against its own data before the HTTP request.
+        device = MagicMock()
+        device.network_client = self.coordinator.network_client
+        device.data = coordinator_data
+        device.async_power_cycle_port = (
+            UnifiDeviceCoordinator.async_power_cycle_port.__get__(device)
+        )
+        self.coordinator.device_coordinator = device
         self.entry = MagicMock()
         self.entry.runtime_data = MagicMock()
         self.entry.runtime_data.coordinator = self.coordinator
@@ -1335,7 +1345,7 @@ class TestNetworkServices:
     async def test_authorize_guest_success(self, hass: HomeAssistant):
         """Test authorize_guest authorizes the client via the coordinator."""
         mock_coordinator = MagicMock()
-        mock_coordinator.async_authorize_guest = AsyncMock()
+        mock_coordinator.config_coordinator.async_authorize_guest = AsyncMock()
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -1354,7 +1364,7 @@ class TestNetworkServices:
                 blocking=True,
             )
 
-        mock_coordinator.async_authorize_guest.assert_called_once_with(
+        mock_coordinator.config_coordinator.async_authorize_guest.assert_called_once_with(
             "site1", "client1"
         )
 
@@ -1648,7 +1658,7 @@ class TestServiceErrorHandling:
     async def test_restart_device_failed(self, hass: HomeAssistant):
         """Test restart_device when restart fails."""
         mock_coordinator = MagicMock()
-        mock_coordinator.async_restart_device = AsyncMock(
+        mock_coordinator.device_coordinator.async_restart_device = AsyncMock(
             side_effect=HomeAssistantError("Failed to restart device device1")
         )
         mock_entry = MagicMock()
@@ -1677,7 +1687,7 @@ class TestServiceErrorHandling:
     async def test_restart_device_error(self, hass: HomeAssistant):
         """Test restart_device with exception."""
         mock_coordinator = MagicMock()
-        mock_coordinator.async_restart_device = AsyncMock(
+        mock_coordinator.device_coordinator.async_restart_device = AsyncMock(
             side_effect=HomeAssistantError("Error restarting device")
         )
         mock_entry = MagicMock()
@@ -2437,7 +2447,7 @@ class TestServiceErrorHandling:
     async def test_authorize_guest_error(self, hass: HomeAssistant):
         """Test authorize_guest propagates coordinator errors."""
         mock_coordinator = MagicMock()
-        mock_coordinator.async_authorize_guest = AsyncMock(
+        mock_coordinator.config_coordinator.async_authorize_guest = AsyncMock(
             side_effect=HomeAssistantError("Unable to authorize guest client client1")
         )
         mock_entry = MagicMock()
@@ -2915,8 +2925,8 @@ class TestConsoleOwnershipRouting:
                 "liveviews": {"lv1": {"id": "lv1"}},
             },
         }
-        coord1.async_restart_device = AsyncMock()
-        coord1.async_authorize_guest = AsyncMock()
+        coord1.device_coordinator.async_restart_device = AsyncMock()
+        coord1.config_coordinator.async_authorize_guest = AsyncMock()
         coord1.async_generate_voucher = AsyncMock()
         coord1.async_delete_voucher = AsyncMock()
         coord1.async_set_hdr_mode = AsyncMock()
@@ -2954,8 +2964,8 @@ class TestConsoleOwnershipRouting:
                 "liveviews": {"lv2": {"id": "lv2"}},
             },
         }
-        coord2.async_restart_device = AsyncMock()
-        coord2.async_authorize_guest = AsyncMock()
+        coord2.device_coordinator.async_restart_device = AsyncMock()
+        coord2.config_coordinator.async_authorize_guest = AsyncMock()
         coord2.async_generate_voucher = AsyncMock()
         coord2.async_delete_voucher = AsyncMock()
         coord2.async_set_hdr_mode = AsyncMock()
@@ -3000,8 +3010,10 @@ class TestConsoleOwnershipRouting:
                 {"site_id": "site2", "device_id": "dev2"},
                 blocking=True,
             )
-            coord2.async_restart_device.assert_called_once_with("site2", "dev2")
-            coord1.async_restart_device.assert_not_called()
+            coord2.device_coordinator.async_restart_device.assert_called_once_with(
+                "site2", "dev2"
+            )
+            coord1.device_coordinator.async_restart_device.assert_not_called()
 
             # Target device on console 1
             await hass.services.async_call(
@@ -3010,7 +3022,9 @@ class TestConsoleOwnershipRouting:
                 {"site_id": "site1", "device_id": "dev1"},
                 blocking=True,
             )
-            coord1.async_restart_device.assert_called_once_with("site1", "dev1")
+            coord1.device_coordinator.async_restart_device.assert_called_once_with(
+                "site1", "dev1"
+            )
 
         await async_unload_services(hass)
 
@@ -3280,8 +3294,10 @@ class TestConsoleOwnershipRouting:
                 {"site_id": "site2", "client_id": "client2"},
                 blocking=True,
             )
-            coord2.async_authorize_guest.assert_called_once_with("site2", "client2")
-            coord1.async_authorize_guest.assert_not_called()
+            coord2.config_coordinator.async_authorize_guest.assert_called_once_with(
+                "site2", "client2"
+            )
+            coord1.config_coordinator.async_authorize_guest.assert_not_called()
 
         await async_unload_services(hass)
 
@@ -3530,8 +3546,8 @@ class TestConsoleOwnershipRouting:
                 {"site_id": "site_shared", "client_id": "client_shared"},
                 blocking=True,
             )
-        coord1.async_reconnect_client.assert_not_called()
-        coord2.async_reconnect_client.assert_not_called()
+        coord1.device_coordinator.async_reconnect_client.assert_not_called()
+        coord2.device_coordinator.async_reconnect_client.assert_not_called()
         await async_unload_services(hass)
 
     async def test_reconnect_client_cross_console_ownership_violation(
@@ -3805,7 +3821,7 @@ class TestClientMacRouting:
             "devices": {site_id: {}},
             "clients": {site_id: clients},
         }
-        coord.async_authorize_guest = AsyncMock()
+        coord.config_coordinator.async_authorize_guest = AsyncMock()
         entry = MagicMock()
         entry.entry_id = entry_id
         entry.title = entry_id
@@ -3837,8 +3853,8 @@ class TestClientMacRouting:
                 blocking=True,
             )
 
-        coord1.async_authorize_guest.assert_not_called()
-        coord2.async_authorize_guest.assert_not_called()
+        coord1.config_coordinator.async_authorize_guest.assert_not_called()
+        coord2.config_coordinator.async_authorize_guest.assert_not_called()
         await async_unload_services(hass)
 
     async def test_client_on_one_console_routes_there(self, hass: HomeAssistant):
@@ -3861,8 +3877,8 @@ class TestClientMacRouting:
                 blocking=True,
             )
 
-        coord2.async_authorize_guest.assert_called_once()
-        coord1.async_authorize_guest.assert_not_called()
+        coord2.config_coordinator.async_authorize_guest.assert_called_once()
+        coord1.config_coordinator.async_authorize_guest.assert_not_called()
         await async_unload_services(hass)
 
 
@@ -4143,7 +4159,7 @@ class TestConsoleRoutingEdgeCases:
         coord.async_set_chime_volume = AsyncMock()
         coord.async_set_chime_ringtone = AsyncMock()
         coord.async_set_chime_repeat = AsyncMock()
-        coord.async_authorize_guest = AsyncMock()
+        coord.config_coordinator.async_authorize_guest = AsyncMock()
         coord.data = {
             "sites": {"s1": {}},
             "clients": {"s1": {"c1": {"id": "c1"}}},
@@ -4185,7 +4201,9 @@ class TestConsoleRoutingEdgeCases:
                 {"site_id": "s1", "client_id": "c1", "duration_minutes": 60},
                 blocking=True,
             )
-            coord.async_authorize_guest.assert_called_once_with("s1", "c1")
+            coord.config_coordinator.async_authorize_guest.assert_called_once_with(
+                "s1", "c1"
+            )
 
         await async_unload_services(hass)
 
@@ -5042,7 +5060,7 @@ class TestServiceComprehensiveFullCoverage:
 
         # Restart device site search (multiple sites in coordinator data)
         coord_net = MagicMock()
-        coord_net.async_restart_device = AsyncMock()
+        coord_net.device_coordinator.async_restart_device = AsyncMock()
         coord_net.data = {
             "devices": {"other_site": {"other_d": {}}, "site_target": {"target_d": {}}}
         }
@@ -5061,7 +5079,7 @@ class TestServiceComprehensiveFullCoverage:
                 {"device_id": "target_d"},
                 blocking=True,
             )
-            coord_net.async_restart_device.assert_called_once_with(
+            coord_net.device_coordinator.async_restart_device.assert_called_once_with(
                 "site_target", "target_d"
             )
 
@@ -5155,7 +5173,7 @@ class TestServiceComprehensiveFullCoverage:
         # branch
         # Also testing restart_device with site_id provided (1231->1236)
         coord = MagicMock()
-        coord.async_restart_device = AsyncMock()
+        coord.device_coordinator.async_restart_device = AsyncMock()
         coord.data = {"devices": {"s1": {"d_exist": {}}}}
         entry_with_coord = MockConfigEntry(
             domain=DOMAIN, entry_id="fg_restart", title="Restart FG"
@@ -5173,7 +5191,7 @@ class TestServiceComprehensiveFullCoverage:
                 {"device_id": "d_exist", "site_id": "s1"},
                 blocking=True,
             )
-            assert coord.async_restart_device.called
+            assert coord.device_coordinator.async_restart_device.called
 
         # --- Protect Resource branches ---
         # 1. Entity without config_entry_id, without device_id, unique_id has no match
@@ -5266,7 +5284,7 @@ class TestServiceComprehensiveFullCoverage:
             "sensor",
             "site_device_uptime",
             {},
-            "async_restart_device",
+            "device_coordinator.async_restart_device",
         ),
         (
             "set_hdr_mode",
@@ -5280,7 +5298,7 @@ class TestServiceComprehensiveFullCoverage:
             "device_tracker",
             "unifi_insights_aa:bb:cc:dd:ee:ff",
             {"site_id": "site"},
-            "async_authorize_guest",
+            "config_coordinator.async_authorize_guest",
         ),
     ],
 )
@@ -5300,9 +5318,13 @@ async def test_unloaded_target_console_does_not_fall_back(
     owner.add_to_hass(hass)
     other = MockConfigEntry(domain=DOMAIN)
     other.add_to_hass(hass)
-    coordinator = MagicMock(data={})
+    coordinator = autospec_command_owners(MagicMock(data={}))
     action = AsyncMock()
-    setattr(coordinator, method, action)
+    *owner_path, name = method.split(".")
+    owner_obj = coordinator
+    for part in owner_path:
+        owner_obj = getattr(owner_obj, part)
+    setattr(owner_obj, name, action)
     other.runtime_data = MagicMock(coordinator=coordinator)
     entity = er.async_get(hass).async_get_or_create(
         entity_domain,
@@ -5390,7 +5412,7 @@ async def test_authorize_guest_accepts_dotted_mac(
             },
         }
     )
-    coordinator.async_authorize_guest = AsyncMock()
+    coordinator.config_coordinator.async_authorize_guest = AsyncMock()
     entry.runtime_data = MagicMock(coordinator=coordinator)
     entity = er.async_get(hass).async_get_or_create(
         "device_tracker",
@@ -5414,7 +5436,7 @@ async def test_authorize_guest_accepts_dotted_mac(
         {"site_id": "site", **target},
         blocking=True,
     )
-    coordinator.async_authorize_guest.assert_awaited_once_with(
+    coordinator.config_coordinator.async_authorize_guest.assert_awaited_once_with(
         "site",
         "native-client-id",
     )
@@ -5526,7 +5548,7 @@ async def test_restart_registry_device_without_cached_site_is_rejected(
     entry = MockConfigEntry(domain=DOMAIN)
     entry.add_to_hass(hass)
     coordinator = MagicMock(data={"devices": {"other": {}}})
-    coordinator.async_restart_device = AsyncMock()
+    coordinator.device_coordinator.async_restart_device = AsyncMock()
     entry.runtime_data = MagicMock(coordinator=coordinator)
     device = dr.async_get(hass).async_get_or_create(
         config_entry_id=entry.entry_id,
@@ -5540,7 +5562,7 @@ async def test_restart_registry_device_without_cached_site_is_rejected(
             {"device_id": device.id},
             blocking=True,
         )
-    coordinator.async_restart_device.assert_not_awaited()
+    coordinator.device_coordinator.async_restart_device.assert_not_awaited()
 
 
 @pytest.mark.parametrize("matched", [True, False])
@@ -5556,7 +5578,7 @@ async def test_guest_client_lookup_skips_other_clients(
     entry = MockConfigEntry(domain=DOMAIN)
     entry.add_to_hass(hass)
     coordinator = MagicMock(data={"clients": {"site": clients}})
-    coordinator.async_authorize_guest = AsyncMock()
+    coordinator.config_coordinator.async_authorize_guest = AsyncMock()
     entry.runtime_data = MagicMock(coordinator=coordinator)
     await async_setup_services(hass)
     await hass.services.async_call(
@@ -5565,7 +5587,7 @@ async def test_guest_client_lookup_skips_other_clients(
         {"site_id": "site", "client_id": "aa:bb:cc:dd:ee:ff"},
         blocking=True,
     )
-    coordinator.async_authorize_guest.assert_awaited_once_with(
+    coordinator.config_coordinator.async_authorize_guest.assert_awaited_once_with(
         "site",
         "native" if matched else "aa:bb:cc:dd:ee:ff",
     )
@@ -5642,7 +5664,7 @@ class TestReconnectClientService:
     async def test_reconnect_client_success(self, hass: HomeAssistant):
         """Test reconnect_client succeeds for a connected wireless client."""
         mock_coordinator = MagicMock()
-        mock_coordinator.async_reconnect_client = AsyncMock()
+        mock_coordinator.device_coordinator.async_reconnect_client = AsyncMock()
         mock_coordinator.data = {
             "sites": {"site1": {}},
             "clients": {
@@ -5673,7 +5695,7 @@ class TestReconnectClientService:
                 blocking=True,
             )
 
-        mock_coordinator.async_reconnect_client.assert_awaited_once_with(
+        mock_coordinator.device_coordinator.async_reconnect_client.assert_awaited_once_with(
             "site1", "client1"
         )
         await async_unload_services(hass)
@@ -5681,7 +5703,7 @@ class TestReconnectClientService:
     async def test_reconnect_client_by_mac_and_dotted_mac(self, hass: HomeAssistant):
         """Test reconnect_client resolves standard and dotted MACs."""
         mock_coordinator = MagicMock()
-        mock_coordinator.async_reconnect_client = AsyncMock()
+        mock_coordinator.device_coordinator.async_reconnect_client = AsyncMock()
         mock_coordinator.data = {
             "sites": {"site1": {}},
             "clients": {
@@ -5712,7 +5734,7 @@ class TestReconnectClientService:
                 {"site_id": "site1", "client_id": "aa:bb:cc:dd:ee:ff"},
                 blocking=True,
             )
-            mock_coordinator.async_reconnect_client.assert_awaited_with(
+            mock_coordinator.device_coordinator.async_reconnect_client.assert_awaited_with(
                 "site1", "native1"
             )
 
@@ -5723,7 +5745,10 @@ class TestReconnectClientService:
                 {"site_id": "site1", "client_id": "aabb.ccdd.eeff"},
                 blocking=True,
             )
-            assert mock_coordinator.async_reconnect_client.call_count == 2
+            assert (
+                mock_coordinator.device_coordinator.async_reconnect_client.call_count
+                == 2
+            )
         await async_unload_services(hass)
 
     async def test_reconnect_client_by_entity_and_device(self, hass: HomeAssistant):
@@ -5731,7 +5756,7 @@ class TestReconnectClientService:
         entry = MockConfigEntry(domain=DOMAIN)
         entry.add_to_hass(hass)
         coordinator = MagicMock()
-        coordinator.async_reconnect_client = AsyncMock()
+        coordinator.device_coordinator.async_reconnect_client = AsyncMock()
         coordinator.data = {
             "sites": {"site1": {}},
             "clients": {
@@ -5765,7 +5790,9 @@ class TestReconnectClientService:
             {"site_id": "site1", "entity_id": entity.entity_id},
             blocking=True,
         )
-        coordinator.async_reconnect_client.assert_awaited_with("site1", "native1")
+        coordinator.device_coordinator.async_reconnect_client.assert_awaited_with(
+            "site1", "native1"
+        )
 
         # Device target
         await hass.services.async_call(
@@ -5774,7 +5801,7 @@ class TestReconnectClientService:
             {"site_id": "site1", "device_id": device.id},
             blocking=True,
         )
-        assert coordinator.async_reconnect_client.call_count == 2
+        assert coordinator.device_coordinator.async_reconnect_client.call_count == 2
         await async_unload_services(hass)
 
     async def test_reconnect_client_missing_client_id(self, hass: HomeAssistant):
@@ -5919,7 +5946,7 @@ class TestReconnectClientService:
     async def test_reconnect_client_api_failure_propagates(self, hass: HomeAssistant):
         """Test reconnect_client propagates coordinator HomeAssistantError."""
         mock_coordinator = MagicMock()
-        mock_coordinator.async_reconnect_client = AsyncMock(
+        mock_coordinator.device_coordinator.async_reconnect_client = AsyncMock(
             side_effect=HomeAssistantError("Failed to kick client")
         )
         mock_coordinator.data = {
@@ -6108,7 +6135,9 @@ class TestRemoveClientsService:
                 [{"mac": "22:22:22:22:22:22", "first_seen": 100, "last_seen": 200}],
             ]
         )
-        coordinator.async_forget_clients_batch = AsyncMock(return_value=True)
+        coordinator.device_coordinator.async_forget_clients_batch = AsyncMock(
+            return_value=True
+        )
         entry = MagicMock(
             entry_id="entry1",
             title="Console 1",
@@ -6122,7 +6151,7 @@ class TestRemoveClientsService:
             )
         await async_unload_services(hass)
 
-        coordinator.async_forget_clients_batch.assert_awaited_once_with(
+        coordinator.device_coordinator.async_forget_clients_batch.assert_awaited_once_with(
             "site2", ["22:22:22:22:22:22"]
         )
 
@@ -6158,7 +6187,9 @@ class TestRemoveClientsService:
                 {"mac": "AA:BB:CC:DD:EE:FF", "name": "Named Device"},
             ]
         )
-        coord1.async_forget_clients_batch = AsyncMock(return_value=True)
+        coord1.device_coordinator.async_forget_clients_batch = AsyncMock(
+            return_value=True
+        )
         entry1 = MagicMock(
             entry_id="entry1",
             title="Console 1",
@@ -6173,7 +6204,9 @@ class TestRemoveClientsService:
                 {"mac": "99:88:77:66:55:44", "first_seen": 100, "last_seen": 300},
             ]
         )
-        coord2.async_forget_clients_batch = AsyncMock(return_value=True)
+        coord2.device_coordinator.async_forget_clients_batch = AsyncMock(
+            return_value=True
+        )
         entry2 = MagicMock(
             entry_id="entry2",
             title="Console 2",
@@ -6191,10 +6224,10 @@ class TestRemoveClientsService:
                 blocking=True,
             )
 
-        coord1.async_forget_clients_batch.assert_awaited_once_with(
+        coord1.device_coordinator.async_forget_clients_batch.assert_awaited_once_with(
             "site1", ["11:22:33:44:55:66"]
         )
-        coord2.async_forget_clients_batch.assert_awaited_once_with(
+        coord2.device_coordinator.async_forget_clients_batch.assert_awaited_once_with(
             "site2", ["99:88:77:66:55:44"]
         )
         await async_unload_services(hass)
@@ -6221,7 +6254,9 @@ class TestRemoveClientsService:
                 {"mac": "11:22:33:44:55:66", "first_seen": 100, "last_seen": 200}
             ]
         )
-        coord_with_net.async_forget_clients_batch = AsyncMock(return_value=True)
+        coord_with_net.device_coordinator.async_forget_clients_batch = AsyncMock(
+            return_value=True
+        )
         entry_with_net = MagicMock(
             entry_id="entry2",
             title="Console Network",
@@ -6242,7 +6277,7 @@ class TestRemoveClientsService:
             )
 
         coord_no_network.async_get_historical_clients.assert_not_called()
-        coord_with_net.async_forget_clients_batch.assert_awaited_once_with(
+        coord_with_net.device_coordinator.async_forget_clients_batch.assert_awaited_once_with(
             "site2", ["11:22:33:44:55:66"]
         )
         await async_unload_services(hass)
@@ -6300,7 +6335,9 @@ class TestRemoveClientsService:
                 {"mac": "11:22:33:44:55:66", "first_seen": 100, "last_seen": 200}
             ]
         )
-        coord2.async_forget_clients_batch = AsyncMock(return_value=True)
+        coord2.device_coordinator.async_forget_clients_batch = AsyncMock(
+            return_value=True
+        )
         entry2 = MagicMock(
             entry_id="entry2",
             title="Console 2",
@@ -6329,7 +6366,7 @@ class TestRemoveClientsService:
         }
 
         # Confirm console 2 was still processed
-        coord2.async_forget_clients_batch.assert_awaited_once_with(
+        coord2.device_coordinator.async_forget_clients_batch.assert_awaited_once_with(
             "site2", ["11:22:33:44:55:66"]
         )
         await async_unload_services(hass)
@@ -6347,7 +6384,7 @@ class TestRemoveClientsService:
                 {"mac": "77:88:99:00:11:22", "first_seen": 100, "last_seen": 2000},
             ]
         )
-        coord.async_forget_clients_batch = AsyncMock()
+        coord.device_coordinator.async_forget_clients_batch = AsyncMock()
         entry = MagicMock(
             entry_id="entry1",
             title="Console 1",
@@ -6363,7 +6400,7 @@ class TestRemoveClientsService:
                 blocking=True,
             )
 
-        coord.async_forget_clients_batch.assert_not_called()
+        coord.device_coordinator.async_forget_clients_batch.assert_not_called()
         await async_unload_services(hass)
 
     async def test_remove_clients_rejects_extra_fields(self, hass: HomeAssistant):
@@ -6389,7 +6426,7 @@ class TestRemoveClientsService:
             coord.async_get_historical_clients = AsyncMock(
                 side_effect=HomeAssistantError(f"Classic API call failed: {error_type}")
             )
-            coord.async_forget_clients_batch = AsyncMock()
+            coord.device_coordinator.async_forget_clients_batch = AsyncMock()
             entry = MagicMock(
                 entry_id="entry1",
                 title="Console 1",
@@ -6412,7 +6449,7 @@ class TestRemoveClientsService:
 
             assert exc_info.value.translation_key == "remove_clients_failed"
             assert f"Classic API call failed: {error_type}" in str(exc_info.value)
-            coord.async_forget_clients_batch.assert_not_called()
+            coord.device_coordinator.async_forget_clients_batch.assert_not_called()
             await async_unload_services(hass)
 
     async def test_remove_clients_end_to_end_http_boundary(self, hass: HomeAssistant):
@@ -6494,11 +6531,24 @@ class TestRemoveClientsService:
             }
         }
         mock_config_coordinator.get_site = mock_config_coordinator.data["sites"].get
+        mock_config_coordinator.resolve_legacy_site_name = (
+            UnifiConfigCoordinator.resolve_legacy_site_name.__get__(
+                mock_config_coordinator
+            )
+        )
 
         mock_device_coordinator = MagicMock()
         mock_device_coordinator.data = {}
         # Device coordinator fuzzy mapping points elsewhere ("beta") and must be ignored
         mock_device_coordinator.get_legacy_site_name = MagicMock(return_value="beta")
+        # The real batch-forget owner command, so the request stays end to end.
+        mock_device_coordinator.network_client = network_client
+        mock_device_coordinator.config_coordinator = mock_config_coordinator
+        mock_device_coordinator.async_forget_clients_batch = (
+            UnifiDeviceCoordinator.async_forget_clients_batch.__get__(
+                mock_device_coordinator
+            )
+        )
 
         entry = MagicMock()
         entry.entry_id = "test_entry"
