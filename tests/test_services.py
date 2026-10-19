@@ -372,6 +372,15 @@ _HANDLER_CASES: list[tuple[Any, ...]] = [
         {"name": "Lobby", "layout": 2, "is_default": False},
     ),
     (
+        "create_liveview",
+        {"name": "Lobby", "layout": 2, "is_default": True},
+        "resolve_protect_console_call",
+        (),
+        "async_create_liveview",
+        (),
+        {"name": "Lobby", "layout": 2, "is_default": True},
+    ),
+    (
         "authorize_guest",
         {"site_id": "s1", "client_id": "x"},
         "resolve_network_client_call:config",

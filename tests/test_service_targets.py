@@ -350,6 +350,12 @@ _DEVICE_CASES = {
         ("Office", "dx", "my_site"),
         registry=(Reg("device", "office", "my_site_dx"),),
     ),
+    "device-identifier-underscore-device-id": Case(
+        {"Office": {"sites": {"default": {}}, "devices": {"default": {"dev_1": {}}}}},
+        {"device_id": "$device"},
+        ("Office", "dev_1", "default"),
+        registry=(Reg("device", "office", "default_dev_1"),),
+    ),
     "device-identifier-split": Case(
         {"Office": UNKNOWN},
         {"device_id": "$device"},

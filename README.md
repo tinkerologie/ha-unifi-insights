@@ -51,7 +51,7 @@ The integration only creates entities for the applications your console runs. A 
 
 ## Requirements
 
-- Home Assistant 2026.6.0 or newer.
+- Home Assistant 2026.9.0 or newer.
 - For Local and Remote entries: a UniFi OS console (for example a UDM, UDR, UCG or Cloud Key Gen2+) with UniFi Network, UniFi Protect or UniFi InnerSpace. The console must provide the official UniFi Integration API. Self-hosted UniFi Network Application installs (Linux, Docker, Proxmox) don't provide it, so they can't be added as Local entries.
 - For Remote entries, Mobility and Site Manager: a cloud API key from [UniFi Site Manager](https://unifi.ui.com).
 - For Carrier Fabric: an ISP API key.
@@ -676,7 +676,7 @@ The integration does not assign plans, create or change subscribers, or attach o
 
 ## Automation blueprints
 
-This repository includes three automation blueprints for network health alerts. They are native Home Assistant YAML and need no external service or API. They use the entities that UniFi Insights creates, and they need Home Assistant 2026.6.0 or newer, like the integration. Each one runs the actions you choose.
+This repository includes three automation blueprints for network health alerts. They are native Home Assistant YAML and need no external service or API. They use the entities that UniFi Insights creates, and they need Home Assistant 2026.9.0 or newer, like the integration. Each one runs the actions you choose.
 
 | Blueprint                      | Runs your actions when                                                                                      | Needs                                                                                                                            |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |

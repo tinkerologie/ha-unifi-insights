@@ -28,7 +28,7 @@ blueprint:
     `matched_prefix`. The blueprint does not pass the MAC address to the actions as a variable.
   domain: automation
   homeassistant:
-    min_version: "2026.6.0"
+    min_version: "2026.9.0"
   input:
     subnet_prefixes:
       name: Secure subnet prefixes

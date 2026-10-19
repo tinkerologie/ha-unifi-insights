@@ -2,6 +2,6 @@
   "name": "UniFi Insights",
   "render_readme": true,
   "country": [],
-  "homeassistant": "2026.6.0",
+  "homeassistant": "2026.9.0",
   "hacs": "2.0.5"
 }

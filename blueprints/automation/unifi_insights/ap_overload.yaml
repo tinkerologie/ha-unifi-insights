@@ -22,7 +22,7 @@ blueprint:
     Assistant's `trigger` object.
   domain: automation
   homeassistant:
-    min_version: "2026.6.0"
+    min_version: "2026.9.0"
   input:
     client_sensors:
       name: Access point client sensors

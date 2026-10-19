@@ -921,7 +921,9 @@ _SERVICE_ERROR_MODULES: Final = (
     "service_targets.py",
     "coordinators/carrier_fabric.py",
 )
-_TRANSLATED_ERRORS: Final = frozenset({"HomeAssistantError", "ServiceValidationError"})
+_TRANSLATED_ERRORS: Final = frozenset(
+    {"HomeAssistantError", "ServiceValidationError", "InvalidSubscriberIdError"}
+)
 # Placeholder alternatives: one frozenset per way the construction can be called.
 _Placeholders = tuple[frozenset[str], ...]
 
@@ -1037,6 +1039,18 @@ def _local_dict_keys(
     return None
 
 
+def _construction_placeholders(
+    node: ast.expr | None, func: ast.FunctionDef | ast.AsyncFunctionDef | None
+) -> _Placeholders | None:
+    """Resolve a literal placeholder dict, or a local name bound to one."""
+    if (found := _dict_placeholders(node)) is not None:
+        return found
+    if isinstance(node, ast.Name):
+        local = _local_dict_keys(func, node.id)
+        return None if local is None else (local,)
+    return None
+
+
 def _call_site_placeholders(
     factory: _Factory,
     call: ast.Call,
@@ -1143,7 +1157,7 @@ def _translated_error_violations(module: str) -> list[str]:
             checked.add(call)
             continue
         keys = _literal_keys(key)
-        supplied = _dict_placeholders(placeholders_arg)
+        supplied = _construction_placeholders(placeholders_arg, func)
         if keys is None:
             problems.append(f"{where}: translation_key is not a literal")
         elif supplied is None:
@@ -1151,6 +1165,9 @@ def _translated_error_violations(module: str) -> list[str]:
         else:
             problems += _check_key(where, keys, supplied, translations)
         checked.add(call)
+
+    if not checked:
+        problems.append(f"{module}: builds no translated error")
 
     # Factory call sites, until no new forwarding factory appears.
     resolved: set[ast.Call] = set()
@@ -1205,7 +1222,12 @@ def test_service_error_guard_resolves_factories_and_conditionals(
         "    details = {'site_id': site_id}\n"
         "    if flag:\n"
         "        raise _invalid('m', 'refresh_site_not_found', **details)\n"
-        "    raise _wrap('target_required' if flag else 'no_coordinator')\n",
+        "    raise _wrap('target_required' if flag else 'no_coordinator')\n"
+        "def g(site_id):\n"
+        "    placeholders = {'site_id': site_id}\n"
+        "    raise InvalidSubscriberIdError('m', translation_domain=DOMAIN,\n"
+        "        translation_key='refresh_site_not_found',\n"
+        "        translation_placeholders=placeholders)\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(__name__ + "._INTEGRATION_DIR", tmp_path)
@@ -1276,6 +1298,8 @@ def test_service_error_guard_resolves_factories_and_conditionals(
         ("raise HomeAssistantError('x')\n", "no translation_key"),
         ("raise exceptions.HomeAssistantError('x')\n", "no translation_key"),
         ("error = ServiceValidationError('x')\n", "no translation_key"),
+        ("raise InvalidSubscriberIdError('x')\n", "no translation_key"),
+        ("VALUE = 1\n", "builds no translated error"),
     ],
     ids=[
         "helper-caller-undefined-key",
@@ -1289,6 +1313,8 @@ def test_service_error_guard_resolves_factories_and_conditionals(
         "called-without-key",
         "attribute-qualified",
         "returned-not-raised",
+        "carrier-subclass",
+        "no-constructions",
     ],
 )
 def test_service_error_guard_rejects_bad_sources(
