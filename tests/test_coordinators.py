@@ -82,6 +82,7 @@ from custom_components.unifi_insights.coordinators.config import (
 from custom_components.unifi_insights.coordinators.config_sections import (
     async_fetch_site_routes,
     async_fetch_site_wifi_and_links,
+    async_update_site_internet_activity,
     enrich_wifi,
     is_predefined_nat_rule,
     map_legacy_site_names,
@@ -95,9 +96,6 @@ from custom_components.unifi_insights.coordinators.device import (
     UnifiDeviceCoordinator,
 )
 from custom_components.unifi_insights.coordinators.facade import UnifiFacadeCoordinator
-from custom_components.unifi_insights.coordinators.internet_activity import (
-    async_update_site_internet_activity,
-)
 from custom_components.unifi_insights.coordinators.protect import (
     MAX_CONSECUTIVE_EMPTY_FETCHES,
     MAX_CONSECUTIVE_MISSING_POLLS,

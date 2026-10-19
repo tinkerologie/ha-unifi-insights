@@ -49,7 +49,7 @@ from custom_components.unifi_insights.data_transforms import (
 )
 
 from .base import CommandFailure, async_execute_command
-from .rule_export import async_build_rule_export
+from .rule_audit import async_build_rule_export
 
 _LOGGER = logging.getLogger(__name__)
 

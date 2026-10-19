@@ -43,8 +43,8 @@ from custom_components.unifi_insights.const import (
     SERVICE_EXPORT_NETWORK_RULES,
 )
 from custom_components.unifi_insights.coordinators.base import UnifiBaseCoordinator
-from custom_components.unifi_insights.coordinators.rule_audit import RULE_TYPES
-from custom_components.unifi_insights.coordinators.rule_export import (
+from custom_components.unifi_insights.coordinators.rule_audit import (
+    RULE_TYPES,
     _export_record,
     async_build_rule_export,
 )
