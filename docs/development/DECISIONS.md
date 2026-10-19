@@ -79,7 +79,7 @@ The 17 platform modules are exempt from ADR-007's 2,000-line budget and are boun
 
 **Status:** kept
 
-`UnifiFacadeCoordinator` exists so entities and services read one `data` mapping. It is the largest coordinator module after Protect and duplicates some lookups that the specialized coordinators already own. Once ADR-007 lands and entities use declarative `EntityDescription` fields, revisit whether entities can subscribe to their owning coordinator directly.
+`UnifiInsightsFacadeCoordinator` exists so entities and services read one `data` mapping. It is the largest coordinator module after Protect and duplicates some lookups that the specialized coordinators already own. Once ADR-007 lands and entities use declarative `EntityDescription` fields, revisit whether entities can subscribe to their owning coordinator directly.
 
 ### Repairs
 

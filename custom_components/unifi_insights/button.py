@@ -53,6 +53,7 @@ from .coordinators.device import (
 )
 from .data_transforms import (
     current_chime_ringtone_id,
+    get_port_label,
     voucher_request_kwargs,
     voucher_site_ids,
 )
@@ -67,8 +68,6 @@ from .entity import (
 from .topology import normalize_mac
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -84,17 +83,6 @@ PARALLEL_UPDATES = 1
 @dataclass
 class UnifiInsightsButtonEntityDescription(ButtonEntityDescription):  # type: ignore[misc]
     """Class describing UniFi Insights button entities."""
-
-
-def _get_port_label(port: Mapping[str, Any], port_idx: int) -> str:
-    """Return user-friendly port label based on port type."""
-    name = port.get("name")
-    if name and name != f"Port {port_idx}":
-        return str(name)
-    media = port.get("media", "")
-    if isinstance(media, str) and media.startswith("SFP"):
-        return f"{media} {port_idx}"
-    return f"Port {port_idx}"
 
 
 def _wired_client_mac(client: dict[str, Any]) -> str | None:
@@ -388,7 +376,7 @@ async def async_setup_entry(
                             continue
                         known_button_keys.add(poe_btn_key)
 
-                        port_label = _get_port_label(port, port_idx)
+                        port_label = get_port_label(port, port_idx)
                         entities.append(
                             UnifiInsightsPoePowerCycleButton(
                                 coordinator=coordinator,
