@@ -17,7 +17,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 from unifi_official_api.exceptions import UniFiError
 
-from .console_identity import resolve_console_namespace
+from .console_identity import async_migrate_site_entity, resolve_console_namespace
 from .const import DOMAIN, MANUFACTURER
 from .coordinators import UnifiFacadeCoordinator
 from .data_transforms import (
@@ -27,7 +27,6 @@ from .data_transforms import (
     voucher_site_ids,
 )
 from .entity import build_site_device_info
-from .helpers import async_migrate_site_entity
 from .innerspace_transforms import parse_floor_plan_asset_path, strip_url_query
 
 if TYPE_CHECKING:

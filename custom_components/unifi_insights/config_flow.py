@@ -44,6 +44,9 @@ from yarl import URL
 
 from .console_identity import (
     DEFAULT_SITE_ID,
+    SiteEntityIdentityError,
+    async_rekey_site_entities,
+    async_restore_site_entity_identities,
     device_fields,
     normalize_console_namespace,
     normalize_mac,
@@ -81,11 +84,6 @@ from .const import (
     DEFAULT_TRACK_CLIENTS,
     DEFAULT_TRACK_SUBSCRIBERS,
     DOMAIN,
-)
-from .helpers import (
-    SiteEntityIdentityError,
-    async_rekey_site_entities,
-    async_restore_site_entity_identities,
 )
 from .probe import (
     ProbeResult,

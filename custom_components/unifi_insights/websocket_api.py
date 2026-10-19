@@ -26,13 +26,12 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util.hass_dict import HassKey
 
 from .carrier_fabric_data import CarrierFabricData
-from .console_identity import resolve_console_namespace
+from .console_identity import async_get_device_entry, resolve_console_namespace
 from .const import DOMAIN
 from .dashboard_contract_utils import as_dict, content_revision
 from .data_transforms import NETWORK_FACTS_KEY
 from .device_tracker import _client_tracker_entries, _mac_from_unique_id
 from .entity import get_field
-from .helpers import async_get_device_entry
 from .internet_activity_snapshot import (
     build_internet_activity_snapshot,
     build_unavailable_internet_activity,

@@ -43,9 +43,14 @@ from custom_components.unifi_insights import (
 )
 from custom_components.unifi_insights.config_flow import UnifiInsightsConfigFlow
 from custom_components.unifi_insights.console_identity import (
+    SiteEntityIdentityError,
+    async_migrate_site_entity,
+    async_rekey_site_entities,
+    async_restore_site_entity_identities,
     build_legacy_site_unique_id,
     build_site_unique_id,
     normalize_console_namespace,
+    owned_site_entity_unique_id,
     resolve_console_namespace,
 )
 from custom_components.unifi_insights.const import (
@@ -56,13 +61,6 @@ from custom_components.unifi_insights.const import (
     CONNECTION_TYPE_REMOTE,
     DOMAIN,
     SITE_ENTITY_SUFFIXES,
-)
-from custom_components.unifi_insights.helpers import (
-    SiteEntityIdentityError,
-    async_migrate_site_entity,
-    async_rekey_site_entities,
-    async_restore_site_entity_identities,
-    owned_site_entity_unique_id,
 )
 from custom_components.unifi_insights.internet_activity_snapshot import (
     _resolve_entity_ids,
@@ -413,7 +411,8 @@ async def test_missing_lookup_record_is_not_claimed():
         config_entry_id="entry", translation_key="key"
     )
     with patch(
-        "custom_components.unifi_insights.helpers.er.async_get", return_value=registry
+        "custom_components.unifi_insights.console_identity.er.async_get",
+        return_value=registry,
     ):
         assert (
             async_migrate_site_entity(

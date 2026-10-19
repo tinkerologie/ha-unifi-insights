@@ -19,16 +19,27 @@ setup reads coordinator data, while the flow dumps its API models with
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import CONF_API_KEY
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
-from .const import CONF_CONSOLE_ID, CONSOLE_DEVICE_TOKENS
+from .const import (
+    CONF_CONSOLE_ID,
+    CONSOLE_DEVICE_TOKENS,
+    DOMAIN,
+    SITE_ENTITY_SUFFIXES,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from homeassistant.config_entries import ConfigEntry
+    from homeassistant.core import HomeAssistant
+
+_LOGGER = logging.getLogger(__name__)
 
 # The site id a controller reports when it has only the implicit default site.
 # It is identical across consoles, so it can never identify one.
@@ -172,3 +183,235 @@ def first_non_default_site_id(site_ids: Iterable[Any]) -> str | None:
         if isinstance(site_id, str) and site_id and site_id != DEFAULT_SITE_ID:
             return site_id
     return None
+
+
+# --- Site entity identity and registry lookups -------------------------------
+
+# Helper utilities for UniFi Insights.
+
+
+def owned_site_entity_unique_id(
+    registry: er.EntityRegistry,
+    entry_id: str,
+    domain: str,
+    legacy_unique_id: str,
+    unique_id: str | None,
+    *,
+    translation_key: str,
+) -> str | None:
+    """Select an owned logical identity, never reusing physical or ambiguous rows."""
+    legacy_entity_id = registry.async_get_entity_id(domain, DOMAIN, legacy_unique_id)
+    if legacy_entity_id:
+        legacy = registry.async_get(legacy_entity_id)
+        if legacy is not None and legacy.config_entry_id == entry_id:
+            if legacy.translation_key == translation_key:
+                return legacy_unique_id
+            if not legacy.translation_key:
+                _LOGGER.warning(
+                    "Skipping a site entity with ambiguous registry metadata"
+                )
+                return None
+            _LOGGER.debug(
+                "Leaving a legacy entity outside the logical-site family unchanged"
+            )
+        else:
+            _LOGGER.debug("Leaving a foreign legacy site entity unchanged")
+    if unique_id is None:
+        return None
+    entity_id = registry.async_get_entity_id(domain, DOMAIN, unique_id)
+    if entity_id:
+        entity = registry.async_get(entity_id)
+        if entity is None or entity.config_entry_id != entry_id:
+            return None
+        if entity.translation_key != translation_key:
+            _LOGGER.warning(
+                "Skipping a site entity with incompatible registry metadata"
+            )
+            return None
+    return unique_id
+
+
+def async_migrate_site_entity(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    domain: str,
+    namespace: str | None,
+    site_id: str,
+    *,
+    suffix: str,
+) -> str | None:
+    """Migrate an owned legacy row, returning the identity safe to construct."""
+    registry = er.async_get(hass)
+    legacy = build_legacy_site_unique_id(site_id, suffix)
+    target = build_site_unique_id(namespace, site_id, suffix) if namespace else None
+    effective = owned_site_entity_unique_id(
+        registry, entry.entry_id, domain, legacy, target, translation_key=suffix
+    )
+    if effective != legacy or target is None or target == legacy:
+        return effective
+    if registry.async_get_entity_id(domain, DOMAIN, target):
+        _LOGGER.warning(
+            "Retaining an owned legacy site entity: target identity is occupied"
+        )
+        return legacy
+    entity_id = registry.async_get_entity_id(domain, DOMAIN, legacy)
+    if entity_id is None:
+        return None
+    try:
+        registry.async_update_entity(entity_id, new_unique_id=target)
+    except ValueError:
+        _LOGGER.warning(
+            "Site entity registry update failed; keeping an eligible owned identity"
+        )
+        effective = owned_site_entity_unique_id(
+            registry, entry.entry_id, domain, legacy, target, translation_key=suffix
+        )
+        if effective is None:
+            return None
+        # After a native post-mutation failure, construct only an existing owned
+        # identity. A missing registry row must not recreate a fresh legacy row.
+        return (
+            effective
+            if registry.async_get_entity_id(domain, DOMAIN, effective)
+            else None
+        )
+    return target
+
+
+class SiteEntityIdentityError(ValueError):
+    """A console identity change cannot preserve logical-site registry rows."""
+
+
+type SiteEntityIdentityUpdates = tuple[tuple[er.RegistryEntry, str], ...]
+
+
+def async_restore_site_entity_identities(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    updates: SiteEntityIdentityUpdates,
+) -> bool:
+    """Restore exact owned rows after a synchronous transition failure."""
+    registry = er.async_get(hass)
+    restored = True
+    for previous, target in reversed(updates):
+        try:
+            current = registry.async_get(previous.entity_id)
+            if (
+                current is None
+                or current.id != previous.id
+                or current.config_entry_id != entry.entry_id
+                or current.domain != previous.domain
+                or current.platform != previous.platform
+                or current.translation_key != previous.translation_key
+            ):
+                restored = False
+                continue
+            if current.unique_id == previous.unique_id:
+                continue
+            occupied = registry.async_get_entity_id(
+                previous.domain, DOMAIN, previous.unique_id
+            )
+            if current.unique_id != target or (
+                occupied is not None and occupied != current.entity_id
+            ):
+                restored = False
+                continue
+            registry.async_update_entity(
+                current.entity_id, new_unique_id=previous.unique_id
+            )
+        except Exception:
+            # A native update may raise after mutation. Continue attempting every
+            # other row without claiming that save scheduling succeeded.
+            restored = False
+    if not restored:
+        _LOGGER.warning("Unable to fully roll back logical-site registry identities")
+    return restored
+
+
+def async_rekey_site_entities(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    new_console_id: Any,
+    *,
+    pending_api_key: Any = None,
+) -> SiteEntityIdentityUpdates:
+    """Preflight and re-key exact families, retaining safe compensation records."""
+    old = resolve_console_namespace(entry)
+    new = normalize_console_namespace(
+        new_console_id,
+        credentials=(entry.data.get(CONF_API_KEY), pending_api_key),
+    )
+    if new is None:
+        if new_console_id in (None, "") and old is None:
+            return ()
+        err_msg = "A safe console namespace is required"
+        raise SiteEntityIdentityError(err_msg)
+    if (
+        old is not None
+        and normalize_console_namespace(
+            entry.data.get(CONF_CONSOLE_ID),
+            credentials=(entry.data.get(CONF_API_KEY), pending_api_key),
+        )
+        is None
+    ):
+        err_msg = "The pending credential conflicts with console identity"
+        raise SiteEntityIdentityError(err_msg)
+    if old is None or old == new:
+        return ()
+    registry = er.async_get(hass)
+    updates: list[tuple[er.RegistryEntry, str]] = []
+    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+        suffixes = SITE_ENTITY_SUFFIXES.get(entity.domain)
+        if entity.platform != DOMAIN or suffixes is None:
+            continue
+        prefix = f"{old}_"
+        if not entity.unique_id.startswith(prefix):
+            continue
+        remainder = entity.unique_id[len(prefix) :]
+        possible_keys = [key for key in suffixes if remainder.endswith(f"_{key}")]
+        key = entity.translation_key
+        if key not in suffixes:
+            if not key and possible_keys:
+                err_msg = "Logical-site registry metadata is missing"
+                raise SiteEntityIdentityError(err_msg)
+            continue
+        ending = f"_{key}"
+        site_id = remainder[: -len(ending)] if remainder.endswith(ending) else ""
+        if not site_id or entity.unique_id != build_site_unique_id(old, site_id, key):
+            err_msg = "Logical-site registry metadata is ambiguous"
+            raise SiteEntityIdentityError(err_msg)
+        target = build_site_unique_id(new, site_id, key)
+        if registry.async_get_entity_id(entity.domain, DOMAIN, target):
+            err_msg = "Logical-site target identity is occupied"
+            raise SiteEntityIdentityError(err_msg)
+        updates.append((entity, target))
+
+    attempted: list[tuple[er.RegistryEntry, str]] = []
+    try:
+        for entity, target in updates:
+            attempted.append((entity, target))
+            registry.async_update_entity(entity.entity_id, new_unique_id=target)
+    except Exception:
+        async_restore_site_entity_identities(hass, entry, tuple(attempted))
+        raise
+    return tuple(attempted)
+
+
+def async_get_device_entry(
+    device_registry: dr.DeviceRegistry,
+    identifier: tuple[str, str],
+    config_entry_id: str | None = None,
+) -> dr.DeviceEntry | None:
+    """
+    Look up a device entry by identifier, scoped to a config entry when given.
+
+    Identifiers are only unique per config entry, and
+    ``DeviceRegistry.async_get_device`` is deprecated (removal in 2027.8), so
+    the lookup is scoped whenever the owning entry is known.
+    """
+    if config_entry_id is not None:
+        return device_registry.async_get_device_by_identifier(
+            identifier, config_entry_id
+        )
+    devices = device_registry.async_get_devices(identifiers={identifier})
+    return devices[0] if devices else None

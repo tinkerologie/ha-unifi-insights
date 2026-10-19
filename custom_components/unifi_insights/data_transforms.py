@@ -38,7 +38,14 @@ from typing import Any, Final, Literal
 
 from homeassistant.util import dt as dt_util
 
-from .const import GATEWAY_MODEL_PREFIXES, STORAGE_NEARLY_FULL_PERCENT
+from .const import (
+    CAMERA_TYPE_DOORBELL,
+    CAMERA_TYPE_DOORBELL_MAIN,
+    CAMERA_TYPE_DOORBELL_PACKAGE,
+    CAMERA_TYPE_DOORBELL_WITH_PACKAGE_DETECTION,
+    GATEWAY_MODEL_PREFIXES,
+    STORAGE_NEARLY_FULL_PERCENT,
+)
 from .innerspace_transforms import (
     _normalize_innerspace_mac,
     correlate_innerspace_devices,
@@ -1291,3 +1298,47 @@ def voucher_site_ids(data: object) -> list[str]:
     if not isinstance(sites, Mapping) or not isinstance(vouchers, Mapping):
         return []
     return [str(site_id) for site_id in sites]
+
+
+# --- Port labels and camera models -------------------------------------------
+
+
+def get_port_label(port: Mapping[str, Any], port_idx: Any) -> str:
+    """Return user-friendly port label based on port type."""
+    name = port.get("name")
+    if name and name != f"Port {port_idx}":
+        return str(name)
+    media = port.get("media")
+    if isinstance(media, str) and media.startswith("SFP"):
+        return f"{media} {port_idx}"
+    return f"Port {port_idx}"
+
+
+def is_doorbell_camera_model(camera_data: dict[str, Any]) -> bool:
+    """
+    Return whether a cached camera record says, by its model, that it is a doorbell.
+
+    This is the evidence a camera's type gives, as opposed to its name: a
+    camera called "Front Door" is not a doorbell because of that.
+    """
+    camera_type = camera_data.get("_camera_type") or ""
+    if camera_type in (
+        CAMERA_TYPE_DOORBELL,
+        CAMERA_TYPE_DOORBELL_WITH_PACKAGE_DETECTION,
+        CAMERA_TYPE_DOORBELL_MAIN,
+        CAMERA_TYPE_DOORBELL_PACKAGE,
+    ):
+        return True
+
+    # The camera type field from the API (handle None safely)
+    api_camera_type = (camera_data.get("type") or "").lower()
+    return any(
+        doorbell_type in api_camera_type
+        for doorbell_type in (
+            "doorbell",
+            "g4-doorbell",
+            "ai-doorbell",
+            "g4doorbell",
+            "aidoorbell",
+        )
+    )

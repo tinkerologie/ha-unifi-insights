@@ -19,7 +19,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .console_identity import resolve_console_namespace
+from .console_identity import async_migrate_site_entity, resolve_console_namespace
 from .const import (
     ATTR_CAMERA_ID,
     ATTR_CAMERA_NAME,
@@ -48,7 +48,6 @@ from .entity import (
     UnifiProtectEntity,
     build_site_device_info,
 )
-from .helpers import async_migrate_site_entity
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant

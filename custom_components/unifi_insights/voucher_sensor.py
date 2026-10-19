@@ -23,6 +23,7 @@ from homeassistant.components.sensor import (
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .console_identity import async_migrate_site_entity
 from .coordinators import UnifiFacadeCoordinator
 from .data_transforms import (
     _field,
@@ -31,7 +32,6 @@ from .data_transforms import (
     voucher_site_ids,
 )
 from .entity import build_site_device_info
-from .helpers import async_migrate_site_entity
 
 
 @dataclass(frozen=True, kw_only=True)

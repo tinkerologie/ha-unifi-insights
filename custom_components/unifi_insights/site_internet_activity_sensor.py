@@ -20,9 +20,9 @@ from homeassistant.const import UnitOfInformation
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .console_identity import async_migrate_site_entity
 from .coordinators import UnifiFacadeCoordinator
 from .entity import build_site_device_info
-from .helpers import async_migrate_site_entity
 
 
 @dataclass

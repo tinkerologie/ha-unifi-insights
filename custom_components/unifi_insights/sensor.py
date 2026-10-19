@@ -29,7 +29,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import site_internet_activity_sensor
-from .console_identity import resolve_console_namespace
+from .console_identity import async_migrate_site_entity, resolve_console_namespace
 from .const import (
     ATTR_NVR_ID,
     ATTR_NVR_NAME,
@@ -57,6 +57,7 @@ from .data_transforms import (
     device_facts,
     normalize_nvr_storage,
 )
+from .data_transforms import get_port_label as _get_port_label
 from .entity import (
     UnifiInsightsEntity,
     UnifiProtectEntity,
@@ -68,8 +69,6 @@ from .entity import (
 from .entity import (
     get_client_type as _get_client_type,
 )
-from .helpers import async_migrate_site_entity
-from .helpers import get_port_label as _get_port_label
 from .innerspace_entity import (
     _discover_innerspace_sensors,
 )

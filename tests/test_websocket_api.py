@@ -23,6 +23,7 @@ from unifi_official_api import UniFiResponseError
 
 from custom_components.unifi_insights import CarrierFabricData
 from custom_components.unifi_insights.console_identity import (
+    async_get_device_entry,
     build_legacy_site_unique_id,
     build_site_unique_id,
 )
@@ -37,7 +38,6 @@ from custom_components.unifi_insights.data_transforms import (
     build_site_network_facts,
 )
 from custom_components.unifi_insights.device_tracker import UnifiClientTracker
-from custom_components.unifi_insights.helpers import async_get_device_entry
 from custom_components.unifi_insights.internet_activity_snapshot import WINDOWS
 from custom_components.unifi_insights.performance import (
     build_performance_snapshot,

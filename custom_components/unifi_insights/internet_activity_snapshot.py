@@ -6,11 +6,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from .console_identity import build_legacy_site_unique_id, build_site_unique_id
+from .console_identity import (
+    build_legacy_site_unique_id,
+    build_site_unique_id,
+    owned_site_entity_unique_id,
+)
 from .const import DOMAIN
 from .dashboard_contract_utils import as_dict, content_revision
 from .data_transforms import site_device_facts, site_network_facts
-from .helpers import owned_site_entity_unique_id
 from .performance import bits_per_second_to_int
 from .topology_contract import site_display_name
 

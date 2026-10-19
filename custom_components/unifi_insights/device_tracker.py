@@ -14,6 +14,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .console_identity import async_get_device_entry
 from .const import (
     CONF_TRACK_CLIENTS,
     CONF_TRACK_WIFI_CLIENTS,
@@ -26,7 +27,6 @@ from .const import (
 from .coordinators import UnifiFacadeCoordinator
 from .entity import get_client_type as _get_client_type
 from .entity import get_field
-from .helpers import async_get_device_entry
 from .mobility_entity import async_setup_mobility_trackers
 
 if TYPE_CHECKING:

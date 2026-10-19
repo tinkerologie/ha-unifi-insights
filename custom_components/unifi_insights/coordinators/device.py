@@ -37,6 +37,7 @@ from custom_components.unifi_insights.client_wake import (
     first_non_blank_text,
     history_network_hint,
 )
+from custom_components.unifi_insights.console_identity import async_get_device_entry
 from custom_components.unifi_insights.const import DOMAIN, SCAN_INTERVAL_DEVICE
 from custom_components.unifi_insights.data_transforms import (
     CPU_STAT_KEYS,
@@ -48,7 +49,6 @@ from custom_components.unifi_insights.data_transforms import (
     normalize_legacy_storage,
     normalize_legacy_wans,
 )
-from custom_components.unifi_insights.helpers import async_get_device_entry
 from custom_components.unifi_insights.topology_contract import (
     first_present,
     normalize_mac,

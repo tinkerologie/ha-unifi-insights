@@ -27,6 +27,7 @@ from custom_components.unifi_insights.config_flow import (
     _clear_access_field,
     _host_key,
 )
+from custom_components.unifi_insights.console_identity import SiteEntityIdentityError
 from custom_components.unifi_insights.const import (
     CONF_ACCESS_PORT,
     CONF_ACCESS_TOKEN,
@@ -42,7 +43,6 @@ from custom_components.unifi_insights.const import (
     DEFAULT_ACCESS_PORT,
     DOMAIN,
 )
-from custom_components.unifi_insights.helpers import SiteEntityIdentityError
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry, ConfigFlowResult

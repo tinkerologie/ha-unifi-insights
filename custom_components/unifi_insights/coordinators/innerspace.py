@@ -16,11 +16,11 @@ from unifi_official_api import (
     UniFiTimeoutError,
 )
 
+from custom_components.unifi_insights.console_identity import async_get_device_entry
 from custom_components.unifi_insights.const import DOMAIN, SCAN_INTERVAL_INNERSPACE
 from custom_components.unifi_insights.data_transforms import (
     normalize_innerspace_snapshot,
 )
-from custom_components.unifi_insights.helpers import async_get_device_entry
 
 from .base import UnifiBaseCoordinator
 

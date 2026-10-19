@@ -11,9 +11,9 @@ from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .console_identity import async_migrate_site_entity
 from .coordinators.rule_audit import RULE_CHANGE_TYPES
 from .entity import build_site_device_info
-from .helpers import async_migrate_site_entity
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

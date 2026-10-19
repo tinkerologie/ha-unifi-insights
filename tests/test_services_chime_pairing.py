@@ -39,7 +39,7 @@ from custom_components.unifi_insights.const import (
     DOMAIN,
     SERVICE_SET_CHIME_PAIRED_DOORBELLS,
 )
-from custom_components.unifi_insights.helpers import is_doorbell_camera_model
+from custom_components.unifi_insights.data_transforms import is_doorbell_camera_model
 from custom_components.unifi_insights.service_targets import _doorbell_camera_id
 from custom_components.unifi_insights.services import (
     async_setup_services,

@@ -38,6 +38,7 @@ from unifi_official_api.protect.talkback import (
 )
 from unifi_official_api.validation import sanitized_validation_fields
 
+from custom_components.unifi_insights.console_identity import async_get_device_entry
 from custom_components.unifi_insights.const import (
     DEVICE_TYPE_CAMERA,
     DEVICE_TYPE_CHIME,
@@ -55,7 +56,6 @@ from custom_components.unifi_insights.const import (
     SCAN_INTERVAL_PROTECT,
 )
 from custom_components.unifi_insights.data_transforms import get_field
-from custom_components.unifi_insights.helpers import async_get_device_entry
 
 from .base import CommandFailure, UnifiBaseCoordinator, async_execute_command
 

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 from homeassistant.helpers import device_registry as dr
 
-from custom_components.unifi_insights.helpers import async_get_device_entry
+from custom_components.unifi_insights.console_identity import async_get_device_entry
 
 IDENTIFIER = ("unifi_insights", "dev1")
 

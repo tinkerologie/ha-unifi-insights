@@ -32,7 +32,7 @@ from .client_wake import (
     mac_from_wake_unique_id,
     wake_unique_id,
 )
-from .console_identity import resolve_console_namespace
+from .console_identity import async_migrate_site_entity, resolve_console_namespace
 from .const import (
     ATTR_CHIME_ID,
     ATTR_CHIME_NAME,
@@ -64,7 +64,6 @@ from .entity import (
     get_client_type,
     get_field,
 )
-from .helpers import async_migrate_site_entity
 from .topology_contract import normalize_mac
 
 if TYPE_CHECKING:

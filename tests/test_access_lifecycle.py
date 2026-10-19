@@ -34,6 +34,7 @@ from custom_components.unifi_insights import (
     async_unload_entry,
 )
 from custom_components.unifi_insights.access_entity import access_unique_id
+from custom_components.unifi_insights.console_identity import SiteEntityIdentityError
 from custom_components.unifi_insights.const import (
     CONF_ACCESS_TOKEN,
     CONF_ACCESS_WEBHOOK,
@@ -47,7 +48,6 @@ from custom_components.unifi_insights.coordinators.access import (
     ACCESS_DEBOUNCE_SECONDS,
     UnifiInsightsAccessCoordinator,
 )
-from custom_components.unifi_insights.helpers import SiteEntityIdentityError
 from tests.test_access_coordinator import DEVICES, DOORS, NAMESPACE, _client
 from tests.test_access_webhook import _sign, _unlock_event
 

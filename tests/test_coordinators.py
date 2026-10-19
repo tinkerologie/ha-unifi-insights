@@ -57,6 +57,7 @@ from unifi_official_api.protect.models import (
     Viewer,
 )
 
+from custom_components.unifi_insights.console_identity import async_get_device_entry
 from custom_components.unifi_insights.const import (
     CONF_CONNECTION_TYPE,
     CONF_SITE_IDS,
@@ -110,7 +111,6 @@ from custom_components.unifi_insights.data_transforms import (
     SiteNetworkFacts,
 )
 from custom_components.unifi_insights.entity import is_device_online
-from custom_components.unifi_insights.helpers import async_get_device_entry
 from tests.conftest import mock_device_lookup_method, set_mock_device_lookup
 from tests.fixtures.library_responses import (
     SAMPLE_ALARM_HUB,
