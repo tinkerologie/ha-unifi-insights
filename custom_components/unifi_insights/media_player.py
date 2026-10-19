@@ -197,7 +197,8 @@ class UnifiProtectCameraSpeaker(UnifiProtectEntity, MediaPlayerEntity):
                 self._current_stream = None
                 self.async_write_ha_state()
 
-            stream = await self.coordinator.async_start_camera_talkback(
+            protect = self.coordinator.require_protect_coordinator()
+            stream = await protect.async_start_camera_talkback(
                 self._device_id, media_url
             )
             self._current_stream = stream

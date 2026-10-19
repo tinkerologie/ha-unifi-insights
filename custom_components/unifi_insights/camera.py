@@ -138,15 +138,8 @@ class UnifiProtectCamera(UnifiProtectEntity, Camera):
         # The Protect snapshot endpoint does not accept width/height params
         # (they cause an HTTP 500). HA scales the returned image as needed.
         _ = (width, height)
-
-        try:
-            snapshot = await self.coordinator.protect_client.cameras.get_snapshot(  # type: ignore[union-attr]
-                self._device_id,
-            )
-            return snapshot if isinstance(snapshot, bytes) else None
-        except Exception:
-            _LOGGER.debug("Error getting camera snapshot", exc_info=True)
-            return None
+        protect = self.coordinator.require_protect_coordinator()
+        return await protect.async_get_camera_snapshot(self._device_id)
 
     async def stream_source(self) -> str | None:
         """
@@ -159,25 +152,10 @@ class UnifiProtectCamera(UnifiProtectEntity, Camera):
         _LOGGER.debug("Getting stream source for %s", self._device_id)
 
         # Try to use the API to create a dynamic RTSPS stream (preferred method)
-        if self.coordinator.protect_client:
-            try:
-                stream = (
-                    await self.coordinator.protect_client.cameras.create_rtsps_stream(
-                        self._device_id,
-                        qualities=["high"],
-                    )
-                )
-                if stream and stream.high:
-                    _LOGGER.debug(
-                        "Using dynamic stream URL for camera %s", self._device_id
-                    )
-                    stream_url: str = stream.high
-                    return stream_url
-            except Exception:
-                _LOGGER.debug(
-                    "Failed to create dynamic stream, falling back to static URL",
-                    exc_info=True,
-                )
+        protect = self.coordinator.require_protect_coordinator()
+        if dynamic_url := await protect.async_create_camera_stream_url(self._device_id):
+            _LOGGER.debug("Using dynamic stream URL for camera %s", self._device_id)
+            return dynamic_url
 
         # Fallback: Construct static RTSPS URL
         nvr_host = None

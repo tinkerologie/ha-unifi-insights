@@ -23,11 +23,9 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
-from unifi_official_api import ApiKeyAuth, ConnectionType
 from unifi_official_api.network.models.routes import (
     PolicyBasedRoute,
 )
-from unifi_official_api.protect import UniFiProtectClient
 
 from custom_components.unifi_insights.const import (
     ATTR_CAMERA_ID,
@@ -57,7 +55,7 @@ from custom_components.unifi_insights.switch import (
     _prune_orphaned_switch_entities,
     async_setup_entry,
 )
-from tests.fixtures.command_owners import autospec_command_owners
+from tests.fixtures.command_owners import autospec_command_owners, protect_owner
 
 
 class TestParallelUpdates:
@@ -2435,8 +2433,6 @@ class TestUnifiProtectStatusLightSwitch:
         coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
         coordinator.protect_client.base_url = "https://192.168.1.1"
-        coordinator.protect_client.cameras = MagicMock()
-        coordinator.protect_client.cameras.update = AsyncMock()
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
         coordinator.data = {
@@ -2539,18 +2535,23 @@ class TestUnifiProtectStatusLightSwitch:
 
         await switch.async_turn_on()
 
-        mock_coordinator.protect_client.cameras.update.assert_called_once_with(
-            "camera1",
-            ledSettings={"isEnabled": True},
+        protect = protect_owner(mock_coordinator)
+        protect.async_update_camera_settings.assert_awaited_once_with(
+            "camera1", ledSettings={"isEnabled": True}
         )
+        # The owner publishes the written setting; the state follows from it.
+        camera = mock_coordinator.data["protect"]["cameras"]["camera1"]
+        camera["ledSettings"] = {"isEnabled": True}
+        switch._update_from_data()
         assert switch._attr_is_on is True
-        switch.async_write_ha_state.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_async_turn_on_error(self, mock_coordinator) -> None:
         """Test turning status light on with error."""
-        mock_coordinator.protect_client.cameras.update.side_effect = Exception(
-            "API error"
+        protect_owner(
+            mock_coordinator
+        ).async_update_camera_settings.side_effect = HomeAssistantError(
+            "Unable to update camera camera1"
         )
         mock_coordinator.data["protect"]["cameras"]["camera1"]["ledSettings"] = {
             "isEnabled": False
@@ -2562,7 +2563,7 @@ class TestUnifiProtectStatusLightSwitch:
         )
         switch.async_write_ha_state = MagicMock()
 
-        with pytest.raises(HomeAssistantError, match="Unable to turn on status light"):
+        with pytest.raises(HomeAssistantError, match="Unable to update camera"):
             await switch.async_turn_on()
 
         switch.async_write_ha_state.assert_not_called()
@@ -2578,18 +2579,23 @@ class TestUnifiProtectStatusLightSwitch:
 
         await switch.async_turn_off()
 
-        mock_coordinator.protect_client.cameras.update.assert_called_once_with(
-            "camera1",
-            ledSettings={"isEnabled": False},
+        protect = protect_owner(mock_coordinator)
+        protect.async_update_camera_settings.assert_awaited_once_with(
+            "camera1", ledSettings={"isEnabled": False}
         )
+        # The owner publishes the written setting; the state follows from it.
+        camera = mock_coordinator.data["protect"]["cameras"]["camera1"]
+        camera["ledSettings"] = {"isEnabled": False}
+        switch._update_from_data()
         assert switch._attr_is_on is False
-        switch.async_write_ha_state.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_async_turn_off_error(self, mock_coordinator) -> None:
         """Test turning status light off with error."""
-        mock_coordinator.protect_client.cameras.update.side_effect = Exception(
-            "API error"
+        protect_owner(
+            mock_coordinator
+        ).async_update_camera_settings.side_effect = HomeAssistantError(
+            "Unable to update camera camera1"
         )
 
         switch = UnifiProtectStatusLightSwitch(
@@ -2598,7 +2604,7 @@ class TestUnifiProtectStatusLightSwitch:
         )
         switch.async_write_ha_state = MagicMock()
 
-        with pytest.raises(HomeAssistantError, match="Unable to turn off status light"):
+        with pytest.raises(HomeAssistantError, match="Unable to update camera"):
             await switch.async_turn_off()
 
         switch.async_write_ha_state.assert_not_called()
@@ -2613,8 +2619,6 @@ class TestUnifiProtectHighFPSSwitch:
         coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
         coordinator.protect_client.base_url = "https://192.168.1.1"
-        coordinator.protect_client.cameras = MagicMock()
-        coordinator.protect_client.cameras.update = AsyncMock()
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
         coordinator.data = {
@@ -2713,18 +2717,23 @@ class TestUnifiProtectHighFPSSwitch:
 
         await switch.async_turn_on()
 
-        mock_coordinator.protect_client.cameras.update.assert_called_once_with(
-            "camera1",
-            videoMode=VIDEO_MODE_HIGH_FPS,
+        protect = protect_owner(mock_coordinator)
+        protect.async_update_camera_settings.assert_awaited_once_with(
+            "camera1", videoMode=VIDEO_MODE_HIGH_FPS
         )
+        # The owner publishes the written setting; the state follows from it.
+        camera = mock_coordinator.data["protect"]["cameras"]["camera1"]
+        camera["videoMode"] = VIDEO_MODE_HIGH_FPS
+        switch._update_from_data()
         assert switch._attr_is_on is True
-        switch.async_write_ha_state.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_async_turn_on_error(self, mock_coordinator) -> None:
         """Test enabling high FPS mode with error."""
-        mock_coordinator.protect_client.cameras.update.side_effect = Exception(
-            "API error"
+        protect_owner(
+            mock_coordinator
+        ).async_update_camera_settings.side_effect = HomeAssistantError(
+            "Unable to update camera camera1"
         )
 
         switch = UnifiProtectHighFPSSwitch(
@@ -2734,7 +2743,7 @@ class TestUnifiProtectHighFPSSwitch:
         switch._attr_is_on = False
         switch.async_write_ha_state = MagicMock()
 
-        with pytest.raises(HomeAssistantError, match="Unable to enable high FPS mode"):
+        with pytest.raises(HomeAssistantError, match="Unable to update camera"):
             await switch.async_turn_on()
 
         switch.async_write_ha_state.assert_not_called()
@@ -2754,18 +2763,23 @@ class TestUnifiProtectHighFPSSwitch:
 
         await switch.async_turn_off()
 
-        mock_coordinator.protect_client.cameras.update.assert_called_once_with(
-            "camera1",
-            videoMode=VIDEO_MODE_DEFAULT,
+        protect = protect_owner(mock_coordinator)
+        protect.async_update_camera_settings.assert_awaited_once_with(
+            "camera1", videoMode=VIDEO_MODE_DEFAULT
         )
+        # The owner publishes the written setting; the state follows from it.
+        camera = mock_coordinator.data["protect"]["cameras"]["camera1"]
+        camera["videoMode"] = VIDEO_MODE_DEFAULT
+        switch._update_from_data()
         assert switch._attr_is_on is False
-        switch.async_write_ha_state.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_async_turn_off_error(self, mock_coordinator) -> None:
         """Test disabling high FPS mode with error."""
-        mock_coordinator.protect_client.cameras.update.side_effect = Exception(
-            "API error"
+        protect_owner(
+            mock_coordinator
+        ).async_update_camera_settings.side_effect = HomeAssistantError(
+            "Unable to update camera camera1"
         )
         mock_coordinator.data["protect"]["cameras"]["camera1"]["videoMode"] = (
             VIDEO_MODE_HIGH_FPS
@@ -2777,7 +2791,7 @@ class TestUnifiProtectHighFPSSwitch:
         )
         switch.async_write_ha_state = MagicMock()
 
-        with pytest.raises(HomeAssistantError, match="Unable to disable high FPS mode"):
+        with pytest.raises(HomeAssistantError, match="Unable to update camera"):
             await switch.async_turn_off()
 
         switch.async_write_ha_state.assert_not_called()
@@ -4030,94 +4044,6 @@ class TestFindGatewayDeviceId:
             }
         }
         assert get_site_gateway_id(coordinator.data, "site1") == "gw"
-
-
-class TestProtectSwitchPatchBodies:
-    """Test camera switches call through facade down to protect_client._patch."""
-
-    @pytest.mark.asyncio
-    async def test_status_light_switch_sends_spec_patch_body(self) -> None:
-        """Test status light switch turn on/off sends ledSettings via facade."""
-        coordinator = autospec_command_owners(MagicMock())
-        client = UniFiProtectClient(
-            auth=ApiKeyAuth(api_key="test-key"),
-            base_url="https://192.168.1.1",
-            connection_type=ConnectionType.LOCAL,
-        )
-        client._patch = AsyncMock(
-            return_value={"id": "camera1", "mac": "00:11:22:33:44:55"}
-        )
-        coordinator.protect_client = client
-        coordinator.async_update_camera_settings = AsyncMock(
-            side_effect=client.cameras.update
-        )
-        coordinator.data = {
-            "protect": {
-                "cameras": {
-                    "camera1": {
-                        "name": "Test Camera",
-                        "ledSettings": {"isEnabled": False},
-                    }
-                }
-            }
-        }
-        switch = UnifiProtectStatusLightSwitch(coordinator, "camera1")
-        switch.async_write_ha_state = MagicMock()
-
-        await switch.async_turn_on()
-        client._patch.assert_awaited_once_with(
-            client.build_api_path("/cameras/camera1"),
-            json_data={"ledSettings": {"isEnabled": True}},
-        )
-
-        client._patch.reset_mock()
-        await switch.async_turn_off()
-        client._patch.assert_awaited_once_with(
-            client.build_api_path("/cameras/camera1"),
-            json_data={"ledSettings": {"isEnabled": False}},
-        )
-
-    @pytest.mark.asyncio
-    async def test_high_fps_switch_sends_spec_patch_body(self) -> None:
-        """Test high FPS switch turn on/off sends videoMode via facade."""
-        coordinator = autospec_command_owners(MagicMock())
-        client = UniFiProtectClient(
-            auth=ApiKeyAuth(api_key="test-key"),
-            base_url="https://192.168.1.1",
-            connection_type=ConnectionType.LOCAL,
-        )
-        client._patch = AsyncMock(
-            return_value={"id": "camera1", "mac": "00:11:22:33:44:55"}
-        )
-        coordinator.protect_client = client
-        coordinator.async_update_camera_settings = AsyncMock(
-            side_effect=client.cameras.update
-        )
-        coordinator.data = {
-            "protect": {
-                "cameras": {
-                    "camera1": {
-                        "name": "Test Camera",
-                        "videoMode": "default",
-                    }
-                }
-            }
-        }
-        switch = UnifiProtectHighFPSSwitch(coordinator, "camera1")
-        switch.async_write_ha_state = MagicMock()
-
-        await switch.async_turn_on()
-        client._patch.assert_awaited_once_with(
-            client.build_api_path("/cameras/camera1"),
-            json_data={"videoMode": "highFps"},
-        )
-
-        client._patch.reset_mock()
-        await switch.async_turn_off()
-        client._patch.assert_awaited_once_with(
-            client.build_api_path("/cameras/camera1"),
-            json_data={"videoMode": "default"},
-        )
 
 
 class TestGetFirewallRuleAction:

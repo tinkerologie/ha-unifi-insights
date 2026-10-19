@@ -227,16 +227,25 @@ def build_seeded_owners(hass: HomeAssistant) -> SeededOwners:
 
 def autospec_command_owners(facade: Any) -> Any:
     """
-    Give a mock facade strict autospecs of its Network command owners.
+    Give a mock facade strict autospecs of its command owners.
 
     For entity and service tests that only check the typed owner call: every
     owner command is an ``AsyncMock`` with the real signature, so calling a
     command that does not exist, or with arguments it does not take, fails.
-    Returns the facade for chaining.
+    The Protect owner is what ``require_protect_coordinator()`` returns
+    (see `protect_owner`). Returns the facade for chaining.
     """
     facade.config_coordinator = create_autospec(UnifiConfigCoordinator, instance=True)
     facade.device_coordinator = create_autospec(UnifiDeviceCoordinator, instance=True)
+    facade.require_protect_coordinator = MagicMock(
+        return_value=create_autospec(UnifiProtectCoordinator, instance=True)
+    )
     return facade
+
+
+def protect_owner(facade: Any) -> Any:
+    """Return the Protect owner that `autospec_command_owners` gave a facade."""
+    return facade.require_protect_coordinator.return_value
 
 
 async def async_refresh_owners(owners: SeededOwners) -> None:

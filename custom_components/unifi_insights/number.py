@@ -44,7 +44,6 @@ from .coordinators.voucher_state import (
 )
 from .entity import (
     UnifiProtectEntity,
-    async_call_coordinator_action,
     build_site_device_info,
 )
 from .helpers import async_migrate_site_entity
@@ -281,21 +280,9 @@ class UnifiProtectMicrophoneVolumeNumber(UnifiProtectEntity, NumberEntity):
             "Setting microphone volume to %s for camera %s", value, self._device_id
         )
 
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_set_microphone_volume",
-            f"Unable to set microphone volume for camera {self._device_id}",
-            self._device_id,
-            int(value),
-            fallback_factory=lambda: (
-                self.coordinator.protect_client.set_microphone_volume(  # type: ignore[union-attr]
-                    camera_id=self._device_id,
-                    volume=int(value),
-                )
-            ),
-        )
-        self._attr_native_value = value
-        self.async_write_ha_state()
+        # The owner publishes the written volume; the value follows from it.
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_set_microphone_volume(self._device_id, int(value))
 
 
 class UnifiProtectLightLevelNumber(UnifiProtectEntity, NumberEntity):
@@ -353,22 +340,10 @@ class UnifiProtectLightLevelNumber(UnifiProtectEntity, NumberEntity):
             self._device_id,
         )
 
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_set_light_brightness",
-            f"Unable to set brightness for light {self._device_id}",
-            self._device_id,
-            led_level,
-            fallback_factory=lambda: (
-                self.coordinator.protect_client.lights.set_brightness(  # type: ignore[union-attr]
-                    self._device_id,
-                    led_level,
-                )
-            ),
-        )
-        # Show the percentage Protect will report for the level it was given
-        self._attr_native_value = led_level_to_percent(led_level)
-        self.async_write_ha_state()
+        # The owner publishes the level; the slider shows the percentage
+        # Protect will report for it.
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_set_light_brightness(self._device_id, led_level)
 
 
 class UnifiProtectChimeVolumeNumber(UnifiProtectEntity, NumberEntity):
@@ -421,19 +396,8 @@ class UnifiProtectChimeVolumeNumber(UnifiProtectEntity, NumberEntity):
         """Set the chime volume level."""
         _LOGGER.debug("Setting chime volume to %s for chime %s", value, self._device_id)
 
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_set_chime_volume",
-            f"Unable to set volume for chime {self._device_id}",
-            self._device_id,
-            int(value),
-            fallback_factory=lambda: self.coordinator.protect_client.set_chime_volume(  # type: ignore[union-attr]
-                chime_id=self._device_id,
-                volume=int(value),
-            ),
-        )
-        self._attr_native_value = int(value)
-        self.async_write_ha_state()
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_set_chime_volume(self._device_id, int(value))
 
 
 class UnifiProtectChimeRepeatTimesNumber(UnifiProtectEntity, NumberEntity):
@@ -488,19 +452,8 @@ class UnifiProtectChimeRepeatTimesNumber(UnifiProtectEntity, NumberEntity):
             "Setting chime repeat times to %s for chime %s", value, self._device_id
         )
 
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_set_chime_repeat",
-            f"Unable to set repeat count for chime {self._device_id}",
-            self._device_id,
-            int(value),
-            fallback_factory=lambda: self.coordinator.protect_client.set_chime_repeat(  # type: ignore[union-attr]
-                chime_id=self._device_id,
-                repeat_times=int(value),
-            ),
-        )
-        self._attr_native_value = int(value)
-        self.async_write_ha_state()
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_set_chime_repeat(self._device_id, int(value))
 
 
 def _async_setup_voucher_numbers(

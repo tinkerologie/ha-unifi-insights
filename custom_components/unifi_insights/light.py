@@ -25,7 +25,7 @@ from .const import (
     LIGHT_MODE_ALWAYS,
     LIGHT_MODE_OFF,
 )
-from .entity import UnifiProtectEntity, async_call_coordinator_action
+from .entity import UnifiProtectEntity
 from .led_level import MAX_LED_LEVEL, MIN_LED_LEVEL, valid_led_level
 
 if TYPE_CHECKING:
@@ -165,8 +165,15 @@ class UnifiProtectLight(UnifiProtectEntity, LightEntity):
         }
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn the light on."""
+        """
+        Turn the light on, setting the brightness first when one is given.
+
+        The two writes are not one transaction: a failed mode write leaves the
+        new brightness. The owner publishes each written field and the state
+        follows from it.
+        """
         _LOGGER.debug("Turning on light %s", self._device_id)
+        protect = self.coordinator.require_protect_coordinator()
 
         # Set brightness if provided
         if ATTR_BRIGHTNESS in kwargs:
@@ -181,56 +188,15 @@ class UnifiProtectLight(UnifiProtectEntity, LightEntity):
                 brightness,
                 led_level,
             )
-            await async_call_coordinator_action(
-                self.coordinator,
-                "async_set_light_brightness",
-                f"Unable to set brightness for light {self._device_id}",
-                self._device_id,
-                led_level,
-                fallback_factory=lambda: (
-                    self.coordinator.protect_client.lights.set_brightness(  # type: ignore[union-attr]
-                        self._device_id,
-                        led_level,
-                    )
-                ),
-            )
-            self._attr_brightness = brightness
+            await protect.async_set_light_brightness(self._device_id, led_level)
 
         # Set light mode to always on
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_set_light_mode",
-            f"Unable to turn on light {self._device_id}",
-            self._device_id,
-            LIGHT_MODE_ALWAYS,
-            fallback_factory=lambda: self.coordinator.protect_client.lights.set_mode(  # type: ignore[union-attr]
-                self._device_id,
-                LIGHT_MODE_ALWAYS,
-            ),
-        )
-
-        # Update state
-        self._attr_is_on = True
-        self.async_write_ha_state()
+        await protect.async_set_light_mode(self._device_id, LIGHT_MODE_ALWAYS)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the light off."""
         _LOGGER.debug("Turning off light %s", self._device_id)
         _ = kwargs
 
-        # Set light mode to off
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_set_light_mode",
-            f"Unable to turn off light {self._device_id}",
-            self._device_id,
-            LIGHT_MODE_OFF,
-            fallback_factory=lambda: self.coordinator.protect_client.lights.set_mode(  # type: ignore[union-attr]
-                self._device_id,
-                LIGHT_MODE_OFF,
-            ),
-        )
-
-        # Update state
-        self._attr_is_on = False
-        self.async_write_ha_state()
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_set_light_mode(self._device_id, LIGHT_MODE_OFF)

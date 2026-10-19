@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
 from homeassistant.core import callback
@@ -42,7 +42,6 @@ from .coordinators.config_sections import (
 from .data_transforms import get_site_gateway_id
 from .entity import (
     UnifiProtectEntity,
-    async_call_coordinator_action,
     get_field,
     is_device_online,
 )
@@ -56,7 +55,7 @@ if TYPE_CHECKING:
 
     from . import UnifiInsightsConfigEntry
     from .coordinators import UnifiFacadeCoordinator
-    from .coordinators.access import UnifiInsightsAccessCoordinator
+    from .coordinators.access import EmergencyMode, UnifiInsightsAccessCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -289,7 +288,8 @@ class UnifiAccessEmergencySwitch(UnifiAccessEntity, SwitchEntity):
     def __init__(self, coordinator: UnifiInsightsAccessCoordinator, mode: str) -> None:
         """Create the switch for one emergency mode on the console device."""
         super().__init__(coordinator)
-        self._mode = mode
+        # One of EMERGENCY_MODES, which the discovery passes in as its keys.
+        self._mode = cast("EmergencyMode", mode)
         self._attr_translation_key = f"access_emergency_{mode}"
         self._attr_unique_id = access_unique_id(self._namespace, "emergency", mode)
         self._attr_device_info = console_device_info(self._namespace)
@@ -309,20 +309,18 @@ class UnifiAccessEmergencySwitch(UnifiAccessEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: object) -> None:  # noqa: ARG002
         """Turn this mode on; the coordinator clears the other mode."""
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_set_emergency_mode",
+        await self._async_command(
             "Could not change the Access emergency mode",
+            self.coordinator.async_set_emergency_mode,
             self._mode,
             enabled=True,
         )
 
     async def async_turn_off(self, **kwargs: object) -> None:  # noqa: ARG002
         """Turn this mode off and keep the other mode as the console reports it."""
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_set_emergency_mode",
+        await self._async_command(
             "Could not change the Access emergency mode",
+            self.coordinator.async_set_emergency_mode,
             self._mode,
             enabled=False,
         )
@@ -1078,38 +1076,22 @@ class UnifiProtectStatusLightSwitch(UnifiProtectEntity, SwitchEntity):
         _ = kwargs
         _LOGGER.debug("Turning on status light for camera %s", self._device_id)
 
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_update_camera_settings",
-            f"Unable to turn on status light for camera {self._device_id}",
-            self._device_id,
-            fallback_factory=lambda: self.coordinator.protect_client.cameras.update(  # type: ignore[union-attr]
-                self._device_id,
-                ledSettings={"isEnabled": True},
-            ),
-            ledSettings={"isEnabled": True},
+        # The owner publishes the written setting; state follows from it.
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_update_camera_settings(
+            self._device_id, ledSettings={"isEnabled": True}
         )
-        self._attr_is_on = True
-        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the status light off."""
         _ = kwargs
         _LOGGER.debug("Turning off status light for camera %s", self._device_id)
 
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_update_camera_settings",
-            f"Unable to turn off status light for camera {self._device_id}",
-            self._device_id,
-            fallback_factory=lambda: self.coordinator.protect_client.cameras.update(  # type: ignore[union-attr]
-                self._device_id,
-                ledSettings={"isEnabled": False},
-            ),
-            ledSettings={"isEnabled": False},
+        # The owner publishes the written setting; state follows from it.
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_update_camera_settings(
+            self._device_id, ledSettings={"isEnabled": False}
         )
-        self._attr_is_on = False
-        self.async_write_ha_state()
 
 
 class UnifiProtectHighFPSSwitch(UnifiProtectEntity, SwitchEntity):
@@ -1154,38 +1136,22 @@ class UnifiProtectHighFPSSwitch(UnifiProtectEntity, SwitchEntity):
         _ = kwargs
         _LOGGER.debug("Enabling high FPS mode for camera %s", self._device_id)
 
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_update_camera_settings",
-            f"Unable to enable high FPS mode for camera {self._device_id}",
-            self._device_id,
-            fallback_factory=lambda: self.coordinator.protect_client.cameras.update(  # type: ignore[union-attr]
-                self._device_id,
-                videoMode=VIDEO_MODE_HIGH_FPS,
-            ),
-            videoMode=VIDEO_MODE_HIGH_FPS,
+        # The owner publishes the written setting; state follows from it.
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_update_camera_settings(
+            self._device_id, videoMode=VIDEO_MODE_HIGH_FPS
         )
-        self._attr_is_on = True
-        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable high FPS mode (return to default)."""
         _ = kwargs
         _LOGGER.debug("Disabling high FPS mode for camera %s", self._device_id)
 
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_update_camera_settings",
-            f"Unable to disable high FPS mode for camera {self._device_id}",
-            self._device_id,
-            fallback_factory=lambda: self.coordinator.protect_client.cameras.update(  # type: ignore[union-attr]
-                self._device_id,
-                videoMode=VIDEO_MODE_DEFAULT,
-            ),
-            videoMode=VIDEO_MODE_DEFAULT,
+        # The owner publishes the written setting; state follows from it.
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_update_camera_settings(
+            self._device_id, videoMode=VIDEO_MODE_DEFAULT
         )
-        self._attr_is_on = False
-        self.async_write_ha_state()
 
 
 class UnifiClientBlockSwitch(CoordinatorEntity["UnifiFacadeCoordinator"], SwitchEntity):

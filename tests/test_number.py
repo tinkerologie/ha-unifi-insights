@@ -15,8 +15,6 @@ from homeassistant.components.number import (
 from homeassistant.const import UnitOfDataRate, UnitOfInformation, UnitOfTime
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
-from unifi_official_api import ApiKeyAuth, ConnectionType
-from unifi_official_api.protect import UniFiProtectClient
 
 from custom_components.unifi_insights.const import (
     ATTR_CAMERA_ID,
@@ -33,7 +31,6 @@ from custom_components.unifi_insights.const import (
     DEVICE_TYPE_CHIME,
     DEVICE_TYPE_LIGHT,
 )
-from custom_components.unifi_insights.coordinators import UnifiFacadeCoordinator
 from custom_components.unifi_insights.coordinators.voucher_state import VoucherSettings
 from custom_components.unifi_insights.number import (
     PARALLEL_UPDATES,
@@ -45,6 +42,7 @@ from custom_components.unifi_insights.number import (
     UnifiVoucherInputNumber,
     async_setup_entry,
 )
+from tests.fixtures.command_owners import autospec_command_owners, protect_owner
 
 
 class TestParallelUpdates:
@@ -61,7 +59,7 @@ class TestAsyncSetupEntry:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
@@ -209,7 +207,7 @@ class TestUnifiProtectMicrophoneVolumeNumber:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
         coordinator.protect_client.base_url = "https://192.168.1.1"
         coordinator.protect_client.set_microphone_volume = AsyncMock()
@@ -320,18 +318,20 @@ class TestUnifiProtectMicrophoneVolumeNumber:
 
         await number.async_set_native_value(50.0)
 
-        mock_coordinator.protect_client.set_microphone_volume.assert_called_once_with(
-            camera_id="camera1",
-            volume=50,
-        )
-        assert number._attr_native_value == 50.0
-        number.async_write_ha_state.assert_called_once()
+        protect = protect_owner(mock_coordinator)
+        protect.async_set_microphone_volume.assert_awaited_once_with("camera1", 50)
+        # The owner publishes micVolume; the value follows from the data.
+        mock_coordinator.data["protect"]["cameras"]["camera1"]["micVolume"] = 50
+        number._update_from_data()
+        assert number._attr_native_value == 50
 
     @pytest.mark.asyncio
     async def test_async_set_native_value_error(self, mock_coordinator) -> None:
         """Test setting volume with error."""
-        mock_coordinator.protect_client.set_microphone_volume.side_effect = Exception(
-            "API error"
+        protect_owner(
+            mock_coordinator
+        ).async_set_microphone_volume.side_effect = HomeAssistantError(
+            "Unable to set microphone volume for camera camera1"
         )
 
         number = UnifiProtectMicrophoneVolumeNumber(
@@ -363,7 +363,7 @@ class TestUnifiProtectLightLevelNumber:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
         coordinator.protect_client.base_url = "https://192.168.1.1"
         coordinator.protect_client.lights = MagicMock()
@@ -453,18 +453,20 @@ class TestUnifiProtectLightLevelNumber:
         await number.async_set_native_value(60.0)
 
         # 60% maps to LED level 4, which reads back as 67%
-        mock_coordinator.protect_client.lights.set_brightness.assert_called_once_with(
-            "light1",
-            4,
-        )
+        protect = protect_owner(mock_coordinator)
+        protect.async_set_light_brightness.assert_awaited_once_with("light1", 4)
+        light = mock_coordinator.data["protect"]["lights"]["light1"]
+        light["lightDeviceSettings"] = {"ledLevel": 4}
+        number._update_from_data()
         assert number._attr_native_value == 67
-        number.async_write_ha_state.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_async_set_native_value_error(self, mock_coordinator) -> None:
         """Test setting light level with error."""
-        mock_coordinator.protect_client.lights.set_brightness.side_effect = Exception(
-            "API error"
+        protect_owner(
+            mock_coordinator
+        ).async_set_light_brightness.side_effect = HomeAssistantError(
+            "Unable to set brightness for light light1"
         )
 
         number = UnifiProtectLightLevelNumber(
@@ -538,25 +540,10 @@ class TestUnifiProtectLightLevelNumber:
         ("percent", "led_level", "shown"),
         [(0, 1, 17), (50, 3, 50), (100, 6, 100)],
     )
-    async def test_light_level_number_sends_spec_patch_body(
+    async def test_light_level_number_writes_the_led_level(
         self, mock_coordinator, percent: float, led_level: int, shown: int
     ) -> None:
-        """Test the slider reaches PATCH /lights/{id} as a 1-6 ledLevel."""
-        client = UniFiProtectClient(
-            auth=ApiKeyAuth(api_key="test-key"),
-            base_url="https://192.168.1.1",
-            connection_type=ConnectionType.LOCAL,
-        )
-        client._patch = AsyncMock(return_value={"id": "light1", "mac": "00:11:22"})
-        mock_coordinator.protect_client = client
-        # Real coordinator methods, so the whole path down to the client runs
-        mock_coordinator._require_protect_client = lambda: client
-        mock_coordinator._async_execute_api_action = (
-            UnifiFacadeCoordinator._async_execute_api_action.__get__(mock_coordinator)
-        )
-        mock_coordinator.async_set_light_brightness = (
-            UnifiFacadeCoordinator.async_set_light_brightness.__get__(mock_coordinator)
-        )
+        """The slider percentage reaches the owner as a 1-6 ledLevel."""
         number = UnifiProtectLightLevelNumber(
             coordinator=mock_coordinator,
             light_id="light1",
@@ -565,30 +552,12 @@ class TestUnifiProtectLightLevelNumber:
 
         await number.async_set_native_value(percent)
 
-        client._patch.assert_awaited_once_with(
-            client.build_api_path("/lights/light1"),
-            json_data={"lightDeviceSettings": {"ledLevel": led_level}},
-        )
+        protect = protect_owner(mock_coordinator)
+        protect.async_set_light_brightness.assert_awaited_once_with("light1", led_level)
+        light = mock_coordinator.data["protect"]["lights"]["light1"]
+        light["lightDeviceSettings"] = {"ledLevel": led_level}
+        number._update_from_data()
         assert number._attr_native_value == shown
-
-    @pytest.mark.asyncio
-    async def test_light_level_number_brightness_fallback(
-        self, mock_coordinator
-    ) -> None:
-        """Test the fallback calls lights.set_brightness with the converted level."""
-        mock_coordinator.async_set_light_brightness = MagicMock()
-        number = UnifiProtectLightLevelNumber(
-            coordinator=mock_coordinator,
-            light_id="light1",
-        )
-        number.async_write_ha_state = MagicMock()
-
-        await number.async_set_native_value(100.0)
-
-        mock_coordinator.protect_client.lights.set_brightness.assert_awaited_once_with(
-            "light1",
-            6,
-        )
 
 
 class TestUnifiProtectChimeVolumeNumber:
@@ -597,7 +566,7 @@ class TestUnifiProtectChimeVolumeNumber:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
         coordinator.protect_client.base_url = "https://192.168.1.1"
         coordinator.protect_client.set_chime_volume = AsyncMock()
@@ -689,18 +658,20 @@ class TestUnifiProtectChimeVolumeNumber:
 
         await number.async_set_native_value(70.0)
 
-        mock_coordinator.protect_client.set_chime_volume.assert_called_once_with(
-            chime_id="chime1",
-            volume=70,
-        )
+        protect = protect_owner(mock_coordinator)
+        protect.async_set_chime_volume.assert_awaited_once_with("chime1", 70)
+        chime = mock_coordinator.data["protect"]["chimes"]["chime1"]
+        chime["ringSettings"] = [{**chime["ringSettings"][0], "volume": 70}]
+        number._update_from_data()
         assert number._attr_native_value == 70
-        number.async_write_ha_state.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_async_set_native_value_error(self, mock_coordinator) -> None:
         """Test setting chime volume with error."""
-        mock_coordinator.protect_client.set_chime_volume.side_effect = Exception(
-            "API error"
+        protect_owner(
+            mock_coordinator
+        ).async_set_chime_volume.side_effect = HomeAssistantError(
+            "Unable to set volume for chime chime1"
         )
 
         number = UnifiProtectChimeVolumeNumber(
@@ -721,7 +692,7 @@ class TestUnifiProtectChimeRepeatTimesNumber:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
         coordinator.protect_client.base_url = "https://192.168.1.1"
         coordinator.protect_client.set_chime_repeat = AsyncMock()
@@ -816,18 +787,20 @@ class TestUnifiProtectChimeRepeatTimesNumber:
 
         await number.async_set_native_value(3.0)
 
-        mock_coordinator.protect_client.set_chime_repeat.assert_called_once_with(
-            chime_id="chime1",
-            repeat_times=3,
-        )
+        protect = protect_owner(mock_coordinator)
+        protect.async_set_chime_repeat.assert_awaited_once_with("chime1", 3)
+        chime = mock_coordinator.data["protect"]["chimes"]["chime1"]
+        chime["ringSettings"] = [{**chime["ringSettings"][0], "repeatTimes": 3}]
+        number._update_from_data()
         assert number._attr_native_value == 3
-        number.async_write_ha_state.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_async_set_native_value_error(self, mock_coordinator) -> None:
         """Test setting repeat times with error."""
-        mock_coordinator.protect_client.set_chime_repeat.side_effect = Exception(
-            "API error"
+        protect_owner(
+            mock_coordinator
+        ).async_set_chime_repeat.side_effect = HomeAssistantError(
+            "Unable to set repeat count for chime chime1"
         )
 
         number = UnifiProtectChimeRepeatTimesNumber(

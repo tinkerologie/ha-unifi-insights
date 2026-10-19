@@ -3,10 +3,8 @@
 
 Most of these set the integration up through the real config entry and call the
 real ``alarm_control_panel`` services, so a service call travels through the
-entity, the real facade and the real library endpoint or its mock, and only the
-Protect API client is mocked. A MagicMock coordinator would make
-``async_call_coordinator_action`` quietly take its fallback path and hide a
-facade that never calls the API.
+entity, the real facade, the real Protect command owner and the real library
+endpoint or its mock, and only the Protect API client is mocked.
 """
 
 from __future__ import annotations
@@ -1168,9 +1166,9 @@ async def test_a_command_refused_by_the_manager_hides_the_panel(
 
 
 async def _call_service_directly(hass: HomeAssistant) -> None:
-    """Ask the facade to arm, as the panel would if it were still there."""
+    """Ask the Protect owner to arm, as the panel would if it were still there."""
     entry = hass.config_entries.async_entries(DOMAIN)[0]
-    await entry.runtime_data.coordinator.async_arm_alarm()
+    await entry.runtime_data.coordinator.require_protect_coordinator().async_arm_alarm()
 
 
 async def test_a_flag_that_survives_polls_and_nvr_frames(

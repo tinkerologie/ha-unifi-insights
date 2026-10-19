@@ -56,7 +56,6 @@ from .data_transforms import current_chime_ringtone_id
 from .entity import (
     UnifiInsightsEntity,
     UnifiProtectEntity,
-    async_call_coordinator_action,
     build_site_device_info,
     camera_supports_ptz,
     get_client_type,
@@ -163,10 +162,9 @@ class UnifiAccessUnlockButton(UnifiAccessDoorEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Send the remote unlock; the relay state comes from the read-back."""
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_unlock_door",
+        await self._async_command(
             "Could not unlock the Access door",
+            self.coordinator.async_unlock_door,
             self._door_id,
         )
 
@@ -627,20 +625,8 @@ class UnifiProtectChimePlayButton(UnifiProtectEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Report that the official API cannot play a chime."""
-
-        async def unsupported() -> None:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="chime_playback_unsupported",
-            )
-
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_play_chime",
-            f"Unable to play ringtone on chime {self._device_id}",
-            self._device_id,
-            fallback_factory=unsupported,
-        )
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_play_chime(self._device_id)
 
 
 class UnifiClientReconnectButton(
@@ -809,17 +795,8 @@ class UnifiProtectPTZPatrolStartButton(UnifiProtectEntity, ButtonEntity):
         """Start PTZ patrol."""
         _LOGGER.debug("Starting PTZ patrol for camera %s", self._device_id)
 
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_start_ptz_patrol",
-            f"Unable to start PTZ patrol for camera {self._device_id}",
-            self._device_id,
-            0,
-            fallback_factory=lambda: self.coordinator.protect_client.ptz_start_patrol(  # type: ignore[union-attr]
-                camera_id=self._device_id,
-                slot=0,
-            ),
-        )
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_start_ptz_patrol(self._device_id, 0)
         _LOGGER.info("Successfully started PTZ patrol for camera %s", self._device_id)
 
 
@@ -841,15 +818,8 @@ class UnifiProtectPTZPatrolStopButton(UnifiProtectEntity, ButtonEntity):
         """Stop PTZ patrol."""
         _LOGGER.debug("Stopping PTZ patrol for camera %s", self._device_id)
 
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_stop_ptz_patrol",
-            f"Unable to stop PTZ patrol for camera {self._device_id}",
-            self._device_id,
-            fallback_factory=lambda: self.coordinator.protect_client.ptz_stop_patrol(  # type: ignore[union-attr]
-                camera_id=self._device_id,
-            ),
-        )
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_stop_ptz_patrol(self._device_id)
         _LOGGER.info("Successfully stopped PTZ patrol for camera %s", self._device_id)
 
 
@@ -885,15 +855,12 @@ class UnifiGenerateVoucherButton(
         """Generate a guest voucher with current HA settings."""
         settings = self.coordinator.get_voucher_settings(self._site_id)
         kwargs: dict[str, Any] = voucher_request_kwargs(settings)
-        created = await async_call_coordinator_action(
-            self.coordinator,
-            "async_generate_voucher",
-            f"Unable to generate a guest voucher in site {self._site_id}",
-            self._site_id,
-            name=DEFAULT_VOUCHER_NAME,
-            count=1,
-            **kwargs,
+        created = await self.coordinator.async_generate_voucher(
+            self._site_id, name=DEFAULT_VOUCHER_NAME, count=1, **kwargs
         )
         if not created:
-            err_msg = f"UniFi returned no voucher for site {self._site_id}"
-            raise HomeAssistantError(err_msg)
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="voucher_not_created",
+                translation_placeholders={"site_id": self._site_id},
+            )

@@ -3,9 +3,8 @@
 
 Most of these set the integration up through the real config entry and call the
 real ``siren`` services, so a service call travels through the entity, the real
-facade and the Protect coordinator, and only the Protect API client is mocked.
-That is deliberate: a MagicMock coordinator makes ``async_call_coordinator_action``
-quietly take its fallback path and would hide a facade that never calls the API.
+facade and the Protect coordinator that owns the siren commands, and only the
+Protect API client is mocked.
 """
 
 from __future__ import annotations

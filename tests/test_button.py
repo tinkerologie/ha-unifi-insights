@@ -48,7 +48,7 @@ from custom_components.unifi_insights.coordinators.facade import (
 )
 from custom_components.unifi_insights.coordinators.voucher_state import VoucherSettings
 from custom_components.unifi_insights.data_transforms import device_ports
-from tests.fixtures.command_owners import autospec_command_owners
+from tests.fixtures.command_owners import autospec_command_owners, protect_owner
 from tests.fixtures.http_fakes import FakeJsonResponse, FakeQueuedSession
 
 if TYPE_CHECKING:
@@ -371,7 +371,12 @@ class TestUnifiProtectChimePlayButton:
         coordinator.network_client.base_url = "https://192.168.1.1"
         coordinator.protect_client = MagicMock()
         coordinator.protect_client.base_url = "https://192.168.1.1"
-        coordinator.protect_client.chimes.play = AsyncMock()
+        # The owner reports the unsupported playback as a translated error.
+        autospec_command_owners(coordinator)
+        protect_owner(coordinator).async_play_chime.side_effect = HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="chime_playback_unsupported",
+        )
         coordinator.data = {
             "sites": {},
             "devices": {},
@@ -424,15 +429,12 @@ class TestUnifiProtectChimePlayButton:
         assert attrs["chime_name"] == "Front Door Chime"
         assert attrs["chime_ringtone_id"] == "mechanical"
 
-    async def test_chime_button_press_uses_facade(
+    async def test_chime_button_press_uses_owner(
         self, hass: HomeAssistant, mock_coordinator
     ):
-        """The facade receives only the ID and its translated error survives."""
-        error = HomeAssistantError(
-            translation_domain=DOMAIN,
-            translation_key="chime_playback_unsupported",
-        )
-        mock_coordinator.async_play_chime = AsyncMock(side_effect=error)
+        """The owner receives only the ID and its translated error survives."""
+        protect = protect_owner(mock_coordinator)
+        error = protect.async_play_chime.side_effect
         button = UnifiProtectChimePlayButton(
             coordinator=mock_coordinator,
             chime_id="chime1",
@@ -442,40 +444,10 @@ class TestUnifiProtectChimePlayButton:
             await button.async_press()
 
         assert raised.value is error
-        mock_coordinator.async_play_chime.assert_awaited_once_with("chime1")
-        mock_coordinator.protect_client.chimes.play.assert_not_called()
-
-    async def test_chime_button_press(self, hass: HomeAssistant, mock_coordinator):
-        """The fallback raises the translated error without calling the client."""
-        button = UnifiProtectChimePlayButton(
-            coordinator=mock_coordinator,
-            chime_id="chime1",
-        )
-
-        with pytest.raises(HomeAssistantError) as raised:
-            await button.async_press()
         assert raised.value.translation_key == "chime_playback_unsupported"
         assert raised.value.translation_domain == DOMAIN
+        protect.async_play_chime.assert_awaited_once_with("chime1")
         mock_coordinator.protect_client.chimes.play.assert_not_called()
-        mock_coordinator.protect_client._post.assert_not_called()
-
-    async def test_chime_button_press_exception(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
-        """Test chime button handles exception."""
-        mock_coordinator.async_play_chime = AsyncMock(
-            side_effect=Exception("API Error")
-        )
-
-        button = UnifiProtectChimePlayButton(
-            coordinator=mock_coordinator,
-            chime_id="chime1",
-        )
-
-        with pytest.raises(
-            HomeAssistantError, match="Unable to play ringtone on chime"
-        ):
-            await button.async_press()
 
     @pytest.mark.parametrize(
         "data",
@@ -521,8 +493,7 @@ class TestUnifiProtectPTZButtons:
         coordinator.network_client.base_url = "https://192.168.1.1"
         coordinator.protect_client = MagicMock()
         coordinator.protect_client.base_url = "https://192.168.1.1"
-        coordinator.protect_client.ptz_start_patrol = AsyncMock()
-        coordinator.protect_client.ptz_stop_patrol = AsyncMock()
+        autospec_command_owners(coordinator)
         coordinator.data = {
             "sites": {},
             "devices": {},
@@ -566,17 +537,17 @@ class TestUnifiProtectPTZButtons:
 
         await button.async_press()
 
-        mock_coordinator.protect_client.ptz_start_patrol.assert_called_once_with(
-            camera_id="camera1",
-            slot=0,
-        )
+        protect = protect_owner(mock_coordinator)
+        protect.async_start_ptz_patrol.assert_awaited_once_with("camera1", 0)
 
     async def test_ptz_start_button_exception(
         self, hass: HomeAssistant, mock_coordinator
     ):
         """Test PTZ start button handles exception."""
-        mock_coordinator.protect_client.ptz_start_patrol = AsyncMock(
-            side_effect=Exception("API Error")
+        protect_owner(
+            mock_coordinator
+        ).async_start_ptz_patrol.side_effect = HomeAssistantError(
+            "Unable to start PTZ patrol for camera camera1"
         )
 
         button = UnifiProtectPTZPatrolStartButton(
@@ -606,9 +577,8 @@ class TestUnifiProtectPTZButtons:
 
         await button.async_press()
 
-        mock_coordinator.protect_client.ptz_stop_patrol.assert_called_once_with(
-            camera_id="camera1",
-        )
+        protect = protect_owner(mock_coordinator)
+        protect.async_stop_ptz_patrol.assert_awaited_once_with("camera1")
 
 
 class TestAsyncSetupEntry:
@@ -990,7 +960,12 @@ class TestChimePlayButtonEdgeCases:
         coordinator.network_client.base_url = "https://192.168.1.1"
         coordinator.protect_client = MagicMock()
         coordinator.protect_client.base_url = "https://192.168.1.1"
-        coordinator.protect_client.chimes.play = AsyncMock()
+        # The owner reports the unsupported playback as a translated error.
+        autospec_command_owners(coordinator)
+        protect_owner(coordinator).async_play_chime.side_effect = HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="chime_playback_unsupported",
+        )
         coordinator.data = {
             "sites": {},
             "devices": {},
@@ -1040,7 +1015,9 @@ class TestChimePlayButtonEdgeCases:
         with pytest.raises(HomeAssistantError) as raised:
             await button.async_press()
         assert raised.value.translation_key == "chime_playback_unsupported"
-        mock_coordinator.protect_client.chimes.play.assert_not_called()
+        protect_owner(mock_coordinator).async_play_chime.assert_awaited_once_with(
+            "chime1"
+        )
 
 
 class TestAsyncSetupEntryWithClients:
@@ -1297,8 +1274,11 @@ class TestPTZPatrolStopButtonException:
         coordinator.network_client.base_url = "https://192.168.1.1"
         coordinator.protect_client = MagicMock()
         coordinator.protect_client.base_url = "https://192.168.1.1"
-        coordinator.protect_client.ptz_stop_patrol = AsyncMock(
-            side_effect=Exception("API Error")
+        autospec_command_owners(coordinator)
+        protect_owner(
+            coordinator
+        ).async_stop_ptz_patrol.side_effect = HomeAssistantError(
+            "Unable to stop PTZ patrol for camera camera1"
         )
         coordinator.data = {
             "sites": {},
@@ -1336,9 +1316,8 @@ class TestPTZPatrolStopButtonException:
         with pytest.raises(HomeAssistantError, match="Unable to stop PTZ patrol"):
             await button.async_press()
 
-        mock_coordinator.protect_client.ptz_stop_patrol.assert_called_once_with(
-            camera_id="camera1",
-        )
+        protect = protect_owner(mock_coordinator)
+        protect.async_stop_ptz_patrol.assert_awaited_once_with("camera1")
 
 
 class TestUnifiInsightsPoePowerCycleButton:
@@ -1746,8 +1725,11 @@ class TestGenerateVoucherButton:
             unique_id="console_default_generate_voucher",
         )
         mock_coordinator.async_generate_voucher.return_value = []
-        with pytest.raises(HomeAssistantError, match="UniFi returned no voucher"):
+        with pytest.raises(HomeAssistantError) as caught:
             await button.async_press()
+        assert caught.value.translation_domain == DOMAIN
+        assert caught.value.translation_key == "voucher_not_created"
+        assert caught.value.translation_placeholders == {"site_id": "default"}
 
     async def test_async_press_coordinator_error_raises_error(self, mock_coordinator):
         button = UnifiGenerateVoucherButton(
@@ -1755,13 +1737,12 @@ class TestGenerateVoucherButton:
             "default",
             unique_id="console_default_generate_voucher",
         )
-        mock_coordinator.async_generate_voucher.side_effect = RuntimeError(
-            "API failure"
-        )
-        with pytest.raises(
-            HomeAssistantError, match="Unable to generate a guest voucher"
-        ):
+        # The facade translates the API failure; the button passes it on.
+        error = HomeAssistantError("Unable to generate voucher in site default")
+        mock_coordinator.async_generate_voucher.side_effect = error
+        with pytest.raises(HomeAssistantError) as caught:
             await button.async_press()
+        assert caught.value is error
 
     async def test_discovery_and_deduplication(self, hass, mock_coordinator):
         mock_entry = MagicMock()

@@ -246,13 +246,15 @@ class UnifiProtectSiren(UnifiProtectEntity, SirenEntity):
                 },
             )
 
+        protect = self.coordinator.require_protect_coordinator()
         if volume_level is not None:
-            await self.coordinator.async_set_siren_volume(
+            await protect.async_set_siren_volume(
                 self._device_id, siren_volume_from_level(volume_level)
             )
-        await self.coordinator.async_play_siren(self._device_id, duration=duration)
+        await protect.async_play_siren(self._device_id, duration=duration)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Stop the siren."""
         _ = kwargs
-        await self.coordinator.async_stop_siren(self._device_id)
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_stop_siren(self._device_id)

@@ -14,7 +14,6 @@ from .access_entity import (
     async_discover_access_entities,
     door_device_info,
 )
-from .entity import async_call_coordinator_action
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -63,19 +62,17 @@ class UnifiAccessDoorLock(UnifiAccessDoorEntity, LockEntity):
 
     async def async_lock(self, **kwargs: object) -> None:  # noqa: ARG002
         """Send the documented reset rule; the relay state comes from the read-back."""
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_lock_door",
+        await self._async_command(
             "Could not lock the Access door",
+            self.coordinator.async_lock_door,
             self._door_id,
         )
 
     async def async_unlock(self, **kwargs: object) -> None:  # noqa: ARG002
         """Remotely unlock the door; the relay state comes from the read-back."""
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_unlock_door",
+        await self._async_command(
             "Could not unlock the Access door",
+            self.coordinator.async_unlock_door,
             self._door_id,
         )
 

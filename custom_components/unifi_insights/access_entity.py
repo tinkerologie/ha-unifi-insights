@@ -11,9 +11,10 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER
 from .coordinators.access import UnifiInsightsAccessCoordinator
+from .coordinators.base import CommandFailure, async_execute_command
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Awaitable, Callable, Iterable
 
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.helpers.entity import Entity
@@ -85,6 +86,28 @@ class UnifiAccessEntity(CoordinatorEntity[UnifiInsightsAccessCoordinator]):
     def _is_present(self) -> bool:
         """Return True when the entity's resource is in the current data."""
         return True
+
+    @staticmethod
+    async def _async_command[**P](
+        message: str,
+        command: Callable[P, Awaitable[None]],
+        /,
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> None:
+        """
+        Call an Access coordinator command (ADR-010).
+
+        The coordinator translates every UniFi API failure itself. Any other
+        failure keeps ``message`` as a translated ``command_failed`` error,
+        as before the command path was typed.
+        """
+        await async_execute_command(
+            CommandFailure(translation_key="command_failed", message=message),
+            command,
+            *args,
+            **kwargs,
+        )
 
 
 class UnifiAccessDoorEntity(UnifiAccessEntity):

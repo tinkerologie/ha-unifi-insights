@@ -207,12 +207,12 @@ class UnifiProtectNvrAlarmControlPanel(UnifiProtectEntity, AlarmControlPanelEnti
         Arm the alarm using the console's currently selected arm profile.
 
         No state is set here: the NVR's WebSocket frame, or the refresh the
-        facade requests, reports whether Protect actually armed.
+        Protect coordinator requests, reports whether Protect actually armed.
         """
         _ = code
-        await self.coordinator.async_arm_alarm()
+        await self.coordinator.require_protect_coordinator().async_arm_alarm()
 
     async def async_alarm_disarm(self, code: str | None = None) -> None:
         """Disarm the alarm."""
         _ = code
-        await self.coordinator.async_disarm_alarm()
+        await self.coordinator.require_protect_coordinator().async_disarm_alarm()

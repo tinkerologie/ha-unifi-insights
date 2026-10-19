@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.core import callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity import EntityCategory
 
 from .const import (
@@ -24,6 +24,7 @@ from .const import (
     DEVICE_TYPE_CAMERA,
     DEVICE_TYPE_CHIME,
     DEVICE_TYPE_VIEWER,
+    DOMAIN,
     HDR_MODE_AUTO,
     HDR_MODE_OFF,
     HDR_MODE_ON,
@@ -33,11 +34,7 @@ from .const import (
     VIDEO_MODE_SPORT,
 )
 from .data_transforms import current_chime_ringtone_id
-from .entity import (
-    UnifiProtectEntity,
-    async_call_coordinator_action,
-    camera_supports_ptz,
-)
+from .entity import UnifiProtectEntity, camera_supports_ptz
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -50,6 +47,55 @@ _LOGGER = logging.getLogger(__name__)
 
 # Select entities are action-based, allow parallel execution
 PARALLEL_UPDATES = 1
+
+
+def observed_ringtone_ids(chimes: Any) -> list[str]:
+    """
+    Return the ringtone IDs any chime on this console uses, sorted.
+
+    The API has no ringtone catalogue, so the ringtone select offers only
+    the IDs already observed.
+    """
+    ringtone_ids: set[str] = set()
+    for chime in chimes.values() if isinstance(chimes, dict) else ():
+        settings = chime.get("ringSettings") if isinstance(chime, dict) else None
+        for setting in settings if isinstance(settings, list) else ():
+            value = setting.get("ringtoneId") if isinstance(setting, dict) else None
+            if isinstance(value, str) and value.strip():
+                ringtone_ids.add(value)
+    return sorted(ringtone_ids)
+
+
+def require_observed_ringtone(chimes: Any, chime_id: str, ringtone_id: str) -> None:
+    """Raise ``ringtone_not_found`` unless a chime already uses ``ringtone_id``."""
+    if ringtone_id not in observed_ringtone_ids(chimes):
+        msg = f"Ringtone ID not found: {ringtone_id}"
+        raise ServiceValidationError(
+            msg,
+            translation_domain=DOMAIN,
+            translation_key="ringtone_not_found",
+            translation_placeholders={"ringtone_id": ringtone_id, "chime_id": chime_id},
+        )
+
+
+def resolve_liveview_id(liveviews: Any, name: str) -> str:
+    """
+    Return the native ID of the liveview shown as ``name``.
+
+    The select offers liveview names, while the Protect owner takes the
+    native ID (ADR-010), so the name is translated here.
+    """
+    items = liveviews.items() if isinstance(liveviews, dict) else ()
+    for liveview_id, liveview in items:
+        if isinstance(liveview, dict) and liveview.get("name") == name:
+            return str(liveview_id)
+    msg = f"Liveview not found: {name}"
+    raise ServiceValidationError(
+        msg,
+        translation_domain=DOMAIN,
+        translation_key="liveview_not_found",
+        translation_placeholders={"liveview": name},
+    )
 
 
 async def async_setup_entry(
@@ -221,19 +267,9 @@ class UnifiProtectHDRModeSelect(UnifiProtectEntity, SelectEntity):
         """Change the selected option."""
         _LOGGER.debug("Setting HDR mode to %s for camera %s", option, self._device_id)
 
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_set_hdr_mode",
-            f"Unable to set HDR mode for camera {self._device_id}",
-            self._device_id,
-            option,
-            fallback_factory=lambda: self.coordinator.protect_client.set_hdr_mode(  # type: ignore[union-attr]
-                camera_id=self._device_id,
-                mode=option,
-            ),
-        )
-        self._attr_current_option = option
-        self.async_write_ha_state()
+        # The owner publishes the written mode; the option follows from it.
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_set_hdr_mode(self._device_id, option)
 
 
 class UnifiProtectVideoModeSelect(UnifiProtectEntity, SelectEntity):
@@ -282,21 +318,8 @@ class UnifiProtectVideoModeSelect(UnifiProtectEntity, SelectEntity):
         """Change the selected option."""
         _LOGGER.debug("Setting video mode to %s for camera %s", option, self._device_id)
 
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_set_video_mode",
-            f"Unable to set video mode for camera {self._device_id}",
-            self._device_id,
-            option,
-            fallback_factory=lambda: (
-                self.coordinator.protect_client.cameras.set_video_mode(  # type: ignore[union-attr]
-                    self._device_id,
-                    option,
-                )
-            ),
-        )
-        self._attr_current_option = option
-        self.async_write_ha_state()
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_set_video_mode(self._device_id, option)
 
 
 class UnifiProtectChimeRingtoneSelect(UnifiProtectEntity, SelectEntity):
@@ -331,20 +354,7 @@ class UnifiProtectChimeRingtoneSelect(UnifiProtectEntity, SelectEntity):
             chime_data = {}
 
         # The API has no ringtone catalogue; offer only IDs observed on this console.
-        ringtone_ids: set[str] = set()
-        for chime in chimes.values():
-            if not isinstance(chime, dict):
-                continue
-            settings = chime.get("ringSettings")
-            if not isinstance(settings, list):
-                continue
-            for setting in settings:
-                if not isinstance(setting, dict):
-                    continue
-                value = setting.get("ringtoneId")
-                if isinstance(value, str) and value.strip():
-                    ringtone_ids.add(value)
-        self._attr_options = sorted(ringtone_ids)
+        self._attr_options = observed_ringtone_ids(chimes)
 
         ringtone_id = current_chime_ringtone_id(chime_data)
 
@@ -360,26 +370,13 @@ class UnifiProtectChimeRingtoneSelect(UnifiProtectEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
-        if option not in self._attr_options:
-            msg = f"Ringtone ID not found: {option}"
-            raise HomeAssistantError(msg)
+        require_observed_ringtone(
+            self.coordinator.data["protect"].get("chimes"), self._device_id, option
+        )
         _LOGGER.debug("Setting ringtone to %s for chime %s", option, self._device_id)
 
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_set_chime_ringtone",
-            f"Unable to set ringtone for chime {self._device_id}",
-            self._device_id,
-            option,
-            fallback_factory=lambda: (
-                self.coordinator.protect_client.chimes.set_ringtone(  # type: ignore[union-attr]
-                    chime_id=self._device_id,
-                    ringtone_id=option,
-                )
-            ),
-        )
-        self._attr_current_option = option
-        self.async_write_ha_state()
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_set_chime_ringtone(self._device_id, option)
 
 
 class UnifiProtectPTZPresetSelect(UnifiProtectEntity, SelectEntity):
@@ -424,18 +421,9 @@ class UnifiProtectPTZPresetSelect(UnifiProtectEntity, SelectEntity):
         """Change the selected option."""
         _LOGGER.debug("Setting PTZ preset to %s for camera %s", option, self._device_id)
 
-        slot = int(option)
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_move_ptz_to_preset",
-            f"Unable to move camera {self._device_id} to PTZ preset {slot}",
-            self._device_id,
-            slot,
-            fallback_factory=lambda: self.coordinator.protect_client.ptz_move_to_preset(  # type: ignore[union-attr]
-                camera_id=self._device_id,
-                slot=slot,
-            ),
-        )
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_move_ptz_to_preset(self._device_id, int(option))
+        # Protect reports no current preset, so the selection is kept here.
         self._attr_current_option = option
         self.async_write_ha_state()
 
@@ -488,27 +476,9 @@ class UnifiProtectViewerLiveviewSelect(UnifiProtectEntity, SelectEntity):
         """Change the selected option."""
         _LOGGER.debug("Setting liveview to %s for viewer %s", option, self._device_id)
 
-        liveviews = self.coordinator.data["protect"].get("liveviews", {})
-        liveview_id = None
-        for lv_id, lv in liveviews.items():
-            if lv.get("name") == option:
-                liveview_id = lv_id
-                break
-
-        if liveview_id is None:
-            msg = f"Liveview not found: {option}"
-            raise HomeAssistantError(msg)
-
-        await async_call_coordinator_action(
-            self.coordinator,
-            "async_update_viewer",
-            f"Unable to set liveview for viewer {self._device_id}",
-            self._device_id,
-            fallback_factory=lambda: self.coordinator.protect_client.update_viewer(  # type: ignore[union-attr]
-                viewer_id=self._device_id,
-                data={"liveview": liveview_id},
-            ),
-            liveview=liveview_id,
+        # The owner takes the native liveview ID, not the display name.
+        liveview_id = resolve_liveview_id(
+            self.coordinator.data["protect"].get("liveviews"), option
         )
-        self._attr_current_option = option
-        self.async_write_ha_state()
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_update_viewer(self._device_id, liveview=liveview_id)

@@ -4,13 +4,11 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from homeassistant.components.light import ATTR_BRIGHTNESS, ColorMode
 from homeassistant.exceptions import HomeAssistantError
-from unifi_official_api import ApiKeyAuth, ConnectionType
-from unifi_official_api.protect import UniFiProtectClient
 
 from custom_components.unifi_insights.const import (
     ATTR_LIGHT_DARK,
@@ -29,6 +27,7 @@ from custom_components.unifi_insights.light import (
     UnifiProtectLight,
     async_setup_entry,
 )
+from tests.fixtures.command_owners import autospec_command_owners, protect_owner
 
 
 class TestParallelUpdates:
@@ -178,14 +177,9 @@ class TestUnifiProtectLight:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
         coordinator.protect_client.base_url = "https://192.168.1.1"
-        coordinator.protect_client.lights = MagicMock()
-        coordinator.protect_client.lights.set_mode = AsyncMock()
-        coordinator.protect_client.lights.set_brightness = AsyncMock()
-        coordinator.async_set_light_mode = AsyncMock()
-        coordinator.async_set_light_brightness = AsyncMock()
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
         coordinator.data = {
@@ -351,12 +345,16 @@ class TestUnifiProtectLight:
 
         await light.async_turn_on()
 
-        mock_coordinator.async_set_light_mode.assert_called_once_with(
+        protect_owner(mock_coordinator).async_set_light_mode.assert_called_once_with(
             "light1",
             LIGHT_MODE_ALWAYS,
         )
+        # The owner publishes the mode; the state follows from the data.
+        mock_coordinator.data["protect"]["lights"]["light1"]["lightModeSettings"] = {
+            "mode": LIGHT_MODE_ALWAYS
+        }
+        light._update_from_data()
         assert light._attr_is_on is True
-        light.async_write_ha_state.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_async_turn_on_with_brightness(self, mock_coordinator) -> None:
@@ -370,12 +368,14 @@ class TestUnifiProtectLight:
         await light.async_turn_on(**{ATTR_BRIGHTNESS: 128})
 
         # Should set brightness first (128 -> ledLevel 3)
-        mock_coordinator.async_set_light_brightness.assert_called_once_with(
+        protect_owner(
+            mock_coordinator
+        ).async_set_light_brightness.assert_called_once_with(
             "light1",
             3,
         )
         # Then set mode
-        mock_coordinator.async_set_light_mode.assert_called_once_with(
+        protect_owner(mock_coordinator).async_set_light_mode.assert_called_once_with(
             "light1",
             LIGHT_MODE_ALWAYS,
         )
@@ -391,7 +391,9 @@ class TestUnifiProtectLight:
 
         await light.async_turn_on(**{ATTR_BRIGHTNESS: 255})
 
-        mock_coordinator.async_set_light_brightness.assert_called_once_with(
+        protect_owner(
+            mock_coordinator
+        ).async_set_light_brightness.assert_called_once_with(
             "light1",
             6,
         )
@@ -407,12 +409,15 @@ class TestUnifiProtectLight:
 
         await light.async_turn_off()
 
-        mock_coordinator.async_set_light_mode.assert_called_once_with(
+        protect_owner(mock_coordinator).async_set_light_mode.assert_called_once_with(
             "light1",
             LIGHT_MODE_OFF,
         )
+        mock_coordinator.data["protect"]["lights"]["light1"]["lightModeSettings"] = {
+            "mode": LIGHT_MODE_OFF
+        }
+        light._update_from_data()
         assert light._attr_is_on is False
-        light.async_write_ha_state.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_async_turn_off_with_kwargs(self, mock_coordinator) -> None:
@@ -425,7 +430,7 @@ class TestUnifiProtectLight:
 
         await light.async_turn_off(some_extra_kwarg="value")
 
-        mock_coordinator.async_set_light_mode.assert_called_once_with(
+        protect_owner(mock_coordinator).async_set_light_mode.assert_called_once_with(
             "light1",
             LIGHT_MODE_OFF,
         )
@@ -433,7 +438,11 @@ class TestUnifiProtectLight:
     @pytest.mark.asyncio
     async def test_async_turn_on_error(self, mock_coordinator) -> None:
         """Test turning light on surfaces Home Assistant errors."""
-        mock_coordinator.async_set_light_mode.side_effect = Exception("API error")
+        protect_owner(
+            mock_coordinator
+        ).async_set_light_mode.side_effect = HomeAssistantError(
+            "Unable to set mode for light light1"
+        )
 
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
@@ -441,7 +450,7 @@ class TestUnifiProtectLight:
         )
         light.async_write_ha_state = MagicMock()
 
-        with pytest.raises(HomeAssistantError, match="Unable to turn on light"):
+        with pytest.raises(HomeAssistantError, match="Unable to set mode for light"):
             await light.async_turn_on()
 
         light.async_write_ha_state.assert_not_called()
@@ -449,7 +458,11 @@ class TestUnifiProtectLight:
     @pytest.mark.asyncio
     async def test_async_turn_off_error(self, mock_coordinator) -> None:
         """Test turning light off surfaces Home Assistant errors."""
-        mock_coordinator.async_set_light_mode.side_effect = Exception("API error")
+        protect_owner(
+            mock_coordinator
+        ).async_set_light_mode.side_effect = HomeAssistantError(
+            "Unable to set mode for light light1"
+        )
 
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
@@ -457,7 +470,7 @@ class TestUnifiProtectLight:
         )
         light.async_write_ha_state = MagicMock()
 
-        with pytest.raises(HomeAssistantError, match="Unable to turn off light"):
+        with pytest.raises(HomeAssistantError, match="Unable to set mode for light"):
             await light.async_turn_off()
 
         light.async_write_ha_state.assert_not_called()
@@ -489,89 +502,38 @@ class TestUnifiProtectLight:
         assert light._attr_is_on is False
 
 
-class TestProtectLightPatchBodies:
-    """Test light entity actions call through facade down to protect_client._patch."""
+class TestProtectLightWrites:
+    """Light writes call the Protect owner; brightness reads map from ledLevel."""
 
     @pytest.mark.asyncio
-    async def test_light_turn_on_and_off_sends_spec_patch_body(self) -> None:
-        """Test light turn on/off sends lightModeSettings via facade."""
-        coordinator = MagicMock()
-        client = UniFiProtectClient(
-            auth=ApiKeyAuth(api_key="test-key"),
-            base_url="https://192.168.1.1",
-            connection_type=ConnectionType.LOCAL,
-        )
-        client._patch = AsyncMock(
-            return_value={"id": "light1", "mac": "00:11:22:33:44:66"}
-        )
-        coordinator.protect_client = client
-        coordinator.async_set_light_mode = AsyncMock(side_effect=client.lights.set_mode)
-        coordinator.async_set_light_brightness = AsyncMock(
-            side_effect=client.lights.set_brightness
-        )
-        coordinator.data = {
-            "protect": {
-                "lights": {
-                    "light1": {
-                        "name": "Test Light",
-                        "lightModeSettings": {"mode": "off"},
-                        "lightDeviceSettings": {"ledLevel": 3},
-                    }
-                }
-            }
-        }
-        light = UnifiProtectLight(coordinator, "light1")
-        light.async_write_ha_state = MagicMock()
+    async def test_light_turn_on_and_off_call_the_owner(self) -> None:
+        """Turn on/off set the mode; a brightness is written first."""
+        _, protect, light = self._setup_light()
 
-        # Turn on without brightness
         await light.async_turn_on()
-        client._patch.assert_awaited_once_with(
-            client.build_api_path("/lights/light1"),
-            json_data={"lightModeSettings": {"mode": "always"}},
+        protect.async_set_light_mode.assert_awaited_once_with(
+            "light1", LIGHT_MODE_ALWAYS
         )
+        protect.async_set_light_brightness.assert_not_awaited()
 
-        # Turn off
-        client._patch.reset_mock()
+        protect.async_set_light_mode.reset_mock()
         await light.async_turn_off()
-        client._patch.assert_awaited_once_with(
-            client.build_api_path("/lights/light1"),
-            json_data={"lightModeSettings": {"mode": "off"}},
-        )
+        protect.async_set_light_mode.assert_awaited_once_with("light1", LIGHT_MODE_OFF)
 
-        # Turn on with brightness 255 (100% -> ledLevel 6)
-        client._patch.reset_mock()
+        manager = MagicMock()
+        manager.attach_mock(protect.async_set_light_brightness, "brightness")
+        manager.attach_mock(protect.async_set_light_mode, "mode")
+        protect.async_set_light_mode.reset_mock()
         await light.async_turn_on(**{ATTR_BRIGHTNESS: 255})
-        assert client._patch.await_count == 2
-        client._patch.assert_has_awaits(
-            [
-                call(
-                    client.build_api_path("/lights/light1"),
-                    json_data={"lightDeviceSettings": {"ledLevel": 6}},
-                ),
-                call(
-                    client.build_api_path("/lights/light1"),
-                    json_data={"lightModeSettings": {"mode": "always"}},
-                ),
-            ]
-        )
+        assert manager.mock_calls == [
+            call.brightness("light1", 6),
+            call.mode("light1", LIGHT_MODE_ALWAYS),
+        ]
 
     def _setup_light(
         self, led_level: float | None = 3
-    ) -> tuple[MagicMock, UniFiProtectClient, UnifiProtectLight]:
-        coordinator = MagicMock()
-        client = UniFiProtectClient(
-            auth=ApiKeyAuth(api_key="test-key"),
-            base_url="https://192.168.1.1",
-            connection_type=ConnectionType.LOCAL,
-        )
-        client._patch = AsyncMock(
-            return_value={"id": "light1", "mac": "00:11:22:33:44:66"}
-        )
-        coordinator.protect_client = client
-        coordinator.async_set_light_mode = AsyncMock(side_effect=client.lights.set_mode)
-        coordinator.async_set_light_brightness = AsyncMock(
-            side_effect=client.lights.set_brightness
-        )
+    ) -> tuple[MagicMock, Any, UnifiProtectLight]:
+        coordinator = autospec_command_owners(MagicMock())
         light_settings: dict[str, Any] = {}
         if led_level is not None:
             light_settings["ledLevel"] = led_level
@@ -588,64 +550,17 @@ class TestProtectLightPatchBodies:
         }
         light = UnifiProtectLight(coordinator, "light1")
         light.async_write_ha_state = MagicMock()
-        return coordinator, client, light
+        return coordinator, protect_owner(coordinator), light
 
     @pytest.mark.asyncio
-    async def test_light_write_brightness_mapping_255_maps_to_6(self) -> None:
-        """Test write path maps HA brightness 255 to ledLevel 6."""
-        _, client, light = self._setup_light()
-        await light.async_turn_on(**{ATTR_BRIGHTNESS: 255})
-        client._patch.assert_has_awaits(
-            [
-                call(
-                    client.build_api_path("/lights/light1"),
-                    json_data={"lightDeviceSettings": {"ledLevel": 6}},
-                ),
-                call(
-                    client.build_api_path("/lights/light1"),
-                    json_data={"lightModeSettings": {"mode": "always"}},
-                ),
-            ]
-        )
-        assert light._attr_brightness == 255
-
-    @pytest.mark.asyncio
-    async def test_light_write_brightness_mapping_128_maps_to_3(self) -> None:
-        """Test write path maps HA brightness 128 to ledLevel 3."""
-        _, client, light = self._setup_light()
-        await light.async_turn_on(**{ATTR_BRIGHTNESS: 128})
-        client._patch.assert_has_awaits(
-            [
-                call(
-                    client.build_api_path("/lights/light1"),
-                    json_data={"lightDeviceSettings": {"ledLevel": 3}},
-                ),
-                call(
-                    client.build_api_path("/lights/light1"),
-                    json_data={"lightModeSettings": {"mode": "always"}},
-                ),
-            ]
-        )
-        assert light._attr_brightness == 128
-
-    @pytest.mark.asyncio
-    async def test_light_write_brightness_mapping_1_maps_to_1(self) -> None:
-        """Test write path maps HA brightness 1 to ledLevel 1."""
-        _, client, light = self._setup_light()
-        await light.async_turn_on(**{ATTR_BRIGHTNESS: 1})
-        client._patch.assert_has_awaits(
-            [
-                call(
-                    client.build_api_path("/lights/light1"),
-                    json_data={"lightDeviceSettings": {"ledLevel": 1}},
-                ),
-                call(
-                    client.build_api_path("/lights/light1"),
-                    json_data={"lightModeSettings": {"mode": "always"}},
-                ),
-            ]
-        )
-        assert light._attr_brightness == 1
+    @pytest.mark.parametrize(("brightness", "led_level"), [(255, 6), (128, 3), (1, 1)])
+    async def test_light_write_brightness_mapping(
+        self, brightness: int, led_level: int
+    ) -> None:
+        """The write path maps HA brightness to the Protect ledLevel."""
+        _, protect, light = self._setup_light()
+        await light.async_turn_on(**{ATTR_BRIGHTNESS: brightness})
+        protect.async_set_light_brightness.assert_awaited_once_with("light1", led_level)
 
     def test_light_read_brightness_mapping_6_maps_to_255(self) -> None:
         """Test read path maps Protect ledLevel 6 to HA brightness 255."""
@@ -680,59 +595,13 @@ class TestProtectLightPatchBodies:
 
     @pytest.mark.asyncio
     async def test_light_brightness_round_trip(self) -> None:
-        """Test round trip: set 255, data ledLevel 6, read 255."""
-        coordinator, client, light = self._setup_light(led_level=3)
+        """Round trip: set 255, the owner overlays ledLevel 6, read 255."""
+        coordinator, protect, light = self._setup_light(led_level=3)
         await light.async_turn_on(**{ATTR_BRIGHTNESS: 255})
-        assert light._attr_brightness == 255
-        client._patch.assert_any_await(
-            client.build_api_path("/lights/light1"),
-            json_data={"lightDeviceSettings": {"ledLevel": 6}},
-        )
+        protect.async_set_light_brightness.assert_awaited_once_with("light1", 6)
         coordinator.data["protect"]["lights"]["light1"]["lightDeviceSettings"][
             "ledLevel"
         ] = 6
         light._update_from_data()
         assert light._attr_brightness == 255
         assert light._attr_extra_state_attributes[ATTR_LIGHT_LEVEL] == 6
-
-    @pytest.mark.asyncio
-    async def test_light_turn_on_mode_fallback(self) -> None:
-        """Test turn on takes fallback when coordinator action is non-coroutine."""
-        coordinator, client, light = self._setup_light()
-        coordinator.async_set_light_mode = MagicMock()
-        client.lights.set_mode = AsyncMock()
-
-        await light.async_turn_on()
-
-        client.lights.set_mode.assert_awaited_once_with(
-            "light1",
-            LIGHT_MODE_ALWAYS,
-        )
-
-    @pytest.mark.asyncio
-    async def test_light_turn_off_mode_fallback(self) -> None:
-        """Test turn off takes fallback when coordinator action is non-coroutine."""
-        coordinator, client, light = self._setup_light()
-        coordinator.async_set_light_mode = MagicMock()
-        client.lights.set_mode = AsyncMock()
-
-        await light.async_turn_off()
-
-        client.lights.set_mode.assert_awaited_once_with(
-            "light1",
-            LIGHT_MODE_OFF,
-        )
-
-    @pytest.mark.asyncio
-    async def test_light_brightness_fallback(self) -> None:
-        """Test brightness takes fallback when coordinator action is non-coroutine."""
-        coordinator, client, light = self._setup_light()
-        coordinator.async_set_light_brightness = MagicMock()
-        client.lights.set_brightness = AsyncMock()
-
-        await light.async_turn_on(**{ATTR_BRIGHTNESS: 128})
-
-        client.lights.set_brightness.assert_awaited_once_with(
-            "light1",
-            3,
-        )

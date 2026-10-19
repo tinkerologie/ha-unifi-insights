@@ -29,6 +29,7 @@ from custom_components.unifi_insights.media_player import (
     UnifiProtectCameraSpeaker,
     async_setup_entry,
 )
+from tests.fixtures.command_owners import autospec_command_owners, protect_owner
 
 
 class TestParallelUpdates:
@@ -241,7 +242,7 @@ class TestUnifiProtectCameraSpeaker:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator with camera speaker data."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
         coordinator.protect_available = True
         coordinator.data = {
@@ -395,9 +396,9 @@ class TestUnifiProtectCameraSpeaker:
         mock_stream = MagicMock()
         mock_stream.running = True
         mock_stream.wait_until_complete = AsyncMock(side_effect=completion_event.wait)
-        mock_coordinator.async_start_camera_talkback = AsyncMock(
-            return_value=mock_stream
-        )
+        protect_owner(
+            mock_coordinator
+        ).async_start_camera_talkback.return_value = mock_stream
 
         with patch(
             "custom_components.unifi_insights.media_player.async_process_play_media_url",
@@ -408,7 +409,9 @@ class TestUnifiProtectCameraSpeaker:
                 media_id="http://media.local/test.mp3",
             )
 
-        mock_coordinator.async_start_camera_talkback.assert_called_once_with(
+        protect_owner(
+            mock_coordinator
+        ).async_start_camera_talkback.assert_called_once_with(
             "cam1", "http://processed.local/test.mp3"
         )
         assert entity._current_stream is mock_stream
@@ -437,9 +440,9 @@ class TestUnifiProtectCameraSpeaker:
         mock_stream = MagicMock()
         mock_stream.running = True
         mock_stream.wait_until_complete = AsyncMock()
-        mock_coordinator.async_start_camera_talkback = AsyncMock(
-            return_value=mock_stream
-        )
+        protect_owner(
+            mock_coordinator
+        ).async_start_camera_talkback.return_value = mock_stream
 
         resolved_item = MagicMock(url="/local/audio.mp3", mime_type="audio/mpeg")
 
@@ -462,7 +465,9 @@ class TestUnifiProtectCameraSpeaker:
                 media_id="media-source://radio_browser/123",
             )
 
-        mock_coordinator.async_start_camera_talkback.assert_called_once_with(
+        protect_owner(
+            mock_coordinator
+        ).async_start_camera_talkback.assert_called_once_with(
             "cam1", "http://127.0.0.1:8123/local/audio.mp3"
         )
         await entity._completion_task
@@ -492,7 +497,7 @@ class TestUnifiProtectCameraSpeaker:
             )
 
         assert exc_info.value.translation_key == "media_not_audio"
-        mock_coordinator.async_start_camera_talkback.assert_not_called()
+        protect_owner(mock_coordinator).async_start_camera_talkback.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_play_media_non_music_rejected(
@@ -500,7 +505,6 @@ class TestUnifiProtectCameraSpeaker:
     ) -> None:
         """Test non-music media type is rejected before request."""
         entity = UnifiProtectCameraSpeaker(mock_coordinator, "cam1")
-        mock_coordinator.async_start_camera_talkback = AsyncMock()
 
         with pytest.raises(ServiceValidationError) as exc_info:
             await entity.async_play_media(
@@ -509,7 +513,7 @@ class TestUnifiProtectCameraSpeaker:
             )
 
         assert exc_info.value.translation_key == "media_not_audio"
-        mock_coordinator.async_start_camera_talkback.assert_not_called()
+        protect_owner(mock_coordinator).async_start_camera_talkback.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_play_media_stops_previous_stream(
@@ -529,9 +533,9 @@ class TestUnifiProtectCameraSpeaker:
         new_stream = MagicMock()
         new_stream.running = True
         new_stream.wait_until_complete = AsyncMock(side_effect=completion_event.wait)
-        mock_coordinator.async_start_camera_talkback = AsyncMock(
-            return_value=new_stream
-        )
+        protect_owner(
+            mock_coordinator
+        ).async_start_camera_talkback.return_value = new_stream
 
         with patch(
             "custom_components.unifi_insights.media_player.async_process_play_media_url",
@@ -556,9 +560,9 @@ class TestUnifiProtectCameraSpeaker:
         entity.hass = hass
         entity.async_write_ha_state = MagicMock()  # type: ignore[method-assign]
 
-        mock_coordinator.async_start_camera_talkback = AsyncMock(
-            side_effect=HomeAssistantError("Start failed")
-        )
+        protect_owner(
+            mock_coordinator
+        ).async_start_camera_talkback.side_effect = HomeAssistantError("Start failed")
 
         with (
             patch(
@@ -590,9 +594,9 @@ class TestUnifiProtectCameraSpeaker:
         old_stream.stop = AsyncMock()
         entity._current_stream = old_stream
 
-        mock_coordinator.async_start_camera_talkback = AsyncMock(
-            side_effect=HomeAssistantError("Start failed")
-        )
+        protect_owner(
+            mock_coordinator
+        ).async_start_camera_talkback.side_effect = HomeAssistantError("Start failed")
 
         with (
             patch(
@@ -626,9 +630,9 @@ class TestUnifiProtectCameraSpeaker:
         mock_stream.wait_until_complete = AsyncMock(
             side_effect=RuntimeError("Stream network error")
         )
-        mock_coordinator.async_start_camera_talkback = AsyncMock(
-            return_value=mock_stream
-        )
+        protect_owner(
+            mock_coordinator
+        ).async_start_camera_talkback.return_value = mock_stream
 
         with patch(
             "custom_components.unifi_insights.media_player.async_process_play_media_url",
@@ -809,9 +813,9 @@ class TestUnifiProtectCameraSpeaker:
             await stream.start()
             return stream
 
-        mock_coordinator.async_start_camera_talkback = AsyncMock(
-            side_effect=_mock_start_camera_talkback
-        )
+        protect_owner(
+            mock_coordinator
+        ).async_start_camera_talkback.side_effect = _mock_start_camera_talkback
 
         with (
             patch.object(entity, "async_write_ha_state"),
@@ -901,7 +905,7 @@ class TestUnifiProtectCameraSpeaker:
                 media_id="http://media.local/test.mp3",
             )
 
-        mock_coordinator.async_start_camera_talkback.assert_not_called()
+        protect_owner(mock_coordinator).async_start_camera_talkback.assert_not_called()
         assert entity._current_stream is None
 
     @pytest.mark.asyncio

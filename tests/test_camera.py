@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from homeassistant.components.camera import CameraEntityFeature
@@ -23,6 +23,7 @@ from custom_components.unifi_insights.const import (
     CAMERA_STATE_CONNECTED,
     DEVICE_TYPE_CAMERA,
 )
+from tests.fixtures.command_owners import autospec_command_owners, protect_owner
 
 
 class TestParallelUpdates:
@@ -128,14 +129,12 @@ class TestUnifiProtectCamera:
     @pytest.fixture
     def mock_coordinator(self) -> MagicMock:
         """Create mock coordinator."""
-        coordinator = MagicMock()
+        coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
         coordinator.protect_client.base_url = "https://192.168.1.1"
-        coordinator.protect_client.cameras = MagicMock()
-        coordinator.protect_client.cameras.get_snapshot = AsyncMock(
-            return_value=b"image_data"
-        )
-        coordinator.protect_client.cameras.create_rtsps_stream = AsyncMock()
+        protect = protect_owner(coordinator)
+        protect.async_get_camera_snapshot.return_value = b"image_data"
+        protect.async_create_camera_stream_url.return_value = None
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
         coordinator.data = {
@@ -249,9 +248,9 @@ class TestUnifiProtectCamera:
         assert result == b"image_data"
         # The Protect snapshot endpoint rejects width/height query params
         # (HTTP 500), so the call must not include them.
-        mock_coordinator.protect_client.cameras.get_snapshot.assert_called_once_with(
-            "camera1",
-        )
+        protect_owner(
+            mock_coordinator
+        ).async_get_camera_snapshot.assert_awaited_once_with("camera1")
 
     @pytest.mark.asyncio
     async def test_async_camera_image_with_dimensions(self, mock_coordinator) -> None:
@@ -265,52 +264,31 @@ class TestUnifiProtectCamera:
 
         assert result == b"image_data"
         # Requested dimensions are ignored; HA scales the returned JPEG.
-        mock_coordinator.protect_client.cameras.get_snapshot.assert_called_once_with(
-            "camera1",
-        )
+        protect_owner(
+            mock_coordinator
+        ).async_get_camera_snapshot.assert_awaited_once_with("camera1")
 
     @pytest.mark.asyncio
-    async def test_async_camera_image_error(self, mock_coordinator) -> None:
-        """Test getting camera image with error."""
-        mock_coordinator.protect_client.cameras.get_snapshot.side_effect = Exception(
-            "API error"
-        )
+    async def test_async_camera_image_unreadable(self, mock_coordinator) -> None:
+        """A snapshot the owner cannot read is no image."""
+        protect_owner(mock_coordinator).async_get_camera_snapshot.return_value = None
 
         camera = UnifiProtectCamera(
             coordinator=mock_coordinator,
             camera_id="camera1",
         )
 
-        result = await camera.async_camera_image()
-
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_async_camera_image_non_bytes(self, mock_coordinator) -> None:
-        """Test getting camera image when response is not bytes."""
-        mock_coordinator.protect_client.cameras.get_snapshot.return_value = "not bytes"
-
-        camera = UnifiProtectCamera(
-            coordinator=mock_coordinator,
-            camera_id="camera1",
-        )
-
-        result = await camera.async_camera_image()
-
-        assert result is None
+        assert await camera.async_camera_image() is None
 
     @pytest.mark.asyncio
     async def test_stream_source_success(self, mock_coordinator) -> None:
         """Test getting stream source successfully using the API.
 
-        The `unifi-official-api` package returns a dynamic stream URL from
-        create_rtsps_stream.
+        The Protect owner returns the dynamic URL it created.
         """
-        # Mock the create_rtsps_stream to return a proper stream object
-        mock_stream = MagicMock()
-        mock_stream.high = "rtsps://192.168.1.1:7441/camera1_abc123?enableSrtp"
-        mock_coordinator.protect_client.cameras.create_rtsps_stream = AsyncMock(
-            return_value=mock_stream
+        protect = protect_owner(mock_coordinator)
+        protect.async_create_camera_stream_url.return_value = (
+            "rtsps://192.168.1.1:7441/camera1_abc123?enableSrtp"
         )
 
         camera = UnifiProtectCamera(
@@ -320,19 +298,14 @@ class TestUnifiProtectCamera:
 
         result = await camera.stream_source()
 
-        # URL comes from the API's create_rtsps_stream response
+        # URL comes from the owner's dynamic stream
         assert result == "rtsps://192.168.1.1:7441/camera1_abc123?enableSrtp"
-        mock_coordinator.protect_client.cameras.create_rtsps_stream.assert_called_once_with(
-            "camera1", qualities=["high"]
-        )
+        protect.async_create_camera_stream_url.assert_awaited_once_with("camera1")
 
     @pytest.mark.asyncio
     async def test_stream_source_api_failure_fallback(self, mock_coordinator) -> None:
         """Test fallback to static URL when API fails."""
-        # Mock the API to fail
-        mock_coordinator.protect_client.cameras.create_rtsps_stream = AsyncMock(
-            side_effect=Exception("API error")
-        )
+        # The owner could not create a dynamic stream (its fixture default)
 
         camera = UnifiProtectCamera(
             coordinator=mock_coordinator,
@@ -347,10 +320,7 @@ class TestUnifiProtectCamera:
     @pytest.mark.asyncio
     async def test_stream_source_no_host(self, mock_coordinator) -> None:
         """Test getting stream source when NVR host cannot be determined."""
-        # Mock the API to fail
-        mock_coordinator.protect_client.cameras.create_rtsps_stream = AsyncMock(
-            side_effect=Exception("API error")
-        )
+        # The owner could not create a dynamic stream (its fixture default)
         # Clear NVR data and set base_url to invalid
         mock_coordinator.data["protect"]["nvrs"] = {}
         mock_coordinator.protect_client.base_url = None
@@ -367,10 +337,6 @@ class TestUnifiProtectCamera:
     @pytest.mark.asyncio
     async def test_stream_source_from_nvr_data(self, mock_coordinator) -> None:
         """Test getting stream source from NVR data when API fails."""
-        # Mock the API to fail so it falls back to static URL
-        mock_coordinator.protect_client.cameras.create_rtsps_stream = AsyncMock(
-            side_effect=Exception("API error")
-        )
         # Add NVR data with a host
         mock_coordinator.data["protect"]["nvrs"] = {
             "nvr1": {"host": "10.0.0.1"},
@@ -390,7 +356,7 @@ class TestUnifiProtectCamera:
     async def test_stream_source_protect_client_none_fallback(
         self, mock_coordinator
     ) -> None:
-        """Test fallback to static URL when protect_client is None."""
+        """Without a Protect client the NVR host still builds the static URL."""
         mock_coordinator.protect_client = None
         mock_coordinator.data["protect"]["nvrs"] = {"nvr1": {"host": "10.0.0.1"}}
 
@@ -403,15 +369,10 @@ class TestUnifiProtectCamera:
         assert result == "rtsps://10.0.0.1:7441/camera1?enableSrtp"
 
     @pytest.mark.asyncio
-    async def test_stream_source_create_stream_missing_high_quality(
+    async def test_stream_source_no_dynamic_url_uses_nvr_host(
         self, mock_coordinator
     ) -> None:
-        """Test fallback to static URL when stream high URL is missing."""
-        mock_stream = MagicMock()
-        mock_stream.high = None
-        mock_coordinator.protect_client.cameras.create_rtsps_stream = AsyncMock(
-            return_value=mock_stream
-        )
+        """Test fallback to static URL when the owner returns no dynamic URL."""
         mock_coordinator.data["protect"]["nvrs"] = {"nvr1": {"host": "10.0.0.1"}}
 
         camera = UnifiProtectCamera(
@@ -425,9 +386,6 @@ class TestUnifiProtectCamera:
     @pytest.mark.asyncio
     async def test_stream_source_nvr_data_without_host(self, mock_coordinator) -> None:
         """Test NVR loop continues when NVR data has no host."""
-        mock_coordinator.protect_client.cameras.create_rtsps_stream = AsyncMock(
-            side_effect=Exception("API error")
-        )
         mock_coordinator.data["protect"]["nvrs"] = {
             "nvr1": {"name": "No Host"},
             "nvr2": {"host": "10.0.0.2"},

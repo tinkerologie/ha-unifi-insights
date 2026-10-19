@@ -6,7 +6,7 @@ import inspect
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 import voluptuous as vol
@@ -51,7 +51,7 @@ from custom_components.unifi_insights.services import (
     _resolve_network_device_id,
     _resolve_protect_resource_id,
 )
-from tests.fixtures.command_owners import autospec_command_owners
+from tests.fixtures.command_owners import autospec_command_owners, protect_owner
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -75,6 +75,9 @@ from custom_components.unifi_insights.coordinators.device import (
 from custom_components.unifi_insights.coordinators.facade import (
     UnifiFacadeCoordinator,
 )
+from custom_components.unifi_insights.coordinators.protect import (
+    UnifiProtectCoordinator,
+)
 from custom_components.unifi_insights.services import (
     SERVICE_REFRESH_DATA,
     _client_records_match,
@@ -94,6 +97,30 @@ from custom_components.unifi_insights.services import (
     async_setup_services,
     async_unload_services,
 )
+
+
+def _protect(facade: Any) -> Any:
+    """
+    Return a mock facade's autospecced Protect owner, creating it once.
+
+    Protect service actions call ``require_protect_coordinator()`` and then
+    the owner's typed command (ADR-010), so tests assert on the owner.
+    """
+    owner = facade.require_protect_coordinator.return_value
+    if getattr(owner, "_spec_class", None) is not UnifiProtectCoordinator:
+        facade.require_protect_coordinator = MagicMock(
+            return_value=create_autospec(UnifiProtectCoordinator, instance=True)
+        )
+    return protect_owner(facade)
+
+
+def _real_protect_owner(
+    hass: HomeAssistant, client: UniFiProtectClient
+) -> UnifiProtectCoordinator:
+    """Return a real Protect owner over ``client`` for end-to-end service tests."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    return UnifiProtectCoordinator(hass, MagicMock(), client, entry)
 
 
 def _network_client() -> UniFiNetworkClient:
@@ -784,7 +811,7 @@ class TestProtectServices:
         """Test set_hdr_mode success."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_set_hdr_mode = AsyncMock()
+        _protect(mock_coordinator)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -803,7 +830,9 @@ class TestProtectServices:
                 blocking=True,
             )
 
-        mock_coordinator.async_set_hdr_mode.assert_called_once_with("cam1", "auto")
+        _protect(mock_coordinator).async_set_hdr_mode.assert_called_once_with(
+            "cam1", "auto"
+        )
 
         await async_unload_services(hass)
 
@@ -811,7 +840,7 @@ class TestProtectServices:
         """Test set_video_mode success."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_set_video_mode = AsyncMock()
+        _protect(mock_coordinator)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -830,7 +859,9 @@ class TestProtectServices:
                 blocking=True,
             )
 
-        mock_coordinator.async_set_video_mode.assert_called_once_with("cam1", "default")
+        _protect(mock_coordinator).async_set_video_mode.assert_called_once_with(
+            "cam1", "default"
+        )
 
         await async_unload_services(hass)
 
@@ -838,7 +869,7 @@ class TestProtectServices:
         """Test set_mic_volume success."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_set_microphone_volume = AsyncMock()
+        _protect(mock_coordinator)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -857,7 +888,9 @@ class TestProtectServices:
                 blocking=True,
             )
 
-        mock_coordinator.async_set_microphone_volume.assert_called_once_with("cam1", 50)
+        _protect(mock_coordinator).async_set_microphone_volume.assert_called_once_with(
+            "cam1", 50
+        )
 
         await async_unload_services(hass)
 
@@ -867,7 +900,7 @@ class TestProtectServices:
     ):
         """Test set_mic_volume passes 1 and 100 to the coordinator unchanged."""
         mock_coordinator = MagicMock()
-        mock_coordinator.async_set_microphone_volume = AsyncMock()
+        _protect(mock_coordinator)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -886,7 +919,7 @@ class TestProtectServices:
                 blocking=True,
             )
 
-        mock_coordinator.async_set_microphone_volume.assert_called_once_with(
+        _protect(mock_coordinator).async_set_microphone_volume.assert_called_once_with(
             "cam1", volume
         )
 
@@ -898,7 +931,7 @@ class TestProtectServices:
     ):
         """Test set_mic_volume rejects 0 and 101; the Protect API range is 1-100."""
         mock_coordinator = MagicMock()
-        mock_coordinator.async_set_microphone_volume = AsyncMock()
+        _protect(mock_coordinator)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -920,7 +953,7 @@ class TestProtectServices:
                 blocking=True,
             )
 
-        mock_coordinator.async_set_microphone_volume.assert_not_called()
+        _protect(mock_coordinator).async_set_microphone_volume.assert_not_called()
 
         await async_unload_services(hass)
 
@@ -932,7 +965,7 @@ class TestLightServices:
         """Test set_light_mode success."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_set_light_mode = AsyncMock()
+        _protect(mock_coordinator)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -951,7 +984,7 @@ class TestLightServices:
                 blocking=True,
             )
 
-        mock_coordinator.async_set_light_mode.assert_called_once_with(
+        _protect(mock_coordinator).async_set_light_mode.assert_called_once_with(
             "light1", "always"
         )
 
@@ -961,7 +994,7 @@ class TestLightServices:
         """Test set_light_level success."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_set_light_brightness = AsyncMock()
+        _protect(mock_coordinator)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -981,7 +1014,9 @@ class TestLightServices:
             )
 
         # 60% maps to LED level 4 (the Protect API takes 1-6)
-        mock_coordinator.async_set_light_brightness.assert_called_once_with("light1", 4)
+        _protect(mock_coordinator).async_set_light_brightness.assert_called_once_with(
+            "light1", 4
+        )
 
         await async_unload_services(hass)
 
@@ -1001,13 +1036,9 @@ class TestLightServices:
         client._patch = AsyncMock(return_value={"id": "light1", "mac": "00:11:22"})
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = client
-        # Real coordinator methods, so the whole path down to the client runs
-        mock_coordinator._require_protect_client = lambda: client
-        mock_coordinator._async_execute_api_action = (
-            UnifiFacadeCoordinator._async_execute_api_action.__get__(mock_coordinator)
-        )
-        mock_coordinator.async_set_light_brightness = (
-            UnifiFacadeCoordinator.async_set_light_brightness.__get__(mock_coordinator)
+        # The real Protect owner, so the whole path down to the client runs
+        mock_coordinator.require_protect_coordinator.return_value = _real_protect_owner(
+            hass, client
         )
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
@@ -1042,7 +1073,7 @@ class TestPTZServices:
         """Test ptz_move success."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_move_ptz_to_preset = AsyncMock()
+        _protect(mock_coordinator)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -1061,7 +1092,9 @@ class TestPTZServices:
                 blocking=True,
             )
 
-        mock_coordinator.async_move_ptz_to_preset.assert_called_once_with("cam1", 2)
+        _protect(mock_coordinator).async_move_ptz_to_preset.assert_called_once_with(
+            "cam1", 2
+        )
 
         await async_unload_services(hass)
 
@@ -1069,7 +1102,7 @@ class TestPTZServices:
         """Test ptz_patrol start success."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_start_ptz_patrol = AsyncMock()
+        _protect(mock_coordinator)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -1088,7 +1121,9 @@ class TestPTZServices:
                 blocking=True,
             )
 
-        mock_coordinator.async_start_ptz_patrol.assert_called_once_with("cam1", 1)
+        _protect(mock_coordinator).async_start_ptz_patrol.assert_called_once_with(
+            "cam1", 1
+        )
 
         await async_unload_services(hass)
 
@@ -1096,7 +1131,7 @@ class TestPTZServices:
         """Test ptz_patrol stop success."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_stop_ptz_patrol = AsyncMock()
+        _protect(mock_coordinator)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -1115,7 +1150,7 @@ class TestPTZServices:
                 blocking=True,
             )
 
-        mock_coordinator.async_stop_ptz_patrol.assert_called_once_with("cam1")
+        _protect(mock_coordinator).async_stop_ptz_patrol.assert_called_once_with("cam1")
 
         await async_unload_services(hass)
 
@@ -1202,14 +1237,9 @@ class TestChimeServices:
         client._patch = AsyncMock(return_value=chime)
         coordinator = MagicMock(protect_client=client)
         coordinator.data = {"protect": {"chimes": {"chime1": chime}}}
-        coordinator._require_protect_client = lambda: client
-        coordinator._async_execute_api_action = (
-            UnifiFacadeCoordinator._async_execute_api_action.__get__(coordinator)
-        )
-        coordinator.async_set_chime_ringtone = (
-            UnifiFacadeCoordinator.async_set_chime_ringtone.__get__(coordinator)
-        )
-        coordinator._protect_coordinator.async_request_refresh = AsyncMock()
+        owner = _real_protect_owner(hass, client)
+        owner.async_request_refresh = AsyncMock()  # type: ignore[method-assign]
+        coordinator.require_protect_coordinator.return_value = owner
         entry = MagicMock(
             entry_id="entry-chime", runtime_data=MagicMock(coordinator=coordinator)
         )
@@ -1231,7 +1261,7 @@ class TestChimeServices:
                         ]
                     },
                 )
-                coordinator._protect_coordinator.async_request_refresh.assert_awaited_once()
+                owner.async_request_refresh.assert_awaited_once()
             else:
                 with pytest.raises(HomeAssistantError, match="Unable to set ringtone"):
                     await hass.services.async_call(
@@ -1241,14 +1271,14 @@ class TestChimeServices:
                         blocking=True,
                     )
                 client._patch.assert_not_awaited()
-                coordinator._protect_coordinator.async_request_refresh.assert_not_awaited()
+                owner.async_request_refresh.assert_not_awaited()
         await async_unload_services(hass)
 
     async def test_set_chime_volume_success(self, hass: HomeAssistant):
         """Test set_chime_volume success."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_set_chime_volume = AsyncMock()
+        _protect(mock_coordinator)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -1267,7 +1297,9 @@ class TestChimeServices:
                 blocking=True,
             )
 
-        mock_coordinator.async_set_chime_volume.assert_called_once_with("chime1", 80)
+        _protect(mock_coordinator).async_set_chime_volume.assert_called_once_with(
+            "chime1", 80
+        )
 
         await async_unload_services(hass)
 
@@ -1288,7 +1320,7 @@ class TestChimeServices:
             translation_domain=DOMAIN,
             translation_key="chime_playback_unsupported",
         )
-        mock_coordinator.async_play_chime = AsyncMock(side_effect=error)
+        _protect(mock_coordinator).async_play_chime.configure_mock(side_effect=error)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -1309,7 +1341,7 @@ class TestChimeServices:
             )
 
         assert raised.value is error
-        mock_coordinator.async_play_chime.assert_awaited_once_with("chime1")
+        _protect(mock_coordinator).async_play_chime.assert_awaited_once_with("chime1")
         mock_coordinator.protect_client.chimes.play.assert_not_called()
         mock_coordinator.protect_client._post.assert_not_called()
 
@@ -1322,7 +1354,7 @@ class TestChimeServices:
         """Missing and unknown targets fail validation before facade dispatch."""
         coordinator = MagicMock()
         coordinator.protect_client = MagicMock()
-        coordinator.async_play_chime = AsyncMock()
+        _protect(coordinator)
         coordinator.data = {"protect": {"chimes": {"chime1": {"id": "chime1"}}}}
         entry = MagicMock()
         entry.runtime_data.coordinator = coordinator
@@ -1334,7 +1366,7 @@ class TestChimeServices:
             await hass.services.async_call(
                 DOMAIN, "play_chime_ringtone", target, blocking=True
             )
-        coordinator.async_play_chime.assert_not_called()
+        _protect(coordinator).async_play_chime.assert_not_called()
         coordinator.protect_client.chimes.play.assert_not_called()
         await async_unload_services(hass)
 
@@ -1744,7 +1776,7 @@ class TestServiceErrorHandling:
         """Test set_hdr_mode with exception."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_set_hdr_mode = AsyncMock(
+        _protect(mock_coordinator).async_set_hdr_mode.configure_mock(
             side_effect=HomeAssistantError("Error setting HDR mode")
         )
         mock_entry = MagicMock()
@@ -1801,7 +1833,7 @@ class TestServiceErrorHandling:
         """Test set_video_mode with exception."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_set_video_mode = AsyncMock(
+        _protect(mock_coordinator).async_set_video_mode.configure_mock(
             side_effect=HomeAssistantError("Error setting video mode")
         )
         mock_entry = MagicMock()
@@ -1858,7 +1890,7 @@ class TestServiceErrorHandling:
         """Test set_mic_volume with exception."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_set_microphone_volume = AsyncMock(
+        _protect(mock_coordinator).async_set_microphone_volume.configure_mock(
             side_effect=HomeAssistantError("Error setting mic volume")
         )
         mock_entry = MagicMock()
@@ -1915,7 +1947,7 @@ class TestServiceErrorHandling:
         """Test set_light_mode with exception."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_set_light_mode = AsyncMock(
+        _protect(mock_coordinator).async_set_light_mode.configure_mock(
             side_effect=HomeAssistantError("Error setting light mode")
         )
         mock_entry = MagicMock()
@@ -1972,7 +2004,7 @@ class TestServiceErrorHandling:
         """Test set_light_level with exception."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_set_light_brightness = AsyncMock(
+        _protect(mock_coordinator).async_set_light_brightness.configure_mock(
             side_effect=HomeAssistantError("Error setting light level")
         )
         mock_entry = MagicMock()
@@ -2029,7 +2061,7 @@ class TestServiceErrorHandling:
         """Test ptz_move with exception."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_move_ptz_to_preset = AsyncMock(
+        _protect(mock_coordinator).async_move_ptz_to_preset.configure_mock(
             side_effect=HomeAssistantError("Error moving PTZ")
         )
         mock_entry = MagicMock()
@@ -2086,7 +2118,7 @@ class TestServiceErrorHandling:
         """Test ptz_patrol stop success."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_stop_ptz_patrol = AsyncMock()
+        _protect(mock_coordinator)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -2105,7 +2137,7 @@ class TestServiceErrorHandling:
                 blocking=True,
             )
 
-        mock_coordinator.async_stop_ptz_patrol.assert_called_once_with("cam1")
+        _protect(mock_coordinator).async_stop_ptz_patrol.assert_called_once_with("cam1")
 
         await async_unload_services(hass)
 
@@ -2113,7 +2145,7 @@ class TestServiceErrorHandling:
         """Test ptz_patrol with exception."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_start_ptz_patrol = AsyncMock(
+        _protect(mock_coordinator).async_start_ptz_patrol.configure_mock(
             side_effect=HomeAssistantError("Error controlling PTZ patrol")
         )
         mock_entry = MagicMock()
@@ -2170,7 +2202,7 @@ class TestServiceErrorHandling:
         """Test set_chime_volume with exception."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_set_chime_volume = AsyncMock(
+        _protect(mock_coordinator).async_set_chime_volume.configure_mock(
             side_effect=HomeAssistantError("Error setting chime volume")
         )
         mock_entry = MagicMock()
@@ -2227,7 +2259,7 @@ class TestServiceErrorHandling:
         """Test play_chime_ringtone with exception."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_play_chime = AsyncMock(
+        _protect(mock_coordinator).async_play_chime.configure_mock(
             side_effect=HomeAssistantError("Error playing chime")
         )
         mock_entry = MagicMock()
@@ -2284,7 +2316,7 @@ class TestServiceErrorHandling:
         """Test set_chime_ringtone with exception."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_set_chime_ringtone = AsyncMock(
+        _protect(mock_coordinator).async_set_chime_ringtone.configure_mock(
             side_effect=HomeAssistantError("Error setting chime ringtone")
         )
         mock_entry = MagicMock()
@@ -2341,7 +2373,7 @@ class TestServiceErrorHandling:
         """Test set_chime_repeat_times with exception."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_set_chime_repeat = AsyncMock(
+        _protect(mock_coordinator).async_set_chime_repeat.configure_mock(
             side_effect=HomeAssistantError("Error setting chime repeat times")
         )
         mock_entry = MagicMock()
@@ -2371,7 +2403,7 @@ class TestServiceErrorHandling:
         """Test set_chime_ringtone success (covers line 784)."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_set_chime_ringtone = AsyncMock()
+        _protect(mock_coordinator)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -2390,7 +2422,7 @@ class TestServiceErrorHandling:
                 blocking=True,
             )
 
-        mock_coordinator.async_set_chime_ringtone.assert_called_once_with(
+        _protect(mock_coordinator).async_set_chime_ringtone.assert_called_once_with(
             "chime1", "tone-1"
         )
 
@@ -2400,7 +2432,7 @@ class TestServiceErrorHandling:
         """Test set_chime_repeat_times success (covers line 816)."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_set_chime_repeat = AsyncMock()
+        _protect(mock_coordinator)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -2419,7 +2451,9 @@ class TestServiceErrorHandling:
                 blocking=True,
             )
 
-        mock_coordinator.async_set_chime_repeat.assert_called_once_with("chime1", 3)
+        _protect(mock_coordinator).async_set_chime_repeat.assert_called_once_with(
+            "chime1", 3
+        )
 
         await async_unload_services(hass)
 
@@ -2581,7 +2615,7 @@ class TestTriggerAlarmService:
         """Test trigger_alarm service success."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_trigger_alarm = AsyncMock()
+        _protect(mock_coordinator)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -2600,7 +2634,7 @@ class TestTriggerAlarmService:
                 blocking=True,
             )
 
-        mock_coordinator.async_trigger_alarm.assert_called_once_with("alarm1")
+        _protect(mock_coordinator).async_trigger_alarm.assert_called_once_with("alarm1")
 
         await async_unload_services(hass)
 
@@ -2656,7 +2690,7 @@ class TestTriggerAlarmService:
         """Test trigger_alarm with exception."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_trigger_alarm = AsyncMock(
+        _protect(mock_coordinator).async_trigger_alarm.configure_mock(
             side_effect=HomeAssistantError("Error triggering alarm")
         )
         mock_entry = MagicMock()
@@ -2690,7 +2724,7 @@ class TestCreateLiveviewService:
         """Test create_liveview service success."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_create_liveview = AsyncMock()
+        _protect(mock_coordinator)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -2709,7 +2743,7 @@ class TestCreateLiveviewService:
                 blocking=True,
             )
 
-        mock_coordinator.async_create_liveview.assert_called_once_with(
+        _protect(mock_coordinator).async_create_liveview.assert_called_once_with(
             name="Test Liveview", layout=2, is_default=True
         )
 
@@ -2767,7 +2801,7 @@ class TestCreateLiveviewService:
         """Test create_liveview with exception."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_create_liveview = AsyncMock(
+        _protect(mock_coordinator).async_create_liveview.configure_mock(
             side_effect=HomeAssistantError("Error creating liveview")
         )
         mock_entry = MagicMock()
@@ -2801,7 +2835,7 @@ class TestSetLiveviewService:
         """Test set_liveview service success."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_update_viewer = AsyncMock()
+        _protect(mock_coordinator)
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
         mock_entry.runtime_data.coordinator = mock_coordinator
@@ -2820,7 +2854,7 @@ class TestSetLiveviewService:
                 blocking=True,
             )
 
-        mock_coordinator.async_update_viewer.assert_called_once_with(
+        _protect(mock_coordinator).async_update_viewer.assert_called_once_with(
             "viewer1", liveview="liveview1"
         )
 
@@ -2878,7 +2912,7 @@ class TestSetLiveviewService:
         """Test set_liveview with exception."""
         mock_coordinator = MagicMock()
         mock_coordinator.protect_client = MagicMock()
-        mock_coordinator.async_update_viewer = AsyncMock(
+        _protect(mock_coordinator).async_update_viewer.configure_mock(
             side_effect=HomeAssistantError("Error setting liveview")
         )
         mock_entry = MagicMock()
@@ -2929,21 +2963,21 @@ class TestConsoleOwnershipRouting:
         coord1.config_coordinator.async_authorize_guest = AsyncMock()
         coord1.async_generate_voucher = AsyncMock()
         coord1.async_delete_voucher = AsyncMock()
-        coord1.async_set_hdr_mode = AsyncMock()
-        coord1.async_set_video_mode = AsyncMock()
-        coord1.async_set_microphone_volume = AsyncMock()
-        coord1.async_set_light_mode = AsyncMock()
-        coord1.async_set_light_brightness = AsyncMock()
-        coord1.async_move_ptz_to_preset = AsyncMock()
-        coord1.async_start_ptz_patrol = AsyncMock()
-        coord1.async_stop_ptz_patrol = AsyncMock()
-        coord1.async_set_chime_volume = AsyncMock()
-        coord1.async_play_chime = AsyncMock()
-        coord1.async_set_chime_ringtone = AsyncMock()
-        coord1.async_set_chime_repeat = AsyncMock()
-        coord1.async_trigger_alarm = AsyncMock()
-        coord1.async_update_viewer = AsyncMock()
-        coord1.async_create_liveview = AsyncMock()
+        _protect(coord1)
+        _protect(coord1)
+        _protect(coord1)
+        _protect(coord1)
+        _protect(coord1)
+        _protect(coord1)
+        _protect(coord1)
+        _protect(coord1)
+        _protect(coord1)
+        _protect(coord1)
+        _protect(coord1)
+        _protect(coord1)
+        _protect(coord1)
+        _protect(coord1)
+        _protect(coord1)
 
         entry1 = MagicMock()
         entry1.entry_id = "entry_1"
@@ -2968,21 +3002,21 @@ class TestConsoleOwnershipRouting:
         coord2.config_coordinator.async_authorize_guest = AsyncMock()
         coord2.async_generate_voucher = AsyncMock()
         coord2.async_delete_voucher = AsyncMock()
-        coord2.async_set_hdr_mode = AsyncMock()
-        coord2.async_set_video_mode = AsyncMock()
-        coord2.async_set_microphone_volume = AsyncMock()
-        coord2.async_set_light_mode = AsyncMock()
-        coord2.async_set_light_brightness = AsyncMock()
-        coord2.async_move_ptz_to_preset = AsyncMock()
-        coord2.async_start_ptz_patrol = AsyncMock()
-        coord2.async_stop_ptz_patrol = AsyncMock()
-        coord2.async_set_chime_volume = AsyncMock()
-        coord2.async_play_chime = AsyncMock()
-        coord2.async_set_chime_ringtone = AsyncMock()
-        coord2.async_set_chime_repeat = AsyncMock()
-        coord2.async_trigger_alarm = AsyncMock()
-        coord2.async_update_viewer = AsyncMock()
-        coord2.async_create_liveview = AsyncMock()
+        _protect(coord2)
+        _protect(coord2)
+        _protect(coord2)
+        _protect(coord2)
+        _protect(coord2)
+        _protect(coord2)
+        _protect(coord2)
+        _protect(coord2)
+        _protect(coord2)
+        _protect(coord2)
+        _protect(coord2)
+        _protect(coord2)
+        _protect(coord2)
+        _protect(coord2)
+        _protect(coord2)
 
         entry2 = MagicMock()
         entry2.entry_id = "entry_2"
@@ -3047,7 +3081,7 @@ class TestConsoleOwnershipRouting:
                 {"camera_id": "cam2", "mode": "auto"},
                 blocking=True,
             )
-            coord2.async_set_hdr_mode.assert_called_once_with("cam2", "auto")
+            _protect(coord2).async_set_hdr_mode.assert_called_once_with("cam2", "auto")
 
             await hass.services.async_call(
                 DOMAIN,
@@ -3055,7 +3089,9 @@ class TestConsoleOwnershipRouting:
                 {"camera_id": "cam2", "mode": "sport"},
                 blocking=True,
             )
-            coord2.async_set_video_mode.assert_called_once_with("cam2", "sport")
+            _protect(coord2).async_set_video_mode.assert_called_once_with(
+                "cam2", "sport"
+            )
 
             await hass.services.async_call(
                 DOMAIN,
@@ -3063,7 +3099,9 @@ class TestConsoleOwnershipRouting:
                 {"camera_id": "cam2", "volume": 80},
                 blocking=True,
             )
-            coord2.async_set_microphone_volume.assert_called_once_with("cam2", 80)
+            _protect(coord2).async_set_microphone_volume.assert_called_once_with(
+                "cam2", 80
+            )
 
             await hass.services.async_call(
                 DOMAIN,
@@ -3071,7 +3109,7 @@ class TestConsoleOwnershipRouting:
                 {"camera_id": "cam2", "preset": 2},
                 blocking=True,
             )
-            coord2.async_move_ptz_to_preset.assert_called_once_with("cam2", 2)
+            _protect(coord2).async_move_ptz_to_preset.assert_called_once_with("cam2", 2)
 
             await hass.services.async_call(
                 DOMAIN,
@@ -3079,7 +3117,7 @@ class TestConsoleOwnershipRouting:
                 {"camera_id": "cam2", "action": "start", "slot": 1},
                 blocking=True,
             )
-            coord2.async_start_ptz_patrol.assert_called_once_with("cam2", 1)
+            _protect(coord2).async_start_ptz_patrol.assert_called_once_with("cam2", 1)
 
             # Light services on console 1
             await hass.services.async_call(
@@ -3088,8 +3126,10 @@ class TestConsoleOwnershipRouting:
                 {"light_id": "light1", "mode": "motion"},
                 blocking=True,
             )
-            coord1.async_set_light_mode.assert_called_once_with("light1", "motion")
-            coord2.async_set_light_mode.assert_not_called()
+            _protect(coord1).async_set_light_mode.assert_called_once_with(
+                "light1", "motion"
+            )
+            _protect(coord2).async_set_light_mode.assert_not_called()
 
             await hass.services.async_call(
                 DOMAIN,
@@ -3098,7 +3138,9 @@ class TestConsoleOwnershipRouting:
                 blocking=True,
             )
             # 60% maps to LED level 4 (Protect takes 1-6)
-            coord1.async_set_light_brightness.assert_called_once_with("light1", 4)
+            _protect(coord1).async_set_light_brightness.assert_called_once_with(
+                "light1", 4
+            )
 
             # Chime services on console 2
             await hass.services.async_call(
@@ -3107,7 +3149,9 @@ class TestConsoleOwnershipRouting:
                 {"chime_id": "chime2", "volume": 70},
                 blocking=True,
             )
-            coord2.async_set_chime_volume.assert_called_once_with("chime2", 70)
+            _protect(coord2).async_set_chime_volume.assert_called_once_with(
+                "chime2", 70
+            )
 
             await hass.services.async_call(
                 DOMAIN,
@@ -3117,11 +3161,11 @@ class TestConsoleOwnershipRouting:
             )
             # camera_id only selects the owning console; the Protect API call
             # itself stays chime-wide.
-            assert coord2.async_set_chime_volume.call_count == 2
-            coord2.async_set_chime_volume.assert_called_with("chime2", 40)
-            coord1.async_set_chime_volume.assert_not_called()
+            assert _protect(coord2).async_set_chime_volume.call_count == 2
+            _protect(coord2).async_set_chime_volume.assert_called_with("chime2", 40)
+            _protect(coord1).async_set_chime_volume.assert_not_called()
 
-            coord2.async_play_chime.side_effect = HomeAssistantError(
+            _protect(coord2).async_play_chime.side_effect = HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="chime_playback_unsupported",
             )
@@ -3133,8 +3177,8 @@ class TestConsoleOwnershipRouting:
                     blocking=True,
                 )
             assert raised.value.translation_key == "chime_playback_unsupported"
-            coord2.async_play_chime.assert_called_once_with("chime2")
-            coord1.async_play_chime.assert_not_called()
+            _protect(coord2).async_play_chime.assert_called_once_with("chime2")
+            _protect(coord1).async_play_chime.assert_not_called()
             coord1.protect_client._post.assert_not_called()
             coord2.protect_client._post.assert_not_called()
 
@@ -3144,7 +3188,9 @@ class TestConsoleOwnershipRouting:
                 {"chime_id": "chime2", "ringtone_id": "tone-1"},
                 blocking=True,
             )
-            coord2.async_set_chime_ringtone.assert_called_once_with("chime2", "tone-1")
+            _protect(coord2).async_set_chime_ringtone.assert_called_once_with(
+                "chime2", "tone-1"
+            )
 
             await hass.services.async_call(
                 DOMAIN,
@@ -3154,9 +3200,11 @@ class TestConsoleOwnershipRouting:
             )
             # camera_id only selects the owning console; the Protect API call
             # itself stays chime-wide.
-            assert coord2.async_set_chime_ringtone.call_count == 2
-            coord2.async_set_chime_ringtone.assert_called_with("chime2", "tone-2")
-            coord1.async_set_chime_ringtone.assert_not_called()
+            assert _protect(coord2).async_set_chime_ringtone.call_count == 2
+            _protect(coord2).async_set_chime_ringtone.assert_called_with(
+                "chime2", "tone-2"
+            )
+            _protect(coord1).async_set_chime_ringtone.assert_not_called()
 
             await hass.services.async_call(
                 DOMAIN,
@@ -3164,7 +3212,7 @@ class TestConsoleOwnershipRouting:
                 {"chime_id": "chime2", "repeat_times": 3},
                 blocking=True,
             )
-            coord2.async_set_chime_repeat.assert_called_once_with("chime2", 3)
+            _protect(coord2).async_set_chime_repeat.assert_called_once_with("chime2", 3)
 
             # trigger_alarm takes an alarm-manager webhook id that appears in
             # no coordinator collection, so the console must be named.
@@ -3174,8 +3222,8 @@ class TestConsoleOwnershipRouting:
                 {"alarm_id": "alarm1", "console_id": entry1.entry_id},
                 blocking=True,
             )
-            coord1.async_trigger_alarm.assert_called_once_with("alarm1")
-            coord2.async_trigger_alarm.assert_not_called()
+            _protect(coord1).async_trigger_alarm.assert_called_once_with("alarm1")
+            _protect(coord2).async_trigger_alarm.assert_not_called()
 
             await hass.services.async_call(
                 DOMAIN,
@@ -3183,7 +3231,7 @@ class TestConsoleOwnershipRouting:
                 {"viewer_id": "viewer2", "liveview_id": "lv2"},
                 blocking=True,
             )
-            coord2.async_update_viewer.assert_called_once_with(
+            _protect(coord2).async_update_viewer.assert_called_once_with(
                 "viewer2", liveview="lv2"
             )
 
@@ -3432,8 +3480,10 @@ class TestConsoleOwnershipRouting:
                 {"chime_id": "chime1", "camera_id": "cam_unknown", "volume": 50},
                 blocking=True,
             )
-            _coord1.async_set_chime_volume.assert_called_once_with("chime1", 50)
-            _coord2.async_set_chime_volume.assert_not_called()
+            _protect(_coord1).async_set_chime_volume.assert_called_once_with(
+                "chime1", 50
+            )
+            _protect(_coord2).async_set_chime_volume.assert_not_called()
 
         await async_unload_services(hass)
 
@@ -3692,7 +3742,7 @@ class TestAlarmRouting:
                 "events": {},
             },
         }
-        coord.async_trigger_alarm = AsyncMock()
+        _protect(coord)
         entry = MagicMock()
         entry.entry_id = entry_id
         entry.title = title
@@ -3713,7 +3763,7 @@ class TestAlarmRouting:
                 blocking=True,
             )
 
-        coord.async_trigger_alarm.assert_called_once_with("webhook-trigger-1")
+        _protect(coord).async_trigger_alarm.assert_called_once_with("webhook-trigger-1")
         await async_unload_services(hass)
 
     async def test_two_consoles_without_console_id_is_refused(
@@ -3737,8 +3787,8 @@ class TestAlarmRouting:
                 blocking=True,
             )
 
-        coord1.async_trigger_alarm.assert_not_called()
-        coord2.async_trigger_alarm.assert_not_called()
+        _protect(coord1).async_trigger_alarm.assert_not_called()
+        _protect(coord2).async_trigger_alarm.assert_not_called()
         await async_unload_services(hass)
 
     async def test_console_id_selects_by_title_or_entry_id(self, hass: HomeAssistant):
@@ -3756,8 +3806,8 @@ class TestAlarmRouting:
                 {"alarm_id": "t1", "console_id": "Cloud Key"},
                 blocking=True,
             )
-            coord2.async_trigger_alarm.assert_called_once_with("t1")
-            coord1.async_trigger_alarm.assert_not_called()
+            _protect(coord2).async_trigger_alarm.assert_called_once_with("t1")
+            _protect(coord1).async_trigger_alarm.assert_not_called()
 
             await hass.services.async_call(
                 DOMAIN,
@@ -3765,7 +3815,7 @@ class TestAlarmRouting:
                 {"alarm_id": "t2", "console_id": "entry_1"},
                 blocking=True,
             )
-            coord1.async_trigger_alarm.assert_called_once_with("t2")
+            _protect(coord1).async_trigger_alarm.assert_called_once_with("t2")
 
         await async_unload_services(hass)
 
@@ -4156,9 +4206,9 @@ class TestConsoleRoutingEdgeCases:
     ):
         """Test service calls passing optional camera_id and ignored guest options."""
         coord = MagicMock(protect_client=MagicMock())
-        coord.async_set_chime_volume = AsyncMock()
-        coord.async_set_chime_ringtone = AsyncMock()
-        coord.async_set_chime_repeat = AsyncMock()
+        _protect(coord)
+        _protect(coord)
+        _protect(coord)
         coord.config_coordinator.async_authorize_guest = AsyncMock()
         coord.data = {
             "sites": {"s1": {}},
@@ -4177,7 +4227,7 @@ class TestConsoleRoutingEdgeCases:
                 {"chime_id": "chime1", "volume": 50, "camera_id": "cam1"},
                 blocking=True,
             )
-            coord.async_set_chime_volume.assert_called_once_with("chime1", 50)
+            _protect(coord).async_set_chime_volume.assert_called_once_with("chime1", 50)
 
             await hass.services.async_call(
                 DOMAIN,
@@ -4185,7 +4235,9 @@ class TestConsoleRoutingEdgeCases:
                 {"chime_id": "chime1", "ringtone_id": "tone-1", "camera_id": "cam1"},
                 blocking=True,
             )
-            coord.async_set_chime_ringtone.assert_called_once_with("chime1", "tone-1")
+            _protect(coord).async_set_chime_ringtone.assert_called_once_with(
+                "chime1", "tone-1"
+            )
 
             await hass.services.async_call(
                 DOMAIN,
@@ -4193,7 +4245,7 @@ class TestConsoleRoutingEdgeCases:
                 {"chime_id": "chime1", "repeat_times": 3, "camera_id": "cam1"},
                 blocking=True,
             )
-            coord.async_set_chime_repeat.assert_called_once_with("chime1", 3)
+            _protect(coord).async_set_chime_repeat.assert_called_once_with("chime1", 3)
 
             await hass.services.async_call(
                 DOMAIN,
@@ -5023,9 +5075,9 @@ class TestServiceComprehensiveFullCoverage:
 
         # Chime services with camera_id as list
         coord = MagicMock(protect_client=MagicMock())
-        coord.async_set_chime_volume = AsyncMock()
-        coord.async_set_chime_ringtone = AsyncMock()
-        coord.async_set_chime_repeat = AsyncMock()
+        _protect(coord)
+        _protect(coord)
+        _protect(coord)
         entry = MagicMock(
             entry_id="entry_p",
             title="Protect",
@@ -5040,7 +5092,7 @@ class TestServiceComprehensiveFullCoverage:
                 {"chime_id": "chime1", "volume": 50, "camera_id": ["cam1"]},
                 blocking=True,
             )
-            assert coord.async_set_chime_volume.called
+            assert _protect(coord).async_set_chime_volume.called
 
             await hass.services.async_call(
                 DOMAIN,
@@ -5048,7 +5100,7 @@ class TestServiceComprehensiveFullCoverage:
                 {"chime_id": "chime1", "ringtone_id": "tone-2", "camera_id": ["cam1"]},
                 blocking=True,
             )
-            assert coord.async_set_chime_ringtone.called
+            assert _protect(coord).async_set_chime_ringtone.called
 
             await hass.services.async_call(
                 DOMAIN,
@@ -5056,7 +5108,7 @@ class TestServiceComprehensiveFullCoverage:
                 {"chime_id": "chime1", "repeat_times": 2, "camera_id": ["cam1"]},
                 blocking=True,
             )
-            assert coord.async_set_chime_repeat.called
+            assert _protect(coord).async_set_chime_repeat.called
 
         # Restart device site search (multiple sites in coordinator data)
         coord_net = MagicMock()
@@ -5373,7 +5425,7 @@ async def test_secondary_camera_registry_owner_is_enforced(
     camera_entry = MockConfigEntry(domain=DOMAIN)
     camera_entry.add_to_hass(hass)
     chime_coord = MagicMock(data={"protect": {"chimes": {"chime": {}}}})
-    chime_coord.async_set_chime_volume = AsyncMock()
+    _protect(chime_coord)
     chime_entry.runtime_data = MagicMock(coordinator=chime_coord)
     camera_entry.runtime_data = MagicMock(
         coordinator=MagicMock(data={"protect": {"cameras": {"cam": {}}}}),
@@ -5392,7 +5444,7 @@ async def test_secondary_camera_registry_owner_is_enforced(
             {"chime_id": "chime", "camera_id": camera.entity_id, "volume": 50},
             blocking=True,
         )
-    chime_coord.async_set_chime_volume.assert_not_awaited()
+    _protect(chime_coord).async_set_chime_volume.assert_not_awaited()
 
 
 @pytest.mark.parametrize("target_kind", ["dotted_mac", "entity", "device"])
