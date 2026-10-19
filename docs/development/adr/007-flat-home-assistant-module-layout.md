@@ -115,12 +115,12 @@ Several modules are already over budget: `coordinators/protect.py` (3,070), `ser
 
 Home Assistant requires device communication to live in a library published on PyPI ([development checklist](https://developers.home-assistant.io/docs/development_checklist), [creating a platform](https://developers.home-assistant.io/docs/creating_platform_index)). The vendored `api/` package (128 files, about 17,400 lines) was 128 of the integration's 199 Python files. [tinkerologie/unifi-official-api#41](https://github.com/tinkerologie/unifi-official-api/issues/41) moved it back upstream as `unifi-official-api` 2.0.0, and #345 replaced it with that PyPI dependency ([ADR-008](./008-depend-on-unifi-official-api-from-pypi.md), superseding ADR-003). `coordinators/` is now the only subpackage. #345 landed before #341 so that the file moves never reorganize client tests that were about to be deleted.
 
-| Python files    | Before #345 | After #345 (today) | After #341 |
-| --------------- | ----------- | ------------------ | ---------- |
-| Root modules    | 55          | 55                 | 34¹        |
-| `coordinators/` | 16          | 16                 | 15         |
-| `api/`          | 128         | 0                  | 0          |
-| **Total**       | 199         | 71                 | 49¹        |
+| Python files    | Before #345 | After #345 | After #341 |
+| --------------- | ----------- | ---------- | ---------- |
+| Root modules    | 55          | 55         | 34¹        |
+| `coordinators/` | 16          | 16         | 15         |
+| `api/`          | 128         | 0          | 0          |
+| **Total**       | 199         | 71         | 49¹        |
 
 ¹ 33 in the original decision, plus `service_targets.py`, which [ADR-009](./009-amend-flat-module-layout.md) allows as the services/routing seam (added in #339).
 
