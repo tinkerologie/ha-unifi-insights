@@ -1469,6 +1469,33 @@ class TestUnifiPortSensorEdgeCases:
 
         assert sensor.native_value == expected
 
+    async def test_port_stats_reject_boolean_counters_and_watts(
+        self, hass: HomeAssistant, mock_coordinator
+    ):
+        """A boolean stats value is not a byte count or a PoE reading."""
+        mock_coordinator.data.pop("network_facts", None)
+        mock_coordinator.data["devices"] = {"site1": {"device1": {"id": "device1"}}}
+        mock_coordinator.data["stats"] = {
+            "site1": {
+                "device1": {
+                    "port_bytes": {1: {"tx_bytes": True}},
+                    "poe_ports": {1: True},
+                }
+            }
+        }
+
+        def _sensor(key: str) -> UnifiPortSensor:
+            return UnifiPortSensor(
+                coordinator=mock_coordinator,
+                description=next(s for s in PORT_SENSOR_TYPES if s.key == key),
+                site_id="site1",
+                device_id="device1",
+                port_idx=1,
+            )
+
+        assert _sensor("port_tx_bytes").native_value is None
+        assert _sensor("port_poe_power").native_value is None
+
     @pytest.mark.parametrize("key", ["port_tx_bytes", "port_tx_rate", "port_speed"])
     async def test_port_sensor_unavailable_when_device_refresh_fails(
         self, hass: HomeAssistant, mock_coordinator, key: str

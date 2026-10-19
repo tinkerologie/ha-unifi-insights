@@ -1641,6 +1641,9 @@ class UnifiPortSensor(UnifiInsightsEntity, SensorEntity):
         watts = poe_ports.get(self._port_idx)
         if watts is None:
             watts = poe_ports.get(str(self._port_idx))
+        if isinstance(watts, bool):
+            # bool is an int subclass: True must not read as 1 W.
+            return None
         if isinstance(watts, (int, float)):
             return float(watts)
         if isinstance(watts, str):
@@ -1659,7 +1662,9 @@ class UnifiPortSensor(UnifiInsightsEntity, SensorEntity):
             entry = self._stats_port_entry(section)
             if isinstance(entry, dict):
                 value = entry.get(counter_key)
-                if isinstance(value, (int, float)):
+                # bool is an int subclass: True must not read as 1 byte, which
+                # a total_increasing counter would record as a reset.
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
                     return int(value)
         return None
 

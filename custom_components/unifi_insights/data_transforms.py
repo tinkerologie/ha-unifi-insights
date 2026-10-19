@@ -165,7 +165,10 @@ ClientConnectionType = Literal["wired", "wireless"]
 # test checks that every library ``DeviceState`` member resolves through it.
 # ``CONNECTED``, ``UP``, ``DISCONNECTED`` and ``DOWN`` are not network device
 # states (they belong to Protect devices and ports), so like an absent or
-# unrecognised value they read as unknown.
+# unrecognised value they read as unknown. The library's ``DeviceState`` also
+# carries lowercase non-spec values (``connected``, ``disconnected``, ...);
+# they stay unknown on purpose until a console is seen sending them (#337
+# design review, 2026-10-19: live consoles report ``ONLINE``).
 NETWORK_DEVICE_STATES: Final[tuple[tuple[str, OnlineState], ...]] = (
     ("ONLINE", "online"),
     ("OFFLINE", "offline"),
