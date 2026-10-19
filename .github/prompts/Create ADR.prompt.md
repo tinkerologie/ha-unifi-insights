@@ -62,7 +62,7 @@ Draft the ADR in `.ai-scratch/` first for review, then move it to `docs/` only i
 
 ## Existing Architectural Foundations to Reference
 
-- Multi-coordinator system (`config`, `device`, `protect`, `access`, `innerspace`, `site_manager`, `mobility`, `carrier_fabric`, `internet_activity`, `rule_audit`, `rule_export`, `facade`) stored on `entry.runtime_data`
+- Multi-coordinator system (`config`, `device`, `protect`, `access`, `innerspace`, `site_manager`, `mobility`, `carrier_fabric`, `rule_audit`, `facade`) stored on `entry.runtime_data`
 - `unifi-official-api` PyPI client library (ADR-008) using injected `async_get_clientsession(hass)`
 - Application capability probing in `probe.py` across Local, Remote, and Carrier Fabric connection modes
 - camelCase/snake_case tolerance and falsy-safe resolution via `get_field()` and `first_not_none()`

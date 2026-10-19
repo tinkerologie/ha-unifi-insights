@@ -11,7 +11,7 @@ Your goal is to diagnose and fix an issue in the UniFi Insights multi-coordinato
 If not provided, ask for:
 
 - Observed symptoms (entities unavailable, stale values, missing devices, errors in logs)
-- Affected coordinator (`config`, `device`, `protect`, `access`, `innerspace`, `site_manager`, `mobility`, `carrier_fabric`, `internet_activity`, `rule_audit`, `rule_export`, `facade`)
+- Affected coordinator (`config`, `device`, `protect`, `access`, `innerspace`, `site_manager`, `mobility`, `carrier_fabric`, `rule_audit`, `facade`)
 - Relevant log traceback or error message
 
 ## Diagnostic Checklist

@@ -12,7 +12,7 @@ For AI agent instructions, see [`AGENTS.md`](/AGENTS.md). For the decision log, 
 custom_components/unifi_insights/
 ├── __init__.py                 # Setup/unload/migrate, UnifiInsightsData, platform forwarding
 ├── config_flow.py              # Config flow (user, reauth, reconfigure) + options flow
-├── console_identity.py         # Stable console identity shared by config flow and setup
+├── console_identity.py         # Stable console identity, site entity identity migration, device registry lookups
 ├── probe.py                    # Capability probing (Network, Protect, Access, InnerSpace, Carrier Fabric)
 ├── const.py                    # Domain, intervals, config keys, attribute names
 ├── entity.py                   # UnifiInsightsEntity, UnifiProtectEntity, get_field(), first_not_none()
@@ -22,17 +22,15 @@ custom_components/unifi_insights/
 ├── <platform>.py               # 17 platforms: alarm_control_panel, binary_sensor, button, camera, cover,
 │                               # device_tracker, event, image, light, lock, media_player, number, select,
 │                               # sensor, siren, switch, update
-├── data_transforms.py          # API response → internal dict mapping
+├── data_transforms.py          # Pure transforms: field and MAC primitives, network device read model,
+│                               # LED level, NVR storage telemetry, voucher state, port labels
 ├── innerspace_transforms.py    # InnerSpace floor plan and MAC correlation transforms
-├── helpers.py, led_level.py, storage_telemetry.py, client_wake.py
-│                               # Small pure helpers (dissolved by ADR-007)
+├── client_wake.py              # Wake-on-LAN helpers shared by the facade and the button
 ├── services.py / services.yaml # Service actions registered in async_setup
 ├── websocket_api.py            # unifi_insights/topology/* and unifi_insights/protect/* commands
-├── topology.py, topology_contract.py, topology_keys.py
-│                               # Topology graph, frontend contract, per-entry HMAC node keys
-├── site_health.py, performance.py, timeline.py, protect_snapshot.py,
-│   internet_activity_snapshot.py, dashboard_contract_utils.py
-│                               # Dashboard snapshot builders (merged into dashboard_snapshots.py by ADR-007)
+├── topology.py                 # Topology frontend contract, per-entry HMAC node keys, graph builder
+├── dashboard_snapshots.py      # Site health, performance, timeline, Protect status and internet
+│                               # activity snapshot builders, with their shared contract helpers
 ├── frontend.py                 # Serves the built Lovelace card bundles with cache busting
 ├── access_webhook.py           # Signed UniFi Access webhook lifecycle
 ├── diagnostics.py              # Three-layer redacted diagnostics export
@@ -74,19 +72,19 @@ Every client receives Home Assistant's shared `aiohttp` session through `async_g
 
 Each config entry owns a set of `DataUpdateCoordinator` subclasses, one per data domain, with intervals chosen for that domain's cost and volatility (see [ADR-002](./adr/002-multi-coordinator-architecture-behind-a-facade.md)):
 
-| Coordinator                           | Module                           | Interval         | Scope                                                     |
-| ------------------------------------- | -------------------------------- | ---------------- | --------------------------------------------------------- |
-| `UnifiInsightsConfigCoordinator`              | `coordinators/config.py`         | 5 min            | Sites, WiFi, networks, firewall, ACL, DNS, vouchers, VPN  |
-| `UnifiInsightsDeviceCoordinator`              | `coordinators/device.py`         | 30 s             | Network device and client metrics                         |
-| `UnifiInsightsProtectCoordinator`             | `coordinators/protect.py`        | 30 s + WebSocket | Cameras, lights, sensors, chimes, NVR, viewers, liveviews |
-| `UnifiInsightsAccessCoordinator`      | `coordinators/access.py`         | 30 s + webhook   | Doors, users, emergency status                            |
-| `UnifiInsightsInnerSpaceCoordinator`  | `coordinators/innerspace.py`     | 5 min            | Floor plans and placements                                |
-| `UnifiInsightsSiteManagerCoordinator` | `coordinators/site_manager.py`   | 10 min           | Cloud console and ISP metrics (shared per cloud key)      |
-| `UnifiInsightsMobilityCoordinator`    | `coordinators/mobility.py`       | 5 min (1 h idle) | Mobility workspaces and routers                           |
-| `UnifiInsightsCarrierFabricCoordinator`       | `coordinators/carrier_fabric.py` | 5 min            | Carrier Fabric organizations (standalone entry)           |
-| `UnifiInsightsFacadeCoordinator`              | `coordinators/facade.py`         | push only        | Unified read view over the coordinators above             |
+| Coordinator                             | Module                           | Interval         | Scope                                                     |
+| --------------------------------------- | -------------------------------- | ---------------- | --------------------------------------------------------- |
+| `UnifiInsightsConfigCoordinator`        | `coordinators/config.py`         | 5 min            | Sites, WiFi, networks, firewall, ACL, DNS, vouchers, VPN  |
+| `UnifiInsightsDeviceCoordinator`        | `coordinators/device.py`         | 30 s             | Network device and client metrics                         |
+| `UnifiInsightsProtectCoordinator`       | `coordinators/protect.py`        | 30 s + WebSocket | Cameras, lights, sensors, chimes, NVR, viewers, liveviews |
+| `UnifiInsightsAccessCoordinator`        | `coordinators/access.py`         | 30 s + webhook   | Doors, users, emergency status                            |
+| `UnifiInsightsInnerSpaceCoordinator`    | `coordinators/innerspace.py`     | 5 min            | Floor plans and placements                                |
+| `UnifiInsightsSiteManagerCoordinator`   | `coordinators/site_manager.py`   | 10 min           | Cloud console and ISP metrics (shared per cloud key)      |
+| `UnifiInsightsMobilityCoordinator`      | `coordinators/mobility.py`       | 5 min (1 h idle) | Mobility workspaces and routers                           |
+| `UnifiInsightsCarrierFabricCoordinator` | `coordinators/carrier_fabric.py` | 5 min            | Carrier Fabric organizations (standalone entry)           |
+| `UnifiInsightsFacadeCoordinator`        | `coordinators/facade.py`         | push only        | Unified read view over the coordinators above             |
 
-All coordinators inherit `UnifiInsightsBaseCoordinator` (`coordinators/base.py`) for shared error mapping: authentication failures raise `ConfigEntryAuthFailed` (triggers reauth) and connection or server failures raise `UpdateFailed` (retry next interval).
+All coordinators inherit `UnifiInsightsBaseCoordinator` (`coordinators/base.py`) for shared error mapping: authentication failures raise `ConfigEntryAuthFailed` (triggers reauth) and connection or server failures raise `UpdateFailed` (retry next interval). The device, Protect and InnerSpace coordinators detach registry devices the console no longer reports through the base class's `_remove_stale_device`; each keeps its own rule for when a device counts as stale (Protect waits `MAX_CONSECUTIVE_MISSING_POLLS` polls).
 
 The facade coordinator has no update interval. It subscribes to the specialized coordinators, aggregates their snapshots into one `data` mapping, and fans out a single listener notification. Entities and services read from the facade so they do not need to know which coordinator owns a field.
 

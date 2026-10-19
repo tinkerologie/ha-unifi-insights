@@ -19,9 +19,9 @@ This integration uses a multi-coordinator architecture under `custom_components/
 - **Site Manager Coordinator** (`coordinators/site_manager.py`) — UniFi Site Manager cloud multi-site health and ISP metrics
 - **Mobility Coordinator** (`coordinators/mobility.py`) — UniFi Mobility cellular/5G devices and SIM metrics
 - **Carrier Fabric Coordinator** (`coordinators/carrier_fabric.py`) — UniFi Carrier Fabric OLTs, ONUs, subscribers, and alarms
-- **Internet Activity Coordinator** (`coordinators/internet_activity.py`) — Per-site WAN/internet activity and latency telemetry
-- **Rule Audit & Export Coordinators** (`coordinators/rule_audit.py`, `coordinators/rule_export.py`) — Network rule change auditing and snapshot export
-- **Voucher State Helper** (`coordinators/voucher_state.py`) — Guest hotspot voucher tracking
+- **Config sections** (`coordinators/config_sections.py`) — Config coordinator section fetchers, including per-site internet activity reports
+- **Rule audit and export** (`coordinators/rule_audit.py`) — Network rule change auditing and snapshot export
+- Voucher state parsing lives in `data_transforms.py` (pure, no coordinator)
 - **Facade Coordinator** (`coordinators/facade.py`) — Unified view combining sub-coordinators for entity platforms; it holds only the voucher commands and `async_refresh_or_raise`
 
 ## Write Commands (ADR-010)

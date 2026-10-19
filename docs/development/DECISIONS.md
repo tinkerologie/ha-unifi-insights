@@ -31,6 +31,7 @@ An accepted ADR is never edited to change its meaning. A new ADR supersedes it i
 | [008](./adr/008-depend-on-unifi-official-api-from-pypi.md)           | Depend on `unifi-official-api` from PyPI                      | Accepted              | 2026-10-19 |
 | [009](./adr/009-amend-flat-module-layout.md)                         | Amendments to the flat module layout for the deepening issues | Accepted              | 2026-10-19 |
 | [010](./adr/010-one-owner-per-write-command.md)                      | One owner per write command                                   | Accepted              | 2026-10-19 |
+| [011](./adr/011-platform-modules-and-flat-layout-homes.md)           | Platform module size and homes for the remaining helpers      | Accepted              | 2026-10-20 |
 
 ### Multi-coordinator architecture behind a facade
 
@@ -67,6 +68,10 @@ ADR-007 is amended for the deepening issues #337, #338 and #339. `get_field()` a
 ### One owner per write command
 
 Each write belongs to the coordinator that owns the data it changes: config (rules, Wi-Fi, guest authorisation), device (restart, PoE, outlets, clients), Protect (cameras, lights, chimes, viewers, alarms, sirens, talkback), Access and Carrier Fabric (unchanged), and the facade only for vouchers and `async_refresh_or_raise`. The owner runs the call through the shared `async_execute_command` in `coordinators/base.py`, raises translated errors, publishes a copy-on-write overlay and applies one recorded reconciliation policy; a failed refresh never fails a successful write. The config coordinator publishes the legacy site-name mapping and owns the only resolver, which never guesses `"default"`. Entities and services call owners with typed calls, replacing the string dispatch and its fallbacks. The Protect commands fit inside ADR-009's 3,500-line cap. Implemented in [#338](https://github.com/tinkerologie/ha-unifi-insights/issues/338). [ADR-010](./adr/010-one-owner-per-write-command.md)
+
+### Platform module size and homes for the remaining helpers
+
+The 17 platform modules are exempt from ADR-007's 2,000-line budget and are bounded by role instead: setup, description tables, entity classes and discovery, in one section per data source. Pure value extraction goes to `data_transforms.py` and base classes to `entity.py`. `sensor.py` is expected at about 3,250 lines after the satellites merge. `async_get_device_entry()` and the site entity identity helpers move to `console_identity.py` (an `entity.py` home would create an import cycle with the coordinators), `get_port_label()` and `is_doorbell_camera_model()` to `data_transforms.py`. `data_transforms.py` may import `homeassistant.util.*` and only the pure integration modules, enforced by a test. Decided in the design review of [#341](https://github.com/tinkerologie/ha-unifi-insights/issues/341). [ADR-011](./adr/011-platform-modules-and-flat-layout-homes.md)
 
 ## Future considerations
 
