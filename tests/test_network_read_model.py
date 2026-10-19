@@ -392,6 +392,12 @@ def test_online_state_edge_inputs(device: dict[str, Any], expected: str) -> None
         pytest.param({"features": {"gateway": False}}, "other", id="false-feature"),
         pytest.param({"features": ["accessPoint"]}, "access_point", id="ap-list"),
         pytest.param({"features": "switching"}, "other", id="bad-features"),
+        pytest.param(
+            {"model": "USW Flex", "features": ("switching", "gateway")},
+            "gateway",
+            id="gateway-feature-tuple",
+        ),
+        pytest.param({"features": ("switching",)}, "switch", id="switch-tuple"),
         pytest.param({"model": 5}, "other", id="bad-model"),
     ],
 )

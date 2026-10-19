@@ -395,7 +395,11 @@ class NetworkDeviceFacts:
     #337 evidence: four same-moment rounds on a UDM Pro SE and a USW Pro Max
     24 (Network 11.0.89) read the v1 rates at 8x (7.994-8.000) the legacy
     uplink bytes/s, and an earlier, not simultaneous, UCG-Fiber sample
-    (Network 10.6.106) agreed. No simultaneous UniFi UI capture was made.
+    (Network 10.6.106) agreed. A third console (UDM Pro, Network 10.6.106,
+    2026-10-19) read 8.00x across seven devices and four same-moment rounds
+    against the legacy ``stat/device`` uplink ``tx_bytes-r``/``rx_bytes-r``,
+    the bytes/s figures the UniFi UI shows rates from. No UI screenshot
+    was taken.
     """
 
     device_id: str

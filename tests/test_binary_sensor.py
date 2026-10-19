@@ -1,7 +1,7 @@
 # Copyright 2026 UniFi Insights contributors
 """Tests for UniFi Insights binary sensors."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,6 +20,7 @@ from custom_components.unifi_insights.binary_sensor import (
     _get_supported_smart_detect_types,
     _is_doorbell_camera,
     _is_smart_detect_active,
+    _sfp_port_index,
     async_setup_entry,
 )
 from custom_components.unifi_insights.const import (
@@ -28,6 +29,7 @@ from custom_components.unifi_insights.const import (
     DEVICE_TYPE_CAMERA,
     DEVICE_TYPE_SENSOR,
 )
+from custom_components.unifi_insights.data_transforms import NetworkPortFacts
 from custom_components.unifi_insights.protect_security_entity import (
     UnifiProtectSecurityBinarySensor,
 )
@@ -2062,3 +2064,20 @@ def test_dynamic_binary_sensor_description_categories(
     sensor = sensor_class(mock_coordinator, "site1", "device1", *args)
     assert sensor.entity_description.entity_category == expected
     assert sensor.entity_category == expected
+
+
+@pytest.mark.parametrize(
+    ("record", "expected"),
+    [
+        pytest.param({"idx": "03", "port_idx": 3}, "03", id="idx-raw-spelling"),
+        pytest.param({"port_idx": 9}, 9, id="port_idx-only"),
+        pytest.param({"idx": 0, "port_idx": 5}, 5, id="falsy-idx-falls-through"),
+        pytest.param({"idx": 0}, None, id="zero-only-not-keyed"),
+    ],
+)
+def test_sfp_port_index_falls_back_to_port_idx(
+    record: dict[str, Any], expected: Any
+) -> None:
+    """SFP presence keys on ``idx or port_idx`` exactly as the record spells it."""
+    port = NetworkPortFacts(raw_index=None, index=None, record=record, is_uplink=False)
+    assert _sfp_port_index(port) == expected

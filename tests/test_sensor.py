@@ -1469,6 +1469,32 @@ class TestUnifiPortSensorEdgeCases:
 
         assert sensor.native_value == expected
 
+    @pytest.mark.parametrize(
+        ("watts", "expected"), [("4.5", 4.5), ("0", 0.0), ("n/a", None)]
+    )
+    async def test_port_poe_power_reads_string_watts_from_stats(
+        self,
+        hass: HomeAssistant,
+        mock_coordinator,
+        watts: str,
+        expected: float | None,
+    ):
+        """String PoE watts parse as numbers; an unparsable string is unknown."""
+        mock_coordinator.data.pop("network_facts", None)
+        mock_coordinator.data["devices"] = {"site1": {"device1": {"id": "device1"}}}
+        mock_coordinator.data["stats"] = {
+            "site1": {"device1": {"poe_ports": {"1": watts}}}
+        }
+        sensor = UnifiPortSensor(
+            coordinator=mock_coordinator,
+            description=next(s for s in PORT_SENSOR_TYPES if s.key == "port_poe_power"),
+            site_id="site1",
+            device_id="device1",
+            port_idx=1,
+        )
+
+        assert sensor.native_value == expected
+
     async def test_port_stats_reject_boolean_counters_and_watts(
         self, hass: HomeAssistant, mock_coordinator
     ):
