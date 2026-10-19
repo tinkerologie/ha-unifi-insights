@@ -14,7 +14,7 @@ import ast
 import json
 from pathlib import Path
 from string import Formatter
-from typing import Final
+from typing import Any, Final, cast
 
 import pytest
 import yaml
@@ -906,3 +906,416 @@ def test_outlet_icon_resource() -> None:
     assert json.loads(_ICONS_JSON.read_text())["entity"]["switch"]["outlet"] == {
         "default": "mdi:power-socket-us"
     }
+
+
+# --- Translated service-action errors (#339) ---------------------------------
+#
+# Every HomeAssistantError and ServiceValidationError the service actions build
+# must name a translation key that exists in strings.json and en.json, with
+# exactly the placeholders it supplies. Every construction counts, raised or
+# returned. A key is a literal or each branch of a conditional expression; a
+# helper that forwards a key parameter is checked at each of its call sites.
+
+_SERVICE_ERROR_MODULES: Final = (
+    "services.py",
+    "service_targets.py",
+    "coordinators/carrier_fabric.py",
+)
+_TRANSLATED_ERRORS: Final = frozenset({"HomeAssistantError", "ServiceValidationError"})
+# Placeholder alternatives: one frozenset per way the construction can be called.
+_Placeholders = tuple[frozenset[str], ...]
+
+
+def _called_name(node: ast.expr) -> str | None:
+    """Return the name a call or raise uses, for ``X``, ``X(...)`` and ``m.X``."""
+    target = node.func if isinstance(node, ast.Call) else node
+    if isinstance(target, ast.Name):
+        return target.id
+    if isinstance(target, ast.Attribute):
+        return target.attr
+    return None
+
+
+def _literal_keys(node: ast.expr | None) -> set[str] | None:
+    """Resolve a literal key or every branch of a conditional; else None."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return {node.value}
+    if isinstance(node, ast.IfExp):
+        body, orelse = _literal_keys(node.body), _literal_keys(node.orelse)
+        return None if body is None or orelse is None else body | orelse
+    return None
+
+
+def _dict_placeholders(node: ast.expr | None) -> _Placeholders | None:
+    """Resolve a literal placeholder dict (or None, or a conditional of those)."""
+    if node is None or (isinstance(node, ast.Constant) and node.value is None):
+        return (frozenset(),)
+    if isinstance(node, ast.Dict) and all(
+        isinstance(k, ast.Constant) and isinstance(k.value, str) for k in node.keys
+    ):
+        return (frozenset(cast("ast.Constant", k).value for k in node.keys),)
+    if isinstance(node, ast.IfExp):
+        body, orelse = _dict_placeholders(node.body), _dict_placeholders(node.orelse)
+        return None if body is None or orelse is None else body + orelse
+    return None
+
+
+def _keyword(call: ast.Call, name: str) -> ast.expr | None:
+    """Return a call's keyword argument value, or None."""
+    return next((kw.value for kw in call.keywords if kw.arg == name), None)
+
+
+def _param_names(func: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+    """Return a function's positional and keyword parameter names, in order."""
+    args = func.args
+    return [a.arg for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]]
+
+
+def _functions(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Return every function in a module, nested ones included."""
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+
+
+def _enclosing(
+    tree: ast.Module,
+) -> dict[ast.AST, ast.FunctionDef | ast.AsyncFunctionDef | None]:
+    """Map each node to its innermost enclosing function."""
+    owner: dict[ast.AST, ast.FunctionDef | ast.AsyncFunctionDef | None] = {}
+
+    def visit(node: ast.AST, func: ast.FunctionDef | ast.AsyncFunctionDef | None):
+        for child in ast.iter_child_nodes(node):
+            owner[child] = func
+            inner = (
+                child
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                else func
+            )
+            visit(child, inner)
+
+    visit(tree, None)
+    return owner
+
+
+class _Factory:
+    """A helper that builds a translated error from its ``key`` parameter."""
+
+    def __init__(
+        self,
+        func: ast.FunctionDef | ast.AsyncFunctionDef,
+        key_param: str,
+        placeholders: _Placeholders | None,
+    ) -> None:
+        self.params = _param_names(func)
+        self.key_param = key_param
+        # None: placeholders are the call site's own **kwargs (forwarded).
+        self.placeholders = placeholders
+
+    def key_arg(self, call: ast.Call) -> ast.expr | None:
+        """Return the expression a call site passes for the key parameter."""
+        index = self.params.index(self.key_param)
+        if index < len(call.args):
+            return call.args[index]
+        return _keyword(call, self.key_param)
+
+
+def _local_dict_keys(
+    func: ast.FunctionDef | ast.AsyncFunctionDef | None, name: str
+) -> frozenset[str] | None:
+    """Return the keys of a dict literal a function assigns to ``name``."""
+    for node in ast.walk(func) if func is not None else ():
+        if (
+            isinstance(node, ast.Assign)
+            and [getattr(t, "id", None) for t in node.targets] == [name]
+            and (found := _dict_placeholders(node.value)) is not None
+            and len(found) == 1
+        ):
+            return found[0]
+    return None
+
+
+def _call_site_placeholders(
+    factory: _Factory,
+    call: ast.Call,
+    func: ast.FunctionDef | ast.AsyncFunctionDef | None,
+) -> _Placeholders | None:
+    """Resolve the placeholders a factory call site supplies."""
+    if factory.placeholders is not None:
+        return factory.placeholders
+    names = {kw.arg for kw in call.keywords if kw.arg and kw.arg not in factory.params}
+    for kw in call.keywords:
+        if kw.arg is None:
+            if not isinstance(kw.value, ast.Name):
+                return None
+            local = _local_dict_keys(func, kw.value.id)
+            if local is None:
+                return None
+            names |= local
+    return (frozenset(names),)
+
+
+def _message_placeholders(message: str) -> frozenset[str]:
+    """Return the format placeholders a translated message uses."""
+    return frozenset(
+        name for _, name, _, _ in Formatter().parse(message) if name is not None
+    )
+
+
+def _check_key(
+    where: str,
+    keys: set[str],
+    supplied: _Placeholders,
+    translations: tuple[dict[str, Any], dict[str, Any]],
+) -> list[str]:
+    """Check each key exists in both files and its placeholders are supplied."""
+    problems = []
+    for key in sorted(keys):
+        for label, exceptions in zip(
+            ("strings.json", "en.json"), translations, strict=True
+        ):
+            if key not in exceptions:
+                problems.append(f"{where}: key {key!r} missing in {label}")
+                continue
+            used = _message_placeholders(exceptions[key]["message"])
+            if used not in supplied:
+                problems.append(
+                    f"{where}: {key!r} in {label} uses {sorted(used)}, "
+                    f"supplied {[sorted(s) for s in supplied]}"
+                )
+    return problems
+
+
+def _exception_translations() -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return the ``exceptions`` sections of strings.json and en.json."""
+    return (
+        json.loads(_STRINGS_JSON.read_text(encoding="utf-8"))["exceptions"],
+        json.loads(_EN_JSON.read_text(encoding="utf-8"))["exceptions"],
+    )
+
+
+def _translated_error_violations(module: str) -> list[str]:
+    """Return every untranslated or mistranslated error a module builds."""
+    tree = ast.parse((_INTEGRATION_DIR / module).read_text(encoding="utf-8"))
+    translations = _exception_translations()
+    enclosing = _enclosing(tree)
+    problems = [
+        f"{module}:{node.lineno}: raises the bare error class"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Raise)
+        and node.exc is not None
+        and not isinstance(node.exc, ast.Call)
+        and _called_name(node.exc) in _TRANSLATED_ERRORS
+    ]
+    factories: dict[str, _Factory] = {}
+    checked: set[ast.Call] = set()
+
+    # Direct constructions; a key that is a parameter makes a factory.
+    for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+        if _called_name(call) not in _TRANSLATED_ERRORS:
+            continue
+        where = f"{module}:{call.lineno}"
+        func = enclosing.get(call)
+        domain = _keyword(call, "translation_domain")
+        if not (isinstance(domain, ast.Name) and domain.id == "DOMAIN"):
+            problems.append(f"{where}: translation_domain is not DOMAIN")
+        key = _keyword(call, "translation_key")
+        placeholders_arg = _keyword(call, "translation_placeholders")
+        if key is None:
+            problems.append(f"{where}: no translation_key")
+            continue
+        if (
+            isinstance(key, ast.Name)
+            and func is not None
+            and key.id in _param_names(func)
+        ):
+            forwarded = (
+                isinstance(placeholders_arg, ast.BoolOp)
+                and isinstance(placeholders_arg.values[0], ast.Name)
+                and placeholders_arg.values[0].id == getattr(func.args.kwarg, "arg", "")
+            )
+            supplied = None if forwarded else _dict_placeholders(placeholders_arg)
+            if not forwarded and supplied is None:
+                problems.append(f"{where}: placeholders are not a literal dict")
+            factories[func.name] = _Factory(func, key.id, supplied)
+            checked.add(call)
+            continue
+        keys = _literal_keys(key)
+        supplied = _dict_placeholders(placeholders_arg)
+        if keys is None:
+            problems.append(f"{where}: translation_key is not a literal")
+        elif supplied is None:
+            problems.append(f"{where}: placeholders are not a literal dict")
+        else:
+            problems += _check_key(where, keys, supplied, translations)
+        checked.add(call)
+
+    # Factory call sites, until no new forwarding factory appears.
+    resolved: set[ast.Call] = set()
+    while True:
+        found_new = False
+        for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+            factory = factories.get(_called_name(call) or "")
+            if factory is None or call in resolved:
+                continue
+            resolved.add(call)
+            where = f"{module}:{call.lineno}"
+            func = enclosing.get(call)
+            key = factory.key_arg(call)
+            if (
+                isinstance(key, ast.Name)
+                and func is not None
+                and key.id in _param_names(func)
+                and func.name not in factories
+            ):
+                factories[func.name] = _Factory(func, key.id, factory.placeholders)
+                found_new = True
+                continue
+            keys = _literal_keys(key)
+            supplied = _call_site_placeholders(factory, call, func)
+            if keys is None:
+                problems.append(f"{where}: translation_key is not a literal")
+            elif supplied is None:
+                problems.append(f"{where}: placeholders cannot be resolved")
+            else:
+                problems += _check_key(where, keys, supplied, translations)
+        if not found_new:
+            return problems
+
+
+@pytest.mark.parametrize("module", _SERVICE_ERROR_MODULES)
+def test_service_errors_are_translated(module: str) -> None:
+    """Every service-action error names a key both files define, with its fields."""
+    assert _translated_error_violations(module) == []
+
+
+def test_service_error_guard_resolves_factories_and_conditionals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Conditional keys, returned errors and key-forwarding helpers are all followed."""
+    (tmp_path / "good.py").write_text(
+        "def _invalid(message, key, **placeholders):\n"
+        "    return ServiceValidationError(message, translation_domain=DOMAIN,\n"
+        "        translation_key=key, translation_placeholders=placeholders or None)\n"
+        "def _wrap(key):\n"
+        "    return _invalid('m', key)\n"
+        "def f(flag, site_id):\n"
+        "    details = {'site_id': site_id}\n"
+        "    if flag:\n"
+        "        raise _invalid('m', 'refresh_site_not_found', **details)\n"
+        "    raise _wrap('target_required' if flag else 'no_coordinator')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(__name__ + "._INTEGRATION_DIR", tmp_path)
+    assert _translated_error_violations("good.py") == []
+
+
+@pytest.mark.parametrize(
+    ("source", "problem"),
+    [
+        (
+            (
+                "def _err(key):\n"
+                "    return ServiceValidationError(translation_domain=DOMAIN,"
+                " translation_key=key)\n"
+                "def f():\n"
+                "    raise _err('no_such_key')\n"
+            ),
+            "key 'no_such_key' missing in strings.json",
+        ),
+        (
+            (
+                "def _err(key):\n"
+                "    return ServiceValidationError(translation_domain=DOMAIN,"
+                " translation_key=key)\n"
+                "def f(name):\n"
+                "    raise _err(f'x_{name}')\n"
+            ),
+            "translation_key is not a literal",
+        ),
+        (
+            (
+                "def f(name):\n"
+                "    raise HomeAssistantError(translation_domain=DOMAIN,"
+                " translation_key=name.lower())\n"
+            ),
+            "translation_key is not a literal",
+        ),
+        (
+            "raise HomeAssistantError(translation_key='no_coordinator')\n",
+            "translation_domain is not DOMAIN",
+        ),
+        (
+            (
+                "raise ServiceValidationError(translation_domain=DOMAIN,"
+                " translation_key='target_multiple',"
+                " translation_placeholders={'wrong': 'x'})\n"
+            ),
+            "'target_multiple' in strings.json uses ['service'], supplied [['wrong']]",
+        ),
+        (
+            (
+                "def _invalid(message, key, **placeholders):\n"
+                "    return ServiceValidationError(message, translation_domain=DOMAIN,"
+                " translation_key=key, translation_placeholders=placeholders or None)\n"
+                "def f(data):\n"
+                "    raise _invalid('m', 'target_multiple', **data)\n"
+            ),
+            "placeholders cannot be resolved",
+        ),
+        (
+            (
+                "raise ServiceValidationError(translation_domain=DOMAIN,"
+                " translation_key='no_coordinator', translation_placeholders=data)\n"
+            ),
+            "placeholders are not a literal dict",
+        ),
+        ("raise HomeAssistantError\n", "raises the bare error class"),
+        ("raise HomeAssistantError('x')\n", "no translation_key"),
+        ("raise exceptions.HomeAssistantError('x')\n", "no translation_key"),
+        ("error = ServiceValidationError('x')\n", "no translation_key"),
+    ],
+    ids=[
+        "helper-caller-undefined-key",
+        "helper-caller-non-literal-key",
+        "non-literal-key",
+        "missing-domain",
+        "placeholder-mismatch",
+        "unresolved-forwarded-placeholders",
+        "non-literal-placeholders",
+        "bare-class",
+        "called-without-key",
+        "attribute-qualified",
+        "returned-not-raised",
+    ],
+)
+def test_service_error_guard_rejects_bad_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str, problem: str
+) -> None:
+    """Each way an error can escape translation fails the guard."""
+    (tmp_path / "bad.py").write_text(source, encoding="utf-8")
+    monkeypatch.setattr(__name__ + "._INTEGRATION_DIR", tmp_path)
+    problems = _translated_error_violations("bad.py")
+    assert any(problem in found for found in problems), problems
+
+
+def test_service_error_guard_requires_the_key_in_both_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A key that only strings.json defines fails; en.json is what HA loads."""
+    english = json.loads(_EN_JSON.read_text(encoding="utf-8"))
+    del english["exceptions"]["no_coordinator"]
+    en_json = tmp_path / "en.json"
+    en_json.write_text(json.dumps(english), encoding="utf-8")
+    (tmp_path / "bad.py").write_text(
+        "raise ServiceValidationError(translation_domain=DOMAIN,"
+        " translation_key='no_coordinator')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(__name__ + "._INTEGRATION_DIR", tmp_path)
+    monkeypatch.setattr(__name__ + "._EN_JSON", en_json)
+    assert _translated_error_violations("bad.py") == [
+        "bad.py:1: key 'no_coordinator' missing in en.json"
+    ]
