@@ -8,10 +8,11 @@ from typing import Any
 
 from .console_identity import build_legacy_site_unique_id, build_site_unique_id
 from .const import DOMAIN
-from .dashboard_contract_utils import as_dict, content_revision, enum_str
+from .dashboard_contract_utils import as_dict, content_revision
+from .data_transforms import site_device_facts, site_network_facts
 from .helpers import owned_site_entity_unique_id
-from .performance import bytes_per_second_to_bits_per_second
-from .topology_contract import device_kind, first_present, site_display_name
+from .performance import bits_per_second_to_int
+from .topology_contract import site_display_name
 
 WINDOWS = ("1h", "1d", "1w", "1m")
 
@@ -68,37 +69,25 @@ def build_internet_activity_snapshot(
             entry_id, site_id, "site_unavailable"
         )
 
-    # Gateway WAN health/rates from current site gateway if present.
-    devices_by_site = as_dict(data.get("devices"))
-    stats_by_site = as_dict(data.get("stats"))
-    devices = as_dict(devices_by_site.get(site_id))
-    stats = as_dict(stats_by_site.get(site_id))
-
-    gateway: dict[str, Any] | None = None
-    gateway_id: str | None = None
-    for did, device in devices.items():
-        if not isinstance(device, dict):
-            continue
-        if device_kind(device) == "gateway":
-            gateway = device
-            gateway_id = did
-            break
+    # Gateway WAN health/rates from the site gateway of the published read
+    # model: its online state and canonical uplink bits/s, the same values
+    # the gateway's own sensors show.
+    devices = as_dict(as_dict(data.get("devices")).get(site_id))
+    site_facts = site_network_facts(data, site_id)
+    gateway_id = site_facts.gateway_id if site_facts is not None else None
+    gateway = devices.get(gateway_id) if gateway_id is not None else None
 
     throughput = None
     wan_links: list[dict[str, Any]] = []
     gateway_online = False
-    if gateway_id is not None and gateway is not None:
-        metric = as_dict(stats.get(gateway_id))
-        tx = first_present(metric, "tx_rate", "txRate")
-        rx = first_present(metric, "rx_rate", "rxRate")
-        tx_bps = bytes_per_second_to_bits_per_second(tx)
-        rx_bps = bytes_per_second_to_bits_per_second(rx)
-        throughput = {"tx_bps": tx_bps, "rx_bps": rx_bps, "source": "gateway_uplink"}
-        gateway_online = enum_str(gateway.get("state")).upper() in {
-            "ONLINE",
-            "CONNECTED",
-            "UP",
+    if gateway_id is not None and isinstance(gateway, dict):
+        facts = site_device_facts(site_facts, gateway_id, gateway)
+        throughput = {
+            "tx_bps": bits_per_second_to_int(facts.tx_bps),
+            "rx_bps": bits_per_second_to_int(facts.rx_bps),
+            "source": "gateway_uplink",
         }
+        gateway_online = facts.online_state == "online"
 
         wans = gateway.get("wans")
         if isinstance(wans, list):

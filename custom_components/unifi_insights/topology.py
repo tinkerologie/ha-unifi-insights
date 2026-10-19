@@ -3,10 +3,11 @@
 Per-site network topology graph derived from coordinator data.
 
 This module is pure: it performs no I/O and imports nothing from Home
-Assistant or the rest of the integration beyond ``topology_contract``, so the
-graph logic is unit-testable in isolation and cheap enough to run on every
-coordinator update. The snapshot types and node normalisers live in
-``topology_contract``.
+Assistant or the rest of the integration beyond ``topology_contract`` and the
+equally pure ``data_transforms``, so the graph logic is unit-testable in
+isolation and cheap enough to run on every coordinator update. The snapshot
+types and node normalisers live in ``topology_contract``; device kind and
+state come from the published network facts (``site_network_facts``).
 
 Relationship sources, verified against real hardware:
 
@@ -37,6 +38,7 @@ import hashlib
 import json
 from typing import TYPE_CHECKING, Any, Final
 
+from .data_transforms import site_device_facts, site_network_facts
 from .topology_contract import (
     MAX_CLIENTS_PER_SITE,
     TOPOLOGY_SCHEMA_VERSION,
@@ -44,8 +46,6 @@ from .topology_contract import (
     UNKNOWN_DEVICE,
     as_int,
     client_connection,
-    device_kind,
-    device_state,
     display_name,
     first_present,
     link_medium,
@@ -61,7 +61,10 @@ from .topology_contract import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from .data_transforms import SiteNetworkFacts
     from .topology_contract import (
+        NodeKind,
+        NodeState,
         SiteTopology,
         TopologyEdge,
         TopologyIssue,
@@ -89,24 +92,31 @@ def _site_map(data: Mapping[str, Any], section: str, site_id: str) -> dict[str, 
     return site_items if isinstance(site_items, dict) else {}
 
 
+def _kind_and_state(
+    site_facts: SiteNetworkFacts | None, device_id: str, device: Mapping[str, Any]
+) -> tuple[NodeKind, NodeState]:
+    """Return a device's kind and state from the published facts."""
+    facts = site_device_facts(site_facts, device_id, device)
+    return facts.kind, facts.online_state
+
+
 def _device_node(
     device: Mapping[str, Any],
-    device_id: str,
     node_id: str,
-    ha_device_ids: Mapping[str, str],
+    kind_state: tuple[NodeKind, NodeState],
+    ha_device_id: str | None,
 ) -> TopologyNode:
     """Build the allowlisted node for one infrastructure device."""
     raw_model = device.get("model")
     model = raw_model if isinstance(raw_model, str) and raw_model else None
     node: TopologyNode = {
         "id": node_id,
-        "kind": device_kind(device),
+        "kind": kind_state[0],
         "name": display_name(device.get("name"), model or UNKNOWN_DEVICE),
-        "state": device_state(device),
+        "state": kind_state[1],
     }
     if model is not None:
         node["model"] = model
-    ha_device_id = ha_device_ids.get(device_id)
     if ha_device_id:
         node["ha_device_id"] = ha_device_id
     return node
@@ -217,6 +227,7 @@ def _client_edge(
 
 def _device_edge(
     device: Mapping[str, Any],
+    kind: NodeKind,
     node_id: str,
     mac_index: Mapping[str, str],
     devices_by_node: Mapping[str, Mapping[str, Any]],
@@ -232,7 +243,7 @@ def _device_edge(
     (gateway names switch, switch names gateway), which would otherwise put
     the switch above the gateway.
     """
-    if device_kind(device) == "gateway":
+    if kind == "gateway":
         return None
     topology = device.get("topology")
     block = topology if isinstance(topology, dict) else {}
@@ -344,6 +355,7 @@ def build_site_topology(
     stay the same across calls for node ids to be stable.
     """
     devices = _site_map(data, "devices", site_id)
+    site_facts = site_network_facts(data, site_id)
     clients = _site_map(data, "clients", site_id)
     links = _site_map(data, "client_links", site_id)
     nodes: list[TopologyNode] = []
@@ -352,6 +364,7 @@ def build_site_topology(
 
     device_node_ids: dict[str, str] = {}
     devices_by_node: dict[str, dict[str, Any]] = {}
+    kinds_by_node: dict[str, NodeKind] = {}
     mac_index: dict[str, str] = {}
     for device_id, device in devices.items():
         if not isinstance(device, dict):
@@ -359,7 +372,11 @@ def build_site_topology(
         node_id = opaque_node_id("dev", node_key, device_id)
         device_node_ids[device_id] = node_id
         devices_by_node[node_id] = device
-        nodes.append(_device_node(device, device_id, node_id, ha_device_ids))
+        kind_state = _kind_and_state(site_facts, device_id, device)
+        kinds_by_node[node_id] = kind_state[0]
+        nodes.append(
+            _device_node(device, node_id, kind_state, ha_device_ids.get(device_id))
+        )
         mac = normalize_mac(
             first_present(device, "macAddress", "mac")
         ) or normalize_mac(device_id)
@@ -367,9 +384,9 @@ def build_site_topology(
             mac_index[mac] = node_id
 
     for device_id, node_id in device_node_ids.items():
-        device = devices_by_node[node_id]
-        if device_kind(device) != "gateway":
+        if kinds_by_node[node_id] != "gateway":
             continue
+        device = devices_by_node[node_id]
         wan_nodes, wan_edges = _wan_links(
             device, device_id, node_id, node_key, ha_device_ids
         )
@@ -377,7 +394,9 @@ def build_site_topology(
         edges.extend(wan_edges)
 
     for node_id, device in devices_by_node.items():
-        link = _device_edge(device, node_id, mac_index, devices_by_node)
+        link = _device_edge(
+            device, kinds_by_node[node_id], node_id, mac_index, devices_by_node
+        )
         if isinstance(link, dict):
             edges.append(link)
         elif link is not None:

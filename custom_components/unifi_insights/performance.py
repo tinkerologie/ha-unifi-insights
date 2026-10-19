@@ -7,29 +7,18 @@ from __future__ import annotations
 from typing import Any
 
 from .dashboard_contract_utils import as_dict, content_revision
-from .data_transforms import bytes_to_bits_per_second
-from .topology_contract import (
-    device_kind,
-    device_state,
-    first_present,
-    site_display_name,
-)
+from .data_transforms import site_device_facts, site_network_facts
+from .topology_contract import first_present, site_display_name
 
 
-# Keep conversion in one place and reuse in snapshots.
-def bytes_per_second_to_bits_per_second(value: Any) -> int | None:
-    """Convert bytes/s to bits/s while preserving explicit zero values."""
-    bits = bytes_to_bits_per_second(value)
-    return int(bits) if bits is not None else None
+def bits_per_second_to_int(value: float | None) -> int | None:
+    """
+    Project a canonical bits/s reading onto an integer payload field.
 
-
-def _metric_rate(stats: dict[str, Any], direction: str) -> int | None:
-    """Resolve uplink rates from known fields."""
-    if direction == "tx":
-        raw = first_present(stats, "tx_rate", "txRate", "uplinkTxRate")
-    else:
-        raw = first_present(stats, "rx_rate", "rxRate", "uplinkRxRate")
-    return bytes_per_second_to_bits_per_second(raw)
+    The read model keeps throughput as float bits/s; the ADR-005 payloads
+    carry integers. A real 0 stays 0.
+    """
+    return int(value) if value is not None else None
 
 
 def build_performance_snapshot(
@@ -49,25 +38,15 @@ def build_performance_snapshot(
     if not isinstance(devices, dict) or not isinstance(stats, dict):
         return build_unavailable_performance(entry_id, site_id, "site_unavailable")
 
+    site_facts = site_network_facts(data, site_id)
     snapshot_devices: list[dict[str, Any]] = []
     for device_id, device in devices.items():
         if not isinstance(device, dict):
             continue
-        kind = device_kind(device)
         metric = as_dict(stats.get(device_id))
-        cpu = first_present(
-            metric, "cpuUtilizationPct", "cpu_utilization_pct", "cpu_percent", "cpu"
-        )
-        memory = first_present(
-            metric,
-            "memoryUtilizationPct",
-            "memory_utilization_pct",
-            "memory_percent",
-            "memory",
-        )
-        uptime = first_present(
-            metric, "uptimeSec", "uptime_sec", "uptime_seconds", "uptime"
-        )
+        # Kind, state, CPU, memory, uptime and the uplink rates are the
+        # published read model, the same values the device sensors show.
+        facts = site_device_facts(site_facts, device_id, device, metric)
         poe = first_present(metric, "poe_total_w", "poeTotalW")
         clients_total = first_present(metric, "num_sta", "clientCount", "client_count")
 
@@ -75,13 +54,13 @@ def build_performance_snapshot(
             "id": f"{site_id}:{device_id}",
             "ha_device_id": ha_device_ids.get(device_id),
             "name": str(device.get("name") or device_id),
-            "kind": kind,
-            "state": device_state(device),
-            "cpu_pct": float(cpu) if isinstance(cpu, (int, float)) else None,
-            "memory_pct": float(memory) if isinstance(memory, (int, float)) else None,
-            "uptime_s": int(uptime) if isinstance(uptime, (int, float)) else None,
-            "tx_bps": _metric_rate(metric, "tx"),
-            "rx_bps": _metric_rate(metric, "rx"),
+            "kind": facts.kind,
+            "state": facts.online_state,
+            "cpu_pct": facts.cpu_pct,
+            "memory_pct": facts.memory_pct,
+            "uptime_s": facts.uptime_s,
+            "tx_bps": bits_per_second_to_int(facts.tx_bps),
+            "rx_bps": bits_per_second_to_int(facts.rx_bps),
             "poe_power_w": float(poe) if isinstance(poe, (int, float)) else None,
             "clients": int(clients_total)
             if isinstance(clients_total, (int, float))

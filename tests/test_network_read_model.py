@@ -47,9 +47,7 @@ from custom_components.unifi_insights.data_transforms import (
 from custom_components.unifi_insights.innerspace_transforms import (
     _normalize_innerspace_mac,
 )
-from custom_components.unifi_insights.performance import (
-    bytes_per_second_to_bits_per_second,
-)
+from custom_components.unifi_insights.performance import bits_per_second_to_int
 from custom_components.unifi_insights.sensor import bytes_to_bits
 from custom_components.unifi_insights.services import _mac_key
 from tests.fixtures.library_responses import (
@@ -196,9 +194,9 @@ def test_converters_delegate_to_the_shared_primitive() -> None:
     """The sensor and dashboard converters use the validated primitive."""
     assert bytes_to_bits(12) == 96
     assert bytes_to_bits(None) is None
-    assert bytes_per_second_to_bits_per_second(12) == 96
-    assert isinstance(bytes_per_second_to_bits_per_second(12.5), int)
-    assert bytes_per_second_to_bits_per_second(float("nan")) is None
+    assert bits_per_second_to_int(bytes_to_bits_per_second(12)) == 96
+    assert isinstance(bits_per_second_to_int(12.5), int)
+    assert bits_per_second_to_int(bytes_to_bits_per_second(float("nan"))) is None
 
 
 # Each column pins one MAC policy: canonical (topology HMAC input), console

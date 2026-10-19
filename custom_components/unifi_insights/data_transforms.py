@@ -576,6 +576,32 @@ def device_facts(
     return site_facts.devices.get(device_id)
 
 
+def site_device_facts(
+    site_facts: SiteNetworkFacts | None,
+    device_id: str,
+    device: Mapping[str, Any],
+    stats: Any = None,
+) -> NetworkDeviceFacts:
+    """
+    Return one device's facts from a site's published facts.
+
+    The snapshot builders iterate the raw ``devices`` map for names and
+    models; this gives them the published facts of each device. A device the
+    facts do not hold is built from its raw records with the same rules (it
+    is never the site gateway then).
+    """
+    facts = site_facts.devices.get(device_id) if site_facts is not None else None
+    if facts is not None:
+        return facts
+    return _device_facts(
+        device_id,
+        device,
+        stats if isinstance(stats, Mapping) else {},
+        kind=device_kind(device),
+        is_site_gateway=False,
+    )
+
+
 def get_site_gateway_id(data: Mapping[str, Any], site_id: str) -> str | None:
     """
     Return the ID of a site's gateway device from coordinator data, or None.
@@ -792,6 +818,7 @@ __all__ = [
     "normalize_mac",
     "parse_floor_plan_asset_path",
     "port_index",
+    "site_device_facts",
     "site_network_facts",
     "storage_used_percent",
     "transform_innerspace_device",

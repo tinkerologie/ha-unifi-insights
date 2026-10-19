@@ -4,11 +4,10 @@
 from __future__ import annotations
 
 import copy
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant.core import HomeAssistant
 from unifi_official_api.network.models.client import ClientType
 
 from custom_components.unifi_insights import data_transforms
@@ -52,6 +51,9 @@ from tests.fixtures.library_responses import (
     SAMPLE_UDM_PRO_OVERVIEW,
     SAMPLE_UDM_PRO_STATS,
 )
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
 
 SITE = "site1"
 

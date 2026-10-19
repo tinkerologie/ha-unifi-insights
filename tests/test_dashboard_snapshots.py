@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 import pytest
 from homeassistant.helpers import entity_registry as er
@@ -17,6 +18,7 @@ from unifi_official_api.protect.models.camera import (
     RecordingMode,
 )
 
+from custom_components.unifi_insights import data_transforms
 from custom_components.unifi_insights.console_identity import (
     build_legacy_site_unique_id,
     build_site_unique_id,
@@ -28,16 +30,20 @@ from custom_components.unifi_insights.dashboard_contract_utils import (
     is_protect_device_connected,
     utc_iso,
 )
+from custom_components.unifi_insights.data_transforms import (
+    NETWORK_FACTS_KEY,
+    build_site_network_facts,
+    get_site_gateway_id,
+)
 from custom_components.unifi_insights.internet_activity_snapshot import (
     WINDOWS,
     build_internet_activity_snapshot,
     build_unavailable_internet_activity,
 )
 from custom_components.unifi_insights.performance import (
-    _metric_rate,
+    bits_per_second_to_int,
     build_performance_snapshot,
     build_unavailable_performance,
-    bytes_per_second_to_bits_per_second,
 )
 from custom_components.unifi_insights.protect_snapshot import (
     build_no_protect_snapshot,
@@ -45,7 +51,6 @@ from custom_components.unifi_insights.protect_snapshot import (
     build_unavailable_protect_snapshot,
 )
 from custom_components.unifi_insights.site_health import (
-    _gateway_for_site,
     _wan_state,
     build_site_health_snapshot,
     build_unavailable_site_health,
@@ -54,6 +59,7 @@ from custom_components.unifi_insights.timeline import (
     build_timeline_snapshot,
     build_unavailable_timeline,
 )
+from custom_components.unifi_insights.topology import build_site_topology
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -110,14 +116,12 @@ def _base_data() -> dict:
                 "gw-1": {
                     "cpuUtilizationPct": 12.5,
                     "memoryUtilizationPct": 42.0,
-                    "tx_rate": 100,
-                    "rx_rate": 50,
+                    "uplink": {"txRateBps": 100, "rxRateBps": 50},
                 },
                 "ap-1": {
                     "cpuUtilizationPct": 30,
                     "memoryUtilizationPct": 20,
-                    "tx_rate": 10,
-                    "rx_rate": 20,
+                    "uplink": {"txRateBps": 10, "rxRateBps": 20},
                     "num_sta": 2,
                 },
             }
@@ -336,8 +340,9 @@ def test_build_performance_snapshot() -> None:
     assert len(snapshot["devices"]) == 2
     gateway = next(item for item in snapshot["devices"] if item["id"] == "site-1:gw-1")
     assert gateway["ha_device_id"] == "ha-gw-1"
-    assert gateway["tx_bps"] == 800
-    assert gateway["rx_bps"] == 400
+    # The public uplink rates are already bits/s (#337): 100/50 stay 100/50.
+    assert gateway["tx_bps"] == 100
+    assert gateway["rx_bps"] == 50
 
 
 def test_build_protect_snapshot() -> None:
@@ -481,8 +486,10 @@ def test_internet_activity_unavailable_paths() -> None:
 
 def test_internet_activity_gateway_rate_parse_failures() -> None:
     data = _base_data()
-    data["stats"]["site-1"]["gw-1"]["tx_rate"] = "bad"
-    data["stats"]["site-1"]["gw-1"]["rx_rate"] = object()
+    data["stats"]["site-1"]["gw-1"]["uplink"] = {
+        "txRateBps": "bad",
+        "rxRateBps": object(),
+    }
     snapshot = build_internet_activity_snapshot(
         data,
         entry_id="entry-1",
@@ -495,10 +502,8 @@ def test_internet_activity_gateway_rate_parse_failures() -> None:
 
 def test_internet_activity_preserves_zero_rates() -> None:
     data = _base_data()
-    data["stats"]["site-1"]["gw-1"]["tx_rate"] = 0
-    data["stats"]["site-1"]["gw-1"]["txRate"] = None
-    data["stats"]["site-1"]["gw-1"]["rx_rate"] = 0
-    data["stats"]["site-1"]["gw-1"]["rxRate"] = None
+    data["stats"]["site-1"]["gw-1"]["uplink"] = {"txRateBps": 0, "rxRateBps": 0}
+    data["stats"]["site-1"]["gw-1"]["tx_rate_bps"] = 5
 
     snapshot = build_internet_activity_snapshot(
         data,
@@ -511,9 +516,9 @@ def test_internet_activity_preserves_zero_rates() -> None:
 
 
 def test_performance_helpers_and_unavailable() -> None:
-    assert bytes_per_second_to_bits_per_second(10) == 80
-    assert bytes_per_second_to_bits_per_second(None) is None
-    assert bytes_per_second_to_bits_per_second("bad") is None
+    assert bits_per_second_to_int(100.9) == 100
+    assert bits_per_second_to_int(0.0) == 0
+    assert bits_per_second_to_int(None) is None
 
     unavailable = build_performance_snapshot(
         {"devices": {}, "stats": {}},
@@ -526,13 +531,6 @@ def test_performance_helpers_and_unavailable() -> None:
 
     manual_unavailable = build_unavailable_performance("entry-1", "site-1", "x")
     assert manual_unavailable["status"] == "unavailable"
-
-
-def test_performance_metric_rate_helper() -> None:
-    assert _metric_rate({"tx_rate": 2}, "tx") == 16
-    assert _metric_rate({"rxRate": 3}, "rx") == 24
-    assert _metric_rate({"tx_rate": "invalid"}, "tx") is None
-    assert _metric_rate({}, "tx") is None
 
 
 def test_performance_skips_non_device_and_client_rows() -> None:
@@ -551,9 +549,13 @@ def test_performance_skips_non_device_and_client_rows() -> None:
 
 def test_performance_rate_fallbacks() -> None:
     data = _base_data()
+    # Coordinator-written keys: snake-case bits/s, then the explicit bytes/s
+    # fallback (x8). The never-written tx_rate/txRate/uplinkTxRate are ignored.
     data["stats"]["site-1"]["gw-1"] = {
-        "uplinkTxRate": "20",
-        "uplinkRxRate": "10",
+        "tx_rate_bps": "20",
+        "rx_bytes_per_sec": "10",
+        "uplinkTxRate": 999,
+        "tx_rate": 999,
         "cpu": "bad",
     }
     snapshot = build_performance_snapshot(
@@ -564,7 +566,7 @@ def test_performance_rate_fallbacks() -> None:
         devices_available=True,
     )
     gateway = next(item for item in snapshot["devices"] if item["id"] == "site-1:gw-1")
-    assert gateway["tx_bps"] == 160
+    assert gateway["tx_bps"] == 20
     assert gateway["rx_bps"] == 80
     assert gateway["cpu_pct"] is None
 
@@ -689,11 +691,11 @@ def test_timeline_ignores_invalid_events() -> None:
 
 
 def test_site_health_helper_paths() -> None:
-    assert _gateway_for_site({"a": {"type": "gateway"}}) == (
-        "a",
-        {"type": "gateway"},
+    gateway_data = {"devices": {"s": {"a": {"type": "gateway"}}}}
+    assert get_site_gateway_id(gateway_data, "s") == "a"
+    assert (
+        get_site_gateway_id({"devices": {"s": {"a": {"type": "switch"}}}}, "s") is None
     )
-    assert _gateway_for_site({"a": {"type": "switch"}}) is None
 
     assert _wan_state(None) == ("unknown", [])
     assert _wan_state({"wans": []}) == ("unknown", [])
@@ -709,11 +711,6 @@ def test_additional_snapshot_branch_coverage() -> None:
     # dashboard_contract_utils: overflow epoch and non-string/number input
     assert utc_iso(1e200) is None
     assert utc_iso([]) is None
-
-    # performance: non-finite and boolean values
-    flag = True
-    assert bytes_per_second_to_bits_per_second(float("inf")) is None
-    assert bytes_per_second_to_bits_per_second(flag) is None
 
     # internet_activity_snapshot: non-dict device, no gateway, and non-dict wan item
     no_gw_data = _base_data()
@@ -841,3 +838,110 @@ def test_protect_snapshot_handles_str_enums_and_is_connected_fallback() -> None:
     assert enum_str(42) == "42"
     assert is_protect_device_connected({"is_connected": True}) is True
     assert is_protect_device_connected({"isConnected": False}) is False
+
+
+# --- Network device read model (#337) ------------------------------------
+
+
+def _published(data: dict[str, Any]) -> dict[str, Any]:
+    """Publish the facts like the device coordinator does after a refresh."""
+    data[NETWORK_FACTS_KEY] = {
+        site_id: build_site_network_facts(devices, data["stats"].get(site_id))
+        for site_id, devices in data["devices"].items()
+    }
+    return data
+
+
+def _all_snapshots(data: dict[str, Any]) -> dict[str, Any]:
+    """Build every snapshot that reads network devices for site-1."""
+    common = {"entry_id": "entry-1", "site_id": "site-1"}
+    return {
+        "health": build_site_health_snapshot(
+            data, ha_device_ids={}, devices_available=True, **common
+        ),
+        "performance": build_performance_snapshot(
+            data, ha_device_ids={}, devices_available=True, **common
+        ),
+        "activity": build_internet_activity_snapshot(
+            data, entity_registry=_FakeEntityRegistry(), **common
+        ),
+        "topology": build_site_topology(
+            data, "entry-1", "site-1", node_key=b"k" * 32, ha_device_ids={}
+        ),
+    }
+
+
+def test_dashboards_read_published_facts_without_rebuilding() -> None:
+    """Every builder reads the published facts; none rebuilds them."""
+    data = _published(_base_data())
+    # Only the raw records change: the published facts still win.
+    data["devices"]["site-1"]["gw-1"]["state"] = "OFFLINE"
+    data["stats"]["site-1"]["gw-1"]["uplink"] = {"txRateBps": 1, "rxRateBps": 1}
+    with patch.object(
+        data_transforms,
+        "build_site_network_facts",
+        side_effect=AssertionError("published facts were rebuilt"),
+    ):
+        snapshots = _all_snapshots(data)
+
+    assert snapshots["health"]["gateway"]["state"] == "online"
+    gateway = next(
+        d for d in snapshots["performance"]["devices"] if d["id"] == "site-1:gw-1"
+    )
+    assert (gateway["state"], gateway["tx_bps"], gateway["rx_bps"]) == (
+        "online",
+        100,
+        50,
+    )
+    assert snapshots["activity"]["throughput"] == {
+        "tx_bps": 100,
+        "rx_bps": 50,
+        "source": "gateway_uplink",
+    }
+    states = {node["kind"]: node["state"] for node in snapshots["topology"]["nodes"]}
+    assert states["gateway"] == "online"
+
+
+def test_dashboards_classify_devices_missing_from_published_facts() -> None:
+    """A device the published facts lack is classified from its raw record."""
+    data = _published(_base_data())
+    data["devices"]["site-1"]["sw-1"] = {
+        "name": "New switch",
+        "state": "ONLINE",
+        "features": ["switching"],
+    }
+    data["stats"]["site-1"]["sw-1"] = {"cpuUtilizationPct": 5}
+    snapshots = _all_snapshots(data)
+
+    assert snapshots["health"]["devices"]["switch"]["online"] == 1
+    switch = next(
+        d for d in snapshots["performance"]["devices"] if d["id"] == "site-1:sw-1"
+    )
+    assert (switch["kind"], switch["state"], switch["cpu_pct"]) == (
+        "switch",
+        "online",
+        5.0,
+    )
+    kinds = sorted(node["kind"] for node in snapshots["topology"]["nodes"])
+    assert "switch" in kinds
+
+
+def test_site_health_gateway_uptime_and_client_rule() -> None:
+    """Gateway uptime comes from the stats; clients use the exact rule."""
+    data = _base_data()
+    data["stats"]["site-1"]["gw-1"]["uptimeSec"] = 3600
+    data["clients"]["site-1"] = {
+        "c1": {"type": "ClientType.WIRED"},
+        "c2": {"connection_type": " wireless "},
+        "c3": {"type": "WIRED_GUEST"},
+        "c4": "not-a-dict",
+    }
+    snapshot = build_site_health_snapshot(
+        data,
+        entry_id="entry-1",
+        site_id="site-1",
+        ha_device_ids={},
+        devices_available=True,
+    )
+    assert snapshot["gateway"]["uptime_s"] == 3600
+    assert snapshot["clients"] == {"total": 4, "wired": 1, "wireless": 1}

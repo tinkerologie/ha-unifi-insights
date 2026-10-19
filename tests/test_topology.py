@@ -94,6 +94,10 @@ def test_opaque_node_id_is_keyed() -> None:
         ({"type": "accessPoint"}, "access_point"),
         ({"features": ["accessPoint"]}, "access_point"),
         ({"features": ["switching"]}, "switch"),
+        # The observed UDM Pro (#337): null type, only switching, no legacy
+        # block. Its model makes it a gateway, before the switching check.
+        ({"type": None, "model": "UDM Pro", "features": ["switching"]}, "gateway"),
+        ({"model": "USW-24", "features": ["switching", "gateway"]}, "gateway"),
         ({"type": "sensor", "features": []}, "other"),
         ({"topology": {"legacy_type": "uph"}}, "other"),
         ({}, "other"),
@@ -108,10 +112,17 @@ def test_device_kind(device, expected) -> None:
     ("device", "expected"),
     [
         ({"state": "ONLINE"}, "online"),
-        ({"state": "connected"}, "online"),
-        ({"status": "UP"}, "online"),
+        ({"status": "online"}, "online"),
+        # The Network API spec mapping (#337): CONNECTED, UP, DISCONNECTED
+        # and DOWN are not network device states.
+        ({"state": "connected"}, "unknown"),
+        ({"status": "UP"}, "unknown"),
+        ({"state": "DISCONNECTED"}, "unknown"),
+        ({"state": "DOWN"}, "unknown"),
         ({"state": "OFFLINE"}, "offline"),
-        ({"state": "DISCONNECTED"}, "offline"),
+        ({"state": "CONNECTION_INTERRUPTED"}, "offline"),
+        ({"state": "ISOLATED"}, "offline"),
+        ({"state": "U5G_INCORRECT_TOPOLOGY"}, "offline"),
         ({"state": "PENDING_ADOPTION"}, "unknown"),
         ({"state": 1}, "unknown"),
         ({}, "unknown"),

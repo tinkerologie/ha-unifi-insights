@@ -6,8 +6,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from .dashboard_contract_utils import as_dict, content_revision, enum_str
-from .topology_contract import device_kind, device_state, site_display_name
+from .dashboard_contract_utils import as_dict, content_revision
+from .data_transforms import (
+    client_connection_type,
+    site_device_facts,
+    site_network_facts,
+)
+from .topology_contract import site_display_name
 
 STATUS_OK = "ok"
 STATUS_PARTIAL = "partial"
@@ -17,17 +22,6 @@ LEVEL_HEALTHY = "healthy"
 LEVEL_DEGRADED = "degraded"
 LEVEL_CRITICAL = "critical"
 LEVEL_UNKNOWN = "unknown"
-
-
-def _gateway_for_site(
-    devices: dict[str, Any],
-) -> tuple[str, dict[str, Any]] | None:
-    for device_id, device in devices.items():
-        if not isinstance(device, dict):
-            continue
-        if device_kind(device) == "gateway":
-            return device_id, device
-    return None
 
 
 def _wan_state(gateway: dict[str, Any] | None) -> tuple[str, list[dict[str, str]]]:
@@ -91,8 +85,17 @@ def build_site_health_snapshot(
     clients_by_site = as_dict(data.get("clients"))
     clients = as_dict(clients_by_site.get(site_id))
 
-    gateway_entry = _gateway_for_site(devices)
-    gateway_id, gateway = gateway_entry or (None, None)
+    # The site gateway, kind, state and uptime are the published read model,
+    # so a null-type UDM Pro is the gateway here exactly as for its entities.
+    site_facts = site_network_facts(data, site_id)
+    gateway_id = site_facts.gateway_id if site_facts is not None else None
+    raw_gateway = devices.get(gateway_id) if gateway_id is not None else None
+    gateway = raw_gateway if isinstance(raw_gateway, dict) else None
+    gateway_facts = (
+        site_device_facts(site_facts, gateway_id, gateway)
+        if gateway_id is not None and gateway is not None
+        else None
+    )
     internet, wan_links = _wan_state(gateway)
 
     by_kind: dict[str, dict[str, int]] = {
@@ -106,8 +109,9 @@ def build_site_health_snapshot(
     for device_id, device in devices.items():
         if not isinstance(device, dict):
             continue
-        kind = device_kind(device)
-        state = device_state(device)
+        facts = site_device_facts(site_facts, device_id, device)
+        kind = facts.kind
+        state = facts.online_state
         by_kind[kind][state] += 1
         if state in {"offline", "unknown"}:
             attention_devices.append(
@@ -131,9 +135,9 @@ def build_site_health_snapshot(
     omitted = max(0, len(attention_devices) - len(shown_attention))
 
     reasons: list[str] = []
-    if gateway is None:
+    if gateway_facts is None:
         reasons.append("gateway_missing")
-    elif device_state(gateway) == "offline":
+    elif gateway_facts.online_state == "offline":
         reasons.append("gateway_offline")
     if internet == "offline":
         reasons.append("wan_down")
@@ -144,7 +148,7 @@ def build_site_health_snapshot(
     if not devices_available:
         reasons.append("device_data_stale")
 
-    if gateway is None or internet == "offline":
+    if gateway_facts is None or internet == "offline":
         level = LEVEL_CRITICAL
     elif reasons:
         level = LEVEL_DEGRADED
@@ -152,6 +156,11 @@ def build_site_health_snapshot(
         level = LEVEL_HEALTHY
 
     status = STATUS_OK if devices_available else STATUS_PARTIAL
+    connections = [
+        client_connection_type(client)
+        for client in clients.values()
+        if isinstance(client, dict)
+    ]
     payload: dict[str, Any] = {
         "version": 1,
         "entry_id": entry_id,
@@ -163,10 +172,10 @@ def build_site_health_snapshot(
         else [{"code": "devices_unavailable", "severity": "warning"}],
         "health": {"level": level, "reasons": reasons},
         "gateway": {
-            "present": gateway is not None,
+            "present": gateway_facts is not None,
             "name": str(gateway.get("name") or "Gateway") if gateway else None,
-            "state": device_state(gateway) if gateway else "unknown",
-            "uptime_s": gateway.get("uptimeSec") if isinstance(gateway, dict) else None,
+            "state": gateway_facts.online_state if gateway_facts else "unknown",
+            "uptime_s": gateway_facts.uptime_s if gateway_facts else None,
             "ha_device_id": ha_device_ids.get(gateway_id) if gateway_id else None,
             "internet": internet,
             "wan_links": wan_links,
@@ -176,24 +185,8 @@ def build_site_health_snapshot(
         "attention_omitted": omitted,
         "clients": {
             "total": len(clients),
-            "wired": len(
-                [
-                    c
-                    for c in clients.values()
-                    if isinstance(c, dict)
-                    and enum_str(c.get("type") or c.get("connection_type")).upper()
-                    == "WIRED"
-                ]
-            ),
-            "wireless": len(
-                [
-                    c
-                    for c in clients.values()
-                    if isinstance(c, dict)
-                    and enum_str(c.get("type") or c.get("connection_type")).upper()
-                    == "WIRELESS"
-                ]
-            ),
+            "wired": connections.count("wired"),
+            "wireless": connections.count("wireless"),
         },
         "freshness": "fresh" if devices_available else "stale",
     }
