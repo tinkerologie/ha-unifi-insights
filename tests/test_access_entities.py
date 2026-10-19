@@ -26,6 +26,7 @@ from custom_components.unifi_insights import lock as lock_platform
 from custom_components.unifi_insights import switch as switch_platform
 from custom_components.unifi_insights.access_entity import (
     UnifiAccessDoorEntity,
+    UnifiAccessEntity,
     access_coordinator_for,
     access_unique_id,
     async_discover_access_entities,
@@ -630,3 +631,143 @@ async def test_door_base_entity_follows_door_presence(hass: Any) -> None:
     assert entity.available
     coordinator.data["doors"].pop("door-plain")
     assert not entity.available
+
+
+# --- Typed command path (ADR-010) -------------------------------------------
+
+
+def _owner() -> MagicMock:
+    """Return an Access coordinator stand-in with awaitable typed commands."""
+    owner = MagicMock(name="access")
+    owner.namespace = NAMESPACE
+    owner.async_lock_door = AsyncMock()
+    owner.async_unlock_door = AsyncMock()
+    owner.async_gate_command = AsyncMock()
+    return owner
+
+
+async def test_access_command_wrapper_success_passes_arguments() -> None:
+    """A successful command is awaited with exactly the given arguments."""
+    command = AsyncMock()
+
+    await UnifiAccessEntity._async_command("msg", command, "door-1", "open")
+
+    command.assert_awaited_once_with("door-1", "open")
+
+
+async def test_access_command_wrapper_passes_home_assistant_errors_through() -> None:
+    """An owner's already-translated error reaches the user unchanged."""
+    own = HomeAssistantError("own")
+
+    with pytest.raises(HomeAssistantError) as caught:
+        await UnifiAccessEntity._async_command(
+            "msg", AsyncMock(side_effect=own), "door-1"
+        )
+
+    assert caught.value is own
+
+
+async def test_access_command_wrapper_translates_other_errors() -> None:
+    """Any other failure becomes command_failed and keeps the English message."""
+    boom = RuntimeError("boom")
+
+    with pytest.raises(HomeAssistantError) as caught:
+        await UnifiAccessEntity._async_command(
+            "Could not unlock the Access door", AsyncMock(side_effect=boom), "d"
+        )
+
+    assert caught.value.translation_domain == DOMAIN
+    assert caught.value.translation_key == "command_failed"
+    assert str(caught.value) == "Could not unlock the Access door"
+    assert caught.value.__cause__ is boom
+
+
+@pytest.mark.parametrize(
+    ("entity_cls", "method", "owner_method", "expected_args"),
+    [
+        pytest.param(
+            button_platform.UnifiAccessUnlockButton,
+            "async_press",
+            "async_unlock_door",
+            ("door-1",),
+            id="unlock-button",
+        ),
+        pytest.param(
+            cover_platform.UnifiAccessGateCover,
+            "async_open_cover",
+            "async_gate_command",
+            ("door-1", "open"),
+            id="gate-open",
+        ),
+        pytest.param(
+            cover_platform.UnifiAccessGateCover,
+            "async_close_cover",
+            "async_gate_command",
+            ("door-1", "close"),
+            id="gate-close",
+        ),
+        pytest.param(
+            cover_platform.UnifiAccessGateCover,
+            "async_stop_cover",
+            "async_gate_command",
+            ("door-1", "stop"),
+            id="gate-stop",
+        ),
+        pytest.param(
+            lock_platform.UnifiAccessDoorLock,
+            "async_lock",
+            "async_lock_door",
+            ("door-1",),
+            id="lock",
+        ),
+        pytest.param(
+            lock_platform.UnifiAccessDoorLock,
+            "async_unlock",
+            "async_unlock_door",
+            ("door-1",),
+            id="unlock",
+        ),
+    ],
+)
+async def test_access_entities_call_typed_owner_commands(
+    entity_cls: type[UnifiAccessDoorEntity],
+    method: str,
+    owner_method: str,
+    expected_args: tuple[str, ...],
+) -> None:
+    """Each Access entity action awaits its owner command, and only that one."""
+    owner = _owner()
+    entity = entity_cls(owner, "door-1")
+
+    await getattr(entity, method)()
+
+    getattr(owner, owner_method).assert_awaited_once_with(*expected_args)
+    for other in ("async_lock_door", "async_unlock_door", "async_gate_command"):
+        if other != owner_method:
+            getattr(owner, other).assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("entity_cls", "method", "owner_method"),
+    [
+        (button_platform.UnifiAccessUnlockButton, "async_press", "async_unlock_door"),
+        (cover_platform.UnifiAccessGateCover, "async_open_cover", "async_gate_command"),
+        (lock_platform.UnifiAccessDoorLock, "async_lock", "async_lock_door"),
+    ],
+)
+async def test_access_entity_command_errors_propagate(
+    entity_cls: type[UnifiAccessDoorEntity], method: str, owner_method: str
+) -> None:
+    """Owner errors pass through; other failures become command_failed."""
+    owner = _owner()
+    entity = entity_cls(owner, "door-1")
+    own = HomeAssistantError("own")
+    getattr(owner, owner_method).side_effect = own
+    with pytest.raises(HomeAssistantError) as caught:
+        await getattr(entity, method)()
+    assert caught.value is own
+
+    getattr(owner, owner_method).side_effect = RuntimeError("boom")
+    with pytest.raises(HomeAssistantError) as caught:
+        await getattr(entity, method)()
+    assert caught.value.translation_key == "command_failed"
