@@ -1533,7 +1533,7 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
         fields are published as a copy-on-write overlay and a deferred
         refresh is requested.
         """
-        site_name = self.config_coordinator.resolve_legacy_site_name(
+        site_name = await self.config_coordinator.async_resolve_legacy_site_name(
             site_id, verified_only=False
         )
         device_data = self.get_device(site_id, device_id) or {}
@@ -1641,7 +1641,7 @@ class UnifiDeviceCoordinator(UnifiBaseCoordinator):
                 translation_key="client_not_resolvable",
                 translation_placeholders={"client_id": client_id},
             )
-        site_name = self.config_coordinator.resolve_legacy_site_name(
+        site_name = await self.config_coordinator.async_resolve_legacy_site_name(
             site_id, verified_only=False
         )
         return site_name, mac

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Final
@@ -15,6 +16,7 @@ from pydantic import ValidationError
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
+    UniFiError,
     UniFiNotFoundError,
     UniFiResponseError,
     UniFiRuleNotEditableError,
@@ -91,6 +93,10 @@ _RULE_SECTIONS: tuple[str, ...] = (
 # to wait before reading the rules one more time.
 RULE_REFRESH_RETRY_DELAY: Final = 15
 
+# Minimum seconds between two on-demand legacy site lookups, so a classic API
+# that is down is not asked again on every write.
+LEGACY_REMAP_COOLDOWN: Final = 60
+
 
 class UnifiConfigCoordinator(UnifiBaseCoordinator):
     """Coordinator for slow-changing configuration data (5 minute updates)."""
@@ -151,6 +157,9 @@ class UnifiConfigCoordinator(UnifiBaseCoordinator):
         self._voucher_site_committed_seq: dict[str, int] = {}
         # Pending one-shot rule refresh retries, keyed by (section, site_id).
         self._rule_refresh_retries: dict[tuple[str, str], CALLBACK_TYPE] = {}
+        # One on-demand legacy site lookup at a time, at most once a cooldown.
+        self._legacy_remap_lock = asyncio.Lock()
+        self._legacy_remap_at: float | None = None
 
     def _section_available(self, section: str, site_id: str) -> bool:
         """Return True if the last refresh fetched the given section for a site."""
@@ -595,6 +604,70 @@ class UnifiConfigCoordinator(UnifiBaseCoordinator):
             )
         return site_name
 
+    async def async_resolve_legacy_site_name(
+        self, site_id: str, *, verified_only: bool
+    ) -> str:
+        """
+        Return the classic site name for a write, remapping once if needed.
+
+        ``resolve_legacy_site_name`` with one recovery step for mapped
+        writes: when it fails while the published mapping is flagged as
+        failed or lacks the site (for example after a failed lookup in the
+        first refresh), the legacy mapping alone is looked up again and the
+        resolution retried, so the write does not wait for the next config
+        poll. Verified-only writes never read the mapping, so they never
+        remap.
+        """
+        try:
+            return self.resolve_legacy_site_name(site_id, verified_only=verified_only)
+        except HomeAssistantError:
+            if (
+                verified_only
+                or site_id not in self.data.get("sites", {})
+                or not (
+                    self.data.get("legacy_mapping_failed")
+                    or site_id not in self.data.get("legacy_site_names", {})
+                )
+            ):
+                raise
+        await self._async_remap_legacy_sites()
+        return self.resolve_legacy_site_name(site_id, verified_only=verified_only)
+
+    async def _async_remap_legacy_sites(self) -> None:
+        """
+        Look up and publish the legacy site mapping outside the config poll.
+
+        Concurrent callers share one lookup: they queue on the lock and find
+        the attempt already made. At most one lookup runs per
+        ``LEGACY_REMAP_COOLDOWN`` seconds, so a classic API that is down is
+        not asked again on every write. A failed lookup leaves the published
+        mapping as it is. The mapping is no entity state, so listeners are
+        not notified.
+        """
+        async with self._legacy_remap_lock:
+            now = time.monotonic()
+            if (
+                self._legacy_remap_at is not None
+                and now - self._legacy_remap_at < LEGACY_REMAP_COOLDOWN
+            ):
+                return
+            self._legacy_remap_at = now
+            try:
+                legacy_sites = await self.network_client.sites.get_legacy_all()
+            except (UniFiError, ValidationError) as err:
+                _LOGGER.debug(
+                    "Config coordinator: On-demand legacy site lookup failed: %s",
+                    type(err).__name__,
+                )
+                return
+            self.data = {
+                **self.data,
+                "legacy_site_names": self._map_legacy_site_names(
+                    self.data.get("sites", {}), legacy_sites
+                ),
+                "legacy_mapping_failed": False,
+            }
+
     async def async_set_firewall_rule_enabled(
         self,
         site_id: str,
@@ -625,7 +698,9 @@ class UnifiConfigCoordinator(UnifiBaseCoordinator):
         enabled: bool,
     ) -> None:
         """Enable or disable a policy-based route (traffic route)."""
-        site_name = self.resolve_legacy_site_name(site_id, verified_only=False)
+        site_name = await self.async_resolve_legacy_site_name(
+            site_id, verified_only=False
+        )
         await async_execute_command(
             CommandFailure(
                 translation_key="command_failed",
@@ -648,7 +723,9 @@ class UnifiConfigCoordinator(UnifiBaseCoordinator):
         enabled: bool,
     ) -> None:
         """Enable or disable a VPN client configuration."""
-        site_name = self.resolve_legacy_site_name(site_id, verified_only=False)
+        site_name = await self.async_resolve_legacy_site_name(
+            site_id, verified_only=False
+        )
         await async_execute_command(
             CommandFailure(
                 translation_key="command_failed",

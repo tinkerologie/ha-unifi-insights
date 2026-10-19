@@ -60,6 +60,8 @@ After a successful write the owner copies every mutable container on the changed
 
 The config coordinator publishes `legacy_site_names` and `legacy_mapping_failed` in its data and owns the only resolver, `resolve_legacy_site_name(site_id, *, verified_only)`. The order is fixed: the site's verified `internalReference`, then (unless `verified_only`) the published mapping, then a translated `legacy_site_not_found` error. It never guesses `"default"`; a real `"default"` from either source is valid. Rule families, historical clients and batch forget use `verified_only=True`.
 
+Mapped writes call `async_resolve_legacy_site_name(site_id, *, verified_only)`. When resolution fails while the mapping is flagged as failed or lacks the site, it looks up the legacy mapping once more, republishes it and retries before raising, so a lookup that failed in the first refresh does not block writes until the next config poll. Concurrent callers share one lookup, and at most one lookup runs per 60 s, so a classic API that is down is not asked on every write. Verified-only writes and unknown sites never trigger it.
+
 The published mapping follows one lifecycle. A successful lookup replaces it for the selected sites and clears the flag. A failed lookup keeps the last published mapping pruned to the selected sites (empty on the first failure) and sets the flag. No selected sites publishes an empty mapping with the flag cleared. A whole-refresh failure leaves the published mapping unchanged. The per-cycle section inputs stay local, so a cycle whose lookup failed still fetches legacy sections without a site name, as before.
 
 The device coordinator reads the published mapping on each poll instead of calling `sites.get_legacy_all()`. In steady state it reads the previous config cycle's mapping; at setup the config coordinator's first refresh completes before the device coordinator's first refresh, the platforms and the service handlers' targets exist. During a lookup outage, device telemetry and mapped commands keep the last-good mapping for still-selected sites, while verified-only writes stay strict.
@@ -103,7 +105,7 @@ Moving the 24 Protect actions and `_async_send_arm_command` adds about 370 facad
 
 ### Negative
 
-- Writes that used to guess `"default"` now raise `legacy_site_not_found` when no mapping is known (for example right after a failed first lookup, until the next config poll).
+- Writes that used to guess `"default"` now raise `legacy_site_not_found` when no mapping is known (for example while the classic site lookup stays down; one on-demand lookup per 60 s is tried first).
 - `coordinators/protect.py` stays over the 2,000-line budget until #340.
 
 ### Neutral

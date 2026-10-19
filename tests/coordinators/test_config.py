@@ -9,6 +9,7 @@ autospecced ``unifi_official_api`` clients.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +26,7 @@ from unifi_official_api import (
 
 from custom_components.unifi_insights.const import CONF_SITE_IDS, DOMAIN
 from custom_components.unifi_insights.coordinators.config import (
+    LEGACY_REMAP_COOLDOWN,
     RULE_REFRESH_RETRY_DELAY,
 )
 from tests.fixtures.command_owners import (
@@ -662,3 +664,132 @@ class TestWifiAndGuestCommands:
 
         assert caught.value.translation_key == "command_failed"
         assert caught.value.__cause__ is cause
+
+
+@pytest.fixture
+async def unmapped_owners(hass: HomeAssistant) -> AsyncGenerator[SeededOwners]:
+    """Owners whose site has no internalReference and whose first lookup failed."""
+    owners = build_seeded_owners(hass)
+    client = owners.network_client
+    client.sites.get_all.return_value[0].pop("internalReference")
+    client.sites.get_legacy_all.side_effect = UniFiConnectionError("down")
+    await async_refresh_owners(owners)
+    assert owners.config.data["legacy_mapping_failed"] is True
+    assert owners.config.data["legacy_site_names"] == {}
+    yield owners
+    await async_shutdown_owners(owners)
+
+
+class TestOnDemandLegacyRemap:
+    """Mapped writes do not wait for the next poll after a failed lookup."""
+
+    async def test_write_succeeds_after_on_demand_remap(
+        self, unmapped_owners: SeededOwners
+    ) -> None:
+        """A failed first lookup is retried once when a mapped write needs it."""
+        config = unmapped_owners.config
+        lookup = unmapped_owners.network_client.sites.get_legacy_all
+        lookup.side_effect = None
+        lookup.return_value = [{"name": "default", "desc": "Default Site"}]
+
+        await config.async_set_policy_based_route_enabled(
+            SITE_ID, "route1", enabled=True
+        )
+
+        unmapped_owners.network_client.routes.update_route.assert_awaited_once_with(
+            "default", "route1", enabled=True
+        )
+        assert lookup.await_count >= 2
+        assert config.data["legacy_mapping_failed"] is False
+
+    async def test_endpoint_still_down_raises_legacy_site_not_found(
+        self, unmapped_owners: SeededOwners
+    ) -> None:
+        """When the remap fails too, the write raises instead of guessing."""
+        lookup = unmapped_owners.network_client.sites.get_legacy_all
+        attempts = lookup.await_count
+
+        with pytest.raises(HomeAssistantError) as caught:
+            await unmapped_owners.config.async_set_vpn_client_enabled(
+                SITE_ID, "vpn1", enabled=True
+            )
+
+        _assert_legacy_not_found(caught.value, SITE_ID)
+        assert lookup.await_count == attempts + 1
+        unmapped_owners.network_client.vpn_clients.update_vpn_client.assert_not_awaited()
+
+    async def test_concurrent_writes_share_one_remap(
+        self, unmapped_owners: SeededOwners
+    ) -> None:
+        """Writes that need the mapping at the same time trigger one lookup."""
+        lookup = unmapped_owners.network_client.sites.get_legacy_all
+        attempts = lookup.await_count
+        release = asyncio.Event()
+
+        async def _slow_lookup() -> list[dict[str, str]]:
+            await release.wait()
+            return [{"name": "default", "desc": "Default Site"}]
+
+        lookup.side_effect = _slow_lookup
+        config = unmapped_owners.config
+        writes = asyncio.gather(
+            config.async_resolve_legacy_site_name(SITE_ID, verified_only=False),
+            config.async_resolve_legacy_site_name(SITE_ID, verified_only=False),
+            config.async_resolve_legacy_site_name(SITE_ID, verified_only=False),
+        )
+        await asyncio.sleep(0)
+        release.set()
+
+        assert await writes == ["default", "default", "default"]
+        assert lookup.await_count == attempts + 1
+
+    async def test_remap_is_rate_limited(self, unmapped_owners: SeededOwners) -> None:
+        """A down classic API is asked at most once per cooldown."""
+        config = unmapped_owners.config
+        lookup = unmapped_owners.network_client.sites.get_legacy_all
+        attempts = lookup.await_count
+
+        for _ in range(3):
+            with pytest.raises(HomeAssistantError):
+                await config.async_resolve_legacy_site_name(
+                    SITE_ID, verified_only=False
+                )
+        assert lookup.await_count == attempts + 1
+
+        assert config._legacy_remap_at is not None
+        config._legacy_remap_at -= LEGACY_REMAP_COOLDOWN
+        with pytest.raises(HomeAssistantError):
+            await config.async_resolve_legacy_site_name(SITE_ID, verified_only=False)
+        assert lookup.await_count == attempts + 2
+
+    async def test_verified_only_and_unknown_sites_never_remap(
+        self, unmapped_owners: SeededOwners
+    ) -> None:
+        """Remapping cannot help verified-only writes or unknown sites."""
+        config = unmapped_owners.config
+        lookup = unmapped_owners.network_client.sites.get_legacy_all
+        attempts = lookup.await_count
+
+        for site_id, verified_only in ((SITE_ID, True), ("missing", False)):
+            with pytest.raises(HomeAssistantError) as caught:
+                await config.async_resolve_legacy_site_name(
+                    site_id, verified_only=verified_only
+                )
+            _assert_legacy_not_found(caught.value, site_id)
+
+        assert lookup.await_count == attempts
+
+    async def test_a_published_mapping_needs_no_remap(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A healthy mapping that lacks a usable name is not looked up again."""
+        config = seeded_owners.config
+        del config.data["sites"][SITE_ID]["internalReference"]
+        config.data["legacy_site_names"] = {SITE_ID: " "}
+        lookup = seeded_owners.network_client.sites.get_legacy_all
+        attempts = lookup.await_count
+
+        with pytest.raises(HomeAssistantError):
+            await config.async_resolve_legacy_site_name(SITE_ID, verified_only=False)
+
+        assert lookup.await_count == attempts
