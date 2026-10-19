@@ -1027,16 +1027,32 @@ class _Factory:
 def _local_dict_keys(
     func: ast.FunctionDef | ast.AsyncFunctionDef | None, name: str
 ) -> frozenset[str] | None:
-    """Return the keys of a dict literal a function assigns to ``name``."""
-    for node in ast.walk(func) if func is not None else ():
-        if (
-            isinstance(node, ast.Assign)
-            and [getattr(t, "id", None) for t in node.targets] == [name]
-            and (found := _dict_placeholders(node.value)) is not None
-            and len(found) == 1
+    """Return the keys of the one dict literal a function binds to ``name``.
+
+    A name bound more than once, or changed through a subscript or a method
+    such as ``update``, is unresolved: the guard cannot tell which dict
+    reaches the error.
+    """
+    if func is None:
+        return None
+    stores = 0
+    value: ast.expr | None = None
+    for node in ast.walk(func):
+        if isinstance(node, ast.Name) and node.id == name:
+            stores += not isinstance(node.ctx, ast.Load)
+        elif (
+            isinstance(node, (ast.Subscript, ast.Attribute))
+            and isinstance(node.value, ast.Name)
+            and node.value.id == name
+            and (isinstance(node, ast.Attribute) or not isinstance(node.ctx, ast.Load))
         ):
-            return found[0]
-    return None
+            return None
+        if isinstance(node, ast.Assign) and [
+            getattr(t, "id", None) for t in node.targets
+        ] == [name]:
+            value = node.value
+    found = _dict_placeholders(value) if stores == 1 and value is not None else None
+    return found[0] if found is not None and len(found) == 1 else None
 
 
 def _construction_placeholders(
@@ -1300,6 +1316,39 @@ def test_service_error_guard_resolves_factories_and_conditionals(
         ("error = ServiceValidationError('x')\n", "no translation_key"),
         ("raise InvalidSubscriberIdError('x')\n", "no translation_key"),
         ("VALUE = 1\n", "builds no translated error"),
+        (
+            (
+                "def f(site_id):\n"
+                "    placeholders = {'site_id': site_id}\n"
+                "    placeholders = {}\n"
+                "    raise HomeAssistantError(translation_domain=DOMAIN,"
+                " translation_key='refresh_site_not_found',"
+                " translation_placeholders=placeholders)\n"
+            ),
+            "placeholders are not a literal dict",
+        ),
+        (
+            (
+                "def f(site_id):\n"
+                "    placeholders = {'site_id': site_id}\n"
+                "    del placeholders['site_id']\n"
+                "    raise HomeAssistantError(translation_domain=DOMAIN,"
+                " translation_key='refresh_site_not_found',"
+                " translation_placeholders=placeholders)\n"
+            ),
+            "placeholders are not a literal dict",
+        ),
+        (
+            (
+                "def f(site_id):\n"
+                "    placeholders = {'site_id': site_id}\n"
+                "    placeholders.clear()\n"
+                "    raise HomeAssistantError(translation_domain=DOMAIN,"
+                " translation_key='refresh_site_not_found',"
+                " translation_placeholders=placeholders)\n"
+            ),
+            "placeholders are not a literal dict",
+        ),
     ],
     ids=[
         "helper-caller-undefined-key",
@@ -1315,6 +1364,9 @@ def test_service_error_guard_resolves_factories_and_conditionals(
         "returned-not-raised",
         "carrier-subclass",
         "no-constructions",
+        "rebound-placeholders",
+        "deleted-placeholder",
+        "mutated-placeholders",
     ],
 )
 def test_service_error_guard_rejects_bad_sources(
