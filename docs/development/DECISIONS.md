@@ -19,16 +19,17 @@ An accepted ADR is never edited to change its meaning. A new ADR supersedes it i
 
 ## Decision log
 
-| ADR                                                                  | Title                                                      | Status                | Date       |
-| -------------------------------------------------------------------- | ---------------------------------------------------------- | --------------------- | ---------- |
-| [001](./adr/001-record-architecture-decisions.md)                    | Record architecture decisions                              | Accepted              | 2026-10-16 |
-| [002](./adr/002-multi-coordinator-architecture-behind-a-facade.md)   | Multi-coordinator architecture behind a facade             | Accepted              | 2026-10-16 |
-| [003](./adr/003-vendor-the-unifi-api-client.md)                      | Vendor the UniFi API client inside the integration         | Superseded by ADR-008 | 2026-10-16 |
-| [004](./adr/004-stable-console-identity-for-unique-ids.md)           | Stable console identity for config entry unique IDs        | Accepted              | 2026-10-16 |
-| [005](./adr/005-bundled-dashboard-cards-with-versioned-contracts.md) | Bundled dashboard cards with versioned WebSocket contracts | Accepted              | 2026-10-16 |
-| [006](./adr/006-three-layer-diagnostics-redaction.md)                | Three-layer diagnostics redaction                          | Accepted              | 2026-10-16 |
-| [007](./adr/007-flat-home-assistant-module-layout.md)                | Flat Home Assistant module layout                          | Proposed              | 2026-10-16 |
-| [008](./adr/008-depend-on-unifi-official-api-from-pypi.md)           | Depend on `unifi-official-api` from PyPI                   | Accepted              | 2026-10-19 |
+| ADR                                                                  | Title                                                         | Status                | Date       |
+| -------------------------------------------------------------------- | ------------------------------------------------------------- | --------------------- | ---------- |
+| [001](./adr/001-record-architecture-decisions.md)                    | Record architecture decisions                                 | Accepted              | 2026-10-16 |
+| [002](./adr/002-multi-coordinator-architecture-behind-a-facade.md)   | Multi-coordinator architecture behind a facade                | Accepted              | 2026-10-16 |
+| [003](./adr/003-vendor-the-unifi-api-client.md)                      | Vendor the UniFi API client inside the integration            | Superseded by ADR-008 | 2026-10-16 |
+| [004](./adr/004-stable-console-identity-for-unique-ids.md)           | Stable console identity for config entry unique IDs           | Accepted              | 2026-10-16 |
+| [005](./adr/005-bundled-dashboard-cards-with-versioned-contracts.md) | Bundled dashboard cards with versioned WebSocket contracts    | Accepted              | 2026-10-16 |
+| [006](./adr/006-three-layer-diagnostics-redaction.md)                | Three-layer diagnostics redaction                             | Accepted              | 2026-10-16 |
+| [007](./adr/007-flat-home-assistant-module-layout.md)                | Flat Home Assistant module layout                             | Proposed              | 2026-10-16 |
+| [008](./adr/008-depend-on-unifi-official-api-from-pypi.md)           | Depend on `unifi-official-api` from PyPI                      | Accepted              | 2026-10-19 |
+| [009](./adr/009-amend-flat-module-layout.md)                         | Amendments to the flat module layout for the deepening issues | Accepted              | 2026-10-19 |
 
 ### Multi-coordinator architecture behind a facade
 
@@ -58,7 +59,9 @@ Consolidate 57 root modules into 33 by moving every base entity into `entity.py`
 
 `manifest.json` pins `unifi-official-api[talkback]==2.0.0`, published to PyPI by the upstream release workflow at a tagged release, and the vendored `api/` package (128 files, about 17,400 lines) is deleted. This meets the `dependency-transparency` rule. API contract fixes now go to `tinkerologie/unifi-official-api` first and reach the integration through a pin bump; no local shims. Implemented in [#345](https://github.com/tinkerologie/ha-unifi-insights/issues/345). [ADR-008](./adr/008-depend-on-unifi-official-api-from-pypi.md)
 
----
+### Amendments to the flat module layout
+
+## ADR-007 is amended for the deepening issues #337, #338 and #339. `get_field()` and `first_not_none()` live in `data_transforms.py`, re-exported by `entity.py`. `data_transforms.normalize_mac()` is the canonical MAC parser for reading device data, and four identity-specific MAC policies stay separate and tested. `service_targets.py` is an allowed 34th root module. `coordinators/protect.py` has a size exception capped at 3,500 lines until #340 splits it. [ADR-009](./adr/009-amend-flat-module-layout.md)
 
 ## Future considerations
 

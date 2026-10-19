@@ -1,7 +1,7 @@
 # ADR-007: Flat Home Assistant module layout
 
 **Date:** 2026-10-16 (revised 2026-10-17: size budget and `api/` end state; revised 2026-10-19: `api/` removed by #345)
-**Status:** Proposed (implementation tracked in [#341](https://github.com/tinkerologie/ha-unifi-insights/issues/341), part of [#343](https://github.com/tinkerologie/ha-unifi-insights/issues/343); originally [#330](https://github.com/tinkerologie/ha-unifi-insights/issues/330))
+**Status:** Proposed (implementation tracked in [#341](https://github.com/tinkerologie/ha-unifi-insights/issues/341), part of [#343](https://github.com/tinkerologie/ha-unifi-insights/issues/343); originally [#330](https://github.com/tinkerologie/ha-unifi-insights/issues/330)) Amended by [ADR-009](./009-amend-flat-module-layout.md).
 
 ## Context
 
