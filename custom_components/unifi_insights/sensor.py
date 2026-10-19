@@ -23,12 +23,15 @@ from homeassistant.const import (
     UnitOfInformation,
     UnitOfPower,
     UnitOfTemperature,
+    UnitOfTime,
 )
 from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import site_internet_activity_sensor
+from . import CarrierFabricData, site_internet_activity_sensor
+from .carrier_fabric_sensor import async_setup_carrier_fabric_sensors
 from .console_identity import async_migrate_site_entity, resolve_console_namespace
 from .const import (
     ATTR_NVR_ID,
@@ -49,8 +52,12 @@ from .const import (
     DEVICE_TYPE_SENSOR,
     DOMAIN,
     MANUFACTURER,
+    MOBILITY_ROUTER_CONNECTED,
+    MOBILITY_ROUTER_STATES,
+    MOBILITY_WORKSPACE_PREFIX,
 )
 from .coordinators import UnifiInsightsFacadeCoordinator
+from .coordinators.mobility import UnifiInsightsMobilityCoordinator
 from .data_transforms import (
     NetworkDeviceFacts,
     bytes_to_bits_per_second,
@@ -60,11 +67,14 @@ from .data_transforms import (
 from .data_transforms import get_port_label as _get_port_label
 from .entity import (
     UnifiInsightsEntity,
+    UnifiMobilityRouterEntity,
     UnifiProtectEntity,
+    async_add_mobility_router_entities,
     build_site_device_info,
     device_has_feature,
     first_not_none,
     get_field,
+    mobility_workspace_device_info,
 )
 from .entity import (
     get_client_type as _get_client_type,
@@ -72,7 +82,6 @@ from .entity import (
 from .innerspace_entity import (
     _discover_innerspace_sensors,
 )
-from .mobility_entity import async_setup_mobility_sensors
 from .protect_security_entity import discover_protect_security_sensors
 from .site_internet_activity_sensor import (
     _discover_site_internet_activity_sensors,
@@ -83,16 +92,14 @@ from .voucher_sensor import discover_voucher_sensors
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
+    from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.entity import Entity
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
     from homeassistant.helpers.typing import StateType
 
     from . import CarrierFabricConfigEntry, UnifiInsightsConfigEntry
 
-from homeassistant.helpers.entity import DeviceInfo
-
-from . import CarrierFabricData
-from .carrier_fabric_sensor import async_setup_carrier_fabric_sensors
 
 # Preserve these public sensor-module exports without redundant import aliases.
 SITE_INTERNET_ACTIVITY_SENSOR_TYPES = (
@@ -2202,3 +2209,318 @@ class UnifiWifiClientCountSensor(
             "is_guest": wifi_data.get("is_guest", wifi_data.get("isGuest", False)),
             "enabled": wifi_data.get("enabled", True),
         }
+
+
+# --- Mobility ----------------------------------------------------------------
+
+# UniFi Mobility workspace and router entities.
+
+# Enum sensor options: the API's values, lower-cased. "NULL" and empty
+# strings are not options; they mean the value is unknown.
+_ROUTER_STATES = [state.lower() for state in MOBILITY_ROUTER_STATES if state != "NULL"]
+_WAN_SOURCES = ["lte", "wan", "wifiwan"]
+_LTE_SIGNALS = ["no_signal", "poor", "fair", "strong"]
+_VPN_STATES = ["connecting", "connected", "disconnected", "failed"]
+_SUBSCRIPTION_STATES = ["active", "inactive", "pending", "failed"]
+_SUBSCRIPTION_PLANS = ["free_trial", "1gb", "2gb", "5gb", "20gb", "cloud"]
+
+
+def _text(field: str) -> Callable[[dict[str, Any]], StateType]:
+    """Return a value function for a free-text field; empty text is unknown."""
+
+    def value(device: dict[str, Any]) -> StateType:
+        raw = device.get(field)
+        return raw if isinstance(raw, str) and raw else None
+
+    return value
+
+
+def _number(field: str) -> Callable[[dict[str, Any]], StateType]:
+    """Return a value function for a numeric field."""
+
+    def value(device: dict[str, Any]) -> StateType:
+        raw = device.get(field)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return None
+        return raw
+
+    return value
+
+
+def _enum(field: str, options: list[str]) -> Callable[[dict[str, Any]], StateType]:
+    """
+    Return a value function for an enum field.
+
+    The API sends upper-case values and an empty string for "not set". Values
+    this integration does not know yet are unknown, never an invalid option.
+    """
+
+    def value(device: dict[str, Any]) -> StateType:
+        raw = device.get(field)
+        state = raw.lower() if isinstance(raw, str) else None
+        return state if state in options else None
+
+    return value
+
+
+def _data_limit(device: dict[str, Any]) -> StateType:
+    """Return the billing-cycle data cap; -1 (unlimited) has no number."""
+    raw = _number("cellular_data_limit_bytes")(device)
+    return raw if isinstance(raw, (int, float)) and raw > 0 else None
+
+
+def _uptime(device: dict[str, Any]) -> StateType:
+    """Return uptime; the API reports 0 for a router that is not connected."""
+    if device.get("state") != MOBILITY_ROUTER_CONNECTED:
+        return None
+    return _number("uptime_seconds")(device)
+
+
+@dataclass(frozen=True, kw_only=True)
+class UnifiMobilitySensorEntityDescription(SensorEntityDescription):
+    """Describes a UniFi Mobility router sensor."""
+
+    value_fn: Callable[[dict[str, Any]], StateType]
+
+
+ROUTER_SENSORS: tuple[UnifiMobilitySensorEntityDescription, ...] = (
+    UnifiMobilitySensorEntityDescription(
+        key="state",
+        translation_key="mobility_state",
+        device_class=SensorDeviceClass.ENUM,
+        options=_ROUTER_STATES,
+        value_fn=_enum("state", _ROUTER_STATES),
+    ),
+    UnifiMobilitySensorEntityDescription(
+        key="clients",
+        translation_key="mobility_clients",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=_number("client_count"),
+    ),
+    UnifiMobilitySensorEntityDescription(
+        key="wan_source",
+        translation_key="mobility_wan_source",
+        device_class=SensorDeviceClass.ENUM,
+        options=_WAN_SOURCES,
+        value_fn=_enum("wan_source", _WAN_SOURCES),
+    ),
+    UnifiMobilitySensorEntityDescription(
+        key="lte_signal",
+        translation_key="mobility_lte_signal",
+        device_class=SensorDeviceClass.ENUM,
+        options=_LTE_SIGNALS,
+        value_fn=_enum("lte_signal_level", _LTE_SIGNALS),
+    ),
+    UnifiMobilitySensorEntityDescription(
+        key="cellular_data_usage",
+        translation_key="mobility_cellular_data_usage",
+        device_class=SensorDeviceClass.DATA_SIZE,
+        # Resets at the start of each billing cycle.
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfInformation.BYTES,
+        suggested_unit_of_measurement=UnitOfInformation.GIGABYTES,
+        suggested_display_precision=2,
+        value_fn=_number("cellular_data_usage_bytes"),
+    ),
+    UnifiMobilitySensorEntityDescription(
+        key="vpn_status",
+        translation_key="mobility_vpn_status",
+        device_class=SensorDeviceClass.ENUM,
+        options=_VPN_STATES,
+        value_fn=_enum("vpn_status", _VPN_STATES),
+    ),
+    UnifiMobilitySensorEntityDescription(
+        key="subscription_status",
+        translation_key="mobility_subscription_status",
+        device_class=SensorDeviceClass.ENUM,
+        options=_SUBSCRIPTION_STATES,
+        value_fn=_enum("subscription_status", _SUBSCRIPTION_STATES),
+    ),
+    UnifiMobilitySensorEntityDescription(
+        key="memory_usage",
+        translation_key="mobility_memory_usage",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_number("memory_usage_percent"),
+    ),
+    UnifiMobilitySensorEntityDescription(
+        key="uptime",
+        translation_key="mobility_uptime",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        suggested_unit_of_measurement=UnitOfTime.DAYS,
+        suggested_display_precision=1,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        # Changes on every poll, so it is opt-in like the console uptime.
+        entity_registry_enabled_default=False,
+        value_fn=_uptime,
+    ),
+    UnifiMobilitySensorEntityDescription(
+        key="firmware",
+        translation_key="mobility_firmware",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_text("firmware_version"),
+    ),
+    UnifiMobilitySensorEntityDescription(
+        key="cellular_data_limit",
+        translation_key="mobility_cellular_data_limit",
+        device_class=SensorDeviceClass.DATA_SIZE,
+        native_unit_of_measurement=UnitOfInformation.BYTES,
+        suggested_unit_of_measurement=UnitOfInformation.GIGABYTES,
+        suggested_display_precision=2,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_data_limit,
+    ),
+    UnifiMobilitySensorEntityDescription(
+        key="subscription_plan",
+        translation_key="mobility_subscription_plan",
+        device_class=SensorDeviceClass.ENUM,
+        options=_SUBSCRIPTION_PLANS,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_enum("subscription_plan", _SUBSCRIPTION_PLANS),
+    ),
+    UnifiMobilitySensorEntityDescription(
+        key="wan_ip",
+        translation_key="mobility_wan_ip",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=_text("wan_ip"),
+    ),
+    UnifiMobilitySensorEntityDescription(
+        key="isp",
+        translation_key="mobility_isp",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=_text("isp"),
+    ),
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class UnifiMobilityWorkspaceSensorEntityDescription(SensorEntityDescription):
+    """Describes a UniFi Mobility workspace sensor."""
+
+    value_fn: Callable[[dict[str, Any], dict[str, dict[str, Any]]], StateType]
+
+
+WORKSPACE_SENSORS: tuple[UnifiMobilityWorkspaceSensorEntityDescription, ...] = (
+    UnifiMobilityWorkspaceSensorEntityDescription(
+        key="devices",
+        translation_key="mobility_workspace_devices",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda workspace, _devices: len(workspace["device_ids"]),
+    ),
+    UnifiMobilityWorkspaceSensorEntityDescription(
+        key="online_devices",
+        translation_key="mobility_workspace_online_devices",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda workspace, devices: sum(
+            1
+            for device_id in workspace["device_ids"]
+            if devices.get(device_id, {}).get("state") == MOBILITY_ROUTER_CONNECTED
+        ),
+    ),
+)
+
+
+class UnifiMobilitySensor(UnifiMobilityRouterEntity, SensorEntity):
+    """A value reported for one Mobility router."""
+
+    entity_description: UnifiMobilitySensorEntityDescription
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the sensor value."""
+        router = self.router
+        return self.entity_description.value_fn(router) if router else None
+
+
+class UnifiMobilityWorkspaceSensor(
+    CoordinatorEntity[UnifiInsightsMobilityCoordinator], SensorEntity
+):
+    """A router count for one Mobility workspace."""
+
+    _attr_has_entity_name = True
+    entity_description: UnifiMobilityWorkspaceSensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsMobilityCoordinator,
+        description: UnifiMobilityWorkspaceSensorEntityDescription,
+        workspace_id: str,
+    ) -> None:
+        """Initialize the workspace sensor."""
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._workspace_id = workspace_id
+        self._attr_unique_id = (
+            f"{MOBILITY_WORKSPACE_PREFIX}{workspace_id}_{description.key}"
+        )
+        workspace = self.workspace or {}
+        self._attr_device_info = mobility_workspace_device_info(
+            workspace_id, workspace.get("name")
+        )
+
+    @property
+    def workspace(self) -> dict[str, Any] | None:
+        """Return the workspace while it is active."""
+        workspace = self.coordinator.data["workspaces"].get(self._workspace_id)
+        if isinstance(workspace, dict) and workspace.get("status") == "ACTIVE":
+            return workspace
+        return None
+
+    @property
+    def available(self) -> bool:
+        """Return True if the last poll succeeded and the workspace is active."""
+        return super().available and self.workspace is not None
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the router count."""
+        workspace = self.workspace
+        if workspace is None:
+            return None
+        return self.entity_description.value_fn(
+            workspace, self.coordinator.data["devices"]
+        )
+
+
+@callback
+def async_setup_mobility_sensors(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    coordinator: UnifiInsightsMobilityCoordinator,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up Mobility workspace and router sensors."""
+    known_workspaces: set[str] = set()
+
+    @callback
+    def async_discover_workspaces() -> None:
+        entities: list[Entity] = []
+        for workspace_id, workspace in coordinator.data["workspaces"].items():
+            if workspace_id in known_workspaces or workspace.get("status") != "ACTIVE":
+                continue
+            known_workspaces.add(workspace_id)
+            entities.extend(
+                UnifiMobilityWorkspaceSensor(coordinator, description, workspace_id)
+                for description in WORKSPACE_SENSORS
+            )
+        if entities:
+            async_add_entities(entities)
+
+    async_discover_workspaces()
+    entry.async_on_unload(coordinator.async_add_listener(async_discover_workspaces))
+    async_add_mobility_router_entities(
+        hass,
+        entry,
+        coordinator,
+        async_add_entities,
+        lambda device_id, workspace_device_id: [
+            UnifiMobilitySensor(
+                coordinator, description, device_id, workspace_device_id
+            )
+            for description in ROUTER_SENSORS
+        ],
+    )

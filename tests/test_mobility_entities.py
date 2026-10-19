@@ -15,6 +15,9 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from unifi_official_api import UniFiConnectionError
 
+from custom_components.unifi_insights.binary_sensor import (
+    async_setup_mobility_binary_sensors,
+)
 from custom_components.unifi_insights.const import (
     CONF_TRACK_WIFI_CLIENTS,
     CONF_TRACK_WIRED_CLIENTS,
@@ -23,12 +26,11 @@ from custom_components.unifi_insights.const import (
 from custom_components.unifi_insights.coordinators.mobility import (
     UnifiInsightsMobilityCoordinator,
 )
-from custom_components.unifi_insights.mobility_entity import (
+from custom_components.unifi_insights.sensor import (
     ROUTER_SENSORS,
     WORKSPACE_SENSORS,
     UnifiMobilitySensor,
     UnifiMobilityWorkspaceSensor,
-    async_setup_mobility_binary_sensors,
 )
 from custom_components.unifi_insights.service_targets import (
     _resolve_network_client_id,

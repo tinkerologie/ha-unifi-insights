@@ -164,6 +164,7 @@ MOBILITY_ROUTER_STATES: Final = (
     "NULL",
     "DELETING",
 )
+MOBILITY_ROUTER_CONNECTED: Final = "CONNECTED"
 # Site Manager response sections shared by the coordinator and diagnostics.
 SITE_MANAGER_COLLECTIONS: Final = (
     "hosts",

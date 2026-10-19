@@ -7,16 +7,15 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
+from homeassistant.const import (
+    EntityCategory,
+)
 from homeassistant.core import callback
-from homeassistant.helpers.entity import EntityCategory
 
 from .const import (
     ATTR_CAMERA_ID,
@@ -37,6 +36,7 @@ from .const import (
     DEVICE_TYPE_CAMERA,
     DEVICE_TYPE_NVR,
     DEVICE_TYPE_SENSOR,
+    MOBILITY_ROUTER_CONNECTED,
     SMART_DETECT_ANIMAL,
     SMART_DETECT_PACKAGE,
     SMART_DETECT_PERSON,
@@ -52,19 +52,25 @@ from .data_transforms import (
 )
 from .entity import (
     UnifiInsightsEntity,
+    UnifiMobilityRouterEntity,
     UnifiProtectEntity,
+    async_add_mobility_router_entities,
     get_field,
 )
-from .mobility_entity import async_setup_mobility_binary_sensors
 from .protect_security_entity import discover_protect_security_binary_sensors
 from .storage_entity import discover_storage_binary_sensors
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
     from . import UnifiInsightsConfigEntry
     from .coordinators import UnifiInsightsFacadeCoordinator
+    from .coordinators.mobility import UnifiInsightsMobilityCoordinator
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1058,3 +1064,42 @@ class UnifiInsightsSiteToSiteVpnBinarySensor(UnifiInsightsEntity, BinarySensorEn
             if isinstance(connection, dict)
             else None,
         }
+
+
+# --- Mobility ----------------------------------------------------------------
+
+CONNECTIVITY_DESCRIPTION = BinarySensorEntityDescription(
+    key="connectivity",
+    device_class=BinarySensorDeviceClass.CONNECTIVITY,
+)
+
+
+class UnifiMobilityConnectivitySensor(UnifiMobilityRouterEntity, BinarySensorEntity):
+    """Whether a Mobility router is connected to the cloud."""
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return True if the router is connected."""
+        router = self.router
+        return router.get("state") == MOBILITY_ROUTER_CONNECTED if router else None
+
+
+@callback
+def async_setup_mobility_binary_sensors(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    coordinator: UnifiInsightsMobilityCoordinator,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up Mobility router connectivity sensors."""
+    async_add_mobility_router_entities(
+        hass,
+        entry,
+        coordinator,
+        async_add_entities,
+        lambda device_id, workspace_device_id: [
+            UnifiMobilityConnectivitySensor(
+                coordinator, CONNECTIVITY_DESCRIPTION, device_id, workspace_device_id
+            )
+        ],
+    )

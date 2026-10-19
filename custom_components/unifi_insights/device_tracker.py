@@ -6,12 +6,16 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.components.device_tracker import ScannerEntity
-from homeassistant.components.device_tracker.const import SourceType
+from homeassistant.components.device_tracker import (
+    ScannerEntity,
+    SourceType,
+    TrackerEntity,
+)
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .console_identity import async_get_device_entry
@@ -25,15 +29,20 @@ from .const import (
     MOBILITY_DEVICE_PREFIX,
 )
 from .coordinators import UnifiInsightsFacadeCoordinator
+from .entity import (
+    UnifiMobilityRouterEntity,
+    async_add_mobility_router_entities,
+    get_field,
+)
 from .entity import get_client_type as _get_client_type
-from .entity import get_field
-from .mobility_entity import async_setup_mobility_trackers
 
 if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
     from . import UnifiInsightsConfigEntry
+    from .coordinators.mobility import UnifiInsightsMobilityCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -502,3 +511,57 @@ class UnifiClientTracker(
             "authorized": get_field(client_data, "authorized", default=True),
             "blocked": get_field(client_data, "blocked", default=False),
         }
+
+
+# --- Mobility ----------------------------------------------------------------
+
+LOCATION_DESCRIPTION = EntityDescription(
+    key="location",
+    translation_key="mobility_location",
+)
+
+
+class UnifiMobilityLocationTracker(UnifiMobilityRouterEntity, TrackerEntity):
+    """GPS position of a Mobility router."""
+
+    _attr_source_type = SourceType.GPS
+
+    def _coordinate(self, key: str) -> float | None:
+        """Return a coordinate of the last GPS fix, if there is one."""
+        router = self.router or {}
+        location = router.get("location")
+        value = location.get(key) if isinstance(location, dict) else None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value)
+
+    @property
+    def latitude(self) -> float | None:
+        """Return the router's latitude."""
+        return self._coordinate("latitude")
+
+    @property
+    def longitude(self) -> float | None:
+        """Return the router's longitude."""
+        return self._coordinate("longitude")
+
+
+@callback
+def async_setup_mobility_trackers(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    coordinator: UnifiInsightsMobilityCoordinator,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up Mobility router GPS trackers."""
+    async_add_mobility_router_entities(
+        hass,
+        entry,
+        coordinator,
+        async_add_entities,
+        lambda device_id, workspace_device_id: [
+            UnifiMobilityLocationTracker(
+                coordinator, LOCATION_DESCRIPTION, device_id, workspace_device_id
+            )
+        ],
+    )

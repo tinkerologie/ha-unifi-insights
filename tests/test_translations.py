@@ -23,11 +23,7 @@ from custom_components.unifi_insights.binary_sensor import BINARY_SENSOR_TYPES
 from custom_components.unifi_insights.coordinators.rule_audit import (
     RULE_CHANGE_TYPES,
 )
-from custom_components.unifi_insights.mobility_entity import (
-    LOCATION_DESCRIPTION,
-    ROUTER_SENSORS,
-    WORKSPACE_SENSORS,
-)
+from custom_components.unifi_insights.device_tracker import LOCATION_DESCRIPTION
 from custom_components.unifi_insights.network_rule_switch import (
     NETWORK_RULE_SWITCH_TYPES,
 )
@@ -35,6 +31,7 @@ from custom_components.unifi_insights.protect_security_entity import (
     SECURITY_BINARY_SENSOR_TYPES,
     SECURITY_SENSOR_TYPES,
 )
+from custom_components.unifi_insights.sensor import ROUTER_SENSORS, WORKSPACE_SENSORS
 from custom_components.unifi_insights.site_internet_activity_sensor import (
     SITE_INTERNET_ACTIVITY_SENSOR_TYPES,
 )

@@ -24,10 +24,13 @@ from .const import (
     DEVICE_TYPE_SENSOR,
     DOMAIN,
     MANUFACTURER,
+    MOBILITY_DEVICE_PREFIX,
+    MOBILITY_WORKSPACE_PREFIX,
 )
 from .coordinators import UnifiInsightsFacadeCoordinator
 from .coordinators.access import UnifiInsightsAccessCoordinator
 from .coordinators.base import CommandFailure, async_execute_command
+from .coordinators.mobility import UnifiInsightsMobilityCoordinator
 
 # Re-exported (see __all__): the platforms import the field helpers from here.
 from .data_transforms import (
@@ -45,6 +48,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable
 
     from homeassistant.config_entries import ConfigEntry
+    from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity import Entity, EntityDescription
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -903,3 +907,102 @@ class UnifiInnerSpaceEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         new_device_info = self._build_device_info()
         self._reconcile_device_association(new_device_info)
         self.async_write_ha_state()
+
+
+# --- Mobility ----------------------------------------------------------------
+
+_DEFAULT_ROUTER_NAME = "UniFi Mobile Router"
+
+
+_WORKSPACE_MODEL = "UniFi Mobility workspace"
+
+
+def mobility_workspace_device_info(workspace_id: str, name: str | None) -> DeviceInfo:
+    """Return the service device that groups a workspace's routers."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, f"{MOBILITY_WORKSPACE_PREFIX}{workspace_id}")},
+        name=name or _WORKSPACE_MODEL,
+        manufacturer=MANUFACTURER,
+        model=_WORKSPACE_MODEL,
+        entry_type=DeviceEntryType.SERVICE,
+    )
+
+
+class UnifiMobilityRouterEntity(CoordinatorEntity[UnifiInsightsMobilityCoordinator]):
+    """Base class for entities of one Mobility router."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsMobilityCoordinator,
+        description: EntityDescription,
+        device_id: str,
+        workspace_device_id: str,
+    ) -> None:
+        """Initialize the router entity under its workspace's device."""
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._device_id = device_id
+        # Keyed by the router alone, so moving it to another workspace keeps
+        # its entities and history.
+        self._attr_unique_id = f"{MOBILITY_DEVICE_PREFIX}{device_id}_{description.key}"
+        device = self.router or {}
+        name = device.get("name") or device.get("model") or _DEFAULT_ROUTER_NAME
+        # No MAC connection: a Mobility router is its own device, and must not
+        # merge into a Network device that happens to share the address.
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{MOBILITY_DEVICE_PREFIX}{device_id}")},
+            name=str(name),
+            manufacturer=MANUFACTURER,
+            model=str(device.get("model") or _DEFAULT_ROUTER_NAME),
+            sw_version=device.get("firmware_version") or None,
+            via_device_id=workspace_device_id,
+        )
+
+    @property
+    def router(self) -> dict[str, Any] | None:
+        """Return the router's latest record, if Mobility still reports it."""
+        device = self.coordinator.data["devices"].get(self._device_id)
+        return device if isinstance(device, dict) else None
+
+    @property
+    def available(self) -> bool:
+        """Return True if the last poll succeeded and still lists the router."""
+        return super().available and self.router is not None
+
+
+@callback
+def async_add_mobility_router_entities(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    coordinator: UnifiInsightsMobilityCoordinator,
+    async_add_entities: AddEntitiesCallback,
+    build: Callable[[str, str], list[Entity]],
+) -> None:
+    """Add a platform's router entities now and for routers found later."""
+    known: set[str] = set()
+    device_registry = dr.async_get(hass)
+
+    @callback
+    def async_discover() -> None:
+        entities: list[Entity] = []
+        for device_id, device in coordinator.data["devices"].items():
+            if device_id in known:
+                continue
+            known.add(device_id)
+            # A router device links to its workspace's device, which must be
+            # registered first. Platforms set up in any order, so whichever
+            # adds a router first registers the workspace.
+            workspace_id = device.get("workspace_id")
+            workspace = coordinator.data["workspaces"].get(workspace_id) or {}
+            workspace_device = device_registry.async_get_or_create(
+                config_entry_id=entry.entry_id,
+                **mobility_workspace_device_info(workspace_id, workspace.get("name")),
+            )
+            entities.extend(build(device_id, workspace_device.id))
+        if entities:
+            async_add_entities(entities)
+
+    async_discover()
+    entry.async_on_unload(coordinator.async_add_listener(async_discover))
