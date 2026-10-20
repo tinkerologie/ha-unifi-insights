@@ -32,6 +32,7 @@ An accepted ADR is never edited to change its meaning. A new ADR supersedes it i
 | [009](./adr/009-amend-flat-module-layout.md)                         | Amendments to the flat module layout for the deepening issues | Accepted              | 2026-10-19 |
 | [010](./adr/010-one-owner-per-write-command.md)                      | One owner per write command                                   | Accepted              | 2026-10-19 |
 | [011](./adr/011-platform-modules-and-flat-layout-homes.md)           | Platform module size and homes for the remaining helpers      | Accepted              | 2026-10-20 |
+| [012](./adr/012-pure-protect-state-reconciler.md)                    | A pure reconciler for Protect state                           | Accepted              | 2026-10-20 |
 
 ### Multi-coordinator architecture behind a facade
 
