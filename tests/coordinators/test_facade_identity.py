@@ -60,11 +60,13 @@ class _Gate:
     """An API answer that waits until the test releases it."""
 
     def __init__(self, answer: Any) -> None:
+        """Hold the answer until the test releases it."""
         self.answer = answer
         self.started = asyncio.Event()
         self.release = asyncio.Event()
 
     async def __call__(self, *_args: Any, **_kwargs: Any) -> Any:
+        """Signal that the call is out, then wait for the release."""
         self.started.set()
         await self.release.wait()
         return self.answer
@@ -117,23 +119,28 @@ def test_snapshot_sections_are_the_owners_objects(
 
 
 async def _refresh_config(owners: SeededOwners) -> None:
+    """Run a full config refresh."""
     await owners.config.async_refresh()
 
 
 async def _refresh_vouchers(owners: SeededOwners) -> None:
+    """Refresh one site's voucher inventory."""
     await owners.config.async_refresh_vouchers(SITE_ID)
 
 
 async def _refresh_device(owners: SeededOwners) -> None:
+    """Run a full device refresh."""
     await owners.device.async_refresh()
 
 
 async def _write_outlet(owners: SeededOwners) -> None:
+    """Turn an outlet off through the device owner's overlay."""
     owners.network_client.devices.set_outlet_state.return_value = True
     await owners.device.async_set_outlet_state(SITE_ID, PDU_ID, 1, state=False)
 
 
 async def _refresh_protect(owners: SeededOwners) -> None:
+    """Run a full Protect refresh."""
     await owners.protect.async_refresh()
 
 
@@ -142,8 +149,9 @@ async def _refresh_protect(owners: SeededOwners) -> None:
     [
         pytest.param(
             _refresh_config,
-            CONFIG_SECTIONS,
-            (*DEVICE_SECTIONS, "protect"),
+            tuple(key for key in CONFIG_SECTIONS if key != "network_info"),
+            # The full refresh keeps the network info it already has.
+            ("network_info", *DEVICE_SECTIONS, "protect"),
             id="config_refresh",
         ),
         pytest.param(
@@ -182,7 +190,7 @@ async def test_owner_update_keeps_untouched_sections(
     touched: tuple[str, ...],
     untouched: tuple[str, ...],
 ) -> None:
-    """An owner update rebuilds the snapshot; sections it skips keep identity."""
+    """An owner update replaces the sections it writes; the rest keep identity."""
     facade = seeded_owners.facade
     before = facade.data
 
@@ -192,8 +200,8 @@ async def test_owner_update_keeps_untouched_sections(
     assert after is not before
     for key in untouched:
         assert after[key] is before[key], key
-    # At least one written section is new, so the rebuild was not a no-op.
-    assert any(after[key] is not before[key] for key in touched)
+    for key in touched:
+        assert after[key] is not before[key], key
 
 
 async def test_mid_refresh_snapshot_changes_later_quirk(
@@ -219,6 +227,7 @@ async def test_mid_refresh_snapshot_changes_later_quirk(
     seen_then: dict[str, Any] = {}
 
     def rebuild() -> None:
+        """Rebuild the facade snapshot while the refresh is in flight."""
         seeded_owners.config.async_update_listeners()
         mid.update(facade.data)
         seen_then.update(mid["devices"])
@@ -257,6 +266,7 @@ async def test_mid_config_refresh_snapshot_sees_new_sites_quirk(
     mid: dict[str, Any] = {}
 
     def rebuild() -> None:
+        """Rebuild the facade snapshot while the refresh is in flight."""
         seeded_owners.device.async_update_listeners()
         mid.update(facade.data)
 
