@@ -88,6 +88,8 @@ All coordinators inherit `UnifiInsightsBaseCoordinator` (`coordinators/base.py`)
 
 The facade coordinator has no update interval. It subscribes to the specialized coordinators, aggregates their snapshots into one `data` mapping, and fans out a single listener notification. Entities and services read from the facade so they do not need to know which coordinator owns a field.
 
+The facade's `data` is a `FacadeData` snapshot ([ADR-013](./adr/013-typed-read-only-facade-snapshot.md)): a `TypedDict` with `ReadOnly` keys and `Mapping` sections, so a write into it is a strict-mypy error, published as a `ReadOnlyDict` root. The pure `build_facade_data` builds each snapshot from the owners' data without copying a section, so the WebSocket streams can compare sections by identity. Each snapshot also captures the owners' availability (`availability`: device, config, Protect, InnerSpace and Network, and per site each tracked config section), and the InnerSpace view is a memo rebuilt only when the objects it reads change.
+
 ### Protect state reconciliation
 
 The Protect coordinator has two sources that race each other: the "devices" and "events" WebSocket streams and the 30 s REST poll. `coordinators/protect_events.py` holds every decision about how one of them changes the cache, as one pure function (see [ADR-012](./adr/012-pure-protect-state-reconciler.md)). The one exception is liveviews: they have no frames, latches or eviction to reconcile, so `protect.py` writes each liveview answer itself, copy-on-write.

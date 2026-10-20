@@ -271,18 +271,8 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
     the original single-coordinator structure. This allows existing entity
     classes to work without modifications.
 
-    Data structure (matches original coordinator):
-    - sites: from config_coordinator
-    - devices: from device_coordinator
-    - clients: from device_coordinator
-    - stats: from device_coordinator
-    - wifi: from config_coordinator
-    - vouchers: from config_coordinator
-    - latest_vouchers: from config_coordinator (generated in Home Assistant)
-    - protect: from protect_coordinator (cameras, lights, sensors, etc.)
-    - innerspace: from innerspace_coordinator (floor_plans, access_points,
-      switches, inventory)
-    - last_update: combined from all coordinators
+    ``data`` is a read-only ``FacadeData`` snapshot that ``build_facade_data``
+    rebuilds on every owner update (ADR-013).
     """
 
     config_entry: ConfigEntry
