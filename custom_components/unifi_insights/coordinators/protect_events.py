@@ -1582,7 +1582,13 @@ def _evict_missing_devices(run: _Run) -> None:
 
 
 def _forget_device(run: _Run, family: Family, device_id: str) -> None:
-    """Drop the per-device tracking of an evicted sensor or alarm hub."""
+    """
+    Drop the per-device tracking of an evicted sensor or alarm hub.
+
+    Accepted gap: a sensor that only ever arrives by frame (the library keeps
+    skipping its REST record) is never evicted, so its tracking stays. That is
+    bounded by the console's own device count.
+    """
     if family == "sensors" and device_id in run.state.sensors:
         run.state = replace(run.state, sensors=_without(run.state.sensors, device_id))
     elif family == "alarm_hubs" and device_id in run.state.tamper:
