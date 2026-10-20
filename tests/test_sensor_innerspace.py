@@ -171,11 +171,6 @@ async def test_innerspace_placement_sensor_discovery_and_device_correlation(
 ) -> None:
     """InnerSpace placement sensors discover records and attach via MAC."""
     mock_config_entry.runtime_data = MagicMock(coordinator=mock_coordinator)
-    mock_coordinator.get_device = MagicMock(
-        side_effect=lambda site_id, dev_id: (
-            mock_coordinator.data["devices"].get(site_id, {}).get(dev_id)
-        )
-    )
     mock_coordinator.data["devices"] = {
         "site-1": {
             "net-ap-1": {

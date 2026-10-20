@@ -18,6 +18,7 @@ from custom_components.unifi_insights.const import (
 from custom_components.unifi_insights.entity import (
     UnifiInsightsEntity,
     UnifiProtectEntity,
+    build_site_device_info,
     camera_supports_ptz,
     camera_supports_speaker,
     device_has_feature,
@@ -25,6 +26,13 @@ from custom_components.unifi_insights.entity import (
     get_field,
     is_device_online,
     is_gateway_device,
+)
+from tests.fixtures.facade_data import (
+    facade_data,
+    with_camera,
+    with_network_device,
+    with_sections,
+    without_sections,
 )
 
 if TYPE_CHECKING:
@@ -1481,3 +1489,134 @@ def test_network_serviceable_availability(
         coordinator, EntityDescription(key="test"), "site", "pdu"
     )
     assert entity.available is expected
+
+
+# --- Snapshot lookups --------------------------------------------------------
+
+_SWITCH = {"id": "sw1", "name": "Switch", "model": "USW-24", "state": "ONLINE"}
+_CAMERA = {"id": "cam1", "name": "Door", "type": "UVC-G4", "state": "CONNECTED"}
+
+
+def _snapshot_coordinator(data: Any) -> MagicMock:
+    """Return a coordinator double that publishes ``data`` as its snapshot."""
+    coordinator = MagicMock()
+    coordinator.data = data
+    coordinator.device_available = True
+    coordinator.protect_available = True
+    coordinator.network_client.base_url = "https://192.168.1.1"
+    coordinator.protect_client = None
+    return coordinator
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param(
+            lambda data: without_sections(data, "devices", "stats"), id="no-section"
+        ),
+        pytest.param(
+            lambda data: with_sections(data, devices={}, stats={}), id="no-site"
+        ),
+        pytest.param(
+            lambda data: with_sections(
+                data, devices={"site1": {}}, stats={"site1": {}}
+            ),
+            id="no-record",
+        ),
+        pytest.param(
+            lambda data: with_sections(data, devices=[], stats="invalid"),
+            id="malformed-section",
+        ),
+    ],
+)
+def test_network_entity_reads_missing_records_as_none(change: Any) -> None:
+    """A missing or malformed device or stats record reads as None."""
+    data = with_network_device(
+        facade_data(), "site1", "sw1", _SWITCH, stats={"cpuUtilizationPct": 5}
+    )
+    coordinator = _snapshot_coordinator(data)
+    entity = UnifiInsightsEntity(
+        coordinator, EntityDescription(key="t"), "site1", "sw1"
+    )
+    assert entity.device_data == _SWITCH
+    assert entity.device_stats == {"cpuUtilizationPct": 5}
+    assert entity.available is True
+
+    coordinator.data = change(data)
+
+    assert entity.device_data is None
+    assert entity.device_stats is None
+    assert entity.available is False
+
+
+def test_network_entity_needs_its_device_record() -> None:
+    """A Network entity is only built for a device the snapshot holds."""
+    coordinator = _snapshot_coordinator(facade_data())
+
+    with pytest.raises(KeyError, match="sw1"):
+        UnifiInsightsEntity(coordinator, EntityDescription(key="t"), "site1", "sw1")
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(without_sections(facade_data(), "protect"), id="no-section"),
+        pytest.param(facade_data(protect={}), id="no-collection"),
+        pytest.param(facade_data(), id="no-record"),
+        pytest.param(facade_data(protect={"cameras": []}), id="malformed-section"),
+    ],
+)
+def test_protect_entity_reads_missing_records_as_none(data: Any) -> None:
+    """A missing or malformed Protect record reads as None and unavailable."""
+    coordinator = _snapshot_coordinator(with_camera(facade_data(), "cam1", _CAMERA))
+    entity = UnifiProtectEntity(coordinator, DEVICE_TYPE_CAMERA, "cam1")
+    assert entity.device_data == _CAMERA
+    assert entity.available is True
+
+    coordinator.data = data
+
+    assert entity.device_data is None
+    assert entity.available is False
+
+
+def test_protect_entity_without_its_record_uses_defaults() -> None:
+    """A Protect entity built without its record gets the default device."""
+    coordinator = _snapshot_coordinator(facade_data())
+
+    entity = UnifiProtectEntity(coordinator, DEVICE_TYPE_CAMERA, "cam1")
+
+    assert entity.device_info is not None
+    assert entity.device_info["identifiers"] == {(DOMAIN, "protect_camera_cam1")}
+    assert entity.device_info["name"] == "UniFi Camera cam1"
+    assert entity.device_info["model"] == "UniFi Camera"
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        pytest.param(
+            without_sections(facade_data(), "sites"), "site1", id="no-section"
+        ),
+        pytest.param(facade_data(), "site1", id="no-site"),
+        pytest.param(facade_data(sites=[]), "site1", id="malformed-section"),
+        pytest.param(
+            facade_data(sites={"site1": "invalid"}), "site1", id="malformed-site"
+        ),
+        pytest.param(
+            facade_data(sites={"site1": {"name": "Home", "meta": "invalid"}}),
+            "Home",
+            id="malformed-meta",
+        ),
+        pytest.param(
+            facade_data(sites={"site1": {"name": "Home", "meta": {"name": "Main"}}}),
+            "Main",
+            id="meta-name",
+        ),
+    ],
+)
+def test_site_device_info_reads_the_site_record(data: Any, expected: str) -> None:
+    """The site device is named from its site record, else from the site ID."""
+    info = build_site_device_info(data, "site1")
+
+    assert info["identifiers"] == {(DOMAIN, "site_site1")}
+    assert info["name"] == f"UniFi Site ({expected})"
