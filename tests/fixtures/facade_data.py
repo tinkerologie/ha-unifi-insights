@@ -4,29 +4,249 @@ Facade snapshot builders for tests (ADR-013).
 
 The facade publishes a read-only root, so a test never writes into
 ``facade.data``: it builds a new snapshot and assigns it, as an owner update
-would.
+would. ``facade_data`` builds a complete snapshot through the facade's own
+``build_facade_data``; the ``with_*`` builders return a new snapshot with one
+record added or replaced, copy-on-write. Every section and record they take is
+deep-frozen (``frozen``), so code under test that writes into the snapshot
+fails. ``with_sections`` and ``without_sections`` replace whole top-level
+sections as given, unfrozen.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+import copy
+from collections.abc import Mapping
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from homeassistant.util.read_only_dict import ReadOnlyDict
 
-if TYPE_CHECKING:
-    from collections.abc import Mapping
+from custom_components.unifi_insights.coordinators.facade import (
+    FacadeData,
+    build_facade_data,
+    capture_availability,
+)
+from custom_components.unifi_insights.data_transforms import (
+    NETWORK_FACTS_KEY,
+    build_innerspace_view,
+    build_site_network_facts,
+)
 
-    from custom_components.unifi_insights.coordinators.facade import FacadeData
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+# The time every built snapshot reports as its last update.
+NOW = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
+
+# Every top-level key a facade snapshot can hold.
+FACADE_DATA_KEYS: frozenset[str] = (
+    FacadeData.__required_keys__ | FacadeData.__optional_keys__
+)
+
+
+class FrozenList(list[Any]):
+    """A list that raises on every write, and still is a ``list``."""
+
+    def _readonly(self, *_args: Any, **_kwargs: Any) -> NoReturn:
+        """Raise like ``ReadOnlyDict`` does."""
+        msg = "Cannot modify FrozenList"
+        raise RuntimeError(msg)
+
+    __setitem__ = _readonly
+    __delitem__ = _readonly
+    __iadd__ = _readonly
+    __imul__ = _readonly
+    append = _readonly
+    extend = _readonly
+    insert = _readonly
+    pop = _readonly
+    remove = _readonly
+    clear = _readonly
+    sort = _readonly
+    reverse = _readonly
+
+    def __copy__(self) -> FrozenList:
+        """Return a shallow copy."""
+        return FrozenList(self)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> FrozenList:
+        """Return a deep copy."""
+        return FrozenList(copy.deepcopy(item, memo) for item in self)
+
+
+def frozen(value: Any) -> Any:
+    """
+    Return a deep, test-only frozen copy of ``value``.
+
+    Mappings become ``ReadOnlyDict``, lists ``FrozenList`` and sets
+    ``frozenset``; tuples are frozen item by item. Both stay a ``dict`` and a
+    ``list``, so the result still serializes to JSON and passes
+    ``async_redact_data``. Anything else is returned as is.
+    """
+    if isinstance(value, Mapping):
+        return ReadOnlyDict({key: frozen(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return FrozenList(frozen(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(value)
+    if isinstance(value, tuple):
+        return tuple(frozen(item) for item in value)
+    return value
+
+
+def _snapshot(data: Mapping[str, Any]) -> FacadeData:
+    """Return ``data`` as a read-only snapshot root."""
+    return cast("FacadeData", ReadOnlyDict(data))
+
+
+def facade_data(
+    *,
+    site_ids: Iterable[str] = (),
+    failed_sections: Iterable[tuple[str, str]] = (),
+    **sections: Any,
+) -> FacadeData:
+    """
+    Build a complete, frozen snapshot with empty sections by default.
+
+    ``sections`` replace top-level sections by key (``network_facts`` too;
+    by default it is None, as before the device coordinator publishes it).
+    The default availability is all available; ``site_ids`` and
+    ``failed_sections`` capture per-site availability as the facade would.
+    """
+    unknown = set(sections) - FACADE_DATA_KEYS
+    if unknown:
+        msg = f"Not facade snapshot keys: {sorted(unknown)}"
+        raise TypeError(msg)
+    base = build_facade_data(
+        {},
+        {},
+        None,
+        build_innerspace_view(None, None, None),
+        availability=capture_availability(
+            device=True,
+            config=True,
+            protect=True,
+            innerspace=True,
+            network=True,
+            failed_sections=frozenset(failed_sections),
+            site_ids=site_ids,
+        ),
+        site_manager=None,
+        site_manager_host_id=None,
+        now=NOW,
+    )
+    return _snapshot(
+        {
+            **{key: frozen(value) for key, value in base.items()},
+            **{key: frozen(value) for key, value in sections.items()},
+        }
+    )
 
 
 def with_sections(data: Mapping[str, Any], **sections: Any) -> FacadeData:
     """Return a copy of ``data`` with the given top-level sections replaced."""
-    return cast("FacadeData", ReadOnlyDict({**data, **sections}))
+    return _snapshot({**data, **sections})
 
 
 def without_sections(data: Mapping[str, Any], *keys: str) -> FacadeData:
     """Return a copy of ``data`` without the given top-level sections."""
-    return cast(
-        "FacadeData",
-        ReadOnlyDict({key: value for key, value in data.items() if key not in keys}),
+    return _snapshot({key: value for key, value in data.items() if key not in keys})
+
+
+def _with_record(
+    data: Mapping[str, Any], section: str, group: str, key: str, record: Any
+) -> dict[str, Any]:
+    """Return ``data[section]`` with ``record`` at ``[group][key]``, copy-on-write."""
+    by_group = data.get(section)
+    by_group = by_group if isinstance(by_group, Mapping) else {}
+    records = by_group.get(group)
+    records = records if isinstance(records, Mapping) else {}
+    return ReadOnlyDict(
+        {**by_group, group: ReadOnlyDict({**records, key: frozen(record)})}
+    )
+
+
+def with_network_device(
+    data: Mapping[str, Any],
+    site_id: str,
+    device_id: str,
+    record: Mapping[str, Any],
+    *,
+    stats: Mapping[str, Any] | None = None,
+) -> FacadeData:
+    """
+    Return ``data`` with a Network device (and its stats) added or replaced.
+
+    When the snapshot carries published network facts, the site's facts are
+    republished from the new records, as the device coordinator would.
+    """
+    sections: dict[str, Any] = {
+        "devices": _with_record(data, "devices", site_id, device_id, record)
+    }
+    if stats is not None:
+        sections["stats"] = _with_record(data, "stats", site_id, device_id, stats)
+    facts = data.get(NETWORK_FACTS_KEY)
+    if isinstance(facts, Mapping):
+        site_stats = (sections.get("stats") or data.get("stats") or {}).get(site_id)
+        sections[NETWORK_FACTS_KEY] = ReadOnlyDict(
+            {
+                **facts,
+                site_id: build_site_network_facts(
+                    sections["devices"][site_id], site_stats
+                ),
+            }
+        )
+    return with_sections(data, **sections)
+
+
+def with_client(
+    data: Mapping[str, Any], site_id: str, client_id: str, record: Mapping[str, Any]
+) -> FacadeData:
+    """Return ``data`` with a Network client added or replaced."""
+    return with_sections(
+        data, clients=_with_record(data, "clients", site_id, client_id, record)
+    )
+
+
+def with_rule(
+    data: Mapping[str, Any],
+    kind: str,
+    site_id: str,
+    rule_id: str,
+    record: Mapping[str, Any],
+) -> FacadeData:
+    """Return ``data`` with a rule of section ``kind`` added or replaced."""
+    return with_sections(
+        data, **{kind: _with_record(data, kind, site_id, rule_id, record)}
+    )
+
+
+def with_protect_device(
+    data: Mapping[str, Any],
+    collection: str,
+    device_id: str,
+    record: Mapping[str, Any],
+) -> FacadeData:
+    """Return ``data`` with a Protect device of ``collection`` added or replaced."""
+    return with_sections(
+        data, protect=_with_record(data, "protect", collection, device_id, record)
+    )
+
+
+def with_camera(
+    data: Mapping[str, Any], camera_id: str, record: Mapping[str, Any]
+) -> FacadeData:
+    """Return ``data`` with a Protect camera added or replaced."""
+    return with_protect_device(data, "cameras", camera_id, record)
+
+
+def with_latest_voucher(
+    data: Mapping[str, Any], site_id: str, record: Mapping[str, Any] | None
+) -> FacadeData:
+    """Return ``data`` with a site's latest generated voucher set or cleared."""
+    latest = data.get("latest_vouchers")
+    latest = latest if isinstance(latest, Mapping) else {}
+    return with_sections(
+        data,
+        latest_vouchers=ReadOnlyDict({**latest, site_id: frozen(record)}),
     )

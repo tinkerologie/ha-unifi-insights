@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util.read_only_dict import ReadOnlyDict
@@ -37,12 +40,31 @@ from custom_components.unifi_insights.coordinators.protect import (
 from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
     build_site_network_facts,
+    device_facts,
+    latest_voucher,
+    network_client,
+    network_device,
+    network_device_stats,
+    protect_device,
+    rule_record,
 )
 from tests.fixtures.command_owners import SITE_ID
 from tests.fixtures.coordinator_clients import (
     RULE_SECTION_PARAMS,
     _create_mock_network_client,
     _create_mock_protect_client,
+)
+from tests.fixtures.facade_data import (
+    FACADE_DATA_KEYS,
+    FrozenList,
+    facade_data,
+    frozen,
+    with_camera,
+    with_client,
+    with_latest_voucher,
+    with_network_device,
+    with_protect_device,
+    with_rule,
 )
 from tests.fixtures.library_responses import (
     SAMPLE_UDM_PRO_OVERVIEW,
@@ -1639,3 +1661,151 @@ async def test_captured_availability_without_protect_or_innerspace(
         assert facade.data["availability"]["innerspace"] is True
     finally:
         await facade.async_shutdown()
+
+
+# --- Test snapshot builders (tests/fixtures/facade_data.py) -------------------
+
+
+def test_facade_data_builds_every_snapshot_key() -> None:
+    """The builder's snapshot has exactly the keys FacadeData declares."""
+    assert (
+        FacadeData.__required_keys__ | FacadeData.__optional_keys__ == FACADE_DATA_KEYS
+    )
+    assert set(facade_data()) == FACADE_DATA_KEYS - {"site_manager"}
+    assert set(facade_data(site_manager={"hosts": {}})) == FACADE_DATA_KEYS
+
+
+def test_facade_data_defaults_are_empty_and_available() -> None:
+    """Every section defaults to empty and every domain to available."""
+    data = facade_data(site_ids=["site1"], failed_sections=[("wifi", "site1")])
+
+    assert data["devices"] == {}
+    assert data["protect"] == EMPTY_PROTECT
+    assert data[NETWORK_FACTS_KEY] is None
+    assert data["innerspace"]["devices"] == {}
+    assert data["availability"]["device"] is True
+    assert data["availability"]["sites"]["site1"]["wifi"] is False
+    assert data["availability"]["sites"]["site1"]["vouchers"] is True
+
+
+def test_facade_data_rejects_unknown_sections() -> None:
+    """A misspelled section fails instead of being silently added."""
+    with pytest.raises(TypeError, match="device_list"):
+        facade_data(device_list={})
+
+
+def test_facade_data_is_frozen_all_the_way_down() -> None:
+    """Writes into the root, a section, a record or a list all raise."""
+    data = facade_data(devices={"site1": {"dev1": {"id": "dev1", "ports": [1]}}})
+    record = data["devices"]["site1"]["dev1"]
+
+    for write in (
+        lambda: data.__setitem__("devices", {}),
+        lambda: data["devices"].__setitem__("site2", {}),
+        lambda: record.__setitem__("name", "x"),
+        lambda: record["ports"].append(2),
+        lambda: record["ports"].__setitem__(0, 2),
+    ):
+        with pytest.raises(RuntimeError):
+            write()
+
+
+def test_frozen_data_serializes_and_redacts_like_the_original() -> None:
+    """Frozen data still serializes to JSON, redacts and copies."""
+    original = {
+        "clients": {"site1": {"c1": {"name": "Phone", "tags": ["a", {"k": "v"}]}}},
+        "unavailable": {"site1"},
+        "pair": ("x", ["y"]),
+    }
+    value = frozen(original)
+
+    assert value == {
+        **original,
+        "unavailable": frozenset({"site1"}),
+        "pair": ("x", ["y"]),
+    }
+    assert isinstance(value["clients"]["site1"]["c1"]["tags"], FrozenList)
+    assert isinstance(value["pair"][1], FrozenList)
+    json_safe = {"clients": value["clients"]}
+    assert json.loads(json.dumps(json_safe)) == {"clients": original["clients"]}
+    assert async_redact_data(json_safe, {"name"}) == async_redact_data(
+        {"clients": original["clients"]}, {"name"}
+    )
+    tags = value["clients"]["site1"]["c1"]["tags"]
+    assert copy.copy(tags) == tags
+    assert isinstance(copy.deepcopy(tags), FrozenList)
+
+
+def test_with_builders_publish_one_record_copy_on_write() -> None:
+    """Each builder returns a new snapshot; the rest keep their identity."""
+    base = facade_data()
+    device = {"id": "dev1", "macAddress": "02:00:00:00:00:01", "state": "ONLINE"}
+
+    cases = [
+        (
+            with_network_device(base, "site1", "dev1", device, stats={"cpu": 1}),
+            lambda d: network_device(d, "site1", "dev1"),
+            {"devices", "stats"},
+        ),
+        (
+            with_client(base, "site1", "c1", {"id": "c1"}),
+            lambda d: network_client(d, "site1", "c1"),
+            {"clients"},
+        ),
+        (
+            with_rule(base, "firewall_rules", "site1", "r1", {"id": "r1"}),
+            lambda d: rule_record(d, "firewall_rules", "site1", "r1"),
+            {"firewall_rules"},
+        ),
+        (
+            with_protect_device(base, "chimes", "ch1", {"id": "ch1"}),
+            lambda d: protect_device(d, "chimes", "ch1"),
+            {"protect"},
+        ),
+        (
+            with_camera(base, "cam1", {"id": "cam1"}),
+            lambda d: protect_device(d, "cameras", "cam1"),
+            {"protect"},
+        ),
+        (
+            with_latest_voucher(base, "site1", {"id": "v1"}),
+            lambda d: latest_voucher(d, "site1"),
+            {"latest_vouchers"},
+        ),
+    ]
+    for data, lookup, changed in cases:
+        assert type(data) is ReadOnlyDict
+        assert lookup(data) is not None
+        assert lookup(base) is None
+        for key in FACADE_DATA_KEYS - {"site_manager"} - changed:
+            assert data[key] is base[key], key
+        with pytest.raises(RuntimeError):
+            lookup(data)["id"] = "x"  # type: ignore[index]
+    assert network_device_stats(cases[0][0], "site1", "dev1") == {"cpu": 1}
+
+
+def test_with_builders_keep_the_other_records() -> None:
+    """Adding a record keeps the collection's and the site's other records."""
+    data = with_camera(with_camera(facade_data(), "cam1", {"id": "cam1"}), "cam2", {})
+    data = with_client(with_client(data, "s1", "c1", {}), "s2", "c2", {})
+
+    assert set(data["protect"]["cameras"]) == {"cam1", "cam2"}
+    assert set(data["protect"]["chimes"]) == set()
+    assert set(data["clients"]) == {"s1", "s2"}
+
+
+def test_with_network_device_republishes_published_facts() -> None:
+    """Published network facts follow the device; unpublished stay None."""
+    device = {"id": "gw", "macAddress": "02:00:00:00:00:01", "state": "ONLINE"}
+    unpublished = with_network_device(facade_data(), "site1", "gw", device)
+    assert unpublished[NETWORK_FACTS_KEY] is None
+
+    published = facade_data(
+        **{NETWORK_FACTS_KEY: {"site0": build_site_network_facts({}, {})}}
+    )
+    data = with_network_device(published, "site1", "gw", device)
+
+    assert set(data[NETWORK_FACTS_KEY]) == {"site0", "site1"}
+    facts = device_facts(data, "site1", "gw")
+    assert facts is not None
+    assert facts.online_state == "online"
