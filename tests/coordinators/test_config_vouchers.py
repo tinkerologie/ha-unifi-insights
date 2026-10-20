@@ -62,15 +62,6 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 
-def _voucher_model(data: dict) -> MagicMock:
-    """Create a mock model returning data from model_dump."""
-    mock = MagicMock()
-    mock.model_dump = MagicMock(return_value=data)
-    for k, v in data.items():
-        setattr(mock, k, v)
-    return mock
-
-
 @pytest.mark.asyncio
 async def test_generate_flow_updates_inventory_and_latest_voucher(
     hass: HomeAssistant,
@@ -88,7 +79,7 @@ async def test_generate_flow_updates_inventory_and_latest_voucher(
     network_client.base_url = "https://192.168.1.1"
     network_client.sites = MagicMock()
     network_client.sites.get_all = AsyncMock(
-        return_value=[_voucher_model({"id": "site1", "name": "Default"})]
+        return_value=[_create_mock_model({"id": "site1", "name": "Default"})]
     )
     network_client.sites.get_legacy_all = AsyncMock(return_value=[])
     network_client.wifi = MagicMock()
@@ -111,7 +102,7 @@ async def test_generate_flow_updates_inventory_and_latest_voucher(
             "time_limit_minutes": 480,
         }
     )
-    updated_voucher_model = _voucher_model(
+    updated_voucher_model = _create_mock_model(
         {
             "id": "v-1",
             "code": "1234567890",
@@ -210,7 +201,7 @@ async def test_slower_full_poll_does_not_regress_newer_targeted_refresh_state(
     network_client.base_url = "https://192.168.1.1"
     network_client.sites = MagicMock()
     network_client.sites.get_all = AsyncMock(
-        return_value=[_voucher_model({"id": "site1", "name": "Default"})]
+        return_value=[_create_mock_model({"id": "site1", "name": "Default"})]
     )
     network_client.sites.get_legacy_all = AsyncMock(return_value=[])
     network_client.wifi = MagicMock()
@@ -224,7 +215,7 @@ async def test_slower_full_poll_does_not_regress_newer_targeted_refresh_state(
     network_client.reports = MagicMock()
     network_client.reports.get_site_report = AsyncMock(return_value=[])
 
-    older_snapshot = _voucher_model(
+    older_snapshot = _create_mock_model(
         {
             "id": "v-1",
             "code": "1234567890",
@@ -233,7 +224,7 @@ async def test_slower_full_poll_does_not_regress_newer_targeted_refresh_state(
             "expired": False,
         }
     )
-    newer_snapshot = _voucher_model(
+    newer_snapshot = _create_mock_model(
         {
             "id": "v-1",
             "code": "1234567890",
@@ -332,7 +323,7 @@ async def voucher_flow(
     client = MagicMock()
     client.base_url = "https://192.168.1.1"
     client.sites.get_all = AsyncMock(
-        return_value=[_voucher_model({"id": "site1", "name": "Default"})]
+        return_value=[_create_mock_model({"id": "site1", "name": "Default"})]
     )
     for endpoint, method in (
         ("sites", "get_legacy_all"),
@@ -640,9 +631,9 @@ async def test_voucher_inventory_skips_records_without_id(
     """Voucher records lacking an id are not stored in the inventory."""
     config, _ = voucher_flow
     config.network_client.vouchers.get_all_pages.return_value = [
-        _voucher_model({"id": "v1", "code": "1234567890"}),
-        _voucher_model({"code": "0987654321"}),
-        _voucher_model({"id": "", "code": "1111111111"}),
+        _create_mock_model({"id": "v1", "code": "1234567890"}),
+        _create_mock_model({"code": "0987654321"}),
+        _create_mock_model({"id": "", "code": "1111111111"}),
     ]
     await config.async_refresh()
     assert list(config.data["vouchers"]["site1"]) == ["v1"]
@@ -654,8 +645,8 @@ async def test_stale_targeted_voucher_refresh_is_discarded(
     """A slower, older targeted refresh cannot overwrite a newer inventory."""
     config, _ = voucher_flow
     await config.async_refresh()
-    older = _voucher_model({"id": "older", "code": "1234567890"})
-    newer = _voucher_model({"id": "newer", "code": "0987654321"})
+    older = _create_mock_model({"id": "older", "code": "1234567890"})
+    newer = _create_mock_model({"id": "newer", "code": "0987654321"})
     older_started = asyncio.Event()
     release_older = asyncio.Event()
     calls = 0
@@ -699,7 +690,7 @@ async def test_stale_full_poll_keeps_newer_voucher_failure(
         if calls == 1:
             poll_started.set()
             await release_poll.wait()
-            return [_voucher_model({"id": "polled", "code": "1234567890"})]
+            return [_create_mock_model({"id": "polled", "code": "1234567890"})]
         msg = "Refused"
         raise UniFiConnectionError(msg)
 

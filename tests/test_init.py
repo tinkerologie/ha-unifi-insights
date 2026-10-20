@@ -51,7 +51,7 @@ from custom_components.unifi_insights.probe import ProbeResult, ProbeStatus
 from tests.fixtures.mobility_responses import (
     OFFICE_ROUTER_ID,
     WORKSPACE_ID,
-    mobility_client_mock,
+    serve_spec_examples,
 )
 
 if TYPE_CHECKING:
@@ -1483,6 +1483,12 @@ async def test_carrier_fabric_setup_probe_auth_failed(
         await hass.async_block_till_done()
 
         assert carrier_entry.state == ConfigEntryState.SETUP_ERROR
+        # ConfigEntryAuthFailed, not any setup error: reauthentication starts.
+        assert any(
+            flow["context"].get("source") == "reauth"
+            and flow["context"].get("entry_id") == carrier_entry.entry_id
+            for flow in hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+        )
 
 
 @pytest.mark.usefixtures("enable_custom_integrations")
@@ -1788,14 +1794,6 @@ def _remote_entry(entry_id: str, console_id: str = "console") -> MockConfigEntry
     )
 
 
-def _serve_spec_examples(client: MagicMock) -> None:
-    """Make the autouse Mobility client mock answer with the spec examples."""
-    examples = mobility_client_mock()
-    client.list_workspaces = examples.list_workspaces
-    client.list_devices = examples.list_devices
-    client.get_device = examples.get_device
-
-
 async def _setup_mobility(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     """Set up an entry and wait for its background Mobility refresh."""
     entry.add_to_hass(hass)
@@ -1859,7 +1857,7 @@ async def test_only_one_remote_entry_per_key_polls_mobility(
     hass: HomeAssistant, mock_mobility_client: MagicMock
 ) -> None:
     """Two consoles behind one cloud key share a single Mobility poller."""
-    _serve_spec_examples(mock_mobility_client)
+    serve_spec_examples(mock_mobility_client)
     owner = _remote_entry("01A", "console-a")
     second = _remote_entry("01B", "console-b")
     second.add_to_hass(hass)
@@ -1888,7 +1886,7 @@ async def test_mobility_devices_are_removable_only_once_confirmed_gone(
     hass: HomeAssistant, mock_mobility_client: MagicMock
 ) -> None:
     """A router or workspace can be deleted once Mobility no longer reports it."""
-    _serve_spec_examples(mock_mobility_client)
+    serve_spec_examples(mock_mobility_client)
     entry = _remote_entry("01REMOTE")
     await _setup_mobility(hass, entry)
     coordinator = entry.runtime_data.mobility_coordinator
@@ -1956,7 +1954,7 @@ async def test_re_enabled_older_entry_does_not_duplicate_mobility(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The entry already polling Mobility keeps it when an older one comes back."""
-    _serve_spec_examples(mock_mobility_client)
+    serve_spec_examples(mock_mobility_client)
     older = _remote_entry("01A", "console-a")
     older.disabled_by = ConfigEntryDisabler.USER
     newer = _remote_entry("01B", "console-b")
@@ -1988,7 +1986,7 @@ async def test_mobility_moves_to_the_next_entry_when_the_owner_leaves(
     leave: str,
 ) -> None:
     """Disabling or deleting the owner hands Mobility to the next entry."""
-    _serve_spec_examples(mock_mobility_client)
+    serve_spec_examples(mock_mobility_client)
     owner = _remote_entry("01A", "console-a")
     successor = _remote_entry("01B", "console-b")
     successor.add_to_hass(hass)
@@ -2030,7 +2028,7 @@ async def test_owner_reload_keeps_mobility_and_leaves_siblings_alone(
     hass: HomeAssistant, mock_mobility_client: MagicMock
 ) -> None:
     """Reloading the owner (an options change) does not reload other entries."""
-    _serve_spec_examples(mock_mobility_client)
+    serve_spec_examples(mock_mobility_client)
     owner = _remote_entry("01A", "console-a")
     sibling = _remote_entry("01B", "console-b")
     sibling.add_to_hass(hass)

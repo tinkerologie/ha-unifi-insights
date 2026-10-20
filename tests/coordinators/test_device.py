@@ -940,7 +940,7 @@ class TestUnifiDeviceCoordinator:
         coordinator.network_client.devices.get_legacy_site_devices.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_process_site_clients_4xx_raises_without_fallback(
+    async def test_process_site_clients_5xx_raises_without_fallback(
         self, coordinator: UnifiInsightsDeviceCoordinator
     ):
         """A clients failure with healthy v1 devices propagates (no fallback)."""

@@ -203,3 +203,12 @@ def mobility_client_mock() -> MagicMock:
     client.update_device_wireless = AsyncMock(return_value=None)
     client.close = AsyncMock()
     return client
+
+
+def serve_spec_examples(client: MagicMock) -> MagicMock:
+    """Make a Mobility client mock answer with the spec examples; return them."""
+    examples = mobility_client_mock()
+    client.list_workspaces = examples.list_workspaces
+    client.list_devices = examples.list_devices
+    client.get_device = examples.get_device
+    return examples

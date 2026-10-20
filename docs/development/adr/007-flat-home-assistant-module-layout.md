@@ -151,7 +151,7 @@ tests/
 
 Rule: `tests/<pkg>/test_<module>.py` mirrors `custom_components/unifi_insights/<pkg>/<module>.py`. A test module may be split with a feature suffix (`test_sensor_ports.py`) only when it exceeds about 2,000 lines. Feature-named test files that don't match a module (`test_access_*.py`, `test_carrier_fabric_*.py`, `test_mobility_*.py` and similar) are folded into the test module of the code they cover. The per-file coverage gate stays at 95%.
 
-Implemented in #341 part 3, which kept every test and its name (the collected test IDs are identical before and after):
+Implemented in #341 part 3, which kept every test and its name: comparing the collected test function and parameter IDs before and after the reorganisation shows no difference (the three Mobility tracker tests that part 2 added are the only new IDs on the branch):
 
 - `test_coordinators.py` is split by coordinator into `tests/coordinators/`, and the coordinator feature files moved there (for example `test_access.py`, `test_rule_audit_export.py`, `test_protect_sensors.py`).
 - Small feature files are folded into their module's test file; a folded file's `pytestmark` is applied to its own tests only.

@@ -440,10 +440,9 @@ class TestFacadeGenerateVoucher:
     ) -> None:
         """Pydantic validation error does not leak code in logs."""
         synthetic_code = "1234567890"
-        try:
+        with pytest.raises(ValidationError) as validation_info:
             Voucher.model_validate({"code": synthetic_code})
-        except ValidationError as validation_error:
-            real_validation_error = validation_error
+        real_validation_error = validation_info.value
 
         facade.network_client.vouchers.create = AsyncMock(
             side_effect=real_validation_error

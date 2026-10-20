@@ -64,7 +64,7 @@ from tests.fixtures.mobility_responses import (
     PENDING_WORKSPACE_ID,
     WORKSPACE_ID,
     WORKSPACES,
-    mobility_client_mock,
+    serve_spec_examples,
 )
 from tests.fixtures.network_rule_responses import (
     nat_rule_record,
@@ -1560,15 +1560,6 @@ _PRIVATE_VALUES = [
 ]
 
 
-def _serve(client: MagicMock) -> MagicMock:
-    """Make the autouse Mobility client mock answer with the spec examples."""
-    examples = mobility_client_mock()
-    client.list_workspaces = examples.list_workspaces
-    client.list_devices = examples.list_devices
-    client.get_device = examples.get_device
-    return examples
-
-
 def _entry(entry_id: str, console_id: str, connection_type: str) -> MockConfigEntry:
     """Return a config entry on the shared test key."""
     return MockConfigEntry(
@@ -1602,7 +1593,7 @@ async def test_mobility_diagnostics_are_counts_only(
     hass: HomeAssistant, mock_mobility_client: MagicMock
 ) -> None:
     """The summary explains Mobility health without exposing the account."""
-    _serve(mock_mobility_client)
+    serve_spec_examples(mock_mobility_client)
     entry = _entry("01REMOTE", "console", "remote")
     await _load(hass, entry)
 
@@ -1639,7 +1630,7 @@ async def test_unexpected_api_values_are_bucketed(
     hass: HomeAssistant, mock_mobility_client: MagicMock
 ) -> None:
     """Values outside the published enums cannot carry free text out."""
-    examples = _serve(mock_mobility_client)
+    examples = serve_spec_examples(mock_mobility_client)
     workspaces = copy.deepcopy(WORKSPACES)
     workspaces[1]["status"] = "Private Workspace Label"
     examples.list_workspaces.return_value = workspaces
@@ -1682,7 +1673,7 @@ async def test_only_the_owner_reports_a_mobility_summary(
     hass: HomeAssistant, mock_mobility_client: MagicMock
 ) -> None:
     """A second entry on the key says it is not the owner; local entries say nothing."""
-    _serve(mock_mobility_client)
+    serve_spec_examples(mock_mobility_client)
     owner = _entry("01A", "console-a", "remote")
     second = _entry("01B", "console-b", "remote")
     local = _entry("01C", "console-c", "local")

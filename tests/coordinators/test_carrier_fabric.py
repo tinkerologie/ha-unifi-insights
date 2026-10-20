@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -30,6 +30,9 @@ from custom_components.unifi_insights.coordinators.carrier_fabric import (
     UnifiInsightsCarrierFabricCoordinator,
 )
 
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+
 
 @pytest.mark.parametrize("subscriber_id", [123, "not-a-uuid"])
 def test_invalid_subscriber_id_is_translated(subscriber_id: object) -> None:
@@ -50,7 +53,7 @@ def test_invalid_subscriber_id_is_translated(subscriber_id: object) -> None:
 
 
 @pytest.fixture
-def mock_carrier_entry(hass):
+def mock_carrier_entry(hass: HomeAssistant) -> MockConfigEntry:
     """Create a mock Carrier Fabric config entry."""
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -66,7 +69,7 @@ def mock_carrier_entry(hass):
 
 
 @pytest.fixture
-def mock_carrier_client():
+def mock_carrier_client() -> MagicMock:
     """Create a mock UniFiCarrierFabricClient."""
     client = MagicMock()
     client.service_plans = MagicMock()
@@ -79,8 +82,10 @@ def mock_carrier_client():
 
 
 async def test_coordinator_data_ingestion_and_allowlist(
-    hass, mock_carrier_entry, mock_carrier_client
-):
+    hass: HomeAssistant,
+    mock_carrier_entry: MockConfigEntry,
+    mock_carrier_client: MagicMock,
+) -> None:
     """Test data ingestion with allowlisting, deduplication, and summary aggregation."""
     # Real ServicePlan model instances from API containing extra/sensitive fields
     raw_plans = [
@@ -275,8 +280,10 @@ async def test_coordinator_data_ingestion_and_allowlist(
 
 
 async def test_coordinator_refresh_auth_failed_401(
-    hass, mock_carrier_entry, mock_carrier_client
-):
+    hass: HomeAssistant,
+    mock_carrier_entry: MockConfigEntry,
+    mock_carrier_client: MagicMock,
+) -> None:
     """Test 401 raises ConfigEntryAuthFailed."""
     mock_carrier_client.service_plans.get_all.side_effect = UniFiResponseError(
         status_code=401, message="Unauthorized"
@@ -291,8 +298,10 @@ async def test_coordinator_refresh_auth_failed_401(
 
 
 async def test_coordinator_refresh_auth_failed_403(
-    hass, mock_carrier_entry, mock_carrier_client
-):
+    hass: HomeAssistant,
+    mock_carrier_entry: MockConfigEntry,
+    mock_carrier_client: MagicMock,
+) -> None:
     """Test 403 raises ConfigEntryAuthFailed naming insufficient_scope."""
     mock_carrier_client.service_plans.get_all.side_effect = UniFiResponseError(
         status_code=403,
@@ -307,8 +316,10 @@ async def test_coordinator_refresh_auth_failed_403(
 
 
 async def test_coordinator_refresh_rate_limited_429(
-    hass, mock_carrier_entry, mock_carrier_client
-):
+    hass: HomeAssistant,
+    mock_carrier_entry: MockConfigEntry,
+    mock_carrier_client: MagicMock,
+) -> None:
     """Test 429 raises UpdateFailed."""
     mock_carrier_client.service_plans.get_all.side_effect = UniFiResponseError(
         status_code=429, message="Too Many Requests"
@@ -321,8 +332,10 @@ async def test_coordinator_refresh_rate_limited_429(
 
 
 async def test_coordinator_refresh_server_error_500(
-    hass, mock_carrier_entry, mock_carrier_client
-):
+    hass: HomeAssistant,
+    mock_carrier_entry: MockConfigEntry,
+    mock_carrier_client: MagicMock,
+) -> None:
     """Test 500 raises UpdateFailed."""
     mock_carrier_client.service_plans.get_all.side_effect = UniFiResponseError(
         status_code=500, message="Internal Server Error"
@@ -335,8 +348,10 @@ async def test_coordinator_refresh_server_error_500(
 
 
 async def test_coordinator_refresh_connection_error(
-    hass, mock_carrier_entry, mock_carrier_client
-):
+    hass: HomeAssistant,
+    mock_carrier_entry: MockConfigEntry,
+    mock_carrier_client: MagicMock,
+) -> None:
     """Test connection error raises UpdateFailed."""
     mock_carrier_client.service_plans.get_all.side_effect = UniFiConnectionError(
         "Connection refused"
@@ -349,8 +364,10 @@ async def test_coordinator_refresh_connection_error(
 
 
 async def test_coordinator_refresh_timeout_error(
-    hass, mock_carrier_entry, mock_carrier_client
-):
+    hass: HomeAssistant,
+    mock_carrier_entry: MockConfigEntry,
+    mock_carrier_client: MagicMock,
+) -> None:
     """Test timeout error raises UpdateFailed."""
     mock_carrier_client.service_plans.get_all.side_effect = UniFiTimeoutError(
         "Request timed out"
@@ -363,8 +380,10 @@ async def test_coordinator_refresh_timeout_error(
 
 
 async def test_coordinator_suspend_invalid_uuid(
-    hass, mock_carrier_entry, mock_carrier_client
-):
+    hass: HomeAssistant,
+    mock_carrier_entry: MockConfigEntry,
+    mock_carrier_client: MagicMock,
+) -> None:
     """Test suspend validates UUID before any HTTP call."""
     coord = UnifiInsightsCarrierFabricCoordinator(
         hass, mock_carrier_client, mock_carrier_entry
@@ -375,8 +394,10 @@ async def test_coordinator_suspend_invalid_uuid(
 
 
 async def test_coordinator_suspend_success(
-    hass, mock_carrier_entry, mock_carrier_client
-):
+    hass: HomeAssistant,
+    mock_carrier_entry: MockConfigEntry,
+    mock_carrier_client: MagicMock,
+) -> None:
     """Test successful suspend calls client and refreshes coordinator."""
     coord = UnifiInsightsCarrierFabricCoordinator(
         hass, mock_carrier_client, mock_carrier_entry
@@ -393,8 +414,10 @@ async def test_coordinator_suspend_success(
 
 
 async def test_coordinator_suspend_retry_on_write_conflict(
-    hass, mock_carrier_entry, mock_carrier_client
-):
+    hass: HomeAssistant,
+    mock_carrier_entry: MockConfigEntry,
+    mock_carrier_client: MagicMock,
+) -> None:
     """Test suspend retries exactly once on write_conflict_retryable."""
     coord = UnifiInsightsCarrierFabricCoordinator(
         hass, mock_carrier_client, mock_carrier_entry
@@ -460,8 +483,11 @@ ERROR_CASES = [
 
 @pytest.mark.parametrize("case", ERROR_CASES)
 async def test_coordinator_suspend_typed_errors_propagate(
-    hass, mock_carrier_entry, mock_carrier_client, case: ErrorCase
-):
+    hass: HomeAssistant,
+    mock_carrier_entry: MockConfigEntry,
+    mock_carrier_client: MagicMock,
+    case: ErrorCase,
+) -> None:
     """Test suspend lets typed client errors propagate without wrapping."""
     coord = UnifiInsightsCarrierFabricCoordinator(
         hass, mock_carrier_client, mock_carrier_entry
@@ -477,8 +503,10 @@ async def test_coordinator_suspend_typed_errors_propagate(
 
 
 async def test_coordinator_suspend_write_conflict_retry_exhausted_propagates(
-    hass, mock_carrier_entry, mock_carrier_client
-):
+    hass: HomeAssistant,
+    mock_carrier_entry: MockConfigEntry,
+    mock_carrier_client: MagicMock,
+) -> None:
     """Test suspend retries 503 write conflict once, then propagates typed error."""
     coord = UnifiInsightsCarrierFabricCoordinator(
         hass, mock_carrier_client, mock_carrier_entry
@@ -500,8 +528,10 @@ async def test_coordinator_suspend_write_conflict_retry_exhausted_propagates(
 
 
 async def test_coordinator_resume_invalid_uuid(
-    hass, mock_carrier_entry, mock_carrier_client
-):
+    hass: HomeAssistant,
+    mock_carrier_entry: MockConfigEntry,
+    mock_carrier_client: MagicMock,
+) -> None:
     """Test resume validates UUID before any HTTP call."""
     coord = UnifiInsightsCarrierFabricCoordinator(
         hass, mock_carrier_client, mock_carrier_entry
@@ -512,8 +542,10 @@ async def test_coordinator_resume_invalid_uuid(
 
 
 async def test_coordinator_resume_success(
-    hass, mock_carrier_entry, mock_carrier_client
-):
+    hass: HomeAssistant,
+    mock_carrier_entry: MockConfigEntry,
+    mock_carrier_client: MagicMock,
+) -> None:
     """Test successful resume calls client and refreshes coordinator."""
     coord = UnifiInsightsCarrierFabricCoordinator(
         hass, mock_carrier_client, mock_carrier_entry
@@ -529,8 +561,11 @@ async def test_coordinator_resume_success(
 
 @pytest.mark.parametrize("case", ERROR_CASES)
 async def test_coordinator_resume_typed_errors_propagate(
-    hass, mock_carrier_entry, mock_carrier_client, case: ErrorCase
-):
+    hass: HomeAssistant,
+    mock_carrier_entry: MockConfigEntry,
+    mock_carrier_client: MagicMock,
+    case: ErrorCase,
+) -> None:
     """Test resume lets typed client errors propagate without wrapping."""
     coord = UnifiInsightsCarrierFabricCoordinator(
         hass, mock_carrier_client, mock_carrier_entry
@@ -546,8 +581,10 @@ async def test_coordinator_resume_typed_errors_propagate(
 
 
 async def test_coordinator_resume_write_conflict_retry_exhausted_propagates(
-    hass, mock_carrier_entry, mock_carrier_client
-):
+    hass: HomeAssistant,
+    mock_carrier_entry: MockConfigEntry,
+    mock_carrier_client: MagicMock,
+) -> None:
     """Test resume retries 503 write conflict once, then propagates typed error."""
     coord = UnifiInsightsCarrierFabricCoordinator(
         hass, mock_carrier_client, mock_carrier_entry
@@ -568,7 +605,9 @@ async def test_coordinator_resume_write_conflict_retry_exhausted_propagates(
     assert exc_info.value.api_error_code == "write_conflict_retryable"
 
 
-async def test_coordinator_refresh_unexpected_unifi_error(hass, mock_carrier_client):
+async def test_coordinator_refresh_unexpected_unifi_error(
+    hass: HomeAssistant, mock_carrier_client: MagicMock
+) -> None:
     """A library error without a more specific type raises UpdateFailed."""
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -584,8 +623,8 @@ async def test_coordinator_refresh_unexpected_unifi_error(hass, mock_carrier_cli
 
 
 async def test_coordinator_refresh_programming_error_surfaces(
-    hass, mock_carrier_client
-):
+    hass: HomeAssistant, mock_carrier_client: MagicMock
+) -> None:
     """A non-library exception is a bug: it propagates and fails the refresh."""
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -604,8 +643,10 @@ async def test_coordinator_refresh_programming_error_surfaces(
 
 
 async def test_coordinator_matches_data_update_coordinator_contract(
-    hass, mock_carrier_entry, mock_carrier_client
-):
+    hass: HomeAssistant,
+    mock_carrier_entry: MockConfigEntry,
+    mock_carrier_client: MagicMock,
+) -> None:
     """Entities and diagnostics rely on config_entry, interval and last_update_*."""
     coord = UnifiInsightsCarrierFabricCoordinator(
         hass, mock_carrier_client, mock_carrier_entry
@@ -627,7 +668,9 @@ async def test_coordinator_matches_data_update_coordinator_contract(
     assert coord.data["org_id"] == "org_123"
 
 
-async def test_coordinator_org_id_fallback_discovery(hass, mock_carrier_client):
+async def test_coordinator_org_id_fallback_discovery(
+    hass: HomeAssistant, mock_carrier_client: MagicMock
+) -> None:
     """Test org_id fallback discovery when entry data is None."""
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -658,8 +701,8 @@ async def test_coordinator_org_id_fallback_discovery(hass, mock_carrier_client):
 
 
 async def test_coordinator_org_id_unknown_when_no_resource_carries_one(
-    hass, mock_carrier_client
-):
+    hass: HomeAssistant, mock_carrier_client: MagicMock
+) -> None:
     """Without a stored or discoverable organisation the id stays unknown."""
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -696,8 +739,8 @@ async def test_coordinator_org_id_unknown_when_no_resource_carries_one(
 
 
 async def test_coordinator_validate_subscriber_uuid_non_string(
-    hass, mock_carrier_client
-):
+    hass: HomeAssistant, mock_carrier_client: MagicMock
+) -> None:
     """Test non-string subscriber ID raises HomeAssistantError."""
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -711,7 +754,9 @@ async def test_coordinator_validate_subscriber_uuid_non_string(
         await coord.async_suspend_subscriber(12345)  # type: ignore[arg-type]
 
 
-async def test_coordinator_resume_retry_on_write_conflict(hass, mock_carrier_client):
+async def test_coordinator_resume_retry_on_write_conflict(
+    hass: HomeAssistant, mock_carrier_client: MagicMock
+) -> None:
     """Test resume retries once on write_conflict_retryable and succeeds."""
     entry = MockConfigEntry(
         domain=DOMAIN,
