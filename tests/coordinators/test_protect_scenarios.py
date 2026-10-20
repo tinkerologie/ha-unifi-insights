@@ -12,6 +12,7 @@ They must keep passing unchanged while the reconciliation moves into
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
@@ -86,12 +87,34 @@ class _Gate:
 async def _while_in_flight(
     gate: _Gate, request: Awaitable[Any], during: Callable[[], Awaitable[None] | None]
 ) -> None:
-    """Run ``request``; call ``during`` once its REST call is out; then answer."""
+    """
+    Run ``request``; call ``during`` once its REST call is out; then answer.
+
+    Fails, instead of hanging, when the request never reaches the gated call,
+    and never leaves the request task pending.
+    """
     task = asyncio.ensure_future(request)
-    await gate.started.wait()
-    result = during()
-    if result is not None:
-        await result
+    started = asyncio.ensure_future(gate.started.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {task, started}, timeout=5, return_when=asyncio.FIRST_COMPLETED
+        )
+        if started not in done:
+            if task.done():
+                await task  # surface the request's own error
+            msg = "the request never reached the gated REST call"
+            raise AssertionError(msg)
+        result = during()
+        if result is not None:
+            await result
+    except BaseException:
+        gate.release.set()
+        started.cancel()
+        if not task.done():
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+        raise
     gate.release.set()
     await task
 

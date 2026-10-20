@@ -323,6 +323,7 @@ async def test_poll_model_wss_delta_null_and_generation(
         feed.device("nvr", id="nvr1", storageInfo=None)
         _assert_entity_snapshot_parity(mock_coordinator, degraded=None, full=None)
     finally:
+        await coordinator.async_stop_websocket()
         await coordinator.async_shutdown()
 
 
