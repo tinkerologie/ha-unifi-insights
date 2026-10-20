@@ -1,0 +1,269 @@
+# Copyright 2026 UniFi Insights contributors
+"""
+Characterization tests for the identity of the facade's shared sections.
+
+The facade passes each owner's published sections through by reference, and
+the WebSocket streams skip a rebuild when every input is the same object as
+last time (``websocket_api._same_inputs``). These pin that contract through
+#342: a rebuilt snapshot holds the owners' own objects, and an owner update
+leaves the sections it does not touch identical. They also record what a
+snapshot taken while a device or config refresh is in flight sees once that
+refresh completes.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import copy
+from typing import TYPE_CHECKING, Any
+
+import pytest
+
+from custom_components.unifi_insights.data_transforms import NETWORK_FACTS_KEY
+from tests.fixtures.command_owners import PDU_ID, SITE_ID
+from tests.fixtures.library_responses import SAMPLE_PDU_DEVICE, SAMPLE_SITE
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from tests.fixtures.command_owners import SeededOwners
+
+CONFIG_SECTIONS: tuple[str, ...] = (
+    "sites",
+    "wifi",
+    "vouchers",
+    "firewall_rules",
+    "policy_based_routes",
+    "vpn_clients",
+    "port_forwards",
+    "traffic_rules",
+    "nat_rules",
+    "static_routes",
+    "site_vpns",
+    "rule_changes",
+    "network_info",
+    "client_links",
+    "internet_activity",
+    "internet_activity_unavailable",
+)
+DEVICE_SECTIONS: tuple[str, ...] = (
+    "devices",
+    "clients",
+    "stats",
+    "vpn_connections",
+    NETWORK_FACTS_KEY,
+)
+
+
+class _Gate:
+    """An API answer that waits until the test releases it."""
+
+    def __init__(self, answer: Any) -> None:
+        self.answer = answer
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(self, *_args: Any, **_kwargs: Any) -> Any:
+        self.started.set()
+        await self.release.wait()
+        return self.answer
+
+
+async def _while_in_flight(
+    gate: _Gate, request: Awaitable[Any], during: Callable[[], None]
+) -> None:
+    """
+    Run ``request``; call ``during`` once its gated call is out; then answer.
+
+    Fails, instead of hanging, when the request never reaches the gated call,
+    and never leaves the request task pending.
+    """
+    task = asyncio.ensure_future(request)
+    started = asyncio.ensure_future(gate.started.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {task, started}, timeout=5, return_when=asyncio.FIRST_COMPLETED
+        )
+        if started not in done:
+            if task.done():
+                await task  # surface the request's own error
+            msg = "the request never reached the gated call"
+            raise AssertionError(msg)
+        during()
+    except BaseException:
+        gate.release.set()
+        started.cancel()
+        if not task.done():
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+        raise
+    gate.release.set()
+    await task
+
+
+def test_snapshot_sections_are_the_owners_objects(
+    seeded_owners: SeededOwners,
+) -> None:
+    """Each shared section is the object its owner published, not a copy."""
+    snapshot = seeded_owners.facade.data
+
+    for key in CONFIG_SECTIONS:
+        assert snapshot[key] is seeded_owners.config.data[key], key
+    for key in DEVICE_SECTIONS:
+        assert snapshot[key] is seeded_owners.device.data[key], key
+    assert snapshot["protect"] is seeded_owners.protect.data
+
+
+async def _refresh_config(owners: SeededOwners) -> None:
+    await owners.config.async_refresh()
+
+
+async def _refresh_vouchers(owners: SeededOwners) -> None:
+    await owners.config.async_refresh_vouchers(SITE_ID)
+
+
+async def _refresh_device(owners: SeededOwners) -> None:
+    await owners.device.async_refresh()
+
+
+async def _write_outlet(owners: SeededOwners) -> None:
+    owners.network_client.devices.set_outlet_state.return_value = True
+    await owners.device.async_set_outlet_state(SITE_ID, PDU_ID, 1, state=False)
+
+
+async def _refresh_protect(owners: SeededOwners) -> None:
+    await owners.protect.async_refresh()
+
+
+@pytest.mark.parametrize(
+    ("update", "touched", "untouched"),
+    [
+        pytest.param(
+            _refresh_config,
+            CONFIG_SECTIONS,
+            (*DEVICE_SECTIONS, "protect"),
+            id="config_refresh",
+        ),
+        pytest.param(
+            _refresh_vouchers,
+            ("vouchers",),
+            (
+                *(key for key in CONFIG_SECTIONS if key != "vouchers"),
+                *DEVICE_SECTIONS,
+                "protect",
+            ),
+            id="voucher_refresh",
+        ),
+        pytest.param(
+            _refresh_device,
+            DEVICE_SECTIONS,
+            (*CONFIG_SECTIONS, "protect"),
+            id="device_refresh",
+        ),
+        pytest.param(
+            _write_outlet,
+            ("devices",),
+            (*CONFIG_SECTIONS, "protect"),
+            id="outlet_overlay",
+        ),
+        pytest.param(
+            _refresh_protect,
+            ("protect",),
+            (*CONFIG_SECTIONS, *DEVICE_SECTIONS),
+            id="protect_refresh",
+        ),
+    ],
+)
+async def test_owner_update_keeps_untouched_sections(
+    seeded_owners: SeededOwners,
+    update: Callable[[SeededOwners], Awaitable[None]],
+    touched: tuple[str, ...],
+    untouched: tuple[str, ...],
+) -> None:
+    """An owner update rebuilds the snapshot; sections it skips keep identity."""
+    facade = seeded_owners.facade
+    before = facade.data
+
+    await update(seeded_owners)
+
+    after = facade.data
+    assert after is not before
+    for key in untouched:
+        assert after[key] is before[key], key
+    # At least one written section is new, so the rebuild was not a no-op.
+    assert any(after[key] is not before[key] for key in touched)
+
+
+async def test_mid_refresh_snapshot_changes_later_quirk(
+    seeded_owners: SeededOwners,
+) -> None:
+    """
+    A snapshot taken during a device refresh changes when the refresh ends.
+
+    Today the refresh prunes its sections into new maps before its API calls,
+    then writes each site's results into those maps afterwards. A facade
+    rebuild in between holds the pruned maps, so its per-site entries are
+    swapped under it when the refresh completes, and the owner's root is the
+    same dict before and after.
+    """
+    device = seeded_owners.device
+    facade = seeded_owners.facade
+    root_before = device.data
+    site_devices_before = device.data["devices"][SITE_ID]
+    site_stats_before = device.data["stats"][SITE_ID]
+    gate = _Gate([copy.deepcopy(SAMPLE_PDU_DEVICE)])
+    seeded_owners.network_client.devices.get_all.side_effect = gate.__call__
+    mid: dict[str, Any] = {}
+    seen_then: dict[str, Any] = {}
+
+    def rebuild() -> None:
+        seeded_owners.config.async_update_listeners()
+        mid.update(facade.data)
+        seen_then.update(mid["devices"])
+
+    await _while_in_flight(gate, device.async_refresh(), rebuild)
+
+    assert device.last_update_success
+    assert seen_then[SITE_ID] is site_devices_before
+    assert mid["devices"][SITE_ID] is not site_devices_before
+    assert mid["devices"][SITE_ID] is device.data["devices"][SITE_ID]
+    assert mid["stats"][SITE_ID] is not site_stats_before
+    assert mid["stats"][SITE_ID] is device.data["stats"][SITE_ID]
+    assert device.data is root_before
+
+
+async def test_mid_config_refresh_snapshot_sees_new_sites_quirk(
+    seeded_owners: SeededOwners,
+) -> None:
+    """
+    A snapshot taken during a config refresh already holds its new sites.
+
+    Today the refresh writes the new site map into its published root right
+    after listing the sites, before its other API calls. A facade rebuild in
+    between publishes those sites beside the previous sections, and the
+    owner's root is the same dict before and after.
+    """
+    config = seeded_owners.config
+    facade = seeded_owners.facade
+    root_before = config.data
+    sites_before = config.data["sites"]
+    renamed = {**copy.deepcopy(SAMPLE_SITE), "internalReference": "default"}
+    renamed["name"] = "Renamed"
+    seeded_owners.network_client.sites.get_all.return_value = [renamed]
+    gate = _Gate([{"name": "default", "desc": SAMPLE_SITE["desc"]}])
+    seeded_owners.network_client.sites.get_legacy_all.side_effect = gate.__call__
+    mid: dict[str, Any] = {}
+
+    def rebuild() -> None:
+        seeded_owners.device.async_update_listeners()
+        mid.update(facade.data)
+
+    await _while_in_flight(gate, config.async_refresh(), rebuild)
+
+    assert config.last_update_success
+    assert mid["sites"] is not sites_before
+    assert mid["sites"][SITE_ID]["name"] == "Renamed"
+    assert mid["sites"] is config.data["sites"]
+    assert config.data is root_before
