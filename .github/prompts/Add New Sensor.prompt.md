@@ -20,7 +20,7 @@ If not provided, ask for:
 
 ### 1. Add entity description
 
-Add to the appropriate description tuple in `custom_components/unifi_insights/sensor.py` (or specialized sensor module):
+Add to the description tuple for the data source's section in `custom_components/unifi_insights/sensor.py`:
 
 ```python
 UnifiInsightsSensorEntityDescription(

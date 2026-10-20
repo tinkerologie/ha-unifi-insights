@@ -26,6 +26,10 @@ from custom_components.unifi_insights.const import (
 from custom_components.unifi_insights.coordinators.mobility import (
     UnifiInsightsMobilityCoordinator,
 )
+from custom_components.unifi_insights.device_tracker import (
+    LOCATION_DESCRIPTION,
+    UnifiMobilityLocationTracker,
+)
 from custom_components.unifi_insights.sensor import (
     ROUTER_SENSORS,
     WORKSPACE_SENSORS,
@@ -398,6 +402,30 @@ async def test_router_links_to_its_workspace(hass: HomeAssistant) -> None:
     device_info: dict[str, Any] = dict(sensor.device_info or {})
     assert device_info["via_device_id"] == "workspace-device-id"
     assert "via_device" not in device_info
+
+
+@pytest.mark.parametrize("value", [True, "37.7749", None])
+async def test_tracker_rejects_non_numeric_coordinates(
+    hass: HomeAssistant, value: Any
+) -> None:
+    """A boolean or text coordinate is not a position."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"connection_type": "remote", "console_id": "c", "api_key": "k"},
+        entry_id="01REMOTE",
+    )
+    entry.add_to_hass(hass)
+    coordinator = UnifiInsightsMobilityCoordinator(hass, entry, mobility_client_mock())
+    coordinator.data = await coordinator._async_update_data()
+    router = coordinator.data["devices"][OFFICE_ROUTER_ID]
+    router["location"] = {"latitude": value, "longitude": value}
+
+    tracker = UnifiMobilityLocationTracker(
+        coordinator, LOCATION_DESCRIPTION, OFFICE_ROUTER_ID, "workspace-device-id"
+    )
+
+    assert tracker.latitude is None
+    assert tracker.longitude is None
 
 
 def _value(key: str, device: dict[str, Any]) -> Any:
