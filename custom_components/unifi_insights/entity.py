@@ -48,7 +48,7 @@ from .data_transforms import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterable
+    from collections.abc import Awaitable, Callable, Iterable, Mapping
 
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
@@ -97,7 +97,7 @@ def is_gateway_device(device_data: dict[str, Any]) -> bool:
 
 
 def build_site_device_info(
-    coordinator_data: dict[str, Any], site_id: str
+    coordinator_data: Mapping[str, Any], site_id: str
 ) -> dict[str, Any]:
     """Build DeviceInfo dictionary for site-level entity grouping."""
     gateway_id = get_site_gateway_id(coordinator_data, site_id)

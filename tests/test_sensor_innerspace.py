@@ -43,6 +43,7 @@ from custom_components.unifi_insights.sensor import (
 from custom_components.unifi_insights.sensor import (
     async_setup_entry as async_setup_sensor,
 )
+from tests.fixtures.facade_data import with_sections
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -95,39 +96,42 @@ async def test_diagnostics_includes_redacted_innerspace_and_anonymizes_macs(
     """InnerSpace diagnostics redact IDs/serials and anonymize MACs."""
     coordinator = init_integration.runtime_data.coordinator
     coordinator.innerspace_client = MagicMock()
-    coordinator.data["innerspace"] = {
-        "project": {"id": "secret-proj-id", "plan_count": 1, "product_count": 1},
-        "floor_plans": {
-            "fp-secret-1": {
-                "id": "fp-secret-1",
-                "name": "Level 1",
-                "floor_number": 1,
-                "site_id": "site-secret-1",
-                "ppm": 25.0,
-            }
+    coordinator.data = with_sections(
+        coordinator.data,
+        innerspace={
+            "project": {"id": "secret-proj-id", "plan_count": 1, "product_count": 1},
+            "floor_plans": {
+                "fp-secret-1": {
+                    "id": "fp-secret-1",
+                    "name": "Level 1",
+                    "floor_number": 1,
+                    "site_id": "site-secret-1",
+                    "ppm": 25.0,
+                }
+            },
+            "access_points": {},
+            "switches": {},
+            "inventory": {},
+            "devices": {
+                "ap-rec-1": {
+                    "id": "ap-rec-1",
+                    "name": "Ceiling AP",
+                    "model": "U6-Pro",
+                    "device_type": "access_point",
+                    "placement_state": "placed",
+                    "mac": "de:ad:be:ef:12:34",
+                    "serial": "SECRET-SERIAL-99",
+                    "floor_plan_id": "fp-secret-1",
+                    "floor_plan_name": "Level 1",
+                    "site_id": "site-secret-1",
+                    "matched_domain": "network",
+                    "matched_site_id": "site-secret-1",
+                    "matched_device_id": "net-dev-secret-1",
+                }
+            },
+            "last_update": "2026-09-25T00:00:00+00:00",
         },
-        "access_points": {},
-        "switches": {},
-        "inventory": {},
-        "devices": {
-            "ap-rec-1": {
-                "id": "ap-rec-1",
-                "name": "Ceiling AP",
-                "model": "U6-Pro",
-                "device_type": "access_point",
-                "placement_state": "placed",
-                "mac": "de:ad:be:ef:12:34",
-                "serial": "SECRET-SERIAL-99",
-                "floor_plan_id": "fp-secret-1",
-                "floor_plan_name": "Level 1",
-                "site_id": "site-secret-1",
-                "matched_domain": "network",
-                "matched_site_id": "site-secret-1",
-                "matched_device_id": "net-dev-secret-1",
-            }
-        },
-        "last_update": "2026-09-25T00:00:00+00:00",
-    }
+    )
 
     diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
 

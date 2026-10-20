@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.core import callback
@@ -21,6 +21,8 @@ from .const import (
 from .entity import UnifiProtectEntity
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -52,11 +54,12 @@ async def async_setup_entry(
     @callback
     def async_discover_cameras() -> None:
         """Discover and add new cameras."""
+        snapshot: Mapping[str, Any] = coordinator.data
         if (
-            not coordinator.data
-            or not isinstance(coordinator.data, dict)
-            or "protect" not in coordinator.data
-            or not isinstance(coordinator.data["protect"], dict)
+            not snapshot
+            or not isinstance(snapshot, dict)
+            or "protect" not in snapshot
+            or not isinstance(snapshot["protect"], dict)
         ):
             return
 

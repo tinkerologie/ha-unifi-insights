@@ -84,7 +84,7 @@ else:
     import voluptuous as vol
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable
+    from collections.abc import Awaitable, Mapping
 
     from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
 
@@ -591,7 +591,7 @@ async def _async_handle_reconnect_client(
     target = resolve_network_client_call(hass, call)
     client_id = target.client_id
 
-    data = target.cache.data
+    data: Mapping[str, Any] = target.cache.data
     clients = data.get("clients", {}) if isinstance(data, dict) else {}
     site_clients = clients.get(target.site_id, {}) if isinstance(clients, dict) else {}
     client_record = (

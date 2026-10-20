@@ -46,6 +46,7 @@ from custom_components.unifi_insights.services import (
     async_unload_services,
 )
 from tests.conftest import _create_mock_protect_client
+from tests.fixtures.facade_data import without_sections
 from tests.fixtures.library_responses import SAMPLE_DOORBELL_CAMERA, SAMPLE_PUBLIC_CHIME
 
 if TYPE_CHECKING:
@@ -406,7 +407,7 @@ async def test_console_without_loaded_cameras_raises_translated_error(
     if unloaded == "data":
         coordinator.data = None
     elif unloaded == "protect":
-        del coordinator.data["protect"]
+        coordinator.data = without_sections(coordinator.data, "protect")
     else:
         coordinator.data["protect"]["cameras"] = None
 

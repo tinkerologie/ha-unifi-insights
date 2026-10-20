@@ -58,7 +58,8 @@ async def async_setup_entry(
     @callback
     def async_discover_images() -> None:
         """Discover and add new WiFi QR code and floor plan image entities."""
-        if not coordinator.data or not isinstance(coordinator.data, dict):
+        snapshot: Mapping[str, Any] = coordinator.data
+        if not snapshot or not isinstance(snapshot, dict):
             return
 
         new_entities: list[ImageEntity] = []
@@ -272,9 +273,10 @@ class UnifiFloorPlanImage(
 
     def _get_floor_plan_data(self) -> dict[str, Any] | None:
         """Get floor plan data from coordinator."""
-        if not self.coordinator.data or not isinstance(self.coordinator.data, dict):
+        snapshot: Mapping[str, Any] = self.coordinator.data
+        if not snapshot or not isinstance(snapshot, dict):
             return None
-        innerspace = self.coordinator.data.get("innerspace")
+        innerspace = snapshot.get("innerspace")
         if not isinstance(innerspace, dict):
             return None
         floor_plans = innerspace.get("floor_plans")
@@ -484,7 +486,7 @@ class UnifiVoucherQrCodeImage(UnifiSiteEntity, ImageEntity):
         self._cancel_expiration_timer()
         if not getattr(self, "hass", None):
             return
-        latest_vouchers = self.coordinator.data.get("latest_vouchers")
+        latest_vouchers: object = self.coordinator.data.get("latest_vouchers")
         if not isinstance(latest_vouchers, Mapping):
             return
         record = latest_vouchers.get(self._site_id)
@@ -529,7 +531,7 @@ class UnifiVoucherQrCodeImage(UnifiSiteEntity, ImageEntity):
 
     def _current_payload(self) -> str | None:
         """Return the QR payload for the latest voucher if active and unexpired."""
-        latest_vouchers = self.coordinator.data.get("latest_vouchers")
+        latest_vouchers: object = self.coordinator.data.get("latest_vouchers")
         if not isinstance(latest_vouchers, Mapping):
             return None
         return latest_voucher_qr_payload(latest_vouchers.get(self._site_id))

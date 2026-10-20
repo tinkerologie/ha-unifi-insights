@@ -37,6 +37,8 @@ from .data_transforms import current_chime_ringtone_id
 from .entity import UnifiProtectEntity, camera_supports_ptz
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -118,11 +120,12 @@ async def async_setup_entry(
     @callback
     def async_discover_selects() -> None:
         """Discover and add new select entities."""
+        snapshot: Mapping[str, Any] = coordinator.data
         if (
-            not coordinator.data
-            or not isinstance(coordinator.data, dict)
-            or "protect" not in coordinator.data
-            or not isinstance(coordinator.data["protect"], dict)
+            not snapshot
+            or not isinstance(snapshot, dict)
+            or "protect" not in snapshot
+            or not isinstance(snapshot["protect"], dict)
         ):
             return
 
@@ -345,7 +348,7 @@ class UnifiProtectChimeRingtoneSelect(UnifiProtectEntity, SelectEntity):
 
     def _update_from_data(self) -> None:
         """Update entity from data."""
-        data = self.coordinator.data
+        data: Mapping[str, Any] = self.coordinator.data
         protect = data.get("protect") if isinstance(data, dict) else None
         chimes = protect.get("chimes") if isinstance(protect, dict) else None
         if not isinstance(chimes, dict):

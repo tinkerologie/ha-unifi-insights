@@ -43,6 +43,8 @@ from .data_transforms import is_doorbell_camera_model
 # CarrierFabricData is imported inside functions: __init__.py imports this
 # module while it loads, before the class exists.
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant, ServiceCall
 
@@ -425,7 +427,7 @@ def _resolve_native_client_id(
     cache: UnifiInsightsFacadeCoordinator, site_id: str, client_id: str
 ) -> str:
     """Resolve a target client ID or MAC to the native cached client ID."""
-    data = cache.data
+    data: Mapping[str, Any] = cache.data
     if isinstance(data, dict):
         clients = data.get("clients", {})
         site_clients = clients.get(site_id, {}) if isinstance(clients, dict) else {}
@@ -1245,7 +1247,7 @@ def _resolve_chime_doorbell_camera_ids(
 
     # Routing keeps a console that has not loaded its Protect data yet as a
     # candidate, so the cached cameras may not be there.
-    data = cache.data
+    data: Mapping[str, Any] = cache.data
     protect_data = data.get("protect") if isinstance(data, dict) else None
     known_cameras = (
         protect_data.get("cameras") if isinstance(protect_data, dict) else None
@@ -1485,8 +1487,9 @@ def resolve_network_device_call(
     cache = entry.runtime_data.coordinator
     device_id = str(resolved_id)
 
-    if not site_id and isinstance(cache.data, dict):
-        devices_by_site = cache.data.get("devices")
+    data: Mapping[str, Any] = cache.data
+    if not site_id and isinstance(data, dict):
+        devices_by_site = data.get("devices")
         if isinstance(devices_by_site, dict):
             site_id = next(
                 (
@@ -1576,7 +1579,8 @@ def resolve_network_consoles_call(
         cache = entry.runtime_data.coordinator
         if not getattr(cache, "is_network_usable", True):
             continue
-        sites = (cache.data or {}).get("sites") or {}
+        snapshot: Mapping[str, Any] = cache.data
+        sites = (snapshot or {}).get("sites") or {}
         targets.append(
             NetworkConsoleTarget(
                 title=entry.title,
@@ -1609,7 +1613,8 @@ def resolve_refresh_call(hass: HomeAssistant, call: ServiceCall) -> RefreshSelec
     targets: list[ConsoleRefreshTarget] = []
     for entry in entries:
         cache = entry.runtime_data.coordinator
-        sites = (cache.data or {}).get("sites") or {}
+        snapshot: Mapping[str, Any] = cache.data
+        sites = (snapshot or {}).get("sites") or {}
         if site_id and site_id not in sites:
             _LOGGER.debug("Skipping coordinator - site %s not found", site_id)
             continue

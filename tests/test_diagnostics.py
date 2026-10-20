@@ -48,6 +48,7 @@ from custom_components.unifi_insights.diagnostics import (
     _redact_coordinator_data,
     async_get_config_entry_diagnostics,
 )
+from tests.fixtures.facade_data import with_sections
 from tests.fixtures.library_responses import (
     SAMPLE_ALARM_HUB,
     SAMPLE_ALARM_HUB_TAMPER_EVENT,
@@ -124,7 +125,9 @@ async def test_site_manager_diagnostics_exclude_raw_cloud_snapshot(
     }
     runtime = init_integration.runtime_data
     runtime.site_manager_coordinator = SimpleNamespace(data=snapshot)
-    runtime.coordinator.data["site_manager"] = snapshot
+    runtime.coordinator.data = with_sections(
+        runtime.coordinator.data, site_manager=snapshot
+    )
 
     diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
 
@@ -205,7 +208,7 @@ async def test_diagnostics_redacts_wifi_qr_code(
     )
     qr_code = wifi["wifi-1"]["qr_code"]
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["wifi"] = {"site-1": wifi}
+    coordinator.data = with_sections(coordinator.data, wifi={"site-1": wifi})
 
     diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
     diagnostic_wifi = diagnostics["data"]["wifi"]["site-1"]["wifi-1"]
@@ -264,10 +267,13 @@ def _client_record() -> dict[str, Any]:
 def _seed_client_data(coordinator: Any) -> dict[str, Any]:
     """Put a synthetic client into every place the coordinator keeps one."""
     record = _client_record()
-    coordinator.data["clients"] = {"site-1": {"client-1": record}}
-    coordinator.data["stats"] = {
-        "site-1": {"device-1": {"id": "device-1", "clients": [record]}}
-    }
+    coordinator.data = with_sections(
+        coordinator.data, clients={"site-1": {"client-1": record}}
+    )
+    coordinator.data = with_sections(
+        coordinator.data,
+        stats={"site-1": {"device-1": {"id": "device-1", "clients": [record]}}},
+    )
     return record
 
 
@@ -331,17 +337,22 @@ async def test_diagnostics_keeps_hardware_names_readable(
     is which, and none of them name a person.
     """
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["sites"] = {"site-1": {"id": "site-1", "name": "Home"}}
-    coordinator.data["devices"] = {
-        "site-1": {
-            "device-1": {
-                "id": "device-1",
-                "name": "Garage Switch",
-                "model": "USW-24",
-                "macAddress": "AA:BB:CC:77:88:99",
+    coordinator.data = with_sections(
+        coordinator.data, sites={"site-1": {"id": "site-1", "name": "Home"}}
+    )
+    coordinator.data = with_sections(
+        coordinator.data,
+        devices={
+            "site-1": {
+                "device-1": {
+                    "id": "device-1",
+                    "name": "Garage Switch",
+                    "model": "USW-24",
+                    "macAddress": "AA:BB:CC:77:88:99",
+                }
             }
-        }
-    }
+        },
+    )
 
     diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
 
@@ -359,24 +370,27 @@ async def test_diagnostics_redacts_wan_link_addresses(
 ) -> None:
     """Test merged WAN link addresses are redacted but link state is kept."""
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["devices"] = {
-        "site-1": {
-            "device-1": {
-                "id": "device-1",
-                "model": "UCG-Ultra",
-                "features": {"gateway": True},
-                "wans": [
-                    {
-                        "key": "wan",
-                        "name": "WAN",
-                        "status": "online",
-                        "ip": "198.51.100.7",
-                        "connected": True,
-                    }
-                ],
+    coordinator.data = with_sections(
+        coordinator.data,
+        devices={
+            "site-1": {
+                "device-1": {
+                    "id": "device-1",
+                    "model": "UCG-Ultra",
+                    "features": {"gateway": True},
+                    "wans": [
+                        {
+                            "key": "wan",
+                            "name": "WAN",
+                            "status": "online",
+                            "ip": "198.51.100.7",
+                            "connected": True,
+                        }
+                    ],
+                }
             }
-        }
-    }
+        },
+    )
 
     diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
 
@@ -401,14 +415,17 @@ async def test_diagnostics_mac_placeholders_are_stable_and_distinct(
     """
     coordinator = init_integration.runtime_data.coordinator
     _seed_client_data(coordinator)
-    coordinator.data["devices"] = {
-        "site-1": {
-            # Devices reported without an id are keyed by MAC (#128).
-            "aa:bb:cc:44:55:60": {"name": "Hallway AP", "mac": "AA:BB:CC:44:55:60"},
-            # Unpunctuated under a known MAC key is still the same MAC.
-            "aa:bb:cc:77:88:99": {"name": "Garage Switch", "mac": "aabbcc778899"},
-        }
-    }
+    coordinator.data = with_sections(
+        coordinator.data,
+        devices={
+            "site-1": {
+                # Devices reported without an id are keyed by MAC (#128).
+                "aa:bb:cc:44:55:60": {"name": "Hallway AP", "mac": "AA:BB:CC:44:55:60"},
+                # Unpunctuated under a known MAC key is still the same MAC.
+                "aa:bb:cc:77:88:99": {"name": "Garage Switch", "mac": "aabbcc778899"},
+            }
+        },
+    )
 
     diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
     devices = diagnostics["data"]["devices"]["site-1"]
@@ -438,18 +455,21 @@ async def test_diagnostics_redacts_wifi_ssid(
 ) -> None:
     """Test the SSID is redacted wherever the WiFi record carries it."""
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["wifi"] = {
-        "site-1": {
-            "wifi-1": {
-                "id": "wifi-1",
-                "name": "Sarah and Tom 5G",
-                "ssid": "Sarah and Tom 5G",
-                "enabled": True,
-                "security": "wpa2",
-                "num_connected_clients": 4,
+    coordinator.data = with_sections(
+        coordinator.data,
+        wifi={
+            "site-1": {
+                "wifi-1": {
+                    "id": "wifi-1",
+                    "name": "Sarah and Tom 5G",
+                    "ssid": "Sarah and Tom 5G",
+                    "enabled": True,
+                    "security": "wpa2",
+                    "num_connected_clients": 4,
+                }
             }
-        }
-    }
+        },
+    )
 
     diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
     wifi = diagnostics["data"]["wifi"]["site-1"]["wifi-1"]
@@ -468,9 +488,25 @@ async def test_diagnostics_redacts_voucher_codes_and_notes(
 ) -> None:
     """Test voucher codes and notes are redacted in vouchers and latest_vouchers."""
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["vouchers"] = {
-        "site-1": {
-            "v-1": {
+    coordinator.data = with_sections(
+        coordinator.data,
+        vouchers={
+            "site-1": {
+                "v-1": {
+                    "id": "v-1",
+                    "code": "secret-code-123",
+                    "name": "Guest John",
+                    "note": "Secret Guest Note",
+                    "timeLimitMinutes": 480,
+                    "expired": False,
+                }
+            }
+        },
+    )
+    coordinator.data = with_sections(
+        coordinator.data,
+        latest_vouchers={
+            "site-1": {
                 "id": "v-1",
                 "code": "secret-code-123",
                 "name": "Guest John",
@@ -478,18 +514,8 @@ async def test_diagnostics_redacts_voucher_codes_and_notes(
                 "timeLimitMinutes": 480,
                 "expired": False,
             }
-        }
-    }
-    coordinator.data["latest_vouchers"] = {
-        "site-1": {
-            "id": "v-1",
-            "code": "secret-code-123",
-            "name": "Guest John",
-            "note": "Secret Guest Note",
-            "timeLimitMinutes": 480,
-            "expired": False,
-        }
-    }
+        },
+    )
 
     diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
     voucher = diagnostics["data"]["vouchers"]["site-1"]["v-1"]
@@ -612,20 +638,26 @@ async def test_diagnostics_redacts_unpunctuated_macs_anywhere(
     form, so both have to reach the same placeholder.
     """
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["clients"] = {
-        "site-1": {
-            "client-1": {
-                "macAddress": "AA:BB:CC:44:55:60",
-                # A field no model declares, holding the unpunctuated form.
-                "wiredUplinkMacAddress": "aabbcc445560",
+    coordinator.data = with_sections(
+        coordinator.data,
+        clients={
+            "site-1": {
+                "client-1": {
+                    "macAddress": "AA:BB:CC:44:55:60",
+                    # A field no model declares, holding the unpunctuated form.
+                    "wiredUplinkMacAddress": "aabbcc445560",
+                }
             }
-        }
-    }
-    coordinator.data["devices"] = {
-        # Devices reported without an id are keyed by MAC, and nothing
-        # guarantees the controller punctuates it.
-        "site-1": {"aabbcc445560": {"name": "Hallway AP", "model": "U7-Pro"}}
-    }
+        },
+    )
+    coordinator.data = with_sections(
+        coordinator.data,
+        devices={
+            # Devices reported without an id are keyed by MAC, and nothing
+            # guarantees the controller punctuates it.
+            "site-1": {"aabbcc445560": {"name": "Hallway AP", "model": "U7-Pro"}}
+        },
+    )
 
     diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
     client = diagnostics["data"]["clients"]["site-1"]["client-1"]
@@ -651,12 +683,15 @@ async def test_diagnostics_keeps_malformed_mac_values_distinct(
     the placeholders exist to preserve.
     """
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["clients"] = {
-        "site-1": {
-            "client-1": {"macAddress": "not-a-mac", "apMac": "aac"},
-            "client-2": {"macAddress": "aac"},
-        }
-    }
+    coordinator.data = with_sections(
+        coordinator.data,
+        clients={
+            "site-1": {
+                "client-1": {"macAddress": "not-a-mac", "apMac": "aac"},
+                "client-2": {"macAddress": "aac"},
+            }
+        },
+    )
 
     diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
     clients = diagnostics["data"]["clients"]["site-1"]
@@ -678,20 +713,23 @@ async def test_diagnostics_placeholders_topology_uplink_mac(
 ) -> None:
     """The copied legacy parent MAC is placeholdered like every other MAC."""
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["devices"] = {
-        "site-1": {
-            "uuid-child": {
-                "name": "Ultra",
-                "macAddress": "58:d6:1f:00:00:02",
-                "topology": {
-                    "legacy_type": "usw",
-                    "uplink_mac": "28:70:4e:00:00:01",
-                    "uplink_remote_port": 6,
+    coordinator.data = with_sections(
+        coordinator.data,
+        devices={
+            "site-1": {
+                "uuid-child": {
+                    "name": "Ultra",
+                    "macAddress": "58:d6:1f:00:00:02",
+                    "topology": {
+                        "legacy_type": "usw",
+                        "uplink_mac": "28:70:4e:00:00:01",
+                        "uplink_remote_port": 6,
+                    },
                 },
-            },
-            "uuid-parent": {"name": "Core", "macAddress": "28:70:4e:00:00:01"},
-        }
-    }
+                "uuid-parent": {"name": "Core", "macAddress": "28:70:4e:00:00:01"},
+            }
+        },
+    )
 
     diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
     devices = diagnostics["data"]["devices"]["site-1"]
@@ -711,16 +749,19 @@ async def test_diagnostics_placeholders_client_links(
 ) -> None:
     """Client link MACs (keys and values) are placeholdered; VLAN stays."""
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["client_links"] = {
-        "site-1": {
-            "8c:ed:e1:00:00:01": {
-                "sw_mac": "28:70:4e:00:00:01",
-                "sw_port": 14,
-                "vlan": 3,
-                "network_name": "Cameras",
+    coordinator.data = with_sections(
+        coordinator.data,
+        client_links={
+            "site-1": {
+                "8c:ed:e1:00:00:01": {
+                    "sw_mac": "28:70:4e:00:00:01",
+                    "sw_port": 14,
+                    "vlan": 3,
+                    "network_name": "Cameras",
+                }
             }
-        }
-    }
+        },
+    )
 
     diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
     (link_key,) = diagnostics["data"]["client_links"]["site-1"]
@@ -786,11 +827,14 @@ async def test_diagnostics_redacts_port_forward_addresses(
 ) -> None:
     """Test diagnostics redacts port forward IP addresses but preserves rule info."""
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["port_forwards"] = {
-        "site-1": {
-            "pf-plex": port_forward_record(destination_ips=["203.0.113.8"]),
-        }
-    }
+    coordinator.data = with_sections(
+        coordinator.data,
+        port_forwards={
+            "site-1": {
+                "pf-plex": port_forward_record(destination_ips=["203.0.113.8"]),
+            }
+        },
+    )
 
     result = await async_get_config_entry_diagnostics(hass, init_integration)
     dumped = json.dumps(result, default=str)
@@ -810,20 +854,23 @@ async def test_diagnostics_redacts_traffic_rule_targets(
 ) -> None:
     """Test diagnostics redacts traffic rule target domains, IPs and MACs."""
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["traffic_rules"] = {
-        "site-1": {
-            "tr-bedtime": traffic_rule_record(
-                ip_addresses=[
-                    {
-                        "ip_or_subnet": "203.0.113.9/32",
-                        "ip_version": "v4",
-                        "port_ranges": [],
-                        "ports": [],
-                    }
-                ]
-            ),
-        }
-    }
+    coordinator.data = with_sections(
+        coordinator.data,
+        traffic_rules={
+            "site-1": {
+                "tr-bedtime": traffic_rule_record(
+                    ip_addresses=[
+                        {
+                            "ip_or_subnet": "203.0.113.9/32",
+                            "ip_version": "v4",
+                            "port_ranges": [],
+                            "ports": [],
+                        }
+                    ]
+                ),
+            }
+        },
+    )
 
     result = await async_get_config_entry_diagnostics(hass, init_integration)
     dumped = json.dumps(result, default=str)
@@ -842,11 +889,14 @@ async def test_diagnostics_redacts_nat_rule_addresses(
 ) -> None:
     """Test diagnostics redacts NAT rule translated and filter addresses."""
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["nat_rules"] = {
-        "site-1": {
-            "nat-dns": nat_rule_record(),
-        }
-    }
+    coordinator.data = with_sections(
+        coordinator.data,
+        nat_rules={
+            "site-1": {
+                "nat-dns": nat_rule_record(),
+            }
+        },
+    )
 
     result = await async_get_config_entry_diagnostics(hass, init_integration)
     dumped = json.dumps(result, default=str)
@@ -864,11 +914,16 @@ async def test_diagnostics_redacts_static_route_targets(
 ) -> None:
     """Test diagnostics redacts static route networks, next hops and gateway MACs."""
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["static_routes"] = {
-        "site-1": {
-            "route-lab": static_route_record(**{"static-route_nexthop": "192.0.2.1"}),
-        }
-    }
+    coordinator.data = with_sections(
+        coordinator.data,
+        static_routes={
+            "site-1": {
+                "route-lab": static_route_record(
+                    **{"static-route_nexthop": "192.0.2.1"}
+                ),
+            }
+        },
+    )
 
     result = await async_get_config_entry_diagnostics(hass, init_integration)
     dumped = json.dumps(result, default=str)
@@ -886,23 +941,26 @@ async def test_diagnostics_redacts_firewall_policy_filters(
 ) -> None:
     """Test diagnostics redacts the nested address, domain and MAC filters."""
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["firewall_rules"] = {
-        "site-1": {
-            "f1": {
-                "id": "f1",
-                "name": "Block cameras",
-                "enabled": True,
-                "source": {
-                    "ipAddressFilter": {"items": [{"value": "10.3.3.3"}]},
-                    "macAddressFilter": {"macAddresses": ["aa:bb:cc:dd:ee:01"]},
-                },
-                "destination": {
-                    "domainFilter": {"domains": ["blocked.example"]},
-                    "portFilter": {"items": [{"value": 443}]},
-                },
+    coordinator.data = with_sections(
+        coordinator.data,
+        firewall_rules={
+            "site-1": {
+                "f1": {
+                    "id": "f1",
+                    "name": "Block cameras",
+                    "enabled": True,
+                    "source": {
+                        "ipAddressFilter": {"items": [{"value": "10.3.3.3"}]},
+                        "macAddressFilter": {"macAddresses": ["aa:bb:cc:dd:ee:01"]},
+                    },
+                    "destination": {
+                        "domainFilter": {"domains": ["blocked.example"]},
+                        "portFilter": {"items": [{"value": 443}]},
+                    },
+                }
             }
-        }
-    }
+        },
+    )
 
     result = await async_get_config_entry_diagnostics(hass, init_integration)
     dumped = json.dumps(result, default=str)
@@ -920,18 +978,21 @@ async def test_diagnostics_redacts_policy_based_route_targets(
 ) -> None:
     """Test diagnostics redacts policy-based route domains, ranges and next hop."""
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["policy_based_routes"] = {
-        "site-1": {
-            "p1": {
-                "_id": "p1",
-                "description": "VPN",
-                "enabled": True,
-                "domains": [{"domain": "routed.example"}],
-                "ipRanges": [{"ip_start": "10.5.5.1"}],
-                "nextHop": "10.4.4.4",
+    coordinator.data = with_sections(
+        coordinator.data,
+        policy_based_routes={
+            "site-1": {
+                "p1": {
+                    "_id": "p1",
+                    "description": "VPN",
+                    "enabled": True,
+                    "domains": [{"domain": "routed.example"}],
+                    "ipRanges": [{"ip_start": "10.5.5.1"}],
+                    "nextHop": "10.4.4.4",
+                }
             }
-        }
-    }
+        },
+    )
 
     result = await async_get_config_entry_diagnostics(hass, init_integration)
     dumped = json.dumps(result, default=str)
@@ -948,14 +1009,19 @@ async def test_diagnostics_anonymizes_dotted_client_mac(
 ) -> None:
     """Test diagnostics anonymizes dotted client_mac in MAC_KEYS."""
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["traffic_rules"] = {
-        "site-1": {
-            "tr-1": {
-                "_id": "tr-1",
-                "target_devices": [{"client_mac": "aabb.ccdd.eeff", "type": "CLIENT"}],
+    coordinator.data = with_sections(
+        coordinator.data,
+        traffic_rules={
+            "site-1": {
+                "tr-1": {
+                    "_id": "tr-1",
+                    "target_devices": [
+                        {"client_mac": "aabb.ccdd.eeff", "type": "CLIENT"}
+                    ],
+                }
             }
-        }
-    }
+        },
+    )
 
     result = await async_get_config_entry_diagnostics(hass, init_integration)
     dumped = json.dumps(result, default=str)
@@ -994,17 +1060,20 @@ async def test_diagnostics_keeps_storage_mounts_readable(
         },
     ]
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["devices"] = {
-        "site-1": {
-            "device-1": {
-                "id": "device-1",
-                "name": "Dream Machine Pro SE",
-                "model": "UDMPROSE",
-                "macAddress": "AA:BB:CC:77:88:99",
-                "storage_mounts": copy.deepcopy(udm_storage),
+    coordinator.data = with_sections(
+        coordinator.data,
+        devices={
+            "site-1": {
+                "device-1": {
+                    "id": "device-1",
+                    "name": "Dream Machine Pro SE",
+                    "model": "UDMPROSE",
+                    "macAddress": "AA:BB:CC:77:88:99",
+                    "storage_mounts": copy.deepcopy(udm_storage),
+                }
             }
-        }
-    }
+        },
+    )
 
     diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
 
@@ -1080,9 +1149,9 @@ async def test_diagnostics_exclude_network_facts(
     stats = {device_mac.lower(): dict(SAMPLE_UDM_PRO_STATS)}
     facts = {"site-1": build_site_network_facts(devices, stats)}
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["devices"] = {"site-1": devices}
-    coordinator.data["stats"] = {"site-1": stats}
-    coordinator.data[NETWORK_FACTS_KEY] = facts
+    coordinator.data = with_sections(coordinator.data, devices={"site-1": devices})
+    coordinator.data = with_sections(coordinator.data, stats={"site-1": stats})
+    coordinator.data = with_sections(coordinator.data, **{NETWORK_FACTS_KEY: facts})
     before = copy.deepcopy({"devices": devices, "stats": stats})
 
     diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)

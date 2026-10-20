@@ -20,6 +20,8 @@ from .coordinators import UnifiInsightsFacadeCoordinator
 from .entity import get_field
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -45,7 +47,8 @@ async def async_setup_entry(
     def async_discover_updates() -> None:
         """Discover and add new update entities."""
         nonlocal first_setup
-        if not coordinator.data or not isinstance(coordinator.data, dict):
+        snapshot: Mapping[str, Any] = coordinator.data
+        if not snapshot or not isinstance(snapshot, dict):
             return
 
         devices_by_site = coordinator.data.get("devices", {})

@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NotRequired, ReadOnly, TypedDict, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from collections.abc import Set as AbstractSet
 
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
@@ -27,12 +29,14 @@ from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
+from homeassistant.util.read_only_dict import ReadOnlyDict
 
 from custom_components.unifi_insights.client_wake import select_wake_history
 from custom_components.unifi_insights.const import CONF_CONSOLE_ID, DOMAIN
 from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
     NetworkDeviceFacts,
+    SiteNetworkFacts,
     correlate_innerspace_devices,
     device_facts,
     get_site_gateway_id,
@@ -44,8 +48,62 @@ from .rule_audit import async_build_rule_export
 
 _LOGGER = logging.getLogger(__name__)
 
+# Sections keyed by site ID whose records are mappings.
+type SiteSection = Mapping[str, Mapping[str, Any]]
 
-class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+
+class FacadeData(TypedDict):
+    """
+    The facade's published snapshot (ADR-013).
+
+    Every key is read-only and every section is a ``Mapping``, so a write into
+    the snapshot is a strict-mypy error. At runtime the root is a
+    ``ReadOnlyDict``; the sections are the owners' own objects, passed through
+    by reference and never copied (the WebSocket streams compare them by
+    identity).
+    """
+
+    # From the config coordinator
+    sites: ReadOnly[SiteSection]
+    wifi: ReadOnly[SiteSection]
+    vouchers: ReadOnly[SiteSection]
+    latest_vouchers: ReadOnly[SiteSection]
+    firewall_rules: ReadOnly[SiteSection]
+    policy_based_routes: ReadOnly[SiteSection]
+    vpn_clients: ReadOnly[SiteSection]
+    port_forwards: ReadOnly[SiteSection]
+    traffic_rules: ReadOnly[SiteSection]
+    nat_rules: ReadOnly[SiteSection]
+    static_routes: ReadOnly[SiteSection]
+    site_vpns: ReadOnly[SiteSection]
+    rule_changes: ReadOnly[Mapping[str, Any]]
+    network_info: ReadOnly[Mapping[str, Any]]
+    client_links: ReadOnly[SiteSection]
+    internet_activity: ReadOnly[SiteSection]
+    internet_activity_unavailable: ReadOnly[AbstractSet[str]]
+    # From the device coordinator
+    devices: ReadOnly[SiteSection]
+    clients: ReadOnly[SiteSection]
+    stats: ReadOnly[SiteSection]
+    vpn_connections: ReadOnly[Mapping[str, Any]]
+    # None until the device coordinator publishes it; readers then build the
+    # facts from the raw devices and stats.
+    network_facts: ReadOnly[Mapping[str, SiteNetworkFacts] | None]
+    # From the Protect coordinator, or an empty stand-in without one
+    protect: ReadOnly[Mapping[str, Any]]
+    # The InnerSpace view, derived from the InnerSpace, device and Protect data
+    innerspace: ReadOnly[Mapping[str, Any]]
+    last_update: ReadOnly[datetime]
+    # Only with a Site Manager coordinator
+    site_manager: ReadOnly[NotRequired[Mapping[str, Any]]]
+
+
+def _read_only(data: dict[str, Any]) -> FacadeData:
+    """Wrap a built snapshot in a ``ReadOnlyDict`` without copying its sections."""
+    return cast("FacadeData", ReadOnlyDict(data))
+
+
+class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
     """
     Facade coordinator providing unified data view for backward compatibility.
 
@@ -308,7 +366,7 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._cached_innerspace_data = None
             innerspace_data = {**normalize_innerspace_snapshot(), "last_update": None}
 
-        self.data = {
+        data: dict[str, Any] = {
             # From config coordinator
             "sites": self._config_coordinator.data.get("sites", {}),
             "wifi": self._config_coordinator.data.get("wifi", {}),
@@ -350,7 +408,7 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
         if self._site_manager_coordinator:
             account_data = self._site_manager_coordinator.data
-            self.data["site_manager"] = {
+            data["site_manager"] = {
                 **account_data,
                 "selected_host_id": (
                     self._site_manager_host_id
@@ -358,6 +416,7 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     else None
                 ),
             }
+        self.data = _read_only(data)
 
     def get_site(self, site_id: str) -> dict[str, Any] | None:
         """Get site data by site ID (delegates to config coordinator)."""
@@ -482,7 +541,7 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return True if Network is configured and usable."""
         return self.network_available and self.network_client is not None
 
-    async def _async_update_data(self) -> dict[str, Any]:
+    async def _async_update_data(self) -> FacadeData:
         """
         Update aggregated data.
 

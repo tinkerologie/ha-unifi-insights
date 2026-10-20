@@ -14,7 +14,7 @@ import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .console_identity import (
     build_legacy_site_unique_id,
@@ -29,6 +29,9 @@ from .data_transforms import (
     site_network_facts,
 )
 from .topology import first_present, site_display_name
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 # --- Shared contract helpers -------------------------------------------------
 
@@ -153,7 +156,7 @@ def _wan_state(gateway: dict[str, Any] | None) -> tuple[str, list[dict[str, str]
 
 
 def build_site_health_snapshot(
-    data: dict[str, Any],
+    data: Mapping[str, Any],
     *,
     entry_id: str,
     site_id: str,
@@ -333,7 +336,7 @@ def bits_per_second_to_int(value: float | None) -> int | None:
 
 
 def build_performance_snapshot(
-    data: dict[str, Any],
+    data: Mapping[str, Any],
     *,
     entry_id: str,
     site_id: str,
@@ -432,7 +435,7 @@ KIND_TO_SEVERITY: dict[str, str] = {
 
 
 def build_timeline_snapshot(
-    data: dict[str, Any],
+    data: Mapping[str, Any],
     *,
     entry_id: str,
     site_id: str,
@@ -549,7 +552,7 @@ def build_unavailable_timeline(
 LOW_BATTERY_PCT = 20
 
 
-def _site_from_mac(data: dict[str, Any], mac: str | None) -> str | None:
+def _site_from_mac(data: Mapping[str, Any], mac: str | None) -> str | None:
     if not mac:
         return None
     devices_by_site = as_dict(data.get("devices"))
@@ -583,7 +586,7 @@ def _camera_entity_id(registry: Any, camera_id: str) -> str | None:
 
 
 def build_protect_snapshot(
-    data: dict[str, Any],
+    data: Mapping[str, Any],
     *,
     entry_id: str,
     entry_title: str,
@@ -801,7 +804,7 @@ def _resolve_entity_ids(
 
 
 def build_internet_activity_snapshot(
-    data: dict[str, Any],
+    data: Mapping[str, Any],
     *,
     entry_id: str,
     site_id: str,

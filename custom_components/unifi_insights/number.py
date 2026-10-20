@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.number import (
     NumberDeviceClass,
@@ -47,6 +47,8 @@ from .entity import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -129,11 +131,12 @@ async def async_setup_entry(
     @callback
     def async_discover_numbers() -> None:
         """Discover and add new number entities."""
+        snapshot: Mapping[str, Any] = coordinator.data
         if (
-            not coordinator.data
-            or not isinstance(coordinator.data, dict)
-            or "protect" not in coordinator.data
-            or not isinstance(coordinator.data["protect"], dict)
+            not snapshot
+            or not isinstance(snapshot, dict)
+            or "protect" not in snapshot
+            or not isinstance(snapshot["protect"], dict)
         ):
             return
 
@@ -461,7 +464,8 @@ def _async_setup_voucher_numbers(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up hotspot voucher input number entities."""
-    if not isinstance(coordinator.data, dict) or "vouchers" not in coordinator.data:
+    snapshot: Mapping[str, Any] = coordinator.data
+    if not isinstance(snapshot, dict) or "vouchers" not in snapshot:
         return
 
     known: set[tuple[str, str]] = set()

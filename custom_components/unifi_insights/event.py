@@ -289,11 +289,12 @@ async def async_setup_entry(
             async_add_entities(rule_events)
         if not coordinator.protect_client:
             return
+        snapshot: Mapping[str, Any] = coordinator.data
         if (
-            not coordinator.data
-            or not isinstance(coordinator.data, dict)
-            or "protect" not in coordinator.data
-            or not isinstance(coordinator.data["protect"], dict)
+            not snapshot
+            or not isinstance(snapshot, dict)
+            or "protect" not in snapshot
+            or not isinstance(snapshot["protect"], dict)
         ):
             return
 

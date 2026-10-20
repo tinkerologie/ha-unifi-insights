@@ -1329,7 +1329,8 @@ async def async_setup_entry(
     @callback
     def async_discover_sensors() -> None:
         """Discover and add new sensors."""
-        if not coordinator.data or not isinstance(coordinator.data, dict):
+        snapshot: Mapping[str, Any] = coordinator.data
+        if not snapshot or not isinstance(snapshot, dict):
             return
 
         entities: list[SensorEntity] = []
@@ -1474,11 +1475,8 @@ async def async_setup_entry(
 
     # Clean up stale port entities from previous runs
     created_uids = {getattr(e, "unique_id", None) for e in initial_entities}
-    devices_by_site = (
-        coordinator.data.get("devices", {})
-        if isinstance(coordinator.data, dict)
-        else {}
-    )
+    snapshot: Mapping[str, Any] = coordinator.data
+    devices_by_site = snapshot.get("devices", {}) if isinstance(snapshot, dict) else {}
     known_device_ids = (
         {
             device_id

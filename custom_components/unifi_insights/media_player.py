@@ -24,6 +24,8 @@ from .const import DEVICE_TYPE_CAMERA, DOMAIN
 from .entity import UnifiProtectEntity, camera_supports_speaker
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
     from unifi_official_api.protect.talkback import TalkbackStream
@@ -57,11 +59,12 @@ async def async_setup_entry(
     @callback
     def async_discover_speakers() -> None:
         """Discover and add speaker entities for speaker-capable cameras."""
+        snapshot: Mapping[str, Any] = coordinator.data
         if (
-            not coordinator.data
-            or not isinstance(coordinator.data, dict)
-            or "protect" not in coordinator.data
-            or not isinstance(coordinator.data["protect"], dict)
+            not snapshot
+            or not isinstance(snapshot, dict)
+            or "protect" not in snapshot
+            or not isinstance(snapshot["protect"], dict)
         ):
             return
 

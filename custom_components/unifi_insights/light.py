@@ -29,6 +29,8 @@ from .data_transforms import MAX_LED_LEVEL, MIN_LED_LEVEL, valid_led_level
 from .entity import UnifiProtectEntity
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -60,11 +62,12 @@ async def async_setup_entry(
     @callback
     def async_discover_lights() -> None:
         """Discover and add new lights."""
+        snapshot: Mapping[str, Any] = coordinator.data
         if (
-            not coordinator.data
-            or not isinstance(coordinator.data, dict)
-            or "protect" not in coordinator.data
-            or not isinstance(coordinator.data["protect"], dict)
+            not snapshot
+            or not isinstance(snapshot, dict)
+            or "protect" not in snapshot
+            or not isinstance(snapshot["protect"], dict)
         ):
             return
 

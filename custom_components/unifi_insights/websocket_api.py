@@ -67,7 +67,7 @@ else:
     import voluptuous as vol
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from homeassistant.core import HomeAssistant
 
@@ -171,7 +171,7 @@ def _device_in_entry(device: dr.DeviceEntry, entry_id: str) -> bool:
 
 
 def _ha_device_ids(
-    hass: HomeAssistant, data: dict[str, Any], site_id: str, entry_id: str
+    hass: HomeAssistant, data: Mapping[str, Any], site_id: str, entry_id: str
 ) -> dict[str, str]:
     """
     Map the site's device ids to their Home Assistant device registry ids.
@@ -215,7 +215,7 @@ def _build_snapshot(
 
 
 def _find_node(
-    data: dict[str, Any], site_id: str, node_key: bytes, node_id: str
+    data: Mapping[str, Any], site_id: str, node_key: bytes, node_id: str
 ) -> tuple[NodeKind, str, dict[str, Any]]:
     """
     Return (kind, raw id, record) of the one device, client or WAN ``node_id`` names.

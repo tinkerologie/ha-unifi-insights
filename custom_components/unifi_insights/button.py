@@ -67,6 +67,8 @@ from .entity import (
 from .topology import normalize_mac
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -94,7 +96,8 @@ def _wired_client_mac(client: dict[str, Any]) -> str | None:
 def _connected_client_macs(coordinator: UnifiInsightsFacadeCoordinator) -> set[str]:
     """Return the normalized MACs of all clients currently connected."""
     macs: set[str] = set()
-    clients_by_site = (coordinator.data or {}).get("clients")
+    snapshot: Mapping[str, Any] = coordinator.data
+    clients_by_site = (snapshot or {}).get("clients")
     if not isinstance(clients_by_site, dict):
         return macs
     for clients in clients_by_site.values():
@@ -221,7 +224,8 @@ async def async_setup_entry(
         connected_macs = _connected_client_macs(coordinator)
         restored: dict[str, UnifiClientWakeButton] = {}
         enabled_macs: set[str] = set()
-        coord_data = coordinator.data or {}
+        snapshot: Mapping[str, Any] = coordinator.data
+        coord_data = snapshot or {}
         for row in er.async_entries_for_config_entry(registry, config_entry.entry_id):
             mac = mac_from_wake_unique_id(row.unique_id)
             if row.domain != "button" or row.platform != DOMAIN or mac is None:
@@ -293,7 +297,8 @@ async def async_setup_entry(
     @callback
     def async_discover_buttons() -> None:
         """Discover and add new button entities."""
-        if not coordinator.data or not isinstance(coordinator.data, dict):
+        snapshot: Mapping[str, Any] = coordinator.data
+        if not snapshot or not isinstance(snapshot, dict):
             return
 
         current_client_control = config_entry.options.get(
@@ -599,7 +604,7 @@ class UnifiProtectChimePlayButton(UnifiProtectEntity, ButtonEntity):
 
     def _update_attributes(self) -> None:
         """Update button attributes."""
-        data = self.coordinator.data
+        data: Mapping[str, Any] = self.coordinator.data
         protect = data.get("protect") if isinstance(data, dict) else None
         chimes = protect.get("chimes") if isinstance(protect, dict) else None
         chime_data = chimes.get(self._device_id) if isinstance(chimes, dict) else None
@@ -729,7 +734,8 @@ class UnifiClientWakeButton(
         self._mac = mac
         self._attr_unique_id = wake_unique_id(mac)
 
-        coord_data = coordinator.data if isinstance(coordinator.data, dict) else {}
+        snapshot: Mapping[str, Any] = coordinator.data
+        coord_data = snapshot if isinstance(snapshot, dict) else {}
         if device_info is not None:
             self._attr_device_info = device_info
         elif site_id:
@@ -740,9 +746,8 @@ class UnifiClientWakeButton(
     @callback
     def async_update_history_name(self, fallback_name: str | None) -> None:
         """Apply a history name while preferring the current live client name."""
-        live = find_client_by_mac(
-            (self.coordinator.data or {}).get("clients"), self._mac
-        )
+        snapshot: Mapping[str, Any] = self.coordinator.data
+        live = find_client_by_mac((snapshot or {}).get("clients"), self._mac)
         live_name = first_non_blank_text(live[1], "name", "hostname") if live else None
         client_name = live_name or (
             fallback_name.strip()

@@ -51,7 +51,7 @@ from .entity import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -416,7 +416,8 @@ async def async_setup_entry(
     def async_discover_switches() -> None:
         nonlocal first_setup
         """Discover and add new switches."""
-        if not coordinator.data or not isinstance(coordinator.data, dict):
+        snapshot: Mapping[str, Any] = coordinator.data
+        if not snapshot or not isinstance(snapshot, dict):
             return
 
         current_client_control = entry.options.get(
