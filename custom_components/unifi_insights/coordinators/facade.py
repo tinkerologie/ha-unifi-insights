@@ -7,7 +7,7 @@ import asyncio
 import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, NotRequired, ReadOnly, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Final, NotRequired, ReadOnly, TypedDict, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -98,8 +98,95 @@ class FacadeData(TypedDict):
     site_manager: ReadOnly[NotRequired[Mapping[str, Any]]]
 
 
-def _read_only(data: dict[str, Any]) -> FacadeData:
-    """Wrap a built snapshot in a ``ReadOnlyDict`` without copying its sections."""
+# The config coordinator's sections, passed through by reference.
+_CONFIG_SECTIONS: Final = (
+    "sites",
+    "wifi",
+    "vouchers",
+    "latest_vouchers",
+    "firewall_rules",
+    "policy_based_routes",
+    "vpn_clients",
+    "port_forwards",
+    "traffic_rules",
+    "nat_rules",
+    "static_routes",
+    "site_vpns",
+    "rule_changes",
+    "network_info",
+    "client_links",
+    "internet_activity",
+)
+# The device coordinator's sections, passed through by reference.
+_DEVICE_SECTIONS: Final = ("devices", "clients", "stats", "vpn_connections")
+
+# The Protect data of a console without a Protect coordinator. Built once, so
+# its identity is stable across rebuilds and the Protect streams never see a
+# change.
+EMPTY_PROTECT: Final[Mapping[str, Mapping[str, Any]]] = ReadOnlyDict(
+    {
+        collection: ReadOnlyDict()
+        for collection in (
+            "cameras",
+            "lights",
+            "sensors",
+            "nvrs",
+            "viewers",
+            "chimes",
+            "fobs",
+            "link_stations",
+            "alarm_hubs",
+            "sirens",
+            "doorlocks",
+            "viewports",
+            "liveviews",
+            "protect_info",
+            "events",
+        )
+    }
+)
+
+
+def build_facade_data(
+    config: Mapping[str, Any],
+    device: Mapping[str, Any],
+    protect: Mapping[str, Any] | None,
+    innerspace: Mapping[str, Any],
+    *,
+    site_manager: Mapping[str, Any] | None,
+    site_manager_host_id: str | None,
+    now: datetime,
+) -> FacadeData:
+    """
+    Build one facade snapshot from the owners' published data.
+
+    Pure: it reads only its arguments and copies no section. ``protect`` is
+    None without a Protect coordinator, ``innerspace`` is the derived
+    InnerSpace view, and ``site_manager`` is the Site Manager account data, or
+    None without a Site Manager coordinator.
+    """
+    data: dict[str, Any] = {
+        **{section: config.get(section, {}) for section in _CONFIG_SECTIONS},
+        "internet_activity_unavailable": config.get(
+            "internet_activity_unavailable", set()
+        ),
+        **{section: device.get(section, {}) for section in _DEVICE_SECTIONS},
+        # None (never published) makes the readers build the facts from the
+        # raw devices and stats.
+        NETWORK_FACTS_KEY: device.get(NETWORK_FACTS_KEY),
+        "protect": EMPTY_PROTECT if protect is None else protect,
+        "innerspace": innerspace,
+        "last_update": now,
+    }
+    if site_manager is not None:
+        data["site_manager"] = {
+            **site_manager,
+            "selected_host_id": (
+                site_manager_host_id
+                if site_manager_host_id in site_manager["hosts"]
+                else None
+            ),
+        }
     return cast("FacadeData", ReadOnlyDict(data))
 
 
@@ -289,134 +376,80 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
                             )
         return (id(raw_innerspace), tuple(net_pairs), tuple(prot_pairs))
 
-    def _aggregate_data(self) -> None:
-        """Aggregate data from all coordinators into unified structure."""
-        devices = self._device_coordinator.data.get("devices", {})
-        protect_data = (
-            self._protect_coordinator.data
-            if self._protect_coordinator
-            else {
-                "cameras": {},
-                "lights": {},
-                "sensors": {},
-                "nvrs": {},
-                "viewers": {},
-                "chimes": {},
-                "fobs": {},
-                "link_stations": {},
-                "alarm_hubs": {},
-                "sirens": {},
-                "doorlocks": {},
-                "viewports": {},
-                "liveviews": {},
-                "protect_info": {},
-                "events": {},
-            }
-        )
-        if self._innerspace_coordinator and self._innerspace_coordinator.data:
-            raw_innerspace = self._innerspace_coordinator.data
-            corr_key = self._build_innerspace_corr_key(
-                raw_innerspace, devices, protect_data
-            )
-            if (
-                self._cached_innerspace_data is not None
-                and self._innerspace_corr_key == corr_key
-            ):
-                innerspace_data = self._cached_innerspace_data
-            else:
-                devices_map: dict[str, dict[str, Any]] = {}
-                access_points_map = {
-                    str(rec_id): dict(rec)
-                    for rec_id, rec in raw_innerspace.get("access_points", {}).items()
-                    if isinstance(rec, dict)
-                }
-                switches_map = {
-                    str(rec_id): dict(rec)
-                    for rec_id, rec in raw_innerspace.get("switches", {}).items()
-                    if isinstance(rec, dict)
-                }
-                inventory_map = {
-                    str(rec_id): dict(rec)
-                    for rec_id, rec in raw_innerspace.get("inventory", {}).items()
-                    if isinstance(rec, dict)
-                }
-                for section_map in (access_points_map, switches_map, inventory_map):
-                    devices_map.update(section_map)
-                innerspace_data = {
-                    "project": raw_innerspace.get("project"),
-                    "floor_plans": dict(raw_innerspace.get("floor_plans", {})),
-                    "access_points": access_points_map,
-                    "switches": switches_map,
-                    "inventory": inventory_map,
-                    "placed_devices": {**access_points_map, **switches_map},
-                    "devices": devices_map,
-                    "last_update": raw_innerspace.get("last_update"),
-                }
-                innerspace_data["correlations"] = correlate_innerspace_devices(
-                    innerspace_data,
-                    network_devices=devices if isinstance(devices, dict) else None,
-                    protect_devices=protect_data
-                    if isinstance(protect_data, dict)
-                    else None,
-                )
-                self._innerspace_corr_key = corr_key
-                self._cached_innerspace_data = innerspace_data
-        else:
+    def _innerspace_view(
+        self, devices: Any, protect_data: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Return the InnerSpace view, correlated with Network and Protect devices."""
+        if not (self._innerspace_coordinator and self._innerspace_coordinator.data):
             self._innerspace_corr_key = None
             self._cached_innerspace_data = None
-            innerspace_data = {**normalize_innerspace_snapshot(), "last_update": None}
-
-        data: dict[str, Any] = {
-            # From config coordinator
-            "sites": self._config_coordinator.data.get("sites", {}),
-            "wifi": self._config_coordinator.data.get("wifi", {}),
-            "vouchers": self._config_coordinator.data.get("vouchers", {}),
-            "latest_vouchers": self._config_coordinator.data.get("latest_vouchers", {}),
-            "firewall_rules": self._config_coordinator.data.get("firewall_rules", {}),
-            "policy_based_routes": self._config_coordinator.data.get(
-                "policy_based_routes", {}
-            ),
-            "vpn_clients": self._config_coordinator.data.get("vpn_clients", {}),
-            "port_forwards": self._config_coordinator.data.get("port_forwards", {}),
-            "traffic_rules": self._config_coordinator.data.get("traffic_rules", {}),
-            "nat_rules": self._config_coordinator.data.get("nat_rules", {}),
-            "static_routes": self._config_coordinator.data.get("static_routes", {}),
-            "site_vpns": self._config_coordinator.data.get("site_vpns", {}),
-            "rule_changes": self._config_coordinator.data.get("rule_changes", {}),
-            "network_info": self._config_coordinator.data.get("network_info", {}),
-            "client_links": self._config_coordinator.data.get("client_links", {}),
-            "internet_activity": self._config_coordinator.data.get(
-                "internet_activity", {}
-            ),
-            "internet_activity_unavailable": self._config_coordinator.data.get(
-                "internet_activity_unavailable", set()
-            ),
-            # From device coordinator
-            "devices": devices,
-            "clients": self._device_coordinator.data.get("clients", {}),
-            "stats": self._device_coordinator.data.get("stats", {}),
-            "vpn_connections": self._device_coordinator.data.get("vpn_connections", {}),
-            # Passed by reference like devices and stats. None (never
-            # published) makes the accessors build the facts from raw data.
-            NETWORK_FACTS_KEY: self._device_coordinator.data.get(NETWORK_FACTS_KEY),
-            # From protect coordinator
-            "protect": protect_data,
-            # From innerspace coordinator
-            "innerspace": innerspace_data,
-            # Combined timestamp
-            "last_update": datetime.now(tz=UTC),
+            return {**normalize_innerspace_snapshot(), "last_update": None}
+        raw_innerspace = self._innerspace_coordinator.data
+        corr_key = self._build_innerspace_corr_key(
+            raw_innerspace, devices, protect_data
+        )
+        if (
+            self._cached_innerspace_data is not None
+            and self._innerspace_corr_key == corr_key
+        ):
+            return self._cached_innerspace_data
+        devices_map: dict[str, dict[str, Any]] = {}
+        access_points_map = {
+            str(rec_id): dict(rec)
+            for rec_id, rec in raw_innerspace.get("access_points", {}).items()
+            if isinstance(rec, dict)
         }
-        if self._site_manager_coordinator:
-            account_data = self._site_manager_coordinator.data
-            data["site_manager"] = {
-                **account_data,
-                "selected_host_id": (
-                    self._site_manager_host_id
-                    if self._site_manager_host_id in account_data["hosts"]
-                    else None
-                ),
-            }
-        self.data = _read_only(data)
+        switches_map = {
+            str(rec_id): dict(rec)
+            for rec_id, rec in raw_innerspace.get("switches", {}).items()
+            if isinstance(rec, dict)
+        }
+        inventory_map = {
+            str(rec_id): dict(rec)
+            for rec_id, rec in raw_innerspace.get("inventory", {}).items()
+            if isinstance(rec, dict)
+        }
+        for section_map in (access_points_map, switches_map, inventory_map):
+            devices_map.update(section_map)
+        innerspace_data: dict[str, Any] = {
+            "project": raw_innerspace.get("project"),
+            "floor_plans": dict(raw_innerspace.get("floor_plans", {})),
+            "access_points": access_points_map,
+            "switches": switches_map,
+            "inventory": inventory_map,
+            "placed_devices": {**access_points_map, **switches_map},
+            "devices": devices_map,
+            "last_update": raw_innerspace.get("last_update"),
+        }
+        innerspace_data["correlations"] = correlate_innerspace_devices(
+            innerspace_data,
+            network_devices=devices if isinstance(devices, dict) else None,
+            protect_devices=protect_data if isinstance(protect_data, dict) else None,
+        )
+        self._innerspace_corr_key = corr_key
+        self._cached_innerspace_data = innerspace_data
+        return innerspace_data
+
+    def _aggregate_data(self) -> None:
+        """Publish a new snapshot built from the owners' current data."""
+        device = self._device_coordinator.data
+        protect = self._protect_coordinator.data if self._protect_coordinator else None
+        self.data = build_facade_data(
+            self._config_coordinator.data,
+            device,
+            protect,
+            self._innerspace_view(
+                device.get("devices", {}),
+                EMPTY_PROTECT if protect is None else protect,
+            ),
+            site_manager=(
+                self._site_manager_coordinator.data
+                if self._site_manager_coordinator
+                else None
+            ),
+            site_manager_host_id=self._site_manager_host_id,
+            now=datetime.now(tz=UTC),
+        )
 
     def get_site(self, site_id: str) -> dict[str, Any] | None:
         """Get site data by site ID (delegates to config coordinator)."""

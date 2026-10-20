@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util.read_only_dict import ReadOnlyDict
 from unifi_official_api import UniFiConnectionError
 
 from custom_components.unifi_insights.const import (
@@ -20,6 +22,11 @@ from custom_components.unifi_insights.coordinators.config import (
 )
 from custom_components.unifi_insights.coordinators.device import (
     UnifiInsightsDeviceCoordinator,
+)
+from custom_components.unifi_insights.coordinators.facade import (
+    EMPTY_PROTECT,
+    FacadeData,
+    build_facade_data,
 )
 from custom_components.unifi_insights.coordinators.protect import (
     UnifiInsightsProtectCoordinator,
@@ -565,6 +572,20 @@ class TestUnifiFacadeCoordinator:
         # Protect data should have default empty structure
         assert facade_coordinator_no_protect.data["protect"]["cameras"] == {}
         assert facade_coordinator_no_protect.data["protect"]["lights"] == {}
+
+    def test_empty_protect_stand_in_is_one_read_only_object(
+        self, facade_coordinator_no_protect: UnifiInsightsFacadeCoordinator
+    ) -> None:
+        """Without Protect every rebuild publishes the same read-only stand-in."""
+        before = facade_coordinator_no_protect.data["protect"]
+        facade_coordinator_no_protect._aggregate_data()
+
+        protect = facade_coordinator_no_protect.data["protect"]
+        assert protect is before
+        assert protect is EMPTY_PROTECT
+        assert protect["cameras"] is before["cameras"]
+        with pytest.raises(RuntimeError):
+            protect["cameras"]["cam-1"] = {}  # type: ignore[index]
 
     def test_aggregate_data_includes_rule_changes(
         self,
@@ -1274,3 +1295,82 @@ class TestCoordinatorDataFlow:
         await config_coord.async_shutdown()
         await device_coord.async_shutdown()
         await protect_coord.async_shutdown()
+
+
+# --- Pure snapshot builder (ADR-013) ------------------------------------------
+
+NOW = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
+
+
+def test_build_facade_data_passes_the_owners_sections_through() -> None:
+    """The builder copies no section and publishes a read-only root."""
+    config = {
+        "sites": {"site1": {"id": "site1"}},
+        "latest_vouchers": {"site1": {"id": "v1"}},
+        "internet_activity_unavailable": {"site1"},
+    }
+    facts = {"site1": build_site_network_facts({}, {})}
+    device = {
+        "devices": {"site1": {}},
+        "stats": {"site1": {}},
+        NETWORK_FACTS_KEY: facts,
+    }
+    protect = {"cameras": {"cam1": {"id": "cam1"}}}
+    innerspace = {"devices": {}}
+
+    snapshot = build_facade_data(
+        config,
+        device,
+        protect,
+        innerspace,
+        site_manager=None,
+        site_manager_host_id=None,
+        now=NOW,
+    )
+
+    assert type(snapshot) is ReadOnlyDict
+    for key in ("sites", "latest_vouchers", "internet_activity_unavailable"):
+        assert snapshot[key] is config[key], key
+    assert snapshot["devices"] is device["devices"]
+    assert snapshot["stats"] is device["stats"]
+    assert snapshot[NETWORK_FACTS_KEY] is facts
+    assert snapshot["protect"] is protect
+    assert snapshot["innerspace"] is innerspace
+    assert snapshot["last_update"] == NOW
+    assert snapshot["firewall_rules"] == {}
+    assert snapshot["clients"] == {}
+    assert "site_manager" not in snapshot
+    assert set(snapshot) == (
+        FacadeData.__required_keys__ | FacadeData.__optional_keys__
+    ) - {"site_manager"}
+    with pytest.raises(RuntimeError):
+        snapshot["sites"] = {}  # type: ignore[typeddict-readonly-mutated]
+
+
+def test_build_facade_data_without_protect_uses_the_stand_in() -> None:
+    """A console without Protect gets the shared empty Protect data."""
+    snapshot = build_facade_data(
+        {}, {}, None, {}, site_manager=None, site_manager_host_id=None, now=NOW
+    )
+
+    assert snapshot["protect"] is EMPTY_PROTECT
+    assert snapshot["internet_activity_unavailable"] == set()
+    assert snapshot[NETWORK_FACTS_KEY] is None
+
+
+@pytest.mark.parametrize(
+    ("host_id", "selected"),
+    [("host-1", "host-1"), ("host-9", None), (None, None)],
+)
+def test_build_facade_data_selects_the_entry_site_manager_host(
+    host_id: str | None, selected: str | None
+) -> None:
+    """The Site Manager section names this entry's console only when listed."""
+    account = {"hosts": {"host-1": {"id": "host-1"}}}
+
+    snapshot = build_facade_data(
+        {}, {}, None, {}, site_manager=account, site_manager_host_id=host_id, now=NOW
+    )
+
+    assert snapshot["site_manager"] == {**account, "selected_host_id": selected}
+    assert "selected_host_id" not in account
