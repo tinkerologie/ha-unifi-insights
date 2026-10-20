@@ -278,6 +278,19 @@ def _at(record: dict[str, Any], path: tuple[str, ...]) -> Any:
     return value
 
 
+def _assert_error_warning_unspent(
+    coordinator: UnifiInsightsProtectCoordinator, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The next real events-stream error still logs its one-time WARNING."""
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG):
+        coordinator._on_websocket_event_message({"error": "Internal error"})
+    assert any(
+        r.levelno == logging.WARNING and "reported an error" in r.getMessage()
+        for r in caplog.records
+    )
+
+
 class TestSettingsCommands:
     """Settings writes: one call, a published overlay, no refresh."""
 
@@ -2143,10 +2156,12 @@ class TestUnifiProtectCoordinator:
         assert "requests deferred" in caplog.text
         assert "limit=10" in caplog.text
         assert not any(r.levelno == logging.WARNING for r in caplog.records)
-        assert coordinator._ws_event_error_warned is False
+        _assert_error_warning_unspent(coordinator, caplog)
 
     def test_on_websocket_event_rate_limit_in_nested_error(
-        self, coordinator: UnifiInsightsProtectCoordinator
+        self,
+        coordinator: UnifiInsightsProtectCoordinator,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """An error object can carry its own rate-limit fields."""
         coordinator._on_websocket_event_message(
@@ -2159,7 +2174,7 @@ class TestUnifiProtectCoordinator:
 
         assert coordinator.protect_client is not None
         coordinator.protect_client._defer_after_rate_limit.assert_called_once_with(1.5)
-        assert coordinator._ws_event_error_warned is False
+        _assert_error_warning_unspent(coordinator, caplog)
 
     def test_on_websocket_event_rate_limit_without_protect_client(
         self,
@@ -2176,9 +2191,9 @@ class TestUnifiProtectCoordinator:
                 }
             )
 
-        assert coordinator_no_protect._ws_event_error_warned is False
-        assert coordinator_no_protect._ws_stream_health["events"]["last_message_at"]
+        assert coordinator_no_protect.websocket_health["events"]["last_message_at"]
         assert not any(r.levelno == logging.WARNING for r in caplog.records)
+        _assert_error_warning_unspent(coordinator_no_protect, caplog)
 
     def test_on_websocket_event_message_error_frame_warns_once_then_debug(
         self,
@@ -2501,8 +2516,8 @@ class TestUnifiProtectCoordinator:
         """Test the WS health signal starts unconnected/unknown, per stream
         and in the top-level roll-up.
         """
-        assert coordinator._ws_connected is False
-        assert coordinator._last_ws_message is None
+        assert coordinator.websocket_health["connected"] is False
+        assert coordinator.websocket_health["last_message_at"] is None
         assert coordinator.websocket_health == {
             "connected": False,
             "last_message_at": None,
@@ -2526,10 +2541,10 @@ class TestUnifiProtectCoordinator:
         assert coordinator.websocket_health["events"]["connected"] is False
         assert coordinator.websocket_health["events"]["last_message_at"] is None
 
-        assert coordinator._ws_connected is False
+        assert coordinator.websocket_health["connected"] is False
         assert coordinator.websocket_health["connected"] is False
         # The top-level "any wire alive" timestamp still advances.
-        assert coordinator._last_ws_message is not None
+        assert coordinator.websocket_health["last_message_at"] is not None
         assert coordinator.websocket_health["last_message_at"] is not None
 
     def test_websocket_health_updates_on_events_frame(
@@ -2544,8 +2559,8 @@ class TestUnifiProtectCoordinator:
         assert coordinator.websocket_health["events"]["last_message_at"] is not None
         assert coordinator.websocket_health["devices"]["connected"] is False
 
-        assert coordinator._ws_connected is False
-        assert coordinator._last_ws_message is not None
+        assert coordinator.websocket_health["connected"] is False
+        assert coordinator.websocket_health["last_message_at"] is not None
 
     def test_websocket_health_reflects_connection_state_changes(
         self, coordinator: UnifiInsightsProtectCoordinator
@@ -2555,16 +2570,20 @@ class TestUnifiProtectCoordinator:
         """
         coordinator._on_websocket_connection_state_change("devices", connected=True)
         assert coordinator.websocket_health["devices"]["connected"] is True
-        assert coordinator._ws_connected is False  # events not connected yet
+        assert (
+            coordinator.websocket_health["connected"] is False
+        )  # events not connected yet
 
         coordinator._on_websocket_connection_state_change("events", connected=True)
         assert coordinator.websocket_health["events"]["connected"] is True
-        assert coordinator._ws_connected is True  # both streams now connected
+        assert (
+            coordinator.websocket_health["connected"] is True
+        )  # both streams now connected
 
         coordinator._on_websocket_connection_state_change("devices", connected=False)
         assert coordinator.websocket_health["devices"]["connected"] is False
         assert coordinator.websocket_health["events"]["connected"] is True
-        assert coordinator._ws_connected is False
+        assert coordinator.websocket_health["connected"] is False
 
     def test_on_devices_connection_state_change_updates_devices_stream_only(
         self, coordinator: UnifiInsightsProtectCoordinator
@@ -2640,7 +2659,7 @@ class TestUnifiProtectCoordinator:
         # The overall roll-up must reflect the outage, not the chatty
         # devices stream alone.
         assert health["connected"] is False
-        assert coordinator._ws_connected is False
+        assert coordinator.websocket_health["connected"] is False
 
     def test_cleanup_stale_devices_no_match(
         self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator

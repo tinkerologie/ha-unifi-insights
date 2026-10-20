@@ -4,7 +4,7 @@ This document describes the technical architecture of the UniFi Insights custom 
 
 For AI agent instructions, see [`AGENTS.md`](/AGENTS.md). For the decision log, see [`DECISIONS.md`](./DECISIONS.md) and the full records in [`adr/`](./adr/).
 
-> **Status:** this describes `main` as of 2026-10-16. The module consolidation tracked in [#330](https://github.com/tinkerologie/ha-unifi-insights/issues/330) and [ADR-007](./adr/007-flat-home-assistant-module-layout.md) changes the directory layout below; the other sections stay valid.
+> **Status:** this describes `main` as of 2026-10-20, with the ADR-007 module layout in place (#341). The Protect coordinator is being split along ADR-007's `protect_ws.py` / `protect_events.py` seam in [#340](https://github.com/tinkerologie/ha-unifi-insights/issues/340).
 
 ## Directory structure
 
@@ -181,7 +181,7 @@ Six Lovelace cards are built from `frontend/src/` with Vite into `custom_compone
 
 ### Push channels
 
-- **Protect WebSocket** (`unifi_official_api.protect.websocket`): device and event updates with heartbeat and health checks, falling back to the 30 s poll.
+- **Protect WebSocket** (`unifi_official_api.protect.websocket`): device and event updates with heartbeat and health checks, falling back to the 30 s poll. `coordinators/protect_ws.py` turns both streams' raw frames into typed `DeviceFrame`, `EventFrame` and `RateLimited` values and tracks each stream's health (`websocket_health` in diagnostics); the Protect coordinator applies them.
 - **Access webhook** (`access_webhook.py`): signed access-granted and access-denied results delivered through Home Assistant's `webhook` component.
 
 ### Diagnostics

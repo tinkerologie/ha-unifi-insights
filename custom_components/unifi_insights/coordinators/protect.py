@@ -6,12 +6,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import math
 import time
 from datetime import UTC, datetime, timedelta
-from functools import partial
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Any, Final, NamedTuple, override
+from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import callback
@@ -27,7 +25,6 @@ from unifi_official_api import (
     UniFiResponseError,
     UniFiTimeoutError,
 )
-from unifi_official_api.const import PROTECT_RATE_LIMIT_WINDOW
 from unifi_official_api.exceptions import UniFiUnsupportedError
 from unifi_official_api.protect.talkback import (
     TalkbackCodecError,
@@ -56,6 +53,12 @@ from custom_components.unifi_insights.const import (
 from custom_components.unifi_insights.data_transforms import get_field
 
 from .base import CommandFailure, UnifiInsightsBaseCoordinator, async_execute_command
+from .protect_ws import (
+    ProtectStreams,
+    RateLimited,
+    WebSocketConnectionStateCallback,
+    pick_field,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine, Mapping
@@ -64,6 +67,8 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from unifi_official_api.network import UniFiNetworkClient
     from unifi_official_api.protect import UniFiProtectClient
+
+    from .protect_ws import Stream
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -176,10 +181,6 @@ GLOBAL_ALARM_MANAGER_REPROBE: Final = timedelta(minutes=10)
 GLOBAL_ALARM_MANAGER_PROBE_BACKOFF: Final = timedelta(minutes=5)
 GLOBAL_ALARM_MANAGER_PROBE_WARN_AFTER: Final = 3
 
-# Envelope-only keys that must never leak from the raw top-level WebSocket
-# frame into a merged device/event dict - see `_pick_field` and the
-# `_on_websocket_message`/`_on_websocket_event_message` docstrings for why.
-_ENVELOPE_ONLY_KEYS: Final = frozenset({"type", "action", "payload", "item"})
 
 # Field names (both camelCase API aliases and snake_case attribute names)
 # that identify a door/motion/tamper/leak *state* frame, as opposed to an
@@ -272,25 +273,6 @@ _PRESERVED_SENSOR_STATE_GROUP_STATE_FIELDS: Final[dict[str, frozenset[str]]] = {
 }
 
 
-def _pick_field(containers: list[dict[str, Any]], *keys: str) -> Any:
-    """
-    Return the first truthy value for any of `keys`, in container order.
-
-    Shared by both WebSocket adapters: a real frame's identifying fields
-    (modelKey/id for devices, type/id for events) may live at the top
-    level, under "item", under "payload", or split across an "action"
-    header - trying every plausible container/key combination instead of
-    picking one and giving up avoids silently dropping every real frame if
-    the guess is wrong.
-    """
-    for container in containers:
-        for key in keys:
-            value = container.get(key)
-            if value:
-                return value
-    return None
-
-
 def _deep_merge(
     old: dict[str, Any], new: Mapping[str, Any], *, into_lists: bool = False
 ) -> dict[str, Any]:
@@ -347,15 +329,6 @@ class _SirenStop(NamedTuple):
     stopped_at_ms: float
     # Monotonic time of the stop, which bounds how long the guard lives.
     monotonic: float
-
-
-class _WebSocketConnectionStateCallback(partial[None]):
-    """Adapt the API's positional boolean to the coordinator's named argument."""
-
-    @override
-    def __call__(self, connected: bool) -> None:
-        """Forward the connection state using the coordinator's named argument."""
-        super().__call__(connected=connected)
 
 
 # A stopped siren is only guarded against a reading that was already in flight
@@ -593,54 +566,18 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         self._protect_websocket: Any = (
             self.protect_client.websocket if self.protect_client else None
         )
-        # Caps the "can't parse WebSocket message" warning to once per
-        # stream, so a persistently wrong frame shape can't log-storm a
-        # production instance; every subsequent occurrence still logs at
-        # debug. Devices and events are tracked separately since they are
-        # different failure classes.
-        self._ws_parse_warned = False
-        self._ws_event_parse_warned = False
-        self._ws_event_error_warned: bool = False
+        # Frame parsing, warn-once logging and per-stream health (protect_ws).
+        self._streams = ProtectStreams()
         self._on_devices_connection_state_change = callback(
-            _WebSocketConnectionStateCallback(
+            WebSocketConnectionStateCallback(
                 self._on_websocket_connection_state_change, "devices"
             )
         )
         self._on_events_connection_state_change = callback(
-            _WebSocketConnectionStateCallback(
+            WebSocketConnectionStateCallback(
                 self._on_websocket_connection_state_change, "events"
             )
         )
-
-        # WebSocket health signal (task 5, hardened by review finding 1):
-        # there was previously no way to tell "connected and delivering"
-        # from "connected but silent" from "reconnect-looping" - surfaced
-        # via `websocket_health` in diagnostics.py.
-        #
-        # Tracked PER SUBSCRIPTION, not as one shared pair of fields: the
-        # devices and events subscriptions are independent WebSocket
-        # connections (see async_start_websocket), and a shared field would
-        # let a chatty devices stream mask a hung/disconnected events
-        # stream - exactly the "motion silently stopped working for days"
-        # failure this signal exists to catch (an NVR restart where devices
-        # reconnects cleanly but events hangs half-open forever, no error,
-        # no close frame). See `_mark_ws_frame_received` and
-        # `_on_websocket_connection_state_change`.
-        self._ws_stream_health: dict[str, dict[str, Any]] = {
-            "devices": {"connected": False, "last_message_at": None},
-            "events": {"connected": False, "last_message_at": None},
-        }
-        # Top-level roll-up, recomputed by `_recompute_ws_health_rollup()`
-        # on every per-stream update. `connected` is True only when BOTH
-        # streams are connected (so a half-dead pair correctly reads as
-        # unhealthy even without inspecting the per-stream detail);
-        # `last_message_at` is the most recent frame from EITHER stream
-        # (preserves the old "any wire alive" semantics as a coarse
-        # liveness signal). Kept as real fields (not just derived in the
-        # `websocket_health` property) so backwards-compatible attribute
-        # access (`coordinator._ws_connected`) keeps working.
-        self._last_ws_message: datetime | None = None
-        self._ws_connected: bool = False
 
         # Wall-clock (HA-local, not Protect's) time each camera/light/ring
         # latch became active (event "start" seen, "end" not yet seen).
@@ -717,8 +654,8 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         self._sensor_ws_recency_latched: dict[str, set[str]] = {}
         # sensor_id set: which sensors have already logged the door-state
         # -preservation cap-hit WARNING at least once (any branch, any
-        # group). Matches `_log_unparseable_ws_message`'s warn-once-then
-        # -debug precedent (`_ws_parse_warned`) - without it, a sensor
+        # group). Matches the warn-once-then-debug precedent of
+        # `ProtectStreams`'s unparseable-frame log - without it, a sensor
         # stuck at the cap re-logs a WARNING roughly every cap-many polls
         # for as long as the condition persists.
         self._sensor_preserve_cap_warned: set[str] = set()
@@ -1205,118 +1142,16 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
 
     @callback
     def _on_websocket_message(self, message: Any) -> None:
-        """
-        Adapt a raw WebSocket "devices" message to `_handle_device_update`.
-
-        Confirmed live against hardware 2026-08-12: the local-console shape is
-        `{"type": "update", "item": {"id", "modelKey", ...fields}}` - the
-        device delta lives under an "item" key, not at top level. `modelKey`
-        and `id` are still resolved independently across every plausible
-        container - "item", a "payload" key (REST-response-shaped push), and
-        an "action" key (the header/payload split used by UniFi's private
-        app WebSocket) - rather than picking one container and giving up.
-        Picking a single container wrong would silently drop every real
-        frame, which for a door sensor means a missed open/close event.
-
-        The raw envelope (`message`) is included as a last-resort container
-        so a fully flat frame (no item/payload/action wrapper) still works,
-        but its own "type"/"action"/"payload"/"item" keys are stripped
-        before merging - confirmed in production: without that exclusion,
-        the envelope's "type": "update" (the action verb, not a device
-        field) clobbered the real hardware model string (UFP-SENSE,
-        USL-Entry-US, USL-Environmental-US) on any partial update frame
-        that didn't re-send the unchanged "type" field, flipping it back
-        and forth against the next REST poll (measured 49 times in 10
-        minutes). Only `message` is filtered this way - item/payload/action
-        are still merged in full, since a real device "type" field nested
-        under one of those is legitimate data, not envelope noise.
-        """
-        self._mark_ws_frame_received("devices")
-
-        if not isinstance(message, dict):
-            self._log_unparseable_ws_message(
-                "Protect coordinator: WebSocket message was not a JSON object: %r",
-                message,
-            )
-            return
-
-        action = message.get("action")
-        payload = message.get("payload")
-        item = message.get("item")
-        containers = [
-            c for c in (payload, action, item, message) if isinstance(c, dict)
-        ]
-
-        model_key = _pick_field(containers, "modelKey", "model_key")
-        if not model_key:
-            self._log_unparseable_ws_message(
-                "Protect coordinator: WebSocket device message missing modelKey: %s",
-                message,
-            )
-            return
-
-        device_id = _pick_field(containers, "id")
-        if not device_id:
-            _LOGGER.debug(
-                "Protect coordinator: WebSocket %s update missing device id: %s",
-                model_key,
-                message,
-            )
-            return
-
-        # Merge every dict container into a brand-new dict (never mutating
-        # `self.data` or any container in place - in-place mutation can
-        # make HA listeners holding a stale reference miss the transition)
-        # so fields split across payload/action (e.g. id in the header,
-        # state fields in the payload) are all kept.
-        device_data: dict[str, Any] = {}
-        for container in reversed(containers):
-            if container is message:
-                device_data.update(
-                    {k: v for k, v in container.items() if k not in _ENVELOPE_ONLY_KEYS}
-                )
-            else:
-                device_data.update(container)
-        device_data["id"] = device_id
-
-        self._handle_device_update(model_key, device_data)
-
-    def _log_unparseable_ws_message(
-        self, msg: str, *args: Any, event_stream: bool = False
-    ) -> None:
-        """
-        Log an unparseable WS message once at WARNING, then at DEBUG.
-
-        `event_stream` selects an independent warned-once flag for the
-        "events" subscription so a persistently-wrong events frame shape
-        (see class docstring) doesn't share its one-time WARNING with the
-        unrelated "devices" subscription, or vice versa.
-        """
-        warned_attr = "_ws_event_parse_warned" if event_stream else "_ws_parse_warned"
-        level = logging.WARNING if not getattr(self, warned_attr) else logging.DEBUG
-        _LOGGER.log(level, msg, *args)
-        setattr(self, warned_attr, True)
-
-    def _mark_ws_frame_received(self, stream: str) -> None:
-        """
-        Record that a WebSocket frame was just delivered on `stream` (task 5).
-
-        Hardened by review finding 1 to be per-subscription, not shared.
-        Called unconditionally at the top of both adapters, even for a
-        frame that turns out to be unparseable - receiving anything at all
-        is evidence that stream's wire is alive, which is exactly the
-        "connected but silent" vs. "delivering" distinction
-        `websocket_health` exists to answer. Only `stream`'s own entry in
-        `_ws_stream_health` is touched, so a chatty devices stream can never
-        make a silent events stream look alive, or vice versa.
-        """
-        self._ws_stream_health[stream]["last_message_at"] = datetime.now(UTC)
-        self._ws_stream_health[stream]["connected"] = True
-        self._recompute_ws_health_rollup()
+        """Apply a raw "devices" frame (parsed by `ProtectStreams`)."""
+        frame = self._streams.parse_device_message(
+            message, received_at=datetime.now(UTC)
+        )
+        if frame is not None:
+            self._handle_device_update(frame.model_key, frame.fields)
 
     @callback
     def _on_websocket_connection_state_change(
-        self, stream: str, *, connected: bool
+        self, stream: Stream, *, connected: bool
     ) -> None:
         """
         Track WS connect/reconnect/disconnect transitions for `stream`.
@@ -1336,8 +1171,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         have been missed entirely, so waiting for the next 30s REST poll to
         notice would leave a latched sensor ON longer than necessary.
         """
-        self._ws_stream_health[stream]["connected"] = connected
-        self._recompute_ws_health_rollup()
+        self._streams.connection_changed(stream, connected=connected)
         if connected:
             self._reconcile_stale_events()
             if stream == "devices":
@@ -1359,55 +1193,10 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
                     )
                 )
 
-    def _recompute_ws_health_rollup(self) -> None:
-        """
-        Recompute the top-level `_ws_connected`/`_last_ws_message` roll-up.
-
-        `_ws_connected` is True only when BOTH the devices and events
-        streams are connected - the whole point of review finding 1 is that
-        a half-dead pair (one stream healthy, one hung) must read as
-        unhealthy at the top level too, not just in the per-stream detail
-        that a human has to know to go look for. `_last_ws_message` stays
-        the most recent frame from EITHER stream, preserving the original
-        "is the wire alive at all" coarse-liveness semantics as a secondary
-        signal.
-        """
-        streams = self._ws_stream_health.values()
-        self._ws_connected = all(s["connected"] for s in streams)
-        timestamps = [s["last_message_at"] for s in streams if s["last_message_at"]]
-        self._last_ws_message = max(timestamps) if timestamps else None
-
     @property
     def websocket_health(self) -> dict[str, Any]:
-        """
-        Expose WS connectivity/delivery health for diagnostics.py (task 5).
-
-        Surfaces BOTH a top-level roll-up (`connected`/`last_message_at`,
-        same key names as before this fix - review finding 1 asked to
-        preserve these where cheap so any existing consumer/dashboard
-        keeps working) AND per-subscription detail under `devices`/`events`,
-        since the top-level pair alone cannot distinguish "both streams
-        healthy" from "devices healthy, events silently hung" - exactly the
-        failure this signal exists to catch.
-        """
-
-        def _stream_payload(stream: dict[str, Any]) -> dict[str, Any]:
-            last_message_at = stream["last_message_at"]
-            return {
-                "connected": stream["connected"],
-                "last_message_at": (
-                    last_message_at.isoformat() if last_message_at else None
-                ),
-            }
-
-        return {
-            "connected": self._ws_connected,
-            "last_message_at": (
-                self._last_ws_message.isoformat() if self._last_ws_message else None
-            ),
-            "devices": _stream_payload(self._ws_stream_health["devices"]),
-            "events": _stream_payload(self._ws_stream_health["events"]),
-        }
+        """Return WebSocket connectivity and delivery health for diagnostics."""
+        return self._streams.health()
 
     @callback
     def _handle_device_update(
@@ -1591,126 +1380,33 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
 
     @callback
     def _on_websocket_event_message(self, message: Any) -> None:
-        """
-        Adapt a raw WebSocket "events" message to `_handle_event_update`.
-
-        UNVALIDATED against live traffic (see class docstring): this
-        subscription has never received a real Protect "events" frame, so
-        the envelope shape assumed here - mirroring the confirmed "devices"
-        envelope (payload/item/action splits, see `_on_websocket_message`)
-        - is a best-effort guess pending a real capture. Every extraction
-        is deliberately tolerant (multiple candidate keys, never raises) so
-        a wrong guess degrades to a dropped/logged frame instead of a crash
-        or a wedged coordinator.
-
-        The event's own "type" (motion/smartDetect/ring) is resolved only
-        from an inner item/payload/action container when one is present -
-        deliberately excluding the raw envelope `message`, whose top-level
-        "type" would otherwise be the envelope action verb ("add"/
-        "update"), not the Protect event type (see the identical "type"
-        -clobbering fix in `_on_websocket_message`). When no inner
-        container exists at all, the frame is flat and `message` itself
-        holds the real fields - there is no separate envelope to strip in
-        that shape, so it is used directly.
-        """
-        self._mark_ws_frame_received("events")
-
-        if not isinstance(message, dict):
-            self._log_unparseable_ws_message(
-                "Protect coordinator: WebSocket event message was not a JSON "
-                "object: %r",
-                message,
-                event_stream=True,
-            )
+        """Apply a raw "events" frame (parsed by `ProtectStreams`)."""
+        parsed = self._streams.parse_event_message(
+            message, received_at=datetime.now(UTC)
+        )
+        if isinstance(parsed, RateLimited):
+            if self.protect_client is not None:
+                self.protect_client._defer_after_rate_limit(parsed.cooldown)
+                _LOGGER.debug(
+                    "Protect coordinator: events stream rate limited "
+                    "(limit=%s, windowMs=%s); requests deferred",
+                    parsed.limit,
+                    parsed.window_ms,
+                )
             return
-
-        payload = message.get("payload")
-        item = message.get("item")
-        action = message.get("action")
-        containers = [c for c in (payload, item, action) if isinstance(c, dict)]
-        if not containers:
-            containers = [message]
-
-        # The console reports its own faults on this stream as a frame with
-        # an "error" field and no event fields, a rate-limit notice being the
-        # common one. That is not a parse failure, and letting it fall through
-        # to the unparseable path spends the one-time WARNING that exists to
-        # surface a genuinely wrong frame shape, leaving a real problem to be
-        # logged at DEBUG afterwards. Reported on its own warned-once flag.
-        error: Any = _pick_field(containers, "error")
-        if error:
-            error_containers = (
-                [error, *containers] if isinstance(error, dict) else containers
-            )
-            if _pick_field(error_containers, "name") == "TOO_MANY_REQUESTS_ERROR":
-                window_ms = _pick_field(error_containers, "windowMs", "window_ms")
-                cooldown = PROTECT_RATE_LIMIT_WINDOW
-                if isinstance(window_ms, (int, float)) and not isinstance(
-                    window_ms, bool
-                ):
-                    try:
-                        candidate = float(window_ms) / 1000
-                    except OverflowError:
-                        candidate = math.inf
-                    if math.isfinite(candidate) and candidate > 0:
-                        cooldown = candidate
-                if self.protect_client is not None:
-                    self.protect_client._defer_after_rate_limit(cooldown)
-                    _LOGGER.debug(
-                        "Protect coordinator: events stream rate limited "
-                        "(limit=%s, windowMs=%s); requests deferred",
-                        _pick_field(error_containers, "limit"),
-                        window_ms,
-                    )
-                return
-            level: int = (
-                logging.DEBUG if self._ws_event_error_warned else logging.WARNING
-            )
-            _LOGGER.log(
-                level,
-                "Protect coordinator: events stream reported an error: %s",
-                message,
-            )
-            self._ws_event_error_warned = True
+        if parsed is None:
             return
-
-        event_type = _pick_field(containers, "type", "eventType", "event_type")
-        if not event_type:
-            self._log_unparseable_ws_message(
-                "Protect coordinator: WebSocket event message missing event type: %s",
-                message,
-                event_stream=True,
-            )
-            return
-
-        event_id = _pick_field([*containers, message], "id")
-        if not event_id:
-            _LOGGER.debug(
-                "Protect coordinator: WebSocket %s event missing event id: %s",
-                event_type,
-                message,
-            )
-            return
-
-        # New dict, never mutating a container in place (same rationale as
-        # _on_websocket_message).
-        event_data: dict[str, Any] = {}
-        for container in reversed(containers):
-            event_data.update(container)
-        event_data["id"] = event_id
-
         try:
-            self._handle_event_update(event_type, event_data)
+            self._handle_event_update(parsed.event_type, parsed.fields)
         except Exception:
-            # This whole path has never executed against real traffic
-            # (class docstring) - never let a wrong schema assumption take
-            # down the WS reconnect loop. STALE_EVENT_TIMEOUT reconciliation
-            # is the real backstop for a dropped/misparsed frame, not this
-            # try/except - this only guarantees the frame doesn't crash us.
+            # The events stream has never been seen live: a wrong schema
+            # assumption must never take down the WebSocket reconnect loop.
+            # STALE_EVENT_TIMEOUT reconciliation is the real backstop for a
+            # dropped or misparsed frame.
             _LOGGER.exception(
                 "Protect coordinator: unexpected error processing WebSocket "
                 "%s event frame; dropping it and continuing",
-                event_type,
+                parsed.event_type,
             )
 
     @callback
@@ -1739,7 +1435,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         # tolerated so a real frame using the model's actual field names
         # still resolves instead of `_process_event_for_device` silently
         # never being called (confirmed dead code before this fix).
-        device_id = _pick_field(
+        device_id = pick_field(
             [event_data],
             "device",
             "camera",
@@ -2634,8 +2330,8 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         """
         Log a door-state-preservation cap-hit warning once per sensor id.
 
-        Matches `_log_unparseable_ws_message`'s warn-once-then-debug
-        precedent (`_ws_parse_warned`): without this, a sensor whose REST
+        Matches the warn-once-then-debug precedent of
+        `ProtectStreams`'s unparseable-frame log: without this, a sensor whose REST
         timestamp is persistently stuck below the cache - or whose
         WebSocket stream keeps re-announcing the same state - re-logs a
         WARNING roughly every cap-many polls (~90s at
