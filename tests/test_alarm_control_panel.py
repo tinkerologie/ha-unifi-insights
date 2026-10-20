@@ -46,6 +46,7 @@ from custom_components.unifi_insights.alarm_control_panel import (
 )
 from custom_components.unifi_insights.const import DOMAIN
 from tests.fixtures.library_responses import SAMPLE_NVR, SAMPLE_NVR_WITH_ARM_MODE
+from tests.fixtures.protect_ws import FakeProtectWebSocket
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -89,6 +90,7 @@ def protect_client(
     enable_custom_integrations: None,
 ) -> MagicMock:
     """Patch every client the integration builds and return the Protect one."""
+    mock_protect_client.websocket = FakeProtectWebSocket()
     return mock_protect_client
 
 
@@ -161,8 +163,10 @@ def _ws_frame(arm_mode: dict[str, Any], **item: Any) -> dict[str, Any]:
 async def _push(
     hass: HomeAssistant, entry: MockConfigEntry, frame: dict[str, Any]
 ) -> None:
-    """Deliver a WebSocket frame to the entry's Protect coordinator."""
-    entry.runtime_data.protect_coordinator._on_websocket_message(frame)
+    """Deliver a WebSocket frame through the Protect devices subscription."""
+    feed = entry.runtime_data.protect_coordinator.protect_client.websocket
+    await feed.wait_subscribed("devices")
+    feed.raw("devices", frame)
     await hass.async_block_till_done()
 
 

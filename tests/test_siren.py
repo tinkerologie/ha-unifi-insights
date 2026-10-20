@@ -45,6 +45,7 @@ from custom_components.unifi_insights.siren import (
     siren_volume_from_level,
 )
 from tests.fixtures.library_responses import SAMPLE_SIREN
+from tests.fixtures.protect_ws import FakeProtectWebSocket
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -131,8 +132,10 @@ def _ws_frame(siren_id: str, status: dict[str, Any]) -> dict[str, Any]:
 async def _push(
     hass: HomeAssistant, entry: MockConfigEntry, frame: dict[str, Any]
 ) -> None:
-    """Deliver a WebSocket frame to the entry's Protect coordinator."""
-    entry.runtime_data.protect_coordinator._on_websocket_message(frame)
+    """Deliver a WebSocket frame through the Protect devices subscription."""
+    feed = entry.runtime_data.protect_coordinator.protect_client.websocket
+    await feed.wait_subscribed("devices")
+    feed.raw("devices", frame)
     await hass.async_block_till_done()
 
 
@@ -144,6 +147,7 @@ def protect_client(
     enable_custom_integrations: None,
 ) -> MagicMock:
     """Patch every client the integration builds and return the Protect one."""
+    mock_protect_client.websocket = FakeProtectWebSocket()
     return mock_protect_client
 
 

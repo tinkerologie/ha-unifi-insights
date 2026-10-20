@@ -33,6 +33,7 @@ from custom_components.unifi_insights.sensor import UnifiProtectSensor
 from custom_components.unifi_insights.sensor import (
     async_setup_entry as setup_sensors,
 )
+from tests.fixtures.protect_ws import FakeProtectWebSocket
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -282,10 +283,14 @@ async def test_poll_model_wss_delta_null_and_generation(
     mock_coordinator,
 ) -> None:
     """Poll feeds entities/snapshot; WSS deltas preserve siblings and win races."""
+    feed = FakeProtectWebSocket()
+    mock_protect_client.websocket = feed
     coordinator = UnifiInsightsProtectCoordinator(
         hass, mock_network_client, mock_protect_client, mock_config_entry
     )
     try:
+        await coordinator.async_start_websocket()
+        await feed.wait_subscribed("devices")
         mock_protect_client.nvr.get.return_value = NVR.model_validate(
             {
                 "id": "nvr1",
@@ -296,18 +301,14 @@ async def test_poll_model_wss_delta_null_and_generation(
         mock_protect_client.nvr.get.assert_awaited_once_with()
         mock_coordinator.data["protect"]["nvrs"] = coordinator.data["nvrs"]
         _assert_entity_snapshot_parity(mock_coordinator, degraded=True, full=True)
-        coordinator._handle_device_update(
-            "nvr", {"id": "nvr1", "storageInfo": {"usedSize": 10}}
-        )
+        feed.device("nvr", id="nvr1", storageInfo={"usedSize": 10})
         _assert_entity_snapshot_parity(mock_coordinator, degraded=True, full=False)
-        coordinator._handle_device_update(
-            "nvr", {"id": "nvr1", "storageInfo": {"healthy": None}}
-        )
+        feed.device("nvr", id="nvr1", storageInfo={"healthy": None})
         _assert_entity_snapshot_parity(mock_coordinator, degraded=None, full=False)
 
         async def stale_poll() -> NVR:
-            coordinator._handle_device_update(
-                "nvr", {"id": "nvr1", "storageInfo": {"usedSize": 95, "healthy": False}}
+            feed.device(
+                "nvr", id="nvr1", storageInfo={"usedSize": 95, "healthy": False}
             )
             return NVR.model_validate(
                 {
@@ -319,7 +320,7 @@ async def test_poll_model_wss_delta_null_and_generation(
         mock_protect_client.nvr.get.side_effect = stale_poll
         await coordinator._fetch_nvr()
         _assert_entity_snapshot_parity(mock_coordinator, degraded=True, full=True)
-        coordinator._handle_device_update("nvr", {"id": "nvr1", "storageInfo": None})
+        feed.device("nvr", id="nvr1", storageInfo=None)
         _assert_entity_snapshot_parity(mock_coordinator, degraded=None, full=None)
     finally:
         await coordinator.async_shutdown()
