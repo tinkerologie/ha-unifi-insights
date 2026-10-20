@@ -17,6 +17,36 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from custom_components.unifi_insights.coordinators.protect import (
+        UnifiInsightsProtectCoordinator,
+    )
+
+
+def send_device(
+    coordinator: UnifiInsightsProtectCoordinator,
+    model_key: str,
+    fields: dict[str, Any],
+) -> None:
+    """Deliver a device frame through the coordinator's "devices" callback.
+
+    The same envelope as `FakeProtectWebSocket.device`, for tests that build
+    the coordinator without starting its WebSocket.
+    """
+    coordinator._on_websocket_message(
+        {"type": "update", "item": {"modelKey": model_key, **fields}}
+    )
+
+
+def send_event(
+    coordinator: UnifiInsightsProtectCoordinator,
+    event_type: str,
+    fields: dict[str, Any],
+) -> None:
+    """Deliver an event through the coordinator's "events" callback."""
+    coordinator._on_websocket_event_message(
+        {"type": "add", "item": {"type": event_type, **fields}}
+    )
+
 
 class FakeProtectWebSocket:
     """Stand-in for ``ProtectWebSocket`` with helpers to push frames."""

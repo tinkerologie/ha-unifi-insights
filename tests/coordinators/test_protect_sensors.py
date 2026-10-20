@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -38,9 +39,13 @@ from custom_components.unifi_insights.coordinators.protect import (
     MAX_DOOR_STATE_PRESERVE_POLLS,
     MAX_WS_RECENCY_PRESERVE_POLLS,
     UnifiInsightsProtectCoordinator,
-    _normalize_epoch_seconds,
+)
+from custom_components.unifi_insights.coordinators.protect_events import (
+    PollCompleted,
+    SensorTracking,
 )
 from tests.conftest import set_mock_device_lookup
+from tests.fixtures.protect_ws import send_device
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -381,12 +386,15 @@ class TestIndependentSensorRecovery:
         waiter branch to swallow instead of re-raise left the full 29/29
         new tests green.
         """
-        # Pre-exhaust the escalation window so the very next fetch failure
+        # Exhaust the escalation window first so the very next fetch failure
         # raises immediately instead of being absorbed (see
-        # `_absorb_transient_fetch_error`/`test_transient_fetch_errors_
-        # preserve_cache`), which keeps this test to a single fetch
-        # instead of orchestrating a multi-poll escalation under one gate.
-        coordinator._consecutive_fetch_errors["sensors"] = MAX_CONSECUTIVE_EMPTY_FETCHES
+        # `test_transient_fetch_errors_preserve_cache`), which keeps this
+        # test to a single gated fetch.
+        coordinator.protect_client.sensors.get_all = AsyncMock(
+            side_effect=UniFiConnectionError("Connection lost")
+        )
+        for _ in range(MAX_CONSECUTIVE_EMPTY_FETCHES):
+            await coordinator._fetch_sensors()
 
         fetch_gate = asyncio.Event()
 
@@ -685,10 +693,13 @@ class TestProtectNewerDoorStates:
                 "openStatusChangedAt": 1000,
             }
         }
-        # Simulate last WS update (door group) occurred before fetch
-        coordinator._sensor_last_ws_update["sensor1"] = {
-            "door": time.monotonic() - 100.0
-        }
+        # A door frame landed before the fetch started.
+        send_device(
+            coordinator,
+            DEVICE_TYPE_SENSOR,
+            {"id": "sensor1", "isOpened": True, "openStatusChangedAt": 1000},
+        )
+        await asyncio.sleep(0.001)
 
         coordinator.protect_client.sensors.get_all = AsyncMock(
             return_value=[
@@ -725,25 +736,25 @@ class TestProtectNewerDoorStates:
         # 1st transient error absorbed, cache preserved
         await coordinator._fetch_sensors()
         assert coordinator.data["sensors"]["sensor1"]["isOpened"] is True
-        assert coordinator._consecutive_fetch_errors["sensors"] == 1
+        assert coordinator._events.families["sensors"].fetch_errors == 1
 
         # 2nd transient error absorbed, cache preserved
         await coordinator._fetch_sensors()
         assert coordinator.data["sensors"]["sensor1"]["isOpened"] is True
-        assert coordinator._consecutive_fetch_errors["sensors"] == 2
+        assert coordinator._events.families["sensors"].fetch_errors == 2
 
         # 3rd transient error absorbed - still within
         # MAX_CONSECUTIVE_EMPTY_FETCHES (3), cache still preserved.
         await coordinator._fetch_sensors()
         assert coordinator.data["sensors"]["sensor1"]["isOpened"] is True
-        assert coordinator._consecutive_fetch_errors["sensors"] == 3
+        assert coordinator._events.families["sensors"].fetch_errors == 3
 
         # 4th transient error crosses the escalation boundary: bounded
         # absorption means this one must escape as a real failure instead
         # of being silently swallowed forever.
         with pytest.raises(UniFiConnectionError):
             await coordinator._fetch_sensors()
-        assert coordinator._consecutive_fetch_errors["sensors"] == 4
+        assert coordinator._events.families["sensors"].fetch_errors == 4
 
     @pytest.mark.asyncio
     async def test_auth_error_triggers_reauth_failure(
@@ -797,10 +808,10 @@ class TestProtectNewerDoorStates:
 class TestGateStampDiscriminatesFrameContent:
     """Round-4 review finding 1: the per-group WS-recency gate must only
 
-    stamp `_sensor_last_ws_update` for the specific group(s) a frame
-    actually carries, not for every sensor WS frame regardless of content.
-    Mutating the per-group `isdisjoint` check in `_handle_device_update`
-    to an unconditional stamp (`if True:`) must make this test fail.
+    stamp WebSocket recency for the specific group(s) a frame actually
+    carries, not for every sensor WS frame regardless of content. Mutating
+    the per-group `isdisjoint` check in `protect_events` to an
+    unconditional stamp must make this test fail.
     """
 
     @pytest.mark.asyncio
@@ -854,9 +865,9 @@ class TestGateStampDiscriminatesFrameContent:
             "REST's genuinely newer door transition must win"
         )
         assert sensor["openStatusChangedAt"] == 2000
-        assert "sensor1" not in coordinator._sensor_last_ws_update, (
+        assert not coordinator._events.sensors["sensor1"].ws_seen, (
             "a frame matching no preserved-state group must leave the "
-            "sensor id entirely absent from _sensor_last_ws_update"
+            "sensor without any WebSocket recency tracking"
         )
 
     @pytest.mark.asyncio
@@ -929,8 +940,8 @@ class TestGateStampDiscriminatesFrameContent:
 class TestDoorStatePreservationIsBounded:
     """Finding 1 (BLOCKER): preservation must not wedge the cache forever.
 
-    `_should_preserve_cached_door_state` + `_merge_preserved_door_state` can
-    re-seed their own "cache is newer" signal every poll. Both branches that
+    The door timestamp preservation in `protect_events` can re-seed its own
+    "cache is newer" signal every poll. Both branches that
     can wedge - "REST omits the timestamp" and "cached timestamp always
     compares newer" - must give way to REST after
     `MAX_DOOR_STATE_PRESERVE_POLLS` consecutive preserves.
@@ -984,10 +995,7 @@ class TestDoorStatePreservationIsBounded:
         }
 
         async def rest_stuck_below_cache() -> list[Any]:
-            # A fresh dict every call: `_merge_preserved_door_state` mutates
-            # the REST dict in place, so reusing one fixed AsyncMock
-            # return_value across iterations would let a previous
-            # preservation's mutation corrupt this call's "REST response".
+            # A fresh dict every call, so no call can see another's answer.
             return [
                 _create_mock_model(
                     {
@@ -1025,10 +1033,7 @@ class TestDoorStatePreservationIsBounded:
             }
         }
 
-        # Two preserves (REST always reports an older timestamp). A fresh
-        # dict per call, since `_merge_preserved_door_state` mutates the
-        # REST dict in place and a fixed AsyncMock return_value would let
-        # one call's mutation corrupt the next call's "REST response".
+        # Two preserves (REST always reports an older timestamp).
         async def rest_always_older() -> list[Any]:
             return [
                 _create_mock_model(
@@ -1044,7 +1049,7 @@ class TestDoorStatePreservationIsBounded:
         coordinator.protect_client.sensors.get_all = rest_always_older
         await coordinator._fetch_sensors()
         await coordinator._fetch_sensors()
-        assert coordinator._sensor_preserve_counts.get("sensor1", 0) == 2
+        assert coordinator._events.sensors["sensor1"].ts_preserve_polls == 2
 
         # REST reports a genuinely newer timestamp: it wins and the
         # bounded-preservation counter resets to zero.
@@ -1062,7 +1067,7 @@ class TestDoorStatePreservationIsBounded:
         )
         await coordinator._fetch_sensors()
         assert coordinator.data["sensors"]["sensor1"]["isOpened"] is False
-        assert coordinator._sensor_preserve_counts.get("sensor1", 0) == 0
+        assert coordinator._events.sensors["sensor1"].ts_preserve_polls == 0
 
     @pytest.mark.asyncio
     async def test_ws_recency_cap_latches_instead_of_oscillating(
@@ -1175,9 +1180,9 @@ class TestDoorStatePreservationIsBounded:
         await coordinator._fetch_sensors()
         await coordinator._fetch_sensors()
         assert coordinator.data["sensors"]["sensor1"]["isOpened"] is True
-        assert "door" not in coordinator._sensor_ws_recency_latched.get(
-            "sensor1", set()
-        ), "the latch must clear once REST's own report agrees with the cache"
+        assert "door" not in coordinator._events.sensors["sensor1"].ws_latched, (
+            "the latch must clear once REST's own report agrees with the cache"
+        )
 
     @pytest.mark.asyncio
     async def test_preserve_cap_hit_warns_once_then_debug(
@@ -1558,29 +1563,27 @@ class TestSensorTrackerCleanup:
     async def test_stale_sensor_removal_prunes_ws_and_preserve_trackers(
         self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
-        """Evicting a sensor from the registry must prune ALL its trackers,
+        """Evicting a sensor from the registry must prune ALL its tracking.
 
-        including the two round-3 additions
-        (`_sensor_ws_recency_preserve_counts` / `_sensor_preserve_cap_warned`)
-        and the round-4 latch tracker (`_sensor_ws_recency_latched`) - not
-        just the two original ones. A re-discovered sensor id must also
-        start completely fresh afterward, never inheriting lingering
-        count/latch/warning state from before its eviction.
+        WebSocket recency, both preserve counters, the recency latch and the
+        warn-once flag all go, so a re-discovered sensor id starts completely
+        fresh, never inheriting count/latch/warning state from before its
+        eviction.
         """
-        coordinator._sensor_last_ws_update["sensor_gone"] = {"door": time.monotonic()}
-        coordinator._sensor_preserve_counts["sensor_gone"] = 2
-        coordinator._sensor_ws_recency_preserve_counts["sensor_gone"] = {"door": 5}
-        coordinator._sensor_ws_recency_latched["sensor_gone"] = {"door"}
-        coordinator._sensor_preserve_cap_warned.add("sensor_gone")
-
-        coordinator._previous_protect_device_ids = {
-            "cameras": set(),
-            "lights": set(),
-            "sensors": {"sensor_gone"},
-            "nvrs": set(),
-            "viewers": set(),
-            "chimes": set(),
-        }
+        coordinator._events = replace(
+            coordinator._events,
+            sensors={
+                "sensor_gone": SensorTracking(
+                    ws_seen={"door": time.monotonic()},
+                    ts_preserve_polls=2,
+                    ws_preserve_polls={"door": 5},
+                    ws_latched=frozenset({"door"}),
+                    cap_warned=True,
+                )
+            },
+        )
+        coordinator.data["sensors"] = {"sensor_gone": {"id": "sensor_gone"}}
+        coordinator._apply(PollCompleted())
         coordinator.data["sensors"] = {}
 
         with patch(
@@ -1591,30 +1594,18 @@ class TestSensorTrackerCleanup:
             set_mock_device_lookup(mock_registry.return_value, mock_device)
 
             for _ in range(MAX_CONSECUTIVE_MISSING_POLLS + 1):
-                coordinator._cleanup_stale_devices()
+                coordinator._apply(PollCompleted())
 
             mock_registry.return_value.async_update_device.assert_called()
 
-        assert "sensor_gone" not in coordinator._sensor_last_ws_update
-        assert "sensor_gone" not in coordinator._sensor_preserve_counts
-        assert "sensor_gone" not in coordinator._sensor_ws_recency_preserve_counts
-        assert "sensor_gone" not in coordinator._sensor_ws_recency_latched
-        assert "sensor_gone" not in coordinator._sensor_preserve_cap_warned
+        assert "sensor_gone" not in coordinator._events.sensors
 
-        # Clean re-adoption: recreate the "reporting back in" state
-        # `_cleanup_stale_devices` sees (present in `current_ids`, so
-        # exempt from the eviction branch entirely) and confirm none of
-        # the pruned trackers reappear on their own.
+        # Clean re-adoption: the sensor reports back in, and none of the
+        # pruned tracking reappears on its own.
         coordinator.data["sensors"] = {"sensor_gone": {"id": "sensor_gone"}}
-        coordinator._previous_protect_device_ids["sensors"] = set()
-        coordinator._cleanup_stale_devices()
+        coordinator._apply(PollCompleted())
 
-        assert (
-            coordinator._sensor_ws_recency_preserve_counts.get("sensor_gone", {}) == {}
-        )
-        assert coordinator._sensor_preserve_counts.get("sensor_gone", 0) == 0
-        assert "sensor_gone" not in coordinator._sensor_ws_recency_latched
-        assert "sensor_gone" not in coordinator._sensor_preserve_cap_warned
+        assert "sensor_gone" not in coordinator._events.sensors
 
     @pytest.mark.asyncio
     async def test_cancelled_refresh_task_ref_is_nulled(
@@ -1699,102 +1690,3 @@ class TestRefreshWaiterPaths:
             await owner_task
 
         notify_mock.assert_not_called()
-
-
-class TestGroupStateAgreement:
-    """`_group_state_agrees` decides when a latched WS-recency cap clears."""
-
-    @pytest.mark.parametrize(
-        ("cached", "rest", "expected"),
-        [
-            pytest.param({"isOpened": True}, {"isOpened": True}, True, id="equal"),
-            pytest.param({"isOpened": True}, {"isOpened": False}, False, id="differ"),
-            pytest.param({}, {}, True, id="absent-both"),
-            pytest.param({}, {"isOpened": False}, False, id="rest-only"),
-            pytest.param({"isOpened": True}, {}, False, id="cached-only"),
-        ],
-    )
-    def test_agreement(
-        self, cached: dict[str, Any], rest: dict[str, Any], *, expected: bool
-    ) -> None:
-        """A field present on only one side is a discrepancy, not agreement.
-
-        Treating it as agreement would clear the latch on a REST payload
-        that simply omitted the door field, re-arming WS-recency
-        preservation against a controller that never confirmed the state.
-        """
-        assert (
-            UnifiInsightsProtectCoordinator._group_state_agrees(cached, rest, "door")
-            is expected
-        )
-
-    @pytest.mark.parametrize(
-        ("cached", "rest", "expected"),
-        [
-            pytest.param(
-                {"isLeakDetected": True, "leakDetectedAt": 100},
-                {"isLeakDetected": True, "leakDetectedAt": 200},
-                True,
-                id="explicit-flag-agrees-ignoring-timestamp",
-            ),
-            pytest.param(
-                {"isLeakDetected": True, "leakDetectedAt": 100},
-                {"isLeakDetected": False, "leakDetectedAt": 100},
-                False,
-                id="explicit-flag-disagrees",
-            ),
-            pytest.param(
-                {"isExternalLeakDetected": True, "externalLeakDetectedAt": 100},
-                {"isExternalLeakDetected": True, "externalLeakDetectedAt": 200},
-                True,
-                id="explicit-external-flag-agrees-ignoring-timestamp",
-            ),
-            pytest.param(
-                {"leakDetectedAt": 100, "externalLeakDetectedAt": None},
-                {"leakDetectedAt": 100, "externalLeakDetectedAt": None},
-                True,
-                id="timestamp-only-equal",
-            ),
-            pytest.param(
-                {"leakDetectedAt": 100, "externalLeakDetectedAt": None},
-                {"leakDetectedAt": 200, "externalLeakDetectedAt": None},
-                False,
-                id="timestamp-only-differ",
-            ),
-            pytest.param(
-                {"leakDetectedAt": None, "externalLeakDetectedAt": 100},
-                {"leakDetectedAt": None, "externalLeakDetectedAt": None},
-                False,
-                id="external-timestamp-only-differ",
-            ),
-        ],
-    )
-    def test_leak_agreement(
-        self, cached: dict[str, Any], rest: dict[str, Any], *, expected: bool
-    ) -> None:
-        """Leak group uses explicit flags when available, or timestamps otherwise."""
-        assert (
-            UnifiInsightsProtectCoordinator._group_state_agrees(cached, rest, "leak")
-            is expected
-        )
-
-
-class TestNormalizeEpochSeconds:
-    """`_normalize_epoch_seconds` edge inputs return comparable or None."""
-
-    def test_naive_iso_string_is_assumed_utc(self) -> None:
-        """A naive ISO string compares equal to the same instant in UTC."""
-        aware = datetime(2026, 9, 16, 0, 47, 27, tzinfo=UTC)
-        assert _normalize_epoch_seconds("2026-09-16T00:47:27") == aware.timestamp()
-
-    @pytest.mark.parametrize(
-        "value",
-        [
-            pytest.param("not-a-timestamp", id="unparseable-string"),
-            pytest.param(True, id="bool"),
-            pytest.param([1000], id="unsupported-type"),
-        ],
-    )
-    def test_uncomparable_values_return_none(self, value: object) -> None:
-        """Values that cannot be ordered become None rather than raising."""
-        assert _normalize_epoch_seconds(value) is None

@@ -20,11 +20,9 @@ from custom_components.unifi_insights import entity, topology
 from custom_components.unifi_insights.console_identity import (
     normalize_mac as console_normalize_mac,
 )
+from custom_components.unifi_insights.coordinators import protect_events
 from custom_components.unifi_insights.coordinators.device import (
     UnifiInsightsDeviceCoordinator,
-)
-from custom_components.unifi_insights.coordinators.protect import (
-    UnifiInsightsProtectCoordinator,
 )
 from custom_components.unifi_insights.dashboard_snapshots import bits_per_second_to_int
 from custom_components.unifi_insights.data_transforms import (
@@ -1160,8 +1158,8 @@ def test_field_helpers_delegate_to_one_implementation() -> None:
     assert topology.first_present(record, "a", "b") == 0
     assert _field(record, "a", "b") == 0
     assert _field(record, "a") is None
-    assert UnifiInsightsProtectCoordinator._get_field(record, "a", default=3) == 3
-    assert UnifiInsightsProtectCoordinator._get_field(record, "a", "b") == 0
+    # The Protect reconciler reads its timestamps through the same helper.
+    assert protect_events.get_field is get_field
 
 
 @pytest.mark.parametrize(

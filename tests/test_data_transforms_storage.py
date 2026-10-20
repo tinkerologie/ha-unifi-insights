@@ -288,6 +288,13 @@ async def test_poll_model_wss_delta_null_and_generation(
     coordinator = UnifiInsightsProtectCoordinator(
         hass, mock_network_client, mock_protect_client, mock_config_entry
     )
+
+    def parity(*, degraded: bool | None, full: bool | None) -> None:
+        # Every frame and poll publishes a new NVR record (copy-on-write), so
+        # the facade view is pointed at the current one before each check.
+        mock_coordinator.data["protect"]["nvrs"] = coordinator.data["nvrs"]
+        _assert_entity_snapshot_parity(mock_coordinator, degraded=degraded, full=full)
+
     try:
         await coordinator.async_start_websocket()
         await feed.wait_subscribed("devices")
@@ -299,12 +306,11 @@ async def test_poll_model_wss_delta_null_and_generation(
         )
         await coordinator._fetch_nvr()
         mock_protect_client.nvr.get.assert_awaited_once_with()
-        mock_coordinator.data["protect"]["nvrs"] = coordinator.data["nvrs"]
-        _assert_entity_snapshot_parity(mock_coordinator, degraded=True, full=True)
+        parity(degraded=True, full=True)
         feed.device("nvr", id="nvr1", storageInfo={"usedSize": 10})
-        _assert_entity_snapshot_parity(mock_coordinator, degraded=True, full=False)
+        parity(degraded=True, full=False)
         feed.device("nvr", id="nvr1", storageInfo={"healthy": None})
-        _assert_entity_snapshot_parity(mock_coordinator, degraded=None, full=False)
+        parity(degraded=None, full=False)
 
         async def stale_poll() -> NVR:
             feed.device(
@@ -319,9 +325,9 @@ async def test_poll_model_wss_delta_null_and_generation(
 
         mock_protect_client.nvr.get.side_effect = stale_poll
         await coordinator._fetch_nvr()
-        _assert_entity_snapshot_parity(mock_coordinator, degraded=True, full=True)
+        parity(degraded=True, full=True)
         feed.device("nvr", id="nvr1", storageInfo=None)
-        _assert_entity_snapshot_parity(mock_coordinator, degraded=None, full=None)
+        parity(degraded=None, full=None)
     finally:
         await coordinator.async_stop_websocket()
         await coordinator.async_shutdown()

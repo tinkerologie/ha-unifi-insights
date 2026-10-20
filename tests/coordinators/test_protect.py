@@ -15,7 +15,7 @@ import asyncio
 import contextlib
 import copy
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -60,6 +60,12 @@ from custom_components.unifi_insights.coordinators.protect import (
     STALE_EVENT_TIMEOUT,
     UnifiInsightsProtectCoordinator,
 )
+from custom_components.unifi_insights.coordinators.protect_events import (
+    PollCompleted,
+    PollStarted,
+    StreamReconnected,
+    normalize_camera,
+)
 from tests.conftest import mock_device_lookup_method, set_mock_device_lookup
 from tests.fixtures.command_owners import (
     BASE_URL,
@@ -69,10 +75,12 @@ from tests.fixtures.command_owners import (
     build_seeded_owners,
 )
 from tests.fixtures.coordinator_clients import (
+    _create_mock_model,
     _create_mock_network_client,
     _create_mock_protect_client,
 )
 from tests.fixtures.library_responses import SAMPLE_SIREN
+from tests.fixtures.protect_ws import send_event
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -987,6 +995,25 @@ class TestCameraReads:
 
 
 # --- Protect coordinator -----------------------------------------------------
+
+
+def _poll_completed(
+    coordinator: UnifiInsightsProtectCoordinator, times: int = 1
+) -> None:
+    """Run the end-of-poll registry clean-up, as the main poll does."""
+    for _ in range(times):
+        coordinator._apply(PollCompleted())
+
+
+def _seen_by_a_poll(coordinator: UnifiInsightsProtectCoordinator, *ids: str) -> None:
+    """Record ``ids`` as cameras a poll saw."""
+    coordinator.data["cameras"] = {camera_id: {"id": camera_id} for camera_id in ids}
+    _poll_completed(coordinator)
+
+
+def _sweep_latches(coordinator: UnifiInsightsProtectCoordinator) -> None:
+    """Expire stale event latches, as the start of every main poll does."""
+    coordinator._apply(PollStarted())
 
 
 class TestUnifiProtectCoordinator:
@@ -1911,15 +1938,12 @@ class TestUnifiProtectCoordinator:
         self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test stale device cleanup."""
-        # Set up previous device IDs
-        coordinator._previous_protect_device_ids = {
-            "cameras": {"camera1", "camera2"},
-            "lights": set(),
-            "sensors": set(),
-            "nvrs": set(),
-            "viewers": set(),
-            "chimes": set(),
+        # A poll saw both cameras.
+        coordinator.data["cameras"] = {
+            "camera1": {"id": "camera1"},
+            "camera2": {"id": "camera2"},
         }
+        _poll_completed(coordinator)
 
         # Current cameras only have camera1
         coordinator.data["cameras"] = {"camera1": {"id": "camera1"}}
@@ -1933,8 +1957,7 @@ class TestUnifiProtectCoordinator:
             set_mock_device_lookup(mock_registry.return_value, mock_device)
 
             # Removal waits out the MAX_CONSECUTIVE_MISSING_POLLS grace window.
-            for _ in range(MAX_CONSECUTIVE_MISSING_POLLS + 1):
-                coordinator._cleanup_stale_devices()
+            _poll_completed(coordinator, MAX_CONSECUTIVE_MISSING_POLLS + 1)
 
             # camera2 should be marked for removal
             mock_registry.return_value.async_update_device.assert_called()
@@ -2301,7 +2324,7 @@ class TestUnifiProtectCoordinator:
         )
 
         freezer.tick(STALE_EVENT_TIMEOUT - timedelta(seconds=1))
-        coordinator._reconcile_stale_events()
+        _sweep_latches(coordinator)
 
         assert coordinator.data["cameras"]["camera1"]["lastMotionEnd"] is None
 
@@ -2322,7 +2345,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["cameras"]["camera1"]["lastMotionEnd"] is None
 
         freezer.tick(STALE_EVENT_TIMEOUT + timedelta(seconds=1))
-        coordinator._reconcile_stale_events()
+        _sweep_latches(coordinator)
 
         assert coordinator.data["cameras"]["camera1"]["lastMotionEnd"] is not None
 
@@ -2346,7 +2369,7 @@ class TestUnifiProtectCoordinator:
         )
 
         freezer.tick(STALE_EVENT_TIMEOUT + timedelta(seconds=1))
-        coordinator._reconcile_stale_events()
+        _sweep_latches(coordinator)
 
         assert coordinator.data["cameras"]["camera1"]["lastMotionEnd"] is not None
         assert coordinator.data["cameras"]["camera1"]["lastSmartDetectTypes"] == []
@@ -2384,7 +2407,7 @@ class TestUnifiProtectCoordinator:
         )
 
         freezer.tick(STALE_EVENT_TIMEOUT + timedelta(seconds=1))
-        coordinator._reconcile_stale_events()
+        _sweep_latches(coordinator)
 
         assert coordinator.data["lights"]["light1"]["lastMotionEnd"] is not None
 
@@ -2402,7 +2425,7 @@ class TestUnifiProtectCoordinator:
         )
 
         freezer.tick(STALE_EVENT_TIMEOUT + timedelta(seconds=1))
-        coordinator._reconcile_stale_events()
+        _sweep_latches(coordinator)
 
         assert coordinator.data["cameras"]["camera1"]["lastRingEnd"] is not None
 
@@ -2417,7 +2440,7 @@ class TestUnifiProtectCoordinator:
             "ring",
             {"id": "event47", "device": "camera1", "start": 1, "end": None},
         )
-        assert "camera1" in coordinator._camera_ring_started
+        assert "camera1" in coordinator._events.latches["camera_ring"]
 
         coordinator._handle_event_update(
             "ring",
@@ -2425,7 +2448,7 @@ class TestUnifiProtectCoordinator:
         )
 
         assert coordinator.data["cameras"]["camera1"]["lastRingEnd"] == 2
-        assert "camera1" not in coordinator._camera_ring_started
+        assert "camera1" not in coordinator._events.latches["camera_ring"]
 
     def test_reconcile_stale_events_skips_tracker_for_removed_device(
         self, coordinator: UnifiInsightsProtectCoordinator, freezer
@@ -2439,16 +2462,16 @@ class TestUnifiProtectCoordinator:
             "motion",
             {"id": "event48", "device": "camera1", "start": 1, "end": None},
         )
-        assert "camera1" in coordinator._camera_motion_started
+        assert "camera1" in coordinator._events.latches["camera_motion"]
 
         # Simulate the camera vanishing (e.g. a REST poll rebuild that no
         # longer includes it) before the timeout elapses.
-        del coordinator.data["cameras"]["camera1"]
+        coordinator.data = {**coordinator.data, "cameras": {}}
 
         freezer.tick(STALE_EVENT_TIMEOUT + timedelta(seconds=1))
-        coordinator._reconcile_stale_events()
+        _sweep_latches(coordinator)
 
-        assert "camera1" not in coordinator._camera_motion_started
+        assert "camera1" not in coordinator._events.latches["camera_motion"]
         assert "camera1" not in coordinator.data["cameras"]
 
     def test_motion_latch_normal_end_event_clears_without_reconciliation(
@@ -2462,7 +2485,7 @@ class TestUnifiProtectCoordinator:
             "motion",
             {"id": "event45", "device": "camera1", "start": 1, "end": None},
         )
-        assert "camera1" in coordinator._camera_motion_started
+        assert "camera1" in coordinator._events.latches["camera_motion"]
 
         coordinator._handle_event_update(
             "motion",
@@ -2470,7 +2493,7 @@ class TestUnifiProtectCoordinator:
         )
 
         assert coordinator.data["cameras"]["camera1"]["lastMotionEnd"] == 2
-        assert "camera1" not in coordinator._camera_motion_started
+        assert "camera1" not in coordinator._events.latches["camera_motion"]
 
     @pytest.mark.asyncio
     async def test_reconcile_stale_events_runs_on_periodic_poll(
@@ -2479,10 +2502,15 @@ class TestUnifiProtectCoordinator:
         """Test the periodic REST poll also reconciles stale latches,
         rather than relying solely on event pairing.
         """
-        with patch.object(coordinator, "_reconcile_stale_events") as mock_reconcile:
+        with patch.object(
+            coordinator, "_apply", wraps=coordinator._apply
+        ) as mock_apply:
             await coordinator._async_update_data()
 
-        mock_reconcile.assert_called_once()
+        inputs = [call.args[0] for call in mock_apply.call_args_list]
+        assert inputs.count(PollStarted()) == 1
+        # Before the first fetch, so it runs against the pre-poll cameras.
+        assert inputs[0] == PollStarted()
 
     def test_reconcile_stale_events_runs_on_websocket_reconnect(
         self, coordinator: UnifiInsightsProtectCoordinator
@@ -2494,19 +2522,17 @@ class TestUnifiProtectCoordinator:
         see review finding 1), but a reconnect of EITHER subscription
         still triggers reconciliation, matching the original behavior.
         """
-        with patch.object(coordinator, "_reconcile_stale_events") as mock_reconcile:
+        with patch.object(coordinator, "_apply") as mock_apply:
             coordinator._on_websocket_connection_state_change("devices", connected=True)
 
-        mock_reconcile.assert_called_once()
+        mock_apply.assert_called_once_with(StreamReconnected("devices"))
 
-        with patch.object(
-            coordinator, "_reconcile_stale_events"
-        ) as mock_reconcile_disconnect:
+        with patch.object(coordinator, "_apply") as mock_apply_disconnect:
             coordinator._on_websocket_connection_state_change(
                 "devices", connected=False
             )
 
-        mock_reconcile_disconnect.assert_not_called()
+        mock_apply_disconnect.assert_not_called()
 
     # -- Task 5: WebSocket health signal -------------------------------------
 
@@ -2660,15 +2686,12 @@ class TestUnifiProtectCoordinator:
         self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test stale device cleanup when device not found in registry."""
-        # Set up previous device IDs
-        coordinator._previous_protect_device_ids = {
-            "cameras": {"stale_camera"},
-            "lights": {"stale_light"},
-            "sensors": set(),
-            "nvrs": set(),
-            "viewers": {"stale_viewer"},
-            "chimes": {"stale_chime"},
-        }
+        # A poll saw one device of each of these families.
+        coordinator.data["cameras"] = {"stale_camera": {"id": "stale_camera"}}
+        coordinator.data["lights"] = {"stale_light": {"id": "stale_light"}}
+        coordinator.data["viewers"] = {"stale_viewer": {"id": "stale_viewer"}}
+        coordinator.data["chimes"] = {"stale_chime": {"id": "stale_chime"}}
+        _poll_completed(coordinator)
 
         # Current data has nothing
         coordinator.data["cameras"] = {}
@@ -2684,8 +2707,7 @@ class TestUnifiProtectCoordinator:
 
             # Poll past the grace window so eviction is actually attempted,
             # then fall through both identifier patterns without a match.
-            for _ in range(MAX_CONSECUTIVE_MISSING_POLLS + 1):
-                coordinator._cleanup_stale_devices()
+            _poll_completed(coordinator, MAX_CONSECUTIVE_MISSING_POLLS + 1)
 
             # No device updates should happen (nothing found)
             mock_registry.return_value.async_update_device.assert_not_called()
@@ -2781,12 +2803,14 @@ class TestUnifiProtectCoordinator:
         await coordinator._fetch_sensors()
         assert coordinator.data["sensors"] == {}
 
-    def test_update_device_collection_handles_non_dict_existing(
+    async def test_update_device_collection_handles_non_dict_existing(
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
-        """Test _update_device_collection handles existing data being non-dict."""
-        coordinator.data["cameras"] = None  # type: ignore[assignment]
-        coordinator._update_device_collection("cameras", {})
+        """An empty answer over a collection that is not a dict leaves it empty."""
+        coordinator.data["cameras"] = None
+        coordinator.protect_client.cameras.get_all = AsyncMock(return_value=[])
+        coordinator.protect_client.cameras.last_result_complete = True
+        await coordinator._fetch_cameras()
         assert coordinator.data["cameras"] == {}
 
     @pytest.mark.asyncio
@@ -2847,11 +2871,7 @@ class TestUnifiProtectCoordinator:
 
         device_id = f"{collection}_device1"
         coordinator.data[collection] = {device_id: {"id": device_id}}
-        coordinator._previous_protect_device_ids = {
-            key: set()
-            for key in ("cameras", "lights", "sensors", "nvrs", "viewers", "chimes")
-        }
-        coordinator._previous_protect_device_ids[collection] = {device_id}
+        _poll_completed(coordinator)
         setattr(
             getattr(coordinator.protect_client, client_attr),
             client_method,
@@ -2863,13 +2883,13 @@ class TestUnifiProtectCoordinator:
             await getattr(coordinator, fetch_method)()
             assert device_id in coordinator.data[collection]
 
-        assert coordinator._consecutive_empty_fetches.get(collection, 0) == 0
+        assert coordinator._events.families[collection].empty_fetches == 0
 
         with patch(
             "custom_components.unifi_insights.coordinators.base.dr.async_get"
         ) as mock_registry:
             set_mock_device_lookup(mock_registry.return_value, MagicMock())
-            coordinator._cleanup_stale_devices()
+            _poll_completed(coordinator)
             mock_registry.return_value.async_update_device.assert_not_called()
 
     @pytest.mark.asyncio
@@ -2909,7 +2929,6 @@ class TestUnifiProtectCoordinator:
         """
         cached = {"nvr1": {"id": "nvr1", "name": "NVR"}}
         coordinator.data["nvrs"] = dict(cached)
-        coordinator._consecutive_empty_fetches["nvrs"] = 0
         coordinator.protect_client.nvr.get = AsyncMock(return_value=empty_response)
 
         for _ in range(MAX_CONSECUTIVE_EMPTY_FETCHES):
@@ -3142,15 +3161,8 @@ class TestUnifiProtectCoordinator:
         self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test stale device cleanup preserves devices during transient empty poll."""
-        coordinator._previous_protect_device_ids = {
-            "cameras": set(),
-            "lights": set(),
-            "sensors": {"sensor1"},
-            "nvrs": set(),
-            "viewers": set(),
-            "chimes": set(),
-        }
         coordinator.data["sensors"] = {"sensor1": {"id": "sensor1"}}
+        _poll_completed(coordinator)
         coordinator.protect_client.sensors.get_all = AsyncMock(return_value=[])
 
         # 1 transient empty fetch
@@ -3162,7 +3174,7 @@ class TestUnifiProtectCoordinator:
         ) as mock_registry:
             mock_device = MagicMock()
             set_mock_device_lookup(mock_registry.return_value, mock_device)
-            coordinator._cleanup_stale_devices()
+            _poll_completed(coordinator)
             mock_registry.return_value.async_update_device.assert_not_called()
 
     @pytest.mark.asyncio
@@ -3170,15 +3182,8 @@ class TestUnifiProtectCoordinator:
         self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test stale device cleanup removes devices after max empty polls."""
-        coordinator._previous_protect_device_ids = {
-            "cameras": set(),
-            "lights": set(),
-            "sensors": {"sensor1"},
-            "nvrs": set(),
-            "viewers": set(),
-            "chimes": set(),
-        }
         coordinator.data["sensors"] = {"sensor1": {"id": "sensor1"}}
+        _poll_completed(coordinator)
         coordinator.protect_client.sensors.get_all = AsyncMock(return_value=[])
 
         # 4 consecutive empty polls
@@ -3194,8 +3199,7 @@ class TestUnifiProtectCoordinator:
             mock_device.id = "sensor1_entry_id"
             set_mock_device_lookup(mock_registry.return_value, mock_device)
             # Removal waits out the MAX_CONSECUTIVE_MISSING_POLLS grace window.
-            for _ in range(MAX_CONSECUTIVE_MISSING_POLLS + 1):
-                coordinator._cleanup_stale_devices()
+            _poll_completed(coordinator, MAX_CONSECUTIVE_MISSING_POLLS + 1)
             mock_registry.return_value.async_update_device.assert_called()
 
     @pytest.mark.asyncio
@@ -3215,7 +3219,7 @@ class TestUnifiProtectCoordinator:
             "camera1": {"id": "camera1", "name": "Front"},
             "camera2": {"id": "camera2", "name": "Back"},
         }
-        coordinator._previous_protect_device_ids["cameras"] = {"camera1", "camera2"}
+        _poll_completed(coordinator)
 
         mock_camera = MagicMock()
         mock_camera.model_dump = MagicMock(
@@ -3232,7 +3236,7 @@ class TestUnifiProtectCoordinator:
             set_mock_device_lookup(mock_registry.return_value, MagicMock())
             for _ in range(MAX_CONSECUTIVE_MISSING_POLLS + 2):
                 await coordinator._fetch_cameras()
-                coordinator._cleanup_stale_devices()
+                _poll_completed(coordinator)
 
             assert "camera2" in coordinator.data["cameras"]
             mock_registry.return_value.async_update_device.assert_not_called()
@@ -3311,7 +3315,7 @@ class TestUnifiProtectCoordinator:
             await coordinator._fetch_cameras()
 
         assert "camera1" in coordinator.data["cameras"]
-        assert coordinator._consecutive_empty_fetches["cameras"] == 0
+        assert coordinator._events.families["cameras"].empty_fetches == 0
 
     @pytest.mark.asyncio
     async def test_cleanup_stale_devices_defers_removal_on_brief_absence(
@@ -3324,15 +3328,14 @@ class TestUnifiProtectCoordinator:
         Acting on that single poll is irreversible: the registry entry, its
         area assignment and every automation keyed on device_id are lost.
         """
-        coordinator._previous_protect_device_ids["cameras"] = {"cam1", "cam2"}
+        _seen_by_a_poll(coordinator, "cam1", "cam2")
         coordinator.data["cameras"] = {"cam1": {"id": "cam1"}}
 
         with patch(
             "custom_components.unifi_insights.coordinators.base.dr.async_get"
         ) as mock_registry:
             set_mock_device_lookup(mock_registry.return_value, MagicMock())
-            for _ in range(MAX_CONSECUTIVE_MISSING_POLLS):
-                coordinator._cleanup_stale_devices()
+            _poll_completed(coordinator, MAX_CONSECUTIVE_MISSING_POLLS)
 
             mock_registry.return_value.async_update_device.assert_not_called()
 
@@ -3346,7 +3349,7 @@ class TestUnifiProtectCoordinator:
         from Protect must not be tracked forever just because removal is no
         longer immediate (Gold stale-device requirement).
         """
-        coordinator._previous_protect_device_ids["cameras"] = {"cam1", "cam2"}
+        _seen_by_a_poll(coordinator, "cam1", "cam2")
         coordinator.data["cameras"] = {"cam1": {"id": "cam1"}}
         mock_device = MagicMock()
         mock_device.id = "registry_id_cam2"
@@ -3355,8 +3358,7 @@ class TestUnifiProtectCoordinator:
             "custom_components.unifi_insights.coordinators.base.dr.async_get"
         ) as mock_registry:
             set_mock_device_lookup(mock_registry.return_value, mock_device)
-            for _ in range(MAX_CONSECUTIVE_MISSING_POLLS + 1):
-                coordinator._cleanup_stale_devices()
+            _poll_completed(coordinator, MAX_CONSECUTIVE_MISSING_POLLS + 1)
 
             mock_registry.return_value.async_update_device.assert_called_once_with(
                 device_id="registry_id_cam2",
@@ -3372,7 +3374,7 @@ class TestUnifiProtectCoordinator:
         Without a reset, intermittent partial responses would accumulate
         across unrelated polls and eventually evict a healthy device.
         """
-        coordinator._previous_protect_device_ids["cameras"] = {"cam1", "cam2"}
+        _seen_by_a_poll(coordinator, "cam1", "cam2")
 
         with patch(
             "custom_components.unifi_insights.coordinators.base.dr.async_get"
@@ -3380,19 +3382,17 @@ class TestUnifiProtectCoordinator:
             set_mock_device_lookup(mock_registry.return_value, MagicMock())
             # Absent for one poll short of the threshold.
             coordinator.data["cameras"] = {"cam1": {"id": "cam1"}}
-            for _ in range(MAX_CONSECUTIVE_MISSING_POLLS):
-                coordinator._cleanup_stale_devices()
+            _poll_completed(coordinator, MAX_CONSECUTIVE_MISSING_POLLS)
 
             # cam2 comes back, then goes missing again for the same span.
             coordinator.data["cameras"] = {
                 "cam1": {"id": "cam1"},
                 "cam2": {"id": "cam2"},
             }
-            coordinator._cleanup_stale_devices()
+            _poll_completed(coordinator)
 
             coordinator.data["cameras"] = {"cam1": {"id": "cam1"}}
-            for _ in range(MAX_CONSECUTIVE_MISSING_POLLS):
-                coordinator._cleanup_stale_devices()
+            _poll_completed(coordinator, MAX_CONSECUTIVE_MISSING_POLLS)
 
             mock_registry.return_value.async_update_device.assert_not_called()
 
@@ -3553,10 +3553,10 @@ class TestUnifiProtectCoordinator:
         Regression test (review finding 2): the REST camera model never
         carries `lastMotionStart`/`lastMotionEnd` (those are only ever
         written by a paired WebSocket "start"/"end" event - see
-        `_apply_motion_event`). Before this fix, a `_fetch_cameras()`
+        `protect_events`). Before this fix, a `_fetch_cameras()`
         rebuild silently cleared the latch's own fields without popping the
-        tracker entry, so on virtually every real motion event
-        `_reconcile_stale_events` would later "discover" the orphaned
+        tracker entry, so on virtually every real motion event the
+        latch sweep would later "discover" the orphaned
         tracker and log a false "missed 'end' event?" warning for motion
         detection that was already correctly cleared ~4m30s earlier by the
         REST poll - flooding INFO logs during exactly the window someone is
@@ -3569,7 +3569,7 @@ class TestUnifiProtectCoordinator:
             "motion",
             {"id": "event49", "device": "camera1", "start": 1, "end": None},
         )
-        assert "camera1" in coordinator._camera_motion_started
+        assert "camera1" in coordinator._events.latches["camera_motion"]
         assert coordinator.data["cameras"]["camera1"]["lastMotionStart"] == 1
 
         # The mock protect client's default camera fixture returns
@@ -3578,13 +3578,13 @@ class TestUnifiProtectCoordinator:
         await coordinator._fetch_cameras()
 
         assert "lastMotionStart" not in coordinator.data["cameras"]["camera1"]
-        assert "camera1" not in coordinator._camera_motion_started
+        assert "camera1" not in coordinator._events.latches["camera_motion"]
 
         # 5+ minutes later, the periodic reconciliation safety net must not
         # find (and log about) a tracker that no longer exists.
         freezer.tick(STALE_EVENT_TIMEOUT + timedelta(seconds=1))
         with caplog.at_level(logging.INFO):
-            coordinator._reconcile_stale_events()
+            _sweep_latches(coordinator)
 
         assert "missed 'end' event" not in caplog.text
 
@@ -3606,16 +3606,16 @@ class TestUnifiProtectCoordinator:
             "ring",
             {"id": "event50", "device": "camera1", "start": 1, "end": None},
         )
-        assert "camera1" in coordinator._camera_ring_started
+        assert "camera1" in coordinator._events.latches["camera_ring"]
 
         await coordinator._fetch_cameras()
 
         assert "lastRingStart" not in coordinator.data["cameras"]["camera1"]
-        assert "camera1" not in coordinator._camera_ring_started
+        assert "camera1" not in coordinator._events.latches["camera_ring"]
 
         freezer.tick(STALE_EVENT_TIMEOUT + timedelta(seconds=1))
         with caplog.at_level(logging.INFO):
-            coordinator._reconcile_stale_events()
+            _sweep_latches(coordinator)
 
         assert "missed 'end' event" not in caplog.text
 
@@ -3795,7 +3795,7 @@ class TestUnifiProtectCoordinator:
             "smart_detect_types": ["person", "vehicle"],
             "is_ptz": True,
         }
-        normalized = coordinator._normalize_camera_data(sparse_cam)
+        normalized = normalize_camera(sparse_cam)
         assert normalized["smartDetectTypes"] == ["person", "vehicle"]
         assert normalized["isPtz"] is True
 
@@ -3805,7 +3805,7 @@ class TestUnifiProtectCoordinator:
             "name": "Sparse Camera No PTZ",
             "is_ptz": False,
         }
-        normalized_no_ptz = coordinator._normalize_camera_data(sparse_cam_no_ptz)
+        normalized_no_ptz = normalize_camera(sparse_cam_no_ptz)
         assert normalized_no_ptz["isPtz"] is False
 
         # 2. Real Camera model dump showing default fields suppress the fallbacks
@@ -3813,46 +3813,51 @@ class TestUnifiProtectCoordinator:
         real_dump = real_cam.model_dump(by_alias=True)
         real_dump["smart_detect_types"] = ["ignored_legacy"]
         real_dump["is_ptz"] = True
-        normalized_real = coordinator._normalize_camera_data(real_dump)
+        normalized_real = normalize_camera(real_dump)
         assert normalized_real["smartDetectTypes"] == []
         assert normalized_real["isPtz"] is False
 
-    def test_prune_rebuilt_trackers_motion_and_ring(
+    async def test_prune_rebuilt_trackers_motion_and_ring(
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
-        """Cover REST rebuild tracker pruning branches for motion and ring."""
-        now = datetime.now(tz=UTC)
-        coordinator._camera_motion_started = {
-            "cam_survives": now,
-            "cam_pruned": now,
-            "cam_missing": now,
-        }
-        coordinator._camera_ring_started = {
-            "cam_survives": now,
-            "cam_pruned": now,
-            "cam_missing": now,
-        }
+        """A camera rebuild drops only the latches whose start field it removed.
 
-        cameras = {
-            "cam_survives": {
-                "id": "cam_survives",
-                "lastMotionStart": 1000,
-                "lastRingStart": 2000,
-            },
-            "cam_pruned": {
-                "id": "cam_pruned",
-            },
-        }
+        A camera still carrying its start keeps its latch, and one missing from
+        the answer is left to the latch sweep.
+        """
+        for camera_id in ("cam_survives", "cam_pruned", "cam_missing"):
+            coordinator.data["cameras"][camera_id] = {"id": camera_id}
+            for event_type in ("motion", "ring"):
+                send_event(
+                    coordinator,
+                    event_type,
+                    {
+                        "id": f"{event_type}-{camera_id}",
+                        "device": camera_id,
+                        "start": 1,
+                    },
+                )
+        coordinator.protect_client.cameras.get_all = AsyncMock(
+            return_value=[
+                _create_mock_model(
+                    {
+                        "id": "cam_survives",
+                        "lastMotionStart": 1000,
+                        "lastRingStart": 2000,
+                    }
+                ),
+                _create_mock_model({"id": "cam_pruned"}),
+            ]
+        )
+        coordinator.protect_client.cameras.last_result_complete = True
 
-        coordinator._drop_rebuilt_latch_trackers(cameras)
+        await coordinator._fetch_cameras()
 
-        assert "cam_survives" in coordinator._camera_motion_started
-        assert "cam_missing" in coordinator._camera_motion_started
-        assert "cam_pruned" not in coordinator._camera_motion_started
-
-        assert "cam_survives" in coordinator._camera_ring_started
-        assert "cam_missing" in coordinator._camera_ring_started
-        assert "cam_pruned" not in coordinator._camera_ring_started
+        for kind in ("camera_motion", "camera_ring"):
+            assert set(coordinator._events.latches[kind]) == {
+                "cam_survives",
+                "cam_missing",
+            }
 
     @pytest.mark.asyncio
     async def test_fetch_lights_unabsorbed_error_raises(
@@ -3865,11 +3870,11 @@ class TestUnifiProtectCoordinator:
         protect_client.lights.get_all = get_lights
         for expected_count in range(1, MAX_CONSECUTIVE_EMPTY_FETCHES + 1):
             await coordinator._fetch_lights()
-            assert coordinator._consecutive_fetch_errors["lights"] == expected_count
+            assert coordinator._events.families["lights"].fetch_errors == expected_count
         with pytest.raises(UniFiConnectionError, match="Connection failure"):
             await coordinator._fetch_lights()
         assert (
-            coordinator._consecutive_fetch_errors["lights"]
+            coordinator._events.families["lights"].fetch_errors
             == MAX_CONSECUTIVE_EMPTY_FETCHES + 1
         )
         assert get_lights.await_count == MAX_CONSECUTIVE_EMPTY_FETCHES + 1

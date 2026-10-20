@@ -360,48 +360,15 @@ def test_ws_recency_cap_latches_until_rest_agrees() -> None:
     assert result.cache["sensors"]["s1"]["isOpened"] is True
 
 
-@pytest.mark.parametrize(
-    ("cached", "rest", "clears"),
-    [
-        pytest.param(
-            {"leakDetectedAt": 5},
-            {"leakDetectedAt": 5},
-            True,
-            id="timestamps-only-agree",
-        ),
-        pytest.param(
-            {"leakDetectedAt": 5},
-            {"leakDetectedAt": None},
-            False,
-            id="timestamps-only-disagree",
-        ),
-        pytest.param(
-            {"isLeakDetected": True, "leakDetectedAt": 5},
-            {"isLeakDetected": True, "leakDetectedAt": 9},
-            True,
-            id="flag-agrees-timestamp-ignored",
-        ),
-        pytest.param(
-            {"isLeakDetected": True},
-            {},
-            False,
-            id="flag-on-one-side-only",
-        ),
-    ],
-)
-def test_leak_latch_clears_when_rest_agrees(
-    cached: dict[str, Any],
-    rest: dict[str, Any],
-    clears: bool,  # noqa: FBT001
-) -> None:
-    """Leak sensors without a flag compare their timestamps instead."""
-    state = initial_state()
-    seed = cache(sensors={"s1": {"id": "s1", **cached}})
+def _latch_clears(
+    group: str, frame: dict[str, Any], cached: dict[str, Any], rest: dict[str, Any]
+) -> bool:
+    """Latch ``group`` with eleven recency polls, then poll ``rest`` over ``cached``."""
     ops: list[Any] = []
     for poll_number in range(MAX_WS_RECENCY_PRESERVE_POLLS + 1):
-        ops += _recency_poll(10.0 * poll_number, {"id": "s1"}, leakDetectedAt=7)
-    latched = run(seed, ops, state=state)
-    assert latched.state.sensors["s1"].ws_latched == frozenset({"leak"})
+        ops += _recency_poll(10.0 * poll_number, {"id": "s1"}, **frame)
+    latched = run(cache(sensors={"s1": {"id": "s1", **cached}}), ops)
+    assert group in latched.state.sensors["s1"].ws_latched
 
     result = run(
         cache(sensors={"s1": {"id": "s1", **cached}}),
@@ -411,7 +378,82 @@ def test_leak_latch_clears_when_rest_agrees(
         ],
         state=latched.state,
     )
-    assert ("leak" not in result.state.sensors["s1"].ws_latched) is clears
+    return group not in result.state.sensors["s1"].ws_latched
+
+
+@pytest.mark.parametrize(
+    ("cached", "rest", "expected"),
+    [
+        pytest.param({"isOpened": True}, {"isOpened": True}, True, id="equal"),
+        pytest.param({"isOpened": True}, {"isOpened": False}, False, id="differ"),
+        pytest.param({}, {}, True, id="absent-both"),
+        pytest.param({}, {"isOpened": False}, False, id="rest-only"),
+        pytest.param({"isOpened": True}, {}, False, id="cached-only"),
+    ],
+)
+def test_door_latch_clears_only_when_rest_agrees(
+    cached: dict[str, Any],
+    rest: dict[str, Any],
+    expected: bool,  # noqa: FBT001
+) -> None:
+    """A field present on only one side is a discrepancy, not agreement.
+
+    Treating it as agreement would clear the latch on a REST answer that
+    simply omitted the door field, re-arming recency preservation against a
+    controller that never confirmed the state.
+    """
+    assert _latch_clears("door", {"isOpened": True}, cached, rest) is expected
+
+
+@pytest.mark.parametrize(
+    ("cached", "rest", "expected"),
+    [
+        pytest.param(
+            {"isLeakDetected": True, "leakDetectedAt": 100},
+            {"isLeakDetected": True, "leakDetectedAt": 200},
+            True,
+            id="explicit-flag-agrees-ignoring-timestamp",
+        ),
+        pytest.param(
+            {"isLeakDetected": True, "leakDetectedAt": 100},
+            {"isLeakDetected": False, "leakDetectedAt": 100},
+            False,
+            id="explicit-flag-disagrees",
+        ),
+        pytest.param(
+            {"isExternalLeakDetected": True, "externalLeakDetectedAt": 100},
+            {"isExternalLeakDetected": True, "externalLeakDetectedAt": 200},
+            True,
+            id="explicit-external-flag-agrees-ignoring-timestamp",
+        ),
+        pytest.param(
+            {"leakDetectedAt": 100, "externalLeakDetectedAt": None},
+            {"leakDetectedAt": 100, "externalLeakDetectedAt": None},
+            True,
+            id="timestamp-only-equal",
+        ),
+        pytest.param(
+            {"leakDetectedAt": 100, "externalLeakDetectedAt": None},
+            {"leakDetectedAt": 200, "externalLeakDetectedAt": None},
+            False,
+            id="timestamp-only-differ",
+        ),
+        pytest.param(
+            {"leakDetectedAt": None, "externalLeakDetectedAt": 100},
+            {"leakDetectedAt": None, "externalLeakDetectedAt": None},
+            False,
+            id="external-timestamp-only-differ",
+        ),
+        pytest.param({"isLeakDetected": True}, {}, False, id="flag-on-one-side-only"),
+    ],
+)
+def test_leak_latch_clears_when_rest_agrees(
+    cached: dict[str, Any],
+    rest: dict[str, Any],
+    expected: bool,  # noqa: FBT001
+) -> None:
+    """Leak sensors compare their flags, or their timestamps when they have none."""
+    assert _latch_clears("leak", {"leakDetectedAt": 7}, cached, rest) is expected
 
 
 # --- sensors: stale REST after WebSocket --------------------------------------
@@ -500,6 +542,10 @@ def test_door_timestamp_cap_resets_so_it_can_win_again() -> None:
         ),
         pytest.param("2026-01-01T00:00:01+00:00", 1_767_225_600_000, True, id="iso"),
         pytest.param("2026-01-01T00:00:00", 1_767_225_601_000, False, id="naive-iso"),
+        pytest.param(
+            "2026-01-01T00:00:01", 1_767_225_600_000, True, id="naive-iso-newer"
+        ),
+        pytest.param("not-a-timestamp", 1000, False, id="cache-unparseable"),
         pytest.param(True, 1000, False, id="bool-is-no-timestamp"),
         pytest.param(5000, 5000, False, id="equal-timestamps"),
         pytest.param([1], 1000, False, id="other-type"),

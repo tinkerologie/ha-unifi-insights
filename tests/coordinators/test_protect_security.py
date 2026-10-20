@@ -30,6 +30,9 @@ from custom_components.unifi_insights.coordinators.protect import (
     UNSUPPORTED_RESOURCE_RETRY,
     UnifiInsightsProtectCoordinator,
 )
+from custom_components.unifi_insights.coordinators.protect_events import (
+    PollCompleted,
+)
 from tests.conftest import set_mock_device_lookup
 from tests.fixtures.coordinator_clients import (
     _create_mock_network_client,
@@ -42,6 +45,7 @@ from tests.fixtures.library_responses import (
     SAMPLE_SIREN,
     SAMPLE_THREAD_LINK_STATION,
 )
+from tests.fixtures.protect_ws import send_event
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -87,7 +91,7 @@ class TestProtectSecurityDeviceFamilies:
         """
         for collection in ("fobs", "link_stations", "alarm_hubs", "sirens"):
             assert coordinator.data[collection] == {}
-            assert coordinator._previous_protect_device_ids[collection] == set()
+            assert coordinator._events.families[collection].previous_ids == frozenset()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -352,7 +356,8 @@ class TestProtectSecurityDeviceFamilies:
 
         The identifier must match the entity's `protect_{device_type}_{id}`.
         """
-        coordinator._previous_protect_device_ids[collection] = {"dev1"}
+        coordinator.data[collection] = {"dev1": {"id": "dev1"}}
+        coordinator._apply(PollCompleted())
         coordinator.data[collection] = {}
         mock_device = MagicMock()
         mock_device.id = "registry_dev1"
@@ -369,7 +374,7 @@ class TestProtectSecurityDeviceFamilies:
             ),
         ):
             for _ in range(MAX_CONSECUTIVE_MISSING_POLLS + 1):
-                coordinator._cleanup_stale_devices()
+                coordinator._apply(PollCompleted())
 
             mock_registry.return_value.async_update_device.assert_called_once_with(
                 device_id="registry_dev1",
@@ -696,12 +701,12 @@ class TestProtectSecurityDeviceFamilies:
         # The console keeps saying so until it reports the siren idle.
         status = await self._poll_sirens(coordinator, running)
         assert status["isActive"] is False
-        assert "siren_1" in coordinator._siren_stopped_at
+        assert "siren_1" in coordinator._events.siren_stops
 
         idle = self._siren_with_status(isActive=False, activatedAt=now_ms - 3000)
         status = await self._poll_sirens(coordinator, idle)
         assert status["isActive"] is False
-        assert coordinator._siren_stopped_at == {}
+        assert coordinator._events.siren_stops == {}
 
     @pytest.mark.asyncio
     async def test_run_started_after_the_stop_is_believed(
@@ -721,7 +726,7 @@ class TestProtectSecurityDeviceFamilies:
         )
 
         assert status["isActive"] is True
-        assert coordinator._siren_stopped_at == {}
+        assert coordinator._events.siren_stops == {}
 
     @pytest.mark.asyncio
     async def test_active_siren_without_a_start_time_is_believed(
@@ -736,7 +741,7 @@ class TestProtectSecurityDeviceFamilies:
         )
 
         assert status["isActive"] is True
-        assert coordinator._siren_stopped_at == {}
+        assert coordinator._events.siren_stops == {}
 
     @pytest.mark.asyncio
     async def test_stop_guard_is_dropped_for_a_siren_that_is_gone(
@@ -750,7 +755,7 @@ class TestProtectSecurityDeviceFamilies:
         coordinator.data["sirens"] = {}
         await coordinator._fetch_sirens()
 
-        assert coordinator._siren_stopped_at == {}
+        assert coordinator._events.siren_stops == {}
 
     @pytest.mark.asyncio
     async def test_console_clock_ahead_cannot_resurrect_the_stopped_run(
@@ -771,7 +776,7 @@ class TestProtectSecurityDeviceFamilies:
         status = await self._poll_sirens(coordinator, running)
 
         assert status["isActive"] is False
-        assert "siren_1" in coordinator._siren_stopped_at
+        assert "siren_1" in coordinator._events.siren_stops
 
     @pytest.mark.asyncio
     async def test_home_assistant_clock_ahead_does_not_hide_a_new_run(
@@ -796,7 +801,7 @@ class TestProtectSecurityDeviceFamilies:
         )
 
         assert status["isActive"] is True
-        assert coordinator._siren_stopped_at == {}
+        assert coordinator._events.siren_stops == {}
 
     @pytest.mark.asyncio
     async def test_siren_without_a_cached_start_falls_back_to_the_wall_clock(
@@ -819,7 +824,7 @@ class TestProtectSecurityDeviceFamilies:
             coordinator, self._siren_with_status(activatedAt=now_ms + 1500)
         )
         assert fresh["isActive"] is True
-        assert coordinator._siren_stopped_at == {}
+        assert coordinator._events.siren_stops == {}
 
     @pytest.mark.asyncio
     async def test_stop_guard_expires_after_two_poll_intervals(
@@ -844,7 +849,7 @@ class TestProtectSecurityDeviceFamilies:
             expired = await self._poll_sirens(coordinator, running)
 
         assert expired["isActive"] is True
-        assert coordinator._siren_stopped_at == {}
+        assert coordinator._events.siren_stops == {}
 
     def test_late_frame_of_the_stopped_run_does_not_switch_the_siren_back_on(
         self, coordinator: UnifiInsightsProtectCoordinator, freezer: Any
@@ -1114,7 +1119,7 @@ class TestProtectSecurityDeviceFamilies:
         coordinator._handle_event_update("alarmHubDeviceTamper", event)
 
         assert coordinator.data["alarm_hubs"] == {}
-        assert coordinator._alarm_hub_last_tamper == {}
+        assert coordinator._events.tamper == {}
 
     @pytest.mark.asyncio
     async def test_tamper_details_survive_the_next_poll(
@@ -1253,8 +1258,12 @@ class TestProtectSecurityDeviceFamilies:
         self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """An evicted hub's event details must not leak onto a reused id."""
-        coordinator._alarm_hub_last_tamper["gone"] = {"_lastTamperUser": "x"}
-        coordinator._previous_protect_device_ids["alarm_hubs"] = {"gone"}
+        coordinator.data["alarm_hubs"] = {"gone": {"id": "gone"}}
+        event = copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
+        event["device"] = "gone"
+        send_event(coordinator, "alarmHubDeviceTamper", event)
+        assert "gone" in coordinator._events.tamper
+        coordinator._apply(PollCompleted())
         coordinator.data["alarm_hubs"] = {}
 
         with patch(
@@ -1262,9 +1271,9 @@ class TestProtectSecurityDeviceFamilies:
         ) as mock_registry:
             set_mock_device_lookup(mock_registry.return_value, None)
             for _ in range(MAX_CONSECUTIVE_MISSING_POLLS + 1):
-                coordinator._cleanup_stale_devices()
+                coordinator._apply(PollCompleted())
 
-        assert "gone" not in coordinator._alarm_hub_last_tamper
+        assert "gone" not in coordinator._events.tamper
 
     # -- remaining branches ------------------------------------------------
 
@@ -1292,17 +1301,17 @@ class TestProtectSecurityDeviceFamilies:
         coordinator._handle_event_update(
             "alarmHubDeviceTamper", copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
         )
-        first_received = coordinator._alarm_hub_last_tamper["alarm_hub_1"]["received"]
+        first_received = coordinator._events.tamper["alarm_hub_1"].received
         update = copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
         update["metadata"]["status"] = {"text": "restored"}
         update["metadata"]["userName"] = "Owner"
 
         coordinator._handle_event_update("alarmHubDeviceTamper", update)
 
-        record = coordinator._alarm_hub_last_tamper["alarm_hub_1"]
-        assert record["status"] == "restored"
-        assert record["_lastTamperUser"] == "Owner"
-        assert record["received"] >= first_received
+        record = coordinator._events.tamper["alarm_hub_1"]
+        assert record.status == "restored"
+        assert record.last_user == "Owner"
+        assert record.received >= first_received
         hub = coordinator.data["alarm_hubs"]["alarm_hub_1"]
         assert hub["alarmHub"]["deviceTamperStatus"] == "restored"
 
@@ -1312,13 +1321,11 @@ class TestProtectSecurityDeviceFamilies:
     ) -> None:
         """A record whose hub is not in the collection is not re-added."""
         self._seed_hub(coordinator)
-        coordinator._alarm_hub_last_tamper["gone"] = {
-            "event_id": "e0",
-            "status": "tampered",
-            "received": 0.0,
-            "_lastTamperUser": None,
-            "_lastTamperAt": None,
-        }
+        coordinator.data["alarm_hubs"]["gone"] = {"id": "gone"}
+        event = copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
+        event["device"] = "gone"
+        send_event(coordinator, "alarmHubDeviceTamper", event)
+        assert "gone" in coordinator._events.tamper
         coordinator.protect_client.alarm_hubs.get_all = AsyncMock(
             return_value=[LinkStation.model_validate(SAMPLE_ALARM_HUB)]
         )
