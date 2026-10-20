@@ -246,7 +246,7 @@ The integration uses a multi-coordinator pattern stored in `entry.runtime_data`:
 - **Config Coordinator** (`coordinators/config.py` & `config_sections.py`) — Site, WiFi, network, firewall, ACL, DNS, voucher, and VPN configuration data (slow polling, 5 min)
 - **Device Coordinator** (`coordinators/device.py`) — Network device and client metrics (30s polling)
 - **Protect Coordinator** (`coordinators/protect.py`) — Camera, light, sensor, NVR, chime, viewer, doorlock, speaker, alarm hub, link station, fob, and liveview data (WebSocket + polling)
-- **Facade Coordinator** (`coordinators/facade.py`) — Unified view combining Config, Device, Protect, InnerSpace, and Site Manager coordinators for entities and services; it holds no domain state and keeps only `async_refresh_or_raise` (the voucher state and commands belong to the config coordinator, ADR-013)
+- **Facade Coordinator** (`coordinators/facade.py`) — Unified view combining Config, Device, Protect, InnerSpace, and Site Manager coordinators for entities and services; it holds no domain state and keeps only aggregation, delegated availability, the owner accessors, `async_refresh_or_raise` and pure reads and exports (`async_get_historical_clients`, `async_get_wake_history`, `async_export_network_rules`, the floor-plan download) (the voucher state and commands belong to the config coordinator, ADR-013)
 - **Feature Coordinators:**
   - `coordinators/access.py` — UniFi Access doors, users, emergency status, and webhook events
   - `coordinators/innerspace.py` — UniFi InnerSpace floor plans and device placements

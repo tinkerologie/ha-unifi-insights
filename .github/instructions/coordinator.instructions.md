@@ -22,7 +22,7 @@ This integration uses a multi-coordinator architecture under `custom_components/
 - **Config sections** (`coordinators/config_sections.py`) — Config coordinator section fetchers, including per-site internet activity reports
 - **Rule audit and export** (`coordinators/rule_audit.py`) — Network rule change auditing and snapshot export
 - Voucher state parsing lives in `data_transforms.py` (pure, no coordinator); the voucher settings, the latest generated vouchers and the voucher commands belong to the config coordinator (ADR-013)
-- **Facade Coordinator** (`coordinators/facade.py`) — Unified view combining sub-coordinators for entity platforms; it holds no domain state and keeps only `async_refresh_or_raise`. Pass each owner's sections through by reference; never copy or write into them
+- **Facade Coordinator** (`coordinators/facade.py`) — Unified view combining sub-coordinators for entity platforms; it holds no domain state and keeps only aggregation, delegated availability, the owner accessors, `async_refresh_or_raise` and pure reads and exports (`async_get_historical_clients`, `async_get_wake_history`, `async_export_network_rules`, the floor-plan download). Pass each owner's sections through by reference; never copy or write into them
 
 ## Write Commands (ADR-010)
 
