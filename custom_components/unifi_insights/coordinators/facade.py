@@ -196,7 +196,7 @@ def capture_availability(
     facade's ``*_available(site_id)`` methods answer.
     """
     sites = {*site_ids, *(site_id for _, site_id in failed_sections)}
-    return {
+    availability = {
         "device": device,
         "config": config,
         "protect": protect,
@@ -214,6 +214,7 @@ def capture_availability(
             }
         ),
     }
+    return cast("FacadeAvailability", ReadOnlyDict(availability))
 
 
 def build_facade_data(
@@ -248,7 +249,7 @@ def build_facade_data(
         "protect": EMPTY_PROTECT if protect is None else protect,
         "innerspace": innerspace,
         "last_update": now,
-        "availability": ReadOnlyDict(availability),
+        "availability": availability,
     }
     if site_manager is not None:
         data["site_manager"] = {
@@ -318,6 +319,9 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
         # (not their id()) so a freed object's address cannot match a new one.
         self._innerspace_inputs: tuple[object, ...] | None = None
         self._innerspace_key: tuple[Any, ...] | None = None
+        # The last captured availability and what it was captured from.
+        self._availability_key: tuple[Any, ...] | None = None
+        self._availability: FacadeAvailability | None = None
         self._innerspace_view_memo: Mapping[str, Any] = {}
 
         # Register listeners to update when any coordinator updates
@@ -432,16 +436,34 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
         return self._innerspace_view_memo
 
     def _capture_availability(self) -> FacadeAvailability:
-        """Capture the availability the delegating properties report now."""
-        return capture_availability(
-            device=bool(self.device_available),
-            config=bool(self.config_available),
-            protect=bool(self.protect_available),
-            innerspace=bool(self.innerspace_available),
-            network=bool(self.network_available),
-            failed_sections=self._config_coordinator.failed_sections,
-            site_ids=self._config_coordinator.data.get("sites", {}),
+        """
+        Capture the availability the delegating properties report now.
+
+        The last capture is reused while every input is equal, so most
+        rebuilds (a Protect frame, a device poll) publish the same object.
+        """
+        key = (
+            bool(self.device_available),
+            bool(self.config_available),
+            bool(self.protect_available),
+            bool(self.innerspace_available),
+            bool(self.network_available),
+            self._config_coordinator.failed_sections,
+            tuple(self._config_coordinator.data.get("sites", {})),
         )
+        if self._availability is None or key != self._availability_key:
+            device, config, protect, innerspace, network, failed, site_ids = key
+            self._availability = capture_availability(
+                device=device,
+                config=config,
+                protect=protect,
+                innerspace=innerspace,
+                network=network,
+                failed_sections=failed,
+                site_ids=site_ids,
+            )
+            self._availability_key = key
+        return self._availability
 
     def _aggregate_data(self) -> None:
         """Publish a new snapshot built from the owners' current data."""

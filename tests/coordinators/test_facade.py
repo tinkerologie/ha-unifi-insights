@@ -1605,6 +1605,21 @@ async def test_captured_availability_follows_each_owner_update(
         assert value is False
 
 
+async def test_unchanged_availability_is_one_object(
+    seeded_owners: SeededOwners,
+) -> None:
+    """A rebuild with unchanged availability publishes the same capture."""
+    facade = seeded_owners.facade
+    before = facade.data["availability"]
+
+    seeded_owners.protect.async_update_listeners()
+    assert facade.data["availability"] is before
+
+    await _fail_device(seeded_owners)
+    assert facade.data["availability"] is not before
+    assert facade.data["availability"]["device"] is False
+
+
 async def test_captured_availability_without_protect_or_innerspace(
     seeded_owners: SeededOwners,
 ) -> None:
