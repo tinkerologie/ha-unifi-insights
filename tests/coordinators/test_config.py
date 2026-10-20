@@ -34,6 +34,7 @@ from unifi_official_api import (
     UniFiTimeoutError,
 )
 from unifi_official_api.exceptions import UniFiResponseError
+from unifi_official_api.network.models import SiteReportBucket
 from unifi_official_api.protect.models import (
     Camera,
     CameraState,
@@ -49,12 +50,27 @@ from custom_components.unifi_insights.const import (
 from custom_components.unifi_insights.coordinators.config import (
     LEGACY_REMAP_COOLDOWN,
     RULE_REFRESH_RETRY_DELAY,
+    WINDOW_1D_MS,
+    WINDOW_1H_MS,
+    WINDOW_1M_MS,
+    WINDOW_1W_MS,
     UnifiInsightsConfigCoordinator,
+    aggregate_internet_activity_windows,
 )
 from custom_components.unifi_insights.coordinators.config_sections import (
+    async_fetch_site_routes,
+    async_fetch_site_wifi_and_links,
+    async_update_site_internet_activity,
+    enrich_wifi,
     is_predefined_nat_rule,
+    map_legacy_site_names,
+    resolve_report_site_name,
     rule_display_name,
     verified_legacy_site_name,
+    wifi_qr_payload,
+)
+from custom_components.unifi_insights.coordinators.facade import (
+    UnifiInsightsFacadeCoordinator,
 )
 from tests.fixtures.command_owners import (
     SITE_ID,
@@ -63,6 +79,7 @@ from tests.fixtures.command_owners import (
     build_seeded_owners,
 )
 from tests.fixtures.coordinator_clients import (
+    RULE_SECTION_PARAMS,
     _create_mock_model,
     _create_mock_network_client,
     _create_mock_protect_client,
@@ -1045,37 +1062,6 @@ class TestTolerantProtectEnums:
 
 # --- Config coordinator ------------------------------------------------------
 
-_RULE_SECTION_PARAMS = [
-    pytest.param(
-        "port_forwards",
-        "port_forwards",
-        "list_port_forwards",
-        "port_forwards_available",
-        id="port_forward",
-    ),
-    pytest.param(
-        "traffic_rules",
-        "traffic_rules",
-        "list_traffic_rules",
-        "traffic_rules_available",
-        id="traffic_rule",
-    ),
-    pytest.param(
-        "nat_rules",
-        "nat_rules",
-        "list_nat_rules",
-        "nat_rules_available",
-        id="nat_rule",
-    ),
-    pytest.param(
-        "static_routes",
-        "static_routes",
-        "list_static_routes",
-        "static_routes_available",
-        id="static_route",
-    ),
-]
-
 
 class TestUnifiConfigCoordinator:
     """Tests for UnifiInsightsConfigCoordinator."""
@@ -1979,7 +1965,7 @@ class TestUnifiConfigCoordinator:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("data_key", "endpoint_attr", "list_method", "avail_method"),
-        _RULE_SECTION_PARAMS,
+        RULE_SECTION_PARAMS,
     )
     async def test_rule_section_fetched_by_internal_reference(
         self,
@@ -2025,7 +2011,7 @@ class TestUnifiConfigCoordinator:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("data_key", "endpoint_attr", "list_method", "avail_method"),
-        _RULE_SECTION_PARAMS,
+        RULE_SECTION_PARAMS,
     )
     async def test_rule_section_ignores_fuzzy_legacy_mapping(
         self,
@@ -2058,7 +2044,7 @@ class TestUnifiConfigCoordinator:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("data_key", "endpoint_attr", "list_method", "avail_method"),
-        _RULE_SECTION_PARAMS,
+        RULE_SECTION_PARAMS,
     )
     async def test_rule_section_without_internal_reference_is_empty_and_available(
         self,
@@ -2083,7 +2069,7 @@ class TestUnifiConfigCoordinator:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("data_key", "endpoint_attr", "list_method", "avail_method"),
-        _RULE_SECTION_PARAMS,
+        RULE_SECTION_PARAMS,
     )
     @pytest.mark.parametrize(
         "error",
@@ -2119,7 +2105,7 @@ class TestUnifiConfigCoordinator:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("data_key", "endpoint_attr", "list_method", "avail_method"),
-        _RULE_SECTION_PARAMS,
+        RULE_SECTION_PARAMS,
     )
     async def test_rule_section_transient_failure_keeps_previous_data(
         self,
@@ -2164,7 +2150,7 @@ class TestUnifiConfigCoordinator:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("data_key", "endpoint_attr", "list_method", "avail_method"),
-        _RULE_SECTION_PARAMS,
+        RULE_SECTION_PARAMS,
     )
     async def test_rule_section_failure_is_per_site(
         self,
@@ -2205,7 +2191,7 @@ class TestUnifiConfigCoordinator:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("data_key", "endpoint_attr", "list_method", "avail_method"),
-        _RULE_SECTION_PARAMS,
+        RULE_SECTION_PARAMS,
     )
     async def test_rule_section_401_triggers_reauth(
         self,
@@ -2235,7 +2221,7 @@ class TestUnifiConfigCoordinator:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("data_key", "endpoint_attr", "list_method", "avail_method"),
-        _RULE_SECTION_PARAMS,
+        RULE_SECTION_PARAMS,
     )
     async def test_rule_sections_pruned_with_sites(
         self,
@@ -2306,3 +2292,330 @@ class TestUnifiConfigCoordinator:
         assert result["traffic_rules"]["default"] == {}
         assert pf_started.is_set()
         assert tr_started.is_set()
+
+    @pytest.mark.asyncio
+    async def test_config_coordinator_internet_activity_windows_and_resilience(
+        self,
+        hass: HomeAssistant,
+        mock_network_client: MagicMock,
+        mock_protect_client: MagicMock,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """Test rolling window aggregation, hourly reuse, and transient recovery."""
+        now_ms = 1_800_000_000_000
+        windows = aggregate_internet_activity_windows(
+            five_minute_buckets=[
+                {
+                    "time": now_ms - WINDOW_1H_MS - 1,
+                    "wan-rx_bytes": 9999,
+                    "wan-tx_bytes": 9999,
+                },
+                {
+                    "time": now_ms - WINDOW_1H_MS,
+                    "wan-rx_bytes": 1000,
+                    "wan-tx_bytes": 500,
+                    "wan2-rx_bytes": 250,
+                    "wan2-tx_bytes": 100,
+                },
+            ],
+            hourly_buckets=[
+                {
+                    "time": now_ms - WINDOW_1W_MS - 1,
+                    "wan-rx_bytes": 8888,
+                    "wan-tx_bytes": 8888,
+                },
+                {
+                    "time": now_ms - WINDOW_1D_MS - 3_600_000,
+                    "wan-rx_bytes": 2000,
+                    "wan-tx_bytes": 800,
+                },
+                {
+                    "time": now_ms - WINDOW_1D_MS,
+                    "wan-rx_bytes": 3000,
+                    "wan-tx_bytes": 1200,
+                },
+            ],
+            daily_buckets=[
+                {
+                    "time": now_ms - WINDOW_1M_MS,
+                    "wan-rx_bytes": 10000,
+                    "wan-tx_bytes": 4000,
+                }
+            ],
+            now_ms=now_ms,
+        )
+        assert windows == {
+            "1h": {"rx_bytes": 1250, "tx_bytes": 600},
+            "1d": {"rx_bytes": 3000, "tx_bytes": 1200},
+            "1w": {"rx_bytes": 5000, "tx_bytes": 2000},
+            "1m": {"rx_bytes": 10000, "tx_bytes": 4000},
+        }
+        assert aggregate_internet_activity_windows([], [], [], now_ms=now_ms) == {}
+
+        mock_network_client.sites.get_all = AsyncMock(
+            return_value=[
+                {
+                    "id": "site1",
+                    "name": "Default",
+                    "internalReference": "default",
+                }
+            ]
+        )
+        coord = UnifiInsightsConfigCoordinator(
+            hass=hass,
+            network_client=mock_network_client,
+            protect_client=mock_protect_client,
+            entry=mock_config_entry,
+        )
+
+        # 1. Unsupported response stores no site data and keeps WiFi/firewall intact
+        mock_network_client.reports.get_site_report = AsyncMock(
+            side_effect=UniFiNotFoundError("Not found", status_code=404)
+        )
+        await coord._async_update_data()
+        assert coord.data["internet_activity"] == {}
+        assert coord.internet_activity_available("site1") is True
+        assert coord.wifi_available("site1") is True
+        assert coord.firewall_available("site1") is True
+
+        # 2. Successful fetch populates windows
+        async def _report_ok(
+            site_name: str, interval: str, *, start_ms: int, end_ms: int
+        ) -> list[dict[str, int]]:
+            return [{"time": end_ms, "wan-rx_bytes": 4096, "wan-tx_bytes": 2048}]
+
+        mock_network_client.reports.get_site_report = AsyncMock(side_effect=_report_ok)
+        await coord._async_update_data()
+        assert coord.data["internet_activity"]["site1"]["1h"] == {
+            "rx_bytes": 4096,
+            "tx_bytes": 2048,
+        }
+        assert coord.internet_activity_available("site1") is True
+
+        # 3. Transient failure retains prior data and marks section unavailable
+        mock_network_client.reports.get_site_report = AsyncMock(
+            side_effect=UniFiTimeoutError("Timeout")
+        )
+        await coord._async_update_data()
+        coord.last_update_success = True
+        assert coord.internet_activity_available("site1") is False
+        assert "site1" in coord.data["internet_activity_unavailable"]
+        assert coord.data["internet_activity"]["site1"]["1h"] == {
+            "rx_bytes": 4096,
+            "tx_bytes": 2048,
+        }
+        assert coord.wifi_available("site1") is True
+        assert coord.firewall_available("site1") is True
+
+        # 4. Later success replaces data and clears the unavailable marker
+        async def _report_recovered(
+            site_name: str, interval: str, *, start_ms: int, end_ms: int
+        ) -> list[dict[str, int]]:
+            return [{"time": end_ms, "wan-rx_bytes": 8192, "wan-tx_bytes": 4096}]
+
+        mock_network_client.reports.get_site_report = AsyncMock(
+            side_effect=_report_recovered
+        )
+        await coord._async_update_data()
+        assert coord.internet_activity_available("site1") is True
+        assert "site1" not in coord.data["internet_activity_unavailable"]
+        assert coord.data["internet_activity"]["site1"]["1h"] == {
+            "rx_bytes": 8192,
+            "tx_bytes": 4096,
+        }
+
+        # 5. Cover bucket variations (SiteReportBucket instance, invalid dict,
+        # non-dict object, rx-only, tx-only), client fallback, hourly/daily
+        # partial failure, HTTP 200 HTML response, empty windows, and facade
+        mixed_buckets: list[Any] = [
+            SiteReportBucket.model_validate({"time": now_ms, "wan-rx_bytes": 100}),
+            {"time": now_ms, "wan-tx_bytes": 50},
+            {"invalid": "no_time"},
+            "not_a_dict",
+        ]
+        rx_only = aggregate_internet_activity_windows(
+            [SiteReportBucket.model_validate({"time": now_ms, "wan-rx_bytes": 100})],
+            [SiteReportBucket.model_validate({"time": now_ms, "wan-tx_bytes": 50})],
+            mixed_buckets,
+            now_ms=now_ms,
+        )
+        assert rx_only["1h"] == {"rx_bytes": 100}
+        assert rx_only["1d"] == {"tx_bytes": 50}
+        assert rx_only["1m"] == {"rx_bytes": 100, "tx_bytes": 50}
+
+        # Fallback to network_client.get_site_report and empty fallback
+        mock_network_client.reports = None
+        mock_network_client.get_site_report = AsyncMock(return_value=[])
+        assert (
+            await coord._call_site_report("default", "hourly", start_ms=1, end_ms=2)
+            == []
+        )
+        mock_network_client.get_site_report = None
+        assert (
+            await coord._call_site_report("default", "hourly", start_ms=1, end_ms=2)
+            == []
+        )
+
+        # Hourly / daily transient failures and HTTP 200 HTML unsupported
+        mock_network_client.reports = MagicMock()
+
+        async def _fail_hourly(
+            site_name: str, interval: str, *, start_ms: int, end_ms: int
+        ) -> list[dict[str, int]]:
+            if interval == "hourly":
+                msg = "Hourly timeout"
+                raise UniFiTimeoutError(msg)
+            return []
+
+        mock_network_client.reports.get_site_report = AsyncMock(
+            side_effect=_fail_hourly
+        )
+        assert (
+            await coord._fetch_site_internet_activity(
+                site_id="site1", site_name="default", now_ms=now_ms
+            )
+            is None
+        )
+
+        async def _fail_daily(
+            site_name: str, interval: str, *, start_ms: int, end_ms: int
+        ) -> list[dict[str, int]]:
+            if interval == "daily":
+                msg = "Daily timeout"
+                raise UniFiTimeoutError(msg)
+            return []
+
+        mock_network_client.reports.get_site_report = AsyncMock(side_effect=_fail_daily)
+        assert (
+            await coord._fetch_site_internet_activity(
+                site_id="site1", site_name="default", now_ms=now_ms
+            )
+            is None
+        )
+
+        mock_network_client.reports.get_site_report = AsyncMock(
+            side_effect=UniFiResponseError("HTML", status_code=200)
+        )
+        await coord._async_update_data()
+        assert "site1" not in coord.data["internet_activity"]
+
+        facade_with_cfg = MagicMock()
+        facade_with_cfg.config_available = True
+        facade_with_cfg._config_coordinator = coord
+        assert (
+            UnifiInsightsFacadeCoordinator.internet_activity_available(
+                facade_with_cfg, "site1"
+            )
+            is True
+        )
+        facade_with_cfg._config_coordinator = None
+        assert (
+            UnifiInsightsFacadeCoordinator.internet_activity_available(
+                facade_with_cfg, "site1"
+            )
+            is True
+        )
+
+    @pytest.mark.asyncio
+    async def test_config_coordinator_innerspace_only_suppresses_network_404(
+        self,
+        hass: HomeAssistant,
+        mock_network_client: MagicMock,
+        mock_config_entry: MockConfigEntry,
+    ) -> None:
+        """The config coordinator suppresses a Network 404 when InnerSpace is used."""
+        mock_network_client.sites.get_all.side_effect = UniFiNotFoundError(
+            "Not found", status_code=404
+        )
+        config_coord = UnifiInsightsConfigCoordinator(
+            hass=hass,
+            network_client=mock_network_client,
+            protect_client=None,
+            entry=mock_config_entry,
+            network_available=True,
+            innerspace_available=True,
+        )
+        data = await config_coord._async_update_data()
+        assert data["sites"] == {}
+        assert config_coord.available is True
+
+    @pytest.mark.asyncio
+    async def test_config_sections_helper_branches(
+        self,
+        mock_network_client: MagicMock,
+    ) -> None:
+        """Test edge branches in config_sections helper functions."""
+        # map_legacy_site_names: skip empty name and fall back to single legacy site
+        mappings = map_legacy_site_names(
+            {"unmatched_site": {"name": "Office"}},
+            [{"name": ""}, {"name": "default", "desc": "Main"}],
+        )
+        assert mappings == {"unmatched_site": "default"}
+
+        # wifi_qr_payload: WEP and hidden SSID
+        qr = wifi_qr_payload("My;Net", "secret", "wep", hidden=True)
+        assert "T:WEP" in qr
+        assert "H:true" in qr
+
+        # enrich_wifi: client without essid, wifi without ssid/matching config
+        wifi_dict: dict[str, dict[str, Any]] = {
+            "w1": {"id": "w1"},
+            "w2": {"id": "w2", "name": "UnmatchedSSID"},
+        }
+        enrich_wifi(
+            wifi_dict,
+            [{"name": "OtherSSID", "x_passphrase": "pw", "security": "wpapsk"}],
+            [{"is_wired": False}],
+        )
+        assert wifi_dict["w2"]["num_connected_clients"] == 0
+
+        # resolve_report_site_name: non-dict site_data and internalReference fallback
+        assert resolve_report_site_name("site1", "not_a_dict", None) == "site1"
+        assert (
+            resolve_report_site_name("site1", {"internalReference": "custom_ref"}, None)
+            == "custom_ref"
+        )
+
+        # async_fetch_site_routes: route without id is skipped
+        mock_network_client.routes.list_routes = AsyncMock(
+            return_value=[{"name": "no-id"}, {"id": "r1", "name": "with-id"}]
+        )
+        routes = await async_fetch_site_routes(
+            mock_network_client, dict, "site1", "default"
+        )
+        assert list(routes.keys()) == ["r1"]
+
+        # async_update_site_internet_activity: failed fetch with no prior_activity
+        failed_set: set[tuple[str, str]] = set()
+        activity_map: dict[str, dict[str, dict[str, int]]] = {}
+        await async_update_site_internet_activity(
+            AsyncMock(return_value=None),
+            site_id="site1",
+            site_data={},
+            legacy_name="default",
+            now_ms=1000,
+            prior_activity=None,
+            internet_activity_by_site=activity_map,
+            failed_sections=failed_set,
+        )
+        assert ("internet_activity", "site1") in failed_set
+        assert "site1" not in activity_map
+
+        # async_fetch_site_wifi_and_links: get_legacy_configs raising logs debug
+        dummy_coord = MagicMock()
+        dummy_coord._fetch_optional_section = AsyncMock(
+            return_value=[{"id": "w1", "name": "Net"}]
+        )
+        dummy_coord._model_to_dict = dict
+        dummy_coord._client_links = lambda _: {}
+        dummy_coord.data = {"client_links": {}, "wifi": {}}
+        dummy_coord.network_client.clients.get_active_legacy = AsyncMock(
+            return_value=[]
+        )
+        dummy_coord.network_client.wifi.get_legacy_configs = AsyncMock(
+            side_effect=RuntimeError("boom")
+        )
+        wifi_res, _ = await async_fetch_site_wifi_and_links(
+            dummy_coord, "site1", "default", set()
+        )
+        assert "w1" in wifi_res

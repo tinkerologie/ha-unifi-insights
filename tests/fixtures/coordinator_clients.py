@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 # --- Client doubles ----------------------------------------------------------
 
 
@@ -255,3 +257,37 @@ def _create_mock_protect_client() -> MagicMock:
 
     client.close = AsyncMock()
     return client
+
+
+# --- Rule sections -----------------------------------------------------------
+
+RULE_SECTION_PARAMS = [
+    pytest.param(
+        "port_forwards",
+        "port_forwards",
+        "list_port_forwards",
+        "port_forwards_available",
+        id="port_forward",
+    ),
+    pytest.param(
+        "traffic_rules",
+        "traffic_rules",
+        "list_traffic_rules",
+        "traffic_rules_available",
+        id="traffic_rule",
+    ),
+    pytest.param(
+        "nat_rules",
+        "nat_rules",
+        "list_nat_rules",
+        "nat_rules_available",
+        id="nat_rule",
+    ),
+    pytest.param(
+        "static_routes",
+        "static_routes",
+        "list_static_routes",
+        "static_routes_available",
+        id="static_route",
+    ),
+]

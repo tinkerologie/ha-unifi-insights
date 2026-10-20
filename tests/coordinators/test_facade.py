@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from homeassistant.exceptions import HomeAssistantError
 from pydantic import ValidationError
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 from unifi_official_api import UniFiAuthenticationError, UniFiConnectionError
 from unifi_official_api.network.endpoints.vouchers import VouchersEndpoint
 from unifi_official_api.network.models.voucher import Voucher
@@ -33,9 +32,9 @@ from custom_components.unifi_insights.data_transforms import (
     VoucherSettings,
     build_site_network_facts,
 )
-from tests.coordinators.test_config import _RULE_SECTION_PARAMS
 from tests.fixtures.command_owners import SITE_ID
 from tests.fixtures.coordinator_clients import (
+    RULE_SECTION_PARAMS,
     _create_mock_network_client,
     _create_mock_protect_client,
 )
@@ -1530,7 +1529,7 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.parametrize(
         ("data_key", "endpoint_attr", "list_method", "avail_method"),
-        _RULE_SECTION_PARAMS,
+        RULE_SECTION_PARAMS,
     )
     def test_rule_section_availability_passthrough(
         self,
