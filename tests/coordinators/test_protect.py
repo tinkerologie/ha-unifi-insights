@@ -2516,8 +2516,6 @@ class TestUnifiProtectCoordinator:
         """Test the WS health signal starts unconnected/unknown, per stream
         and in the top-level roll-up.
         """
-        assert coordinator.websocket_health["connected"] is False
-        assert coordinator.websocket_health["last_message_at"] is None
         assert coordinator.websocket_health == {
             "connected": False,
             "last_message_at": None,
@@ -2657,7 +2655,6 @@ class TestUnifiProtectCoordinator:
         # The overall roll-up must reflect the outage, not the chatty
         # devices stream alone.
         assert health["connected"] is False
-        assert coordinator.websocket_health["connected"] is False
 
     def test_cleanup_stale_devices_no_match(
         self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
