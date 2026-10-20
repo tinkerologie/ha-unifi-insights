@@ -10,29 +10,51 @@ autospecced ``unifi_official_api`` clients.
 from __future__ import annotations
 
 import asyncio
+import copy
+import logging
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.const import CONF_API_KEY
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiNotFoundError,
+    UniFiRateLimitError,
     UniFiRuleNotEditableError,
+    UniFiTimeoutError,
 )
 from unifi_official_api.exceptions import UniFiResponseError
-from unifi_official_api.protect.models import Camera, CameraState
-from unifi_official_api.protect.models.viewer import Viewer, ViewerState
+from unifi_official_api.protect.models import (
+    Camera,
+    CameraState,
+    Viewer,
+)
+from unifi_official_api.protect.models.viewer import ViewerState
 
-from custom_components.unifi_insights.const import CONF_SITE_IDS, DOMAIN
+from custom_components.unifi_insights.const import (
+    CONF_SITE_IDS,
+    DOMAIN,
+    SCAN_INTERVAL_CONFIG,
+)
 from custom_components.unifi_insights.coordinators.config import (
     LEGACY_REMAP_COOLDOWN,
     RULE_REFRESH_RETRY_DELAY,
     UnifiInsightsConfigCoordinator,
+)
+from custom_components.unifi_insights.coordinators.config_sections import (
+    is_predefined_nat_rule,
+    rule_display_name,
+    verified_legacy_site_name,
 )
 from tests.fixtures.command_owners import (
     SITE_ID,
@@ -40,12 +62,16 @@ from tests.fixtures.command_owners import (
     async_shutdown_owners,
     build_seeded_owners,
 )
+from tests.fixtures.coordinator_clients import (
+    _create_mock_model,
+    _create_mock_network_client,
+    _create_mock_protect_client,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
 
     from tests.fixtures.command_owners import SeededOwners
 
@@ -853,7 +879,7 @@ class TestOnDemandLegacyRemap:
 # Tests for Protect-only console polling and warning suppression.
 
 
-def _create_mock_network_client() -> MagicMock:
+def _create_site_listing_client() -> MagicMock:
     """Create a network client whose site listing can be asserted on."""
     client = MagicMock()
     client.sites = MagicMock()
@@ -869,7 +895,7 @@ class TestProtectOnlyPollingBehavior:
         self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
     ) -> None:
         """Test config coordinator skips sites.get_all when network unavailable."""
-        network_client = _create_mock_network_client()
+        network_client = _create_site_listing_client()
 
         coordinator = UnifiInsightsConfigCoordinator(
             hass=hass,
@@ -890,7 +916,7 @@ class TestProtectOnlyPollingBehavior:
         self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
     ) -> None:
         """Test sites.get_all non-JSON error marks network unavailable."""
-        network_client = _create_mock_network_client()
+        network_client = _create_site_listing_client()
         network_client.sites.get_all = AsyncMock(
             side_effect=UniFiResponseError("Response is not JSON", status_code=200)
         )
@@ -1015,3 +1041,1268 @@ class TestTolerantProtectEnums:
     def test_viewer_known_state(self) -> None:
         viewer = Viewer.model_validate({"id": "v1", "mac": "BB", "state": "CONNECTED"})
         assert viewer.state is ViewerState.CONNECTED
+
+
+# --- Config coordinator ------------------------------------------------------
+
+_RULE_SECTION_PARAMS = [
+    pytest.param(
+        "port_forwards",
+        "port_forwards",
+        "list_port_forwards",
+        "port_forwards_available",
+        id="port_forward",
+    ),
+    pytest.param(
+        "traffic_rules",
+        "traffic_rules",
+        "list_traffic_rules",
+        "traffic_rules_available",
+        id="traffic_rule",
+    ),
+    pytest.param(
+        "nat_rules",
+        "nat_rules",
+        "list_nat_rules",
+        "nat_rules_available",
+        id="nat_rule",
+    ),
+    pytest.param(
+        "static_routes",
+        "static_routes",
+        "list_static_routes",
+        "static_routes_available",
+        id="static_route",
+    ),
+]
+
+
+class TestUnifiConfigCoordinator:
+    """Tests for UnifiInsightsConfigCoordinator."""
+
+    @pytest.fixture
+    def coordinator(
+        self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
+    ) -> UnifiInsightsConfigCoordinator:
+        """Create a config coordinator for testing."""
+        network_client = _create_mock_network_client()
+        protect_client = _create_mock_protect_client()
+        return UnifiInsightsConfigCoordinator(
+            hass=hass,
+            network_client=network_client,
+            protect_client=protect_client,
+            entry=mock_config_entry,
+        )
+
+    def test_initialization(self, coordinator: UnifiInsightsConfigCoordinator):
+        """Test coordinator initialization."""
+        assert coordinator.name == f"{DOMAIN}_config"
+        assert coordinator.update_interval == SCAN_INTERVAL_CONFIG
+        assert "sites" in coordinator.data
+        assert "wifi" in coordinator.data
+        assert "firewall_rules" in coordinator.data
+        assert "policy_based_routes" in coordinator.data
+        assert "network_info" in coordinator.data
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_success(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """Test successful data fetch."""
+        result = await coordinator._async_update_data()
+
+        assert "sites" in result
+        assert "default" in result["sites"]
+        assert "site2" in result["sites"]
+        assert "wifi" in result
+        assert "firewall_rules" in result
+        assert "rule1" in result["firewall_rules"]["default"]
+        assert "policy_based_routes" in result
+        assert "route1" in result["policy_based_routes"]["default"]
+        assert coordinator._available is True
+        assert coordinator.available_sites == {
+            "default": "Default",
+            "site2": "Site 2",
+        }
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_filters_selected_sites(self, hass: HomeAssistant):
+        """Only the sites picked in options are polled (Issue #128)."""
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            data={CONF_API_KEY: "test_api_key"},
+            options={CONF_SITE_IDS: ["site2"]},
+        )
+        network_client = _create_mock_network_client()
+        coordinator = UnifiInsightsConfigCoordinator(
+            hass=hass,
+            network_client=network_client,
+            protect_client=None,
+            entry=entry,
+        )
+
+        result = await coordinator._async_update_data()
+
+        assert list(result["sites"]) == ["site2"]
+        assert coordinator.get_site_ids() == ["site2"]
+        # Every site stays selectable in the options flow.
+        assert coordinator.available_sites == {
+            "default": "Default",
+            "site2": "Site 2",
+        }
+        polled = [call.args[0] for call in network_client.wifi.get_all.await_args_list]
+        assert polled == ["site2"]
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_prunes_per_site_maps(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """Per-site config data for a site no longer polled is dropped."""
+        for key in ("wifi", "firewall_rules", "policy_based_routes", "vpn_clients"):
+            coordinator.data[key]["gone"] = {"stale": {"id": "stale"}}
+
+        result = await coordinator._async_update_data()
+
+        for key in ("wifi", "firewall_rules", "policy_based_routes", "vpn_clients"):
+            assert "gone" not in result[key]
+            assert "default" in result[key]
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_selected_sites_all_gone(
+        self, hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+    ):
+        """A selection matching no current site polls nothing and says why."""
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            data={CONF_API_KEY: "test_api_key"},
+            options={CONF_SITE_IDS: ["removed-site"]},
+        )
+        coordinator = UnifiInsightsConfigCoordinator(
+            hass=hass,
+            network_client=_create_mock_network_client(),
+            protect_client=None,
+            entry=entry,
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = await coordinator._async_update_data()
+            await coordinator._async_update_data()
+
+        assert result["sites"] == {}
+        # Warned once, not on every 5-minute poll.
+        assert caplog.text.count("none of the selected sites") == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("endpoint", ["wifi.get_all", "firewall.list_rules"])
+    @pytest.mark.parametrize(
+        "error",
+        [
+            UniFiNotFoundError("Not found", status_code=404),
+            UniFiResponseError("Bad request", status_code=400),
+            UniFiAuthenticationError("Forbidden", status_code=403),
+            UniFiResponseError("HTML instead of JSON", status_code=200),
+        ],
+        ids=["404", "400", "403", "200-non-json"],
+    )
+    async def test_async_update_data_optional_endpoint_unsupported(
+        self,
+        coordinator: UnifiInsightsConfigCoordinator,
+        endpoint: str,
+        error: Exception,
+    ):
+        """A 4xx from WiFi/firewall means the feature is absent, not a failure."""
+        namespace, method = endpoint.split(".")
+        setattr(
+            getattr(coordinator.network_client, namespace),
+            method,
+            AsyncMock(side_effect=error),
+        )
+
+        result = await coordinator._async_update_data()
+
+        section = "wifi" if namespace == "wifi" else "firewall_rules"
+        assert result[section]["default"] == {}
+        assert "default" in result["sites"]
+        assert coordinator._available is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("endpoint", "section", "other_section"),
+        [
+            ("wifi.get_all", "wifi", "firewall_rules"),
+            ("firewall.list_rules", "firewall_rules", "wifi"),
+        ],
+        ids=["wifi", "firewall"],
+    )
+    @pytest.mark.parametrize(
+        "error",
+        [
+            UniFiResponseError("Server error", status_code=500),
+            UniFiRateLimitError("Slow down", status_code=429),
+            UniFiConnectionError("Connection refused"),
+            UniFiTimeoutError("Timed out"),
+            ValueError("Unparseable payload"),
+        ],
+        ids=["500", "429", "connection", "timeout", "unexpected"],
+    )
+    async def test_async_update_data_optional_section_failure(
+        self,
+        coordinator: UnifiInsightsConfigCoordinator,
+        endpoint: str,
+        section: str,
+        other_section: str,
+        error: Exception,
+    ):
+        """A failed WiFi/firewall fetch keeps that section's data and flags it."""
+        await coordinator.async_refresh()
+        assert coordinator.wifi_available("default") is True
+        assert coordinator.firewall_available("default") is True
+        previous = copy.deepcopy(coordinator.data[section])
+        assert previous["default"]
+
+        namespace, method = endpoint.split(".")
+        working = getattr(getattr(coordinator.network_client, namespace), method)
+        setattr(
+            getattr(coordinator.network_client, namespace),
+            method,
+            AsyncMock(side_effect=error),
+        )
+
+        await coordinator.async_refresh()
+
+        # The refresh itself succeeds so other sections and platforms keep
+        # working, but the failed section is not reported as fresh.
+        assert coordinator.last_update_success is True
+        assert coordinator.data[section] == previous
+        section_flag = {
+            "wifi": coordinator.wifi_available,
+            "firewall_rules": coordinator.firewall_available,
+        }
+        assert section_flag[section]("default") is False
+        assert section_flag[other_section]("default") is True
+
+        setattr(getattr(coordinator.network_client, namespace), method, working)
+        await coordinator.async_refresh()
+        assert section_flag[section]("default") is True
+
+    @pytest.mark.asyncio
+    async def test_optional_section_failure_is_per_site(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """A WiFi failure on one site leaves other sites' WiFi available."""
+        working = coordinator.network_client.wifi.get_all
+
+        async def get_all(site_id: str):
+            if site_id == "site2":
+                msg = "site2 WiFi down"
+                raise UniFiConnectionError(msg)
+            return await working(site_id)
+
+        coordinator.network_client.wifi.get_all = AsyncMock(side_effect=get_all)
+        await coordinator.async_refresh()
+
+        assert coordinator.wifi_available("default") is True
+        assert coordinator.wifi_available("site2") is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("endpoint", ["wifi.get_all", "firewall.list_rules"])
+    async def test_async_update_data_optional_endpoint_auth_failure_reauths(
+        self, coordinator: UnifiInsightsConfigCoordinator, endpoint: str
+    ):
+        """A 401 from WiFi/firewall means revoked credentials and starts reauth."""
+        namespace, method = endpoint.split(".")
+        setattr(
+            getattr(coordinator.network_client, namespace),
+            method,
+            AsyncMock(side_effect=UniFiAuthenticationError("Revoked", status_code=401)),
+        )
+
+        with pytest.raises(ConfigEntryAuthFailed):
+            await coordinator._async_update_data()
+
+        assert coordinator._available is False
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_enriches_wifi_and_collects_sections(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """Legacy WiFi enrichment, VPN clients and id-less rules on a good poll."""
+        client = coordinator.network_client
+        client.wifi.get_legacy_configs = AsyncMock(
+            return_value=[
+                {"name": "MainWiFi", "x_passphrase": "secret", "security": "wpapsk"}
+            ]
+        )
+        client.clients.get_active_legacy = AsyncMock(
+            return_value=[
+                {"essid": "MainWiFi"},
+                {"essid": "MainWiFi", "is_wired": True},
+            ]
+        )
+        client.vpn_clients.list_vpn_clients = AsyncMock(
+            return_value=[{"_id": "vpn1", "name": "Office"}, {"name": "no id"}]
+        )
+        client.firewall.list_rules = AsyncMock(
+            return_value=[_create_mock_model({"name": "rule without id"})]
+        )
+
+        result = await coordinator._async_update_data()
+
+        wifi = result["wifi"]["default"]["wifi1"]
+        assert wifi["num_connected_clients"] == 1
+        assert wifi["qr_code"].startswith("WIFI:T:WPA;S:MainWiFi;P:")
+        assert list(result["vpn_clients"]["default"]) == ["vpn1"]
+        assert result["firewall_rules"]["default"] == {}
+        assert coordinator.firewall_available("default") is True
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_drops_sites_that_disappeared(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """Per-site sections are rebuilt, so a removed site's data is not kept."""
+        coordinator.data["wifi"]["gone"] = {"wifi-x": {"id": "wifi-x"}}
+        coordinator.data["firewall_rules"]["gone"] = {"rule-x": {"id": "rule-x"}}
+
+        result = await coordinator._async_update_data()
+
+        assert "gone" not in result["wifi"]
+        assert "gone" not in result["firewall_rules"]
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_routes_error(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """Test policy-based routes are optional when the endpoint is unavailable."""
+        coordinator.network_client.routes.list_routes = AsyncMock(
+            side_effect=Exception("Routes endpoint unavailable")
+        )
+
+        result = await coordinator._async_update_data()
+
+        assert "sites" in result
+        assert "default" in result["sites"]
+        assert result["policy_based_routes"]["default"] == {}
+        assert coordinator._available is True
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_routes_auth_error(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """Test auth error during routes fetch triggers reauth."""
+        coordinator.protect_client = None
+        coordinator.network_client.routes.list_routes = AsyncMock(
+            side_effect=UniFiAuthenticationError("Invalid API key")
+        )
+
+        with pytest.raises(ConfigEntryAuthFailed):
+            await coordinator._async_update_data()
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_vpn_clients_error(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """Test VPN clients are optional when the endpoint is unavailable."""
+        coordinator.network_client.vpn_clients.list_vpn_clients = AsyncMock(
+            side_effect=Exception("VPN clients endpoint unavailable")
+        )
+
+        result = await coordinator._async_update_data()
+
+        assert "sites" in result
+        assert "default" in result["sites"]
+        assert result["vpn_clients"]["default"] == {}
+        assert coordinator._available is True
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_stores_site_to_site_vpns(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """Configured site-to-site tunnels are stored per site by id."""
+        tunnel = {
+            "id": "tun1",
+            "name": "Office",
+            "vpn_type": "ipsec-vpn",
+            "enabled": True,
+        }
+        coordinator.network_client.vpn_clients.list_site_to_site_vpns = AsyncMock(
+            return_value=[tunnel]
+        )
+
+        result = await coordinator._async_update_data()
+
+        assert result["site_vpns"]["default"] == {"tun1": tunnel}
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_site_to_site_vpns_error_keeps_last_known(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """A failed tunnel fetch keeps the last known tunnels, not an empty set."""
+        tunnel = {
+            "id": "tun1",
+            "name": "Office",
+            "vpn_type": "ipsec-vpn",
+            "enabled": True,
+        }
+        coordinator.network_client.vpn_clients.list_site_to_site_vpns = AsyncMock(
+            return_value=[tunnel]
+        )
+        await coordinator._async_update_data()
+
+        coordinator.network_client.vpn_clients.list_site_to_site_vpns = AsyncMock(
+            side_effect=Exception("networkconf unavailable")
+        )
+        result = await coordinator._async_update_data()
+
+        assert result["site_vpns"]["default"] == {"tun1": tunnel}
+        assert coordinator._available is True
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_site_mapping_error_keeps_site_vpns(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """A failed legacy site mapping keeps the last known tunnels."""
+        tunnel = {
+            "id": "tun1",
+            "name": "Office",
+            "vpn_type": "ipsec-vpn",
+            "enabled": True,
+        }
+        coordinator.network_client.vpn_clients.list_site_to_site_vpns = AsyncMock(
+            return_value=[tunnel]
+        )
+        await coordinator._async_update_data()
+
+        coordinator.network_client.sites.get_legacy_all = AsyncMock(
+            side_effect=Exception("legacy sites unavailable")
+        )
+        result = await coordinator._async_update_data()
+
+        assert result["site_vpns"]["default"] == {"tun1": tunnel}
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_site_to_site_vpns_auth_error(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """An auth error on the tunnel fetch triggers reauth, not last-known."""
+        coordinator.network_client.vpn_clients.list_site_to_site_vpns = AsyncMock(
+            side_effect=UniFiAuthenticationError("Invalid API key")
+        )
+
+        with pytest.raises(ConfigEntryAuthFailed):
+            await coordinator._async_update_data()
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_vpn_clients_auth_error(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """Test auth error during VPN clients fetch triggers reauth."""
+        coordinator.protect_client = None
+        coordinator.network_client.vpn_clients.list_vpn_clients = AsyncMock(
+            side_effect=UniFiAuthenticationError("Invalid API key")
+        )
+
+        with pytest.raises(ConfigEntryAuthFailed):
+            await coordinator._async_update_data()
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_auth_error(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """Test data fetch with auth error on network-only setup."""
+        coordinator.protect_client = None
+        coordinator.network_client.sites.get_all = AsyncMock(
+            side_effect=UniFiAuthenticationError("Invalid API key")
+        )
+
+        with pytest.raises(ConfigEntryAuthFailed):
+            await coordinator._async_update_data()
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_protect_only_console(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """Test fetch succeeds on Protect-only console with empty sites (Issue 93)."""
+        coordinator.network_client.sites.get_all = AsyncMock(
+            side_effect=UniFiNotFoundError("Not found", status_code=404)
+        )
+
+        result = await coordinator._async_update_data()
+        assert result["sites"] == {}
+        assert result["wifi"] == {}
+        assert result["firewall_rules"] == {}
+        assert coordinator._available is True
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_protect_only_console_non_json_sites(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """Test fetch succeeds when the sites endpoint returns 200 and no JSON."""
+        coordinator.network_client.sites.get_all = AsyncMock(
+            side_effect=UniFiResponseError(
+                "API returned non-JSON response (status 200)", status_code=200
+            )
+        )
+
+        result = await coordinator._async_update_data()
+        assert result["sites"] == {}
+        assert result["wifi"] == {}
+        assert result["firewall_rules"] == {}
+        assert coordinator._available is True
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_non_json_sites_without_protect(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """Test a non-JSON sites response still fails when Protect is absent."""
+        coordinator.protect_client = None
+        coordinator.network_client.sites.get_all = AsyncMock(
+            side_effect=UniFiResponseError(
+                "API returned non-JSON response (status 200)", status_code=200
+            )
+        )
+
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_redirect_sites_still_fails(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """Test only a 200 is tolerated, so a 3xx is not swallowed."""
+        coordinator.network_client.sites.get_all = AsyncMock(
+            side_effect=UniFiResponseError("Redirected", status_code=302)
+        )
+
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_server_error_sites_still_fails(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """Test a >=400 response is not swallowed by the non-JSON tolerance."""
+        coordinator.network_client.sites.get_all = AsyncMock(
+            side_effect=UniFiResponseError("Server error", status_code=500)
+        )
+
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_connection_error(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """Test data fetch with connection error."""
+        coordinator.network_client.sites.get_all = AsyncMock(
+            side_effect=UniFiConnectionError("Connection refused")
+        )
+
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_timeout_error(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """Test data fetch with timeout error."""
+        coordinator.network_client.sites.get_all = AsyncMock(
+            side_effect=UniFiTimeoutError("Request timed out")
+        )
+
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_response_error(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """Test data fetch with response error."""
+        coordinator.network_client.sites.get_all = AsyncMock(
+            side_effect=UniFiResponseError("Bad response", status_code=400)
+        )
+
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_generic_error(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """Test data fetch with generic error."""
+        coordinator.network_client.sites.get_all = AsyncMock(
+            side_effect=Exception("Something broke")
+        )
+
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+
+    def test_get_site_existing(self, coordinator: UnifiInsightsConfigCoordinator):
+        """Test getting existing site."""
+        coordinator.data["sites"] = {"default": {"id": "default", "name": "Default"}}
+        result = coordinator.get_site("default")
+        assert result == {"id": "default", "name": "Default"}
+
+    def test_get_site_missing(self, coordinator: UnifiInsightsConfigCoordinator):
+        """Test getting missing site."""
+        result = coordinator.get_site("nonexistent")
+        assert result is None
+
+    def test_get_site_non_dict_entry(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """Test getting site when site entry in data is not a dict."""
+        coordinator.data["sites"] = {"site1": "not a dict"}
+        assert coordinator.get_site("site1") is None
+
+    def test_get_site_ids(self, coordinator: UnifiInsightsConfigCoordinator):
+        """Test getting all site IDs."""
+        coordinator.data["sites"] = {
+            "default": {"id": "default"},
+            "site2": {"id": "site2"},
+        }
+        result = coordinator.get_site_ids()
+        assert set(result) == {"default", "site2"}
+
+    def test_get_wifi_networks(self, coordinator: UnifiInsightsConfigCoordinator):
+        """Test getting WiFi networks for a site."""
+        coordinator.data["wifi"] = {
+            "default": {"wifi1": {"id": "wifi1", "name": "MainWiFi"}}
+        }
+        result = coordinator.get_wifi_networks("default")
+        assert "wifi1" in result
+
+    def test_get_wifi_networks_missing_site(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """Test getting WiFi networks for missing site."""
+        result = coordinator.get_wifi_networks("nonexistent")
+        assert result == {}
+
+    def test_get_firewall_rules(self, coordinator: UnifiInsightsConfigCoordinator):
+        """Test getting firewall rules for a site."""
+        coordinator.data["firewall_rules"] = {
+            "default": {"rule1": {"id": "rule1", "name": "Block Instagram"}}
+        }
+        result = coordinator.get_firewall_rules("default")
+        assert "rule1" in result
+
+    def test_get_firewall_rules_missing_site(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """Test getting firewall rules for missing site."""
+        result = coordinator.get_firewall_rules("nonexistent")
+        assert result == {}
+
+    def test_get_policy_based_routes(self, coordinator: UnifiInsightsConfigCoordinator):
+        """Test getting policy-based routes for a site."""
+        coordinator.data["policy_based_routes"] = {
+            "default": {"route1": {"id": "route1", "description": "Route to VPN"}}
+        }
+        result = coordinator.get_policy_based_routes("default")
+        assert "route1" in result
+
+    def test_get_policy_based_routes_missing_site(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """Test getting policy-based routes for missing site."""
+        result = coordinator.get_policy_based_routes("nonexistent")
+        assert result == {}
+
+    def test_get_vpn_clients(self, coordinator: UnifiInsightsConfigCoordinator) -> None:
+        """Test getting VPN clients for a site."""
+        coordinator.data["vpn_clients"] = {
+            "default": {"client1": {"_id": "client1", "name": "Privado VPN"}}
+        }
+        result = coordinator.get_vpn_clients("default")
+        assert "client1" in result
+
+    def test_get_vpn_clients_missing_site(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """Test getting VPN clients for missing site."""
+        result = coordinator.get_vpn_clients("nonexistent")
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_skips_none_site_id(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """Test that WiFi fetch skips None site IDs."""
+        # Create a site model that returns None for id
+        site_with_none_id = MagicMock()
+        site_with_none_id.model_dump.return_value = {"id": None, "name": "BadSite"}
+
+        site_valid = MagicMock()
+        site_valid.model_dump.return_value = {"id": "valid_site", "name": "ValidSite"}
+
+        coordinator.network_client.sites.get_all = AsyncMock(
+            return_value=[site_with_none_id, site_valid]
+        )
+
+        result = await coordinator._async_update_data()
+
+        # Should only have the valid site (None id is filtered out)
+        assert "valid_site" in result["sites"]
+        assert None not in result["sites"]
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_skips_wifi_without_id(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """Test that WiFi networks without an ID are skipped."""
+        # Create WiFi models - one with ID, one without
+        wifi_with_id = MagicMock()
+        wifi_with_id.model_dump.return_value = {"id": "wifi1", "name": "ValidWiFi"}
+
+        wifi_without_id = MagicMock()
+        wifi_without_id.model_dump.return_value = {"id": None, "name": "BadWiFi"}
+
+        coordinator.network_client.wifi.get_all = AsyncMock(
+            return_value=[wifi_with_id, wifi_without_id]
+        )
+
+        result = await coordinator._async_update_data()
+
+        # Should only have the WiFi with valid ID
+        assert "wifi1" in result["wifi"].get("default", {})
+        # WiFi without ID should not be in the dict
+        assert None not in result["wifi"].get("default", {})
+
+    def test_client_links_from_stat_sta(self):
+        """Only link fields survive; MACs normalise; untagged has no vlan."""
+        links = UnifiInsightsConfigCoordinator._client_links(
+            [
+                {
+                    "mac": "8C:ED:E1:00:00:01",
+                    "hostname": "cam",
+                    "ip": "10.2.0.77",
+                    "is_wired": True,
+                    "sw_mac": "28:70:4E:00:00:01",
+                    "sw_port": 14,
+                    "vlan": 3,
+                    "network": "Cameras",
+                    "network_id": "legacy-net-1",
+                },
+                {
+                    "mac": "12:00:00:00:00:02",
+                    "is_wired": False,
+                    "ap_mac": "02:00:00:00:00:08",
+                    "network": "Default",
+                },
+                {
+                    "mac": "aa:bb:cc:00:00:03",
+                    "is_wired": True,
+                    "sw_mac": "28:70:4e:00:00:01",
+                    "sw_port": 5,
+                    "vlan": 0,
+                    "network": "Default",
+                },
+                {"mac": "not-a-mac"},
+                "garbage",
+            ]
+        )
+
+        assert links == {
+            "8c:ed:e1:00:00:01": {
+                "sw_mac": "28:70:4e:00:00:01",
+                "sw_port": 14,
+                "vlan": 3,
+                "network_name": "Cameras",
+            },
+            "12:00:00:00:00:02": {
+                "ap_mac": "02:00:00:00:00:08",
+                "network_name": "Default",
+            },
+            "aa:bb:cc:00:00:03": {
+                "sw_mac": "28:70:4e:00:00:01",
+                "sw_port": 5,
+                "network_name": "Default",
+            },
+        }
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_collects_client_links_without_wifi(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """Links are built even when the Wi-Fi section is unavailable."""
+        client = coordinator.network_client
+        client.wifi.get_all = AsyncMock(side_effect=RuntimeError("wifi down"))
+        client.clients.get_active_legacy = AsyncMock(
+            return_value=[
+                {
+                    "mac": "8c:ed:e1:00:00:01",
+                    "sw_mac": "28:70:4e:00:00:01",
+                    "sw_port": 3,
+                }
+            ]
+        )
+
+        result = await coordinator._async_update_data()
+
+        assert result["client_links"]["default"] == {
+            "8c:ed:e1:00:00:01": {"sw_mac": "28:70:4e:00:00:01", "sw_port": 3}
+        }
+        # The fixture polls two sites, so this call also runs for "site2";
+        # count the "default" calls specifically to pin the spec's "one
+        # /stat/sta call per site" invariant without over-specifying the
+        # total call count across sites, which is incidental here.
+        assert (
+            client.clients.get_active_legacy.await_args_list.count(call("default")) == 1
+        )
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_keeps_client_links_on_failure(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """A failed /stat/sta keeps the previous links and does not fail."""
+        coordinator.data["client_links"] = {
+            "default": {"aa:aa:aa:aa:aa:aa": {"vlan": 2}}
+        }
+        coordinator.network_client.clients.get_active_legacy = AsyncMock(
+            side_effect=RuntimeError("sta down")
+        )
+
+        result = await coordinator._async_update_data()
+
+        assert result["client_links"]["default"] == {"aa:aa:aa:aa:aa:aa": {"vlan": 2}}
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_wifi_enrichment_unchanged(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """The single /stat/sta call still feeds per-SSID client counts."""
+        client = coordinator.network_client
+        client.wifi.get_legacy_configs = AsyncMock(
+            return_value=[{"name": "MainWiFi", "security": "wpapsk"}]
+        )
+        client.clients.get_active_legacy = AsyncMock(
+            return_value=[{"essid": "MainWiFi", "mac": "12:00:00:00:00:02"}]
+        )
+
+        result = await coordinator._async_update_data()
+
+        assert result["wifi"]["default"]["wifi1"]["num_connected_clients"] == 1
+        # The fixture polls two sites, so this call also runs for "site2";
+        # count the "default" calls specifically to pin the spec's "one
+        # /stat/sta call per site" invariant without over-specifying the
+        # total call count across sites, which is incidental here.
+        assert (
+            client.clients.get_active_legacy.await_args_list.count(call("default")) == 1
+        )
+
+    @pytest.mark.asyncio
+    async def test_async_update_data_clears_client_links_with_no_sites(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ):
+        """The no-sites early return blanks client_links like its siblings."""
+        coordinator.data["client_links"] = {
+            "default": {"aa:aa:aa:aa:aa:aa": {"vlan": 2}}
+        }
+        coordinator.network_client.sites.get_all = AsyncMock(
+            side_effect=UniFiNotFoundError("Not found", status_code=404)
+        )
+
+        result = await coordinator._async_update_data()
+
+        assert result["client_links"] == {}
+
+    def test_initialization_has_rule_sections(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """Test coordinator initialization includes rule section dictionaries."""
+        assert "port_forwards" in coordinator.data
+        assert "traffic_rules" in coordinator.data
+        assert coordinator.data["port_forwards"] == {}
+        assert coordinator.data["traffic_rules"] == {}
+
+    def test_initialization_has_nat_and_static_route_sections(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """Test coordinator initialization includes NAT and static route sections."""
+        assert "nat_rules" in coordinator.data
+        assert "static_routes" in coordinator.data
+        assert coordinator.data["nat_rules"] == {}
+        assert coordinator.data["static_routes"] == {}
+
+    @pytest.mark.parametrize(
+        ("site_data", "expected"),
+        [
+            ({"internalReference": " branch "}, "branch"),
+            ({"internalReference": ""}, None),
+            ({"internalReference": "   "}, None),
+            ({"name": "default"}, None),
+            ({"internalReference": 123}, None),
+            ("not-a-dict", None),
+            (None, None),
+        ],
+    )
+    def test_verified_legacy_site_name(
+        self, site_data: Any, expected: str | None
+    ) -> None:
+        """Test verified_legacy_site_name extracts valid non-blank internalReference."""
+        assert verified_legacy_site_name(site_data) == expected
+
+    @pytest.mark.parametrize(
+        ("rule_data", "name_field", "expected"),
+        [
+            ({"name": "  Plex  "}, "name", "Plex"),
+            ({"description": " Kids bedtime "}, "description", "Kids bedtime"),
+            ({"name": "   "}, "name", "pf1"),
+            ({"name": 42}, "name", "pf1"),
+            ({"description": "Plex"}, "name", "pf1"),
+            ("not-a-dict", "name", "pf1"),
+        ],
+    )
+    def test_rule_display_name(
+        self, rule_data: Any, name_field: str, expected: str
+    ) -> None:
+        """Test rule_display_name strips the name and falls back to the rule id."""
+        assert rule_display_name(rule_data, "pf1", name_field) == expected
+
+    @pytest.mark.parametrize(
+        ("rule_data", "expected"),
+        [
+            ({"is_predefined": True}, True),
+            ({"is_predefined": True, "setting_preference": "manual"}, True),
+            ({"setting_preference": "auto"}, True),
+            ({"setting_preference": None}, True),
+            ({"is_predefined": False, "setting_preference": "manual"}, False),
+            ({}, False),
+            ({"is_predefined": "true"}, False),
+            ("not a dict", False),
+        ],
+    )
+    def test_is_predefined_nat_rule(self, rule_data: Any, *, expected: bool) -> None:
+        """Test is_predefined_nat_rule identifies controller-managed NAT rules."""
+        assert is_predefined_nat_rule(rule_data) is expected
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        _RULE_SECTION_PARAMS,
+    )
+    async def test_rule_section_fetched_by_internal_reference(
+        self,
+        coordinator: UnifiInsightsConfigCoordinator,
+        data_key: str,
+        endpoint_attr: str,
+        list_method: str,
+        avail_method: str,
+    ) -> None:
+        """Rule sections are fetched with internalReference and keyed by id."""
+        site1 = _create_mock_model(
+            {"id": "default", "name": "Default", "internalReference": "default"}
+        )
+        site2 = _create_mock_model(
+            {"id": "site2", "name": "Site 2", "internalReference": "branch"}
+        )
+        coordinator.network_client.sites.get_all = AsyncMock(
+            return_value=[site1, site2]
+        )
+
+        record1 = {"_id": "rule-1", "name": "Rule 1", "enabled": True}
+        record2 = {"id": "rule-2", "name": "Rule 2", "enabled": False}
+        endpoint = getattr(coordinator.network_client, endpoint_attr)
+
+        def _fetch_side_effect(ref: str) -> list[Any]:
+            return (
+                [_create_mock_model(record1), _create_mock_model({"name": "No id"})]
+                if ref == "default"
+                else [_create_mock_model(record2)]
+            )
+
+        setattr(endpoint, list_method, AsyncMock(side_effect=_fetch_side_effect))
+
+        result = await coordinator._async_update_data()
+        mock_fn = getattr(endpoint, list_method)
+        assert [c.args[0] for c in mock_fn.await_args_list] == ["default", "branch"]
+        assert result[data_key]["default"] == {"rule-1": record1}
+        assert result[data_key]["site2"] == {"rule-2": record2}
+        avail_fn = getattr(coordinator, avail_method)
+        assert avail_fn("default") is True
+        assert avail_fn("site2") is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        _RULE_SECTION_PARAMS,
+    )
+    async def test_rule_section_ignores_fuzzy_legacy_mapping(
+        self,
+        coordinator: UnifiInsightsConfigCoordinator,
+        data_key: str,
+        endpoint_attr: str,
+        list_method: str,
+        avail_method: str,
+    ) -> None:
+        """Rule sections ignore fuzzy legacy mapping from get_legacy_all."""
+        site1 = _create_mock_model(
+            {"id": "default", "name": "Default", "internalReference": "default"}
+        )
+        site2 = _create_mock_model(
+            {"id": "site2", "name": "Site 2", "internalReference": "branch"}
+        )
+        coordinator.network_client.sites.get_all = AsyncMock(
+            return_value=[site1, site2]
+        )
+        coordinator.network_client.sites.get_legacy_all = AsyncMock(
+            return_value=[{"name": "default", "desc": "Site 2"}]
+        )
+        endpoint = getattr(coordinator.network_client, endpoint_attr)
+        setattr(endpoint, list_method, AsyncMock(return_value=[]))
+
+        await coordinator._async_update_data()
+        mock_fn = getattr(endpoint, list_method)
+        assert [c.args[0] for c in mock_fn.await_args_list] == ["default", "branch"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        _RULE_SECTION_PARAMS,
+    )
+    async def test_rule_section_without_internal_reference_is_empty_and_available(
+        self,
+        coordinator: UnifiInsightsConfigCoordinator,
+        data_key: str,
+        endpoint_attr: str,
+        list_method: str,
+        avail_method: str,
+    ) -> None:
+        """Without internalReference, fetch is skipped and data is empty."""
+        endpoint = getattr(coordinator.network_client, endpoint_attr)
+        mock_fn = getattr(endpoint, list_method)
+
+        result = await coordinator._async_update_data()
+        mock_fn.assert_not_awaited()
+        assert result[data_key]["default"] == {}
+        assert result[data_key]["site2"] == {}
+        avail_fn = getattr(coordinator, avail_method)
+        assert avail_fn("default") is True
+        assert avail_fn("site2") is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        _RULE_SECTION_PARAMS,
+    )
+    @pytest.mark.parametrize(
+        "error",
+        [
+            UniFiAuthenticationError("Forbidden", status_code=403),
+            UniFiNotFoundError("Not found", status_code=404),
+            UniFiResponseError("Non-JSON body", status_code=200),
+        ],
+    )
+    async def test_rule_section_unsupported_response_stores_empty(
+        self,
+        coordinator: UnifiInsightsConfigCoordinator,
+        data_key: str,
+        endpoint_attr: str,
+        list_method: str,
+        avail_method: str,
+        *,
+        error: Exception,
+    ) -> None:
+        """Unsupported responses (403/404/200 non-JSON) store {} and keep available."""
+        site = _create_mock_model(
+            {"id": "default", "name": "Default", "internalReference": "default"}
+        )
+        coordinator.network_client.sites.get_all = AsyncMock(return_value=[site])
+        endpoint = getattr(coordinator.network_client, endpoint_attr)
+        setattr(endpoint, list_method, AsyncMock(side_effect=error))
+
+        result = await coordinator._async_update_data()
+        assert result[data_key]["default"] == {}
+        avail_fn = getattr(coordinator, avail_method)
+        assert avail_fn("default") is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        _RULE_SECTION_PARAMS,
+    )
+    async def test_rule_section_transient_failure_keeps_previous_data(
+        self,
+        coordinator: UnifiInsightsConfigCoordinator,
+        data_key: str,
+        endpoint_attr: str,
+        list_method: str,
+        avail_method: str,
+    ) -> None:
+        """Transient failure preserves data and toggles available until recovery."""
+        site = _create_mock_model(
+            {"id": "default", "name": "Default", "internalReference": "default"}
+        )
+        coordinator.network_client.sites.get_all = AsyncMock(return_value=[site])
+        rec = {"_id": "r1", "name": "R1", "enabled": True}
+        endpoint = getattr(coordinator.network_client, endpoint_attr)
+        setattr(
+            endpoint, list_method, AsyncMock(return_value=[_create_mock_model(rec)])
+        )
+
+        res1 = await coordinator._async_update_data()
+        assert res1[data_key]["default"] == {"r1": rec}
+        avail_fn = getattr(coordinator, avail_method)
+        assert avail_fn("default") is True
+
+        setattr(
+            endpoint,
+            list_method,
+            AsyncMock(side_effect=UniFiConnectionError("Connection lost")),
+        )
+        res2 = await coordinator._async_update_data()
+        assert res2[data_key]["default"] == {"r1": rec}
+        assert avail_fn("default") is False
+
+        setattr(
+            endpoint, list_method, AsyncMock(return_value=[_create_mock_model(rec)])
+        )
+        res3 = await coordinator._async_update_data()
+        assert res3[data_key]["default"] == {"r1": rec}
+        assert avail_fn("default") is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        _RULE_SECTION_PARAMS,
+    )
+    async def test_rule_section_failure_is_per_site(
+        self,
+        coordinator: UnifiInsightsConfigCoordinator,
+        data_key: str,
+        endpoint_attr: str,
+        list_method: str,
+        avail_method: str,
+    ) -> None:
+        """Failure on site A does not affect availability on site B."""
+        site_a = _create_mock_model(
+            {"id": "site_a", "name": "Site A", "internalReference": "ref_a"}
+        )
+        site_b = _create_mock_model(
+            {"id": "site_b", "name": "Site B", "internalReference": "ref_b"}
+        )
+        coordinator.network_client.sites.get_all = AsyncMock(
+            return_value=[site_a, site_b]
+        )
+
+        rec_b = {"_id": "rb", "name": "RB", "enabled": True}
+
+        def _side_effect(ref: str) -> list[Any]:
+            if ref == "ref_a":
+                msg = "Failure on A"
+                raise UniFiConnectionError(msg)
+            return [_create_mock_model(rec_b)]
+
+        endpoint = getattr(coordinator.network_client, endpoint_attr)
+        setattr(endpoint, list_method, AsyncMock(side_effect=_side_effect))
+
+        result = await coordinator._async_update_data()
+        avail_fn = getattr(coordinator, avail_method)
+        assert avail_fn("site_a") is False
+        assert avail_fn("site_b") is True
+        assert result[data_key]["site_b"] == {"rb": rec_b}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        _RULE_SECTION_PARAMS,
+    )
+    async def test_rule_section_401_triggers_reauth(
+        self,
+        coordinator: UnifiInsightsConfigCoordinator,
+        data_key: str,
+        endpoint_attr: str,
+        list_method: str,
+        avail_method: str,
+    ) -> None:
+        """401 error during rule fetch triggers reauthentication."""
+        site = _create_mock_model(
+            {"id": "default", "name": "Default", "internalReference": "default"}
+        )
+        coordinator.network_client.sites.get_all = AsyncMock(return_value=[site])
+        endpoint = getattr(coordinator.network_client, endpoint_attr)
+        setattr(
+            endpoint,
+            list_method,
+            AsyncMock(
+                side_effect=UniFiAuthenticationError("Unauthorized", status_code=401)
+            ),
+        )
+
+        with pytest.raises(ConfigEntryAuthFailed):
+            await coordinator._async_update_data()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        _RULE_SECTION_PARAMS,
+    )
+    async def test_rule_sections_pruned_with_sites(
+        self,
+        coordinator: UnifiInsightsConfigCoordinator,
+        data_key: str,
+        endpoint_attr: str,
+        list_method: str,
+        avail_method: str,
+    ) -> None:
+        """Removed sites are pruned from rule sections, leaving empty dict."""
+        site1 = _create_mock_model(
+            {"id": "s1", "name": "S1", "internalReference": "r1"}
+        )
+        site2 = _create_mock_model(
+            {"id": "s2", "name": "S2", "internalReference": "r2"}
+        )
+        coordinator.network_client.sites.get_all = AsyncMock(
+            return_value=[site1, site2]
+        )
+        endpoint = getattr(coordinator.network_client, endpoint_attr)
+        setattr(endpoint, list_method, AsyncMock(return_value=[]))
+
+        res1 = await coordinator._async_update_data()
+        assert "s1" in res1[data_key]
+        assert "s2" in res1[data_key]
+
+        coordinator.network_client.sites.get_all = AsyncMock(return_value=[site1])
+        res2 = await coordinator._async_update_data()
+        assert "s1" in res2[data_key]
+        assert "s2" not in res2[data_key]
+
+        coordinator.network_client.sites.get_all = AsyncMock(return_value=[])
+        res3 = await coordinator._async_update_data()
+        assert res3[data_key] == {}
+
+    @pytest.mark.asyncio
+    async def test_rule_sections_fetched_concurrently(
+        self, coordinator: UnifiInsightsConfigCoordinator
+    ) -> None:
+        """Port forwards and traffic rules are fetched concurrently with gather."""
+        site = _create_mock_model(
+            {"id": "default", "name": "Default", "internalReference": "default"}
+        )
+        coordinator.network_client.sites.get_all = AsyncMock(return_value=[site])
+
+        pf_started = asyncio.Event()
+        tr_started = asyncio.Event()
+
+        async def slow_list_pf(site_name: str) -> list[Any]:
+            pf_started.set()
+            await tr_started.wait()
+            return []
+
+        async def slow_list_tr(site_name: str) -> list[Any]:
+            tr_started.set()
+            await pf_started.wait()
+            return []
+
+        coordinator.network_client.port_forwards.list_port_forwards = AsyncMock(
+            side_effect=slow_list_pf
+        )
+        coordinator.network_client.traffic_rules.list_traffic_rules = AsyncMock(
+            side_effect=slow_list_tr
+        )
+
+        result = await asyncio.wait_for(coordinator._async_update_data(), timeout=2)
+        assert result["port_forwards"]["default"] == {}
+        assert result["traffic_rules"]["default"] == {}
+        assert pf_started.is_set()
+        assert tr_started.is_set()

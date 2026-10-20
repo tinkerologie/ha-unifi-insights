@@ -8,20 +8,43 @@ import json
 import logging
 import string
 import traceback
+from datetime import timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock
+from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    HomeAssistantError,
+    ServiceValidationError,
+)
+from homeassistant.helpers.update_coordinator import UpdateFailed
 from pydantic import ValidationError
-from unifi_official_api import UniFiConnectionError
+from unifi_official_api import (
+    UniFiAuthenticationError,
+    UniFiConnectionError,
+    UniFiResponseError,
+    UniFiTimeoutError,
+)
 from unifi_official_api.network.models.voucher import Voucher
 
-from custom_components.unifi_insights.const import DOMAIN
+from custom_components.unifi_insights.const import (
+    DOMAIN,
+)
 from custom_components.unifi_insights.coordinators.base import (
     CommandFailure,
+    UnifiInsightsBaseCoordinator,
     async_execute_command,
 )
+from tests.fixtures.coordinator_clients import (
+    _create_mock_network_client,
+    _create_mock_protect_client,
+)
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 _INTEGRATION_DIR = Path(__file__).parents[2] / "custom_components" / "unifi_insights"
 
@@ -273,3 +296,183 @@ def test_translation_guard_catches_untranslated_raise_forms(source: str) -> None
         isinstance(node.exc, ast.Call)
         and "translation_key" in {kw.arg for kw in node.exc.keywords}
     )
+
+
+# --- Base coordinator --------------------------------------------------------
+
+
+class TestUnifiBaseCoordinator:
+    """Tests for UnifiInsightsBaseCoordinator."""
+
+    @pytest.fixture
+    def coordinator(
+        self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
+    ) -> UnifiInsightsBaseCoordinator:
+        """Create a base coordinator for testing."""
+        network_client = _create_mock_network_client()
+        protect_client = _create_mock_protect_client()
+        return UnifiInsightsBaseCoordinator(
+            hass=hass,
+            network_client=network_client,
+            protect_client=protect_client,
+            entry=mock_config_entry,
+            name="test",
+            update_interval=timedelta(seconds=30),
+        )
+
+    def test_initialization(self, coordinator: UnifiInsightsBaseCoordinator):
+        """Test coordinator initialization."""
+        assert coordinator.name == f"{DOMAIN}_test"
+        assert coordinator.update_interval == timedelta(seconds=30)
+        assert coordinator._available is True
+        assert coordinator.data == {}
+
+    def test_available_property(self, coordinator: UnifiInsightsBaseCoordinator):
+        """Test available property."""
+        assert coordinator.available is True
+        coordinator._available = False
+        assert coordinator.available is False
+
+    def test_model_to_dict_with_none(self, coordinator: UnifiInsightsBaseCoordinator):
+        """Test model_to_dict with None input."""
+        result = coordinator._model_to_dict(None)
+        assert result == {}
+
+    def test_model_to_dict_with_dict(self, coordinator: UnifiInsightsBaseCoordinator):
+        """Test model_to_dict with dict input."""
+        input_dict = {"key": "value"}
+        result = coordinator._model_to_dict(input_dict)
+        assert result == input_dict
+
+    def test_model_to_dict_with_pydantic_model(
+        self, coordinator: UnifiInsightsBaseCoordinator
+    ):
+        """Test model_to_dict with pydantic model."""
+        mock_model = MagicMock()
+        mock_model.model_dump = MagicMock(return_value={"id": "test", "name": "Test"})
+        result = coordinator._model_to_dict(mock_model)
+        assert result == {"id": "test", "name": "Test"}
+        mock_model.model_dump.assert_called_once_with(by_alias=True, exclude_none=False)
+
+    def test_model_to_dict_with_pydantic_model_type_error(
+        self, coordinator: UnifiInsightsBaseCoordinator
+    ):
+        """Test model_to_dict fallback when by_alias raises TypeError."""
+        mock_model = MagicMock()
+        # First call raises TypeError, second call succeeds
+        mock_model.model_dump = MagicMock(
+            side_effect=[TypeError("by_alias not supported"), {"id": "fallback"}]
+        )
+        result = coordinator._model_to_dict(mock_model)
+        assert result == {"id": "fallback"}
+
+    @pytest.mark.parametrize(
+        ("side_effects", "expected_calls"),
+        [
+            (["not_a_dict"], 1),
+            ([TypeError("by_alias not supported"), "not_a_dict"], 2),
+        ],
+        ids=["direct_non_dict", "type_error_fallback_non_dict"],
+    )
+    def test_model_to_dict_non_dict_results(
+        self,
+        coordinator: UnifiInsightsBaseCoordinator,
+        side_effects: list[Any],
+        expected_calls: int,
+    ) -> None:
+        """Test model_to_dict returns {} when model_dump or
+        TypeError fallback returns non-dict.
+        """
+        mock_model = MagicMock()
+        mock_model.model_dump = MagicMock(side_effect=side_effects)
+        result = coordinator._model_to_dict(mock_model)
+        assert result == {}
+        assert mock_model.model_dump.call_count == expected_calls
+
+    def test_model_to_dict_with_object_dict(
+        self, coordinator: UnifiInsightsBaseCoordinator
+    ):
+        """Test model_to_dict with object having __dict__."""
+
+        class SimpleObject:
+            def __init__(self):
+                self.id = "test"
+                self.name = "Test Object"
+                self._private = "hidden"
+
+        obj = SimpleObject()
+        result = coordinator._model_to_dict(obj)
+        assert result == {"id": "test", "name": "Test Object"}
+        assert "_private" not in result
+
+    def test_model_to_dict_with_primitive(
+        self, coordinator: UnifiInsightsBaseCoordinator
+    ):
+        """Test model_to_dict with primitive value."""
+        result = coordinator._model_to_dict("string")
+        assert result == {}
+
+    def test_handle_auth_error(self, coordinator: UnifiInsightsBaseCoordinator):
+        """Test handling authentication error."""
+        err = UniFiAuthenticationError("Invalid credentials")
+        with pytest.raises(ConfigEntryAuthFailed, match="Authentication failed"):
+            coordinator._handle_auth_error(err)
+        assert coordinator._available is False
+
+    def test_handle_connection_error(self, coordinator: UnifiInsightsBaseCoordinator):
+        """Test handling connection error."""
+        err = UniFiConnectionError("Connection refused")
+        with pytest.raises(UpdateFailed, match="Error communicating with API"):
+            coordinator._handle_connection_error(err)
+        assert coordinator._available is False
+
+    def test_handle_timeout_error(self, coordinator: UnifiInsightsBaseCoordinator):
+        """Test handling timeout error."""
+        err = UniFiTimeoutError("Request timed out")
+        with pytest.raises(UpdateFailed, match="Timeout"):
+            coordinator._handle_timeout_error(err)
+        assert coordinator._available is False
+
+    def test_handle_response_error(self, coordinator: UnifiInsightsBaseCoordinator):
+        """Test handling API response error."""
+        err = UniFiResponseError("Bad response", status_code=400)
+        with pytest.raises(UpdateFailed, match="API error"):
+            coordinator._handle_response_error(err)
+        assert coordinator._available is False
+
+    @pytest.mark.parametrize(
+        ("handler", "err", "detail"),
+        [
+            ("_handle_timeout_error", UniFiTimeoutError("timed out"), "timed out"),
+            (
+                "_handle_response_error",
+                UniFiResponseError("gateway", status_code=502),
+                "502",
+            ),
+            (
+                "_handle_response_error",
+                UniFiResponseError("bad request", status_code=400),
+                "400",
+            ),
+            (
+                "_handle_generic_error",
+                ValueError("unexpected"),
+                "ValueError: unexpected",
+            ),
+        ],
+    )
+    def test_handlers_leave_outage_logging_to_coordinator(
+        self,
+        coordinator: UnifiInsightsBaseCoordinator,
+        caplog: pytest.LogCaptureFixture,
+        handler: str,
+        err: Exception,
+        detail: str,
+    ) -> None:
+        """Failures preserve diagnostics without emitting per-poll warnings."""
+        caplog.set_level(logging.DEBUG)
+        with pytest.raises(UpdateFailed, match=detail) as raised:
+            getattr(coordinator, handler)(err)
+        assert raised.value.__cause__ is err
+        assert coordinator.available is False
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
