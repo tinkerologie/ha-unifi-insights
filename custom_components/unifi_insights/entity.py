@@ -397,11 +397,10 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         if network_device_id and network_site_id:
             # Use the network device's identifiers to ensure all entities
             # appear under the same device
-            network_device = matched_network_device
-            network_device_name = network_device.get(
+            network_device_name = matched_network_device.get(
                 "name", f"UniFi Device {network_device_id}"
             )
-            ip_address = network_device.get("ipAddress", "")
+            ip_address = matched_network_device.get("ipAddress", "")
 
             device_info = {
                 "identifiers": {(DOMAIN, f"{network_site_id}_{network_device_id}")},
@@ -409,11 +408,11 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
                 if ip_address
                 else network_device_name,
                 "manufacturer": MANUFACTURER,
-                "model": network_device.get("model", "Unknown Model"),
+                "model": matched_network_device.get("model", "Unknown Model"),
                 "sw_version": (
-                    network_device.get("firmwareVersion")
-                    or network_device.get("firmware_version")
-                    or network_device.get("version")
+                    matched_network_device.get("firmwareVersion")
+                    or matched_network_device.get("firmware_version")
+                    or matched_network_device.get("version")
                 ),
                 "configuration_url": (
                     f"{coordinator.network_client.base_url}/network/devices/{network_device_id}"
@@ -422,7 +421,7 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
 
             # Add network connections
             device_info["connections"] = {
-                (CONNECTION_NETWORK_MAC, network_device.get("macAddress"))
+                (CONNECTION_NETWORK_MAC, matched_network_device.get("macAddress"))
             }
 
             _LOGGER.debug(
