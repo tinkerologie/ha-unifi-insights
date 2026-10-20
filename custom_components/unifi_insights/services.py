@@ -1040,7 +1040,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         # The Network API requires a voucher name.
         name = call.data.get("note") or DEFAULT_VOUCHER_NAME
 
-        await target.facade_commands.async_generate_voucher(
+        await target.config_commands.async_generate_voucher(
             target.site_id,
             count=count,
             time_limit_minutes=time_limit_minutes,
@@ -1053,7 +1053,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def async_handle_delete_voucher(call: ServiceCall) -> None:
         """Handle the delete_voucher service call."""
         target = resolve_network_site_call(hass, call)
-        await target.facade_commands.async_delete_voucher(
+        await target.config_commands.async_delete_voucher(
             target.site_id, call.data["voucher_id"]
         )
 

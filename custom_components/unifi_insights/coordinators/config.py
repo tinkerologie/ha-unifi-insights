@@ -6,6 +6,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Final
@@ -28,6 +30,11 @@ from custom_components.unifi_insights.const import (
     CONF_SITE_IDS,
     DOMAIN,
     SCAN_INTERVAL_CONFIG,
+)
+from custom_components.unifi_insights.data_transforms import (
+    VoucherSettings,
+    refresh_latest_voucher,
+    voucher_to_record,
 )
 
 from .base import CommandFailure, UnifiInsightsBaseCoordinator, async_execute_command
@@ -69,11 +76,12 @@ __all__ = [
 ]
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping
+    from collections.abc import Awaitable, Callable, Iterable
 
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import CALLBACK_TYPE, HomeAssistant
     from unifi_official_api.network import UniFiNetworkClient
+    from unifi_official_api.network.models.voucher import Voucher
     from unifi_official_api.protect import UniFiProtectClient
 
 _LOGGER = logging.getLogger(__name__)
@@ -94,6 +102,29 @@ RULE_REFRESH_RETRY_DELAY: Final = 15
 # Minimum seconds between two on-demand legacy site lookups, so a classic API
 # that is down is not asked again on every write.
 LEGACY_REMAP_COOLDOWN: Final = 60
+
+
+def refreshed_latest_vouchers(
+    latest: Mapping[str, dict[str, Any]],
+    inventory: object,
+    site_ids: Iterable[str],
+) -> dict[str, dict[str, Any]]:
+    """
+    Return the latest vouchers with the given sites refreshed from inventory.
+
+    A site whose inventory is missing or malformed keeps its record, so a
+    voucher generated in Home Assistant outlives a deselected site or a
+    failed fetch. Records of other sites are shared, not copied.
+    """
+    refreshed = dict(latest)
+    if not isinstance(inventory, Mapping):
+        return refreshed
+    for site_id in site_ids:
+        record = refreshed.get(site_id)
+        site_inventory = inventory.get(site_id)
+        if record is not None and isinstance(site_inventory, Mapping):
+            refreshed[site_id] = refresh_latest_voucher(record, site_inventory)
+    return refreshed
 
 
 class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
@@ -130,6 +161,9 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
             "wifi": {},
             "firewall_rules": {},
             "vouchers": {},
+            # Site ID -> the last voucher generated in Home Assistant,
+            # refreshed from each committed inventory (ADR-013).
+            "latest_vouchers": {},
             "policy_based_routes": {},
             "vpn_clients": {},
             "port_forwards": {},
@@ -153,6 +187,9 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
         self._failed_sections: set[tuple[str, str]] = set()
         self._voucher_site_request_seq: dict[str, int] = {}
         self._voucher_site_committed_seq: dict[str, int] = {}
+        # Per-site settings for the next generated voucher, replaced, never
+        # changed in place.
+        self._voucher_settings: dict[str, VoucherSettings] = {}
         # Pending one-shot rule refresh retries, keyed by (section, site_id).
         self._rule_refresh_retries: dict[tuple[str, str], CALLBACK_TYPE] = {}
         # One on-demand legacy site lookup at a time, at most once a cooldown.
@@ -500,6 +537,11 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
                 "wifi": wifi_by_site,
                 "firewall_rules": firewall_by_site,
                 "vouchers": committed_vouchers,
+                "latest_vouchers": refreshed_latest_vouchers(
+                    self.data.get("latest_vouchers", {}),
+                    committed_vouchers,
+                    committed_vouchers,
+                ),
                 "internet_activity": internet_activity_by_site,
                 "internet_activity_unavailable": {
                     s for sec, s in failed_sections if sec == "internet_activity"
@@ -566,13 +608,126 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
         inventory = await async_fetch_site_vouchers(self, site_id, failed)
         if v_seq >= self._voucher_site_committed_seq.get(site_id, 0):
             self._voucher_site_committed_seq[site_id] = v_seq
+            vouchers = {**self.data.get("vouchers", {}), site_id: inventory}
             self.data = {
                 **self.data,
-                "vouchers": {**self.data.get("vouchers", {}), site_id: inventory},
+                "vouchers": vouchers,
+                "latest_vouchers": refreshed_latest_vouchers(
+                    self.data.get("latest_vouchers", {}), vouchers, (site_id,)
+                ),
             }
             self._failed_sections.discard(("vouchers", site_id))
             self._failed_sections |= failed
             self.async_update_listeners()
+
+    def get_voucher_settings(self, site_id: str) -> VoucherSettings:
+        """Return a site's settings for the next voucher, the defaults at first."""
+        return self._voucher_settings.setdefault(site_id, VoucherSettings())
+
+    def set_voucher_setting(self, site_id: str, field: str, value: float) -> None:
+        """
+        Replace a site's voucher settings with one field changed.
+
+        The settings are kept in Home Assistant only and are read when a
+        voucher is generated, so listeners are not notified; the number
+        entity that set the value writes its own state.
+        """
+        # Any: the field picks the type; cast_input already rounds an
+        # integer field to an int.
+        changes: dict[str, Any] = {field: value}
+        self._voucher_settings[site_id] = replace(
+            self.get_voucher_settings(site_id), **changes
+        )
+
+    def _publish_latest_voucher(
+        self, site_id: str, record: dict[str, Any] | None
+    ) -> None:
+        """
+        Publish a site's latest voucher copy-on-write, or drop it for None.
+
+        Listeners are notified by the targeted voucher refresh that follows.
+        """
+        latest = dict(self.data.get("latest_vouchers", {}))
+        if record is None:
+            latest.pop(site_id, None)
+        else:
+            latest[site_id] = record
+            latest = refreshed_latest_vouchers(
+                latest, self.data.get("vouchers", {}), (site_id,)
+            )
+        self.data = {**self.data, "latest_vouchers": latest}
+
+    async def async_generate_voucher(
+        self,
+        site_id: str,
+        *,
+        name: str,
+        time_limit_minutes: int,
+        count: int = 1,
+        tx_rate_limit_kbps: int | None = None,
+        rx_rate_limit_kbps: int | None = None,
+        data_usage_limit_mbytes: int | None = None,
+        authorized_guest_limit: int | None = None,
+    ) -> list[Voucher]:
+        """Generate voucher(s) for a site and publish the last one as latest."""
+        kwargs: dict[str, Any] = {
+            "name": name,
+            "time_limit_minutes": time_limit_minutes,
+            "count": count,
+        }
+        if tx_rate_limit_kbps is not None:
+            kwargs["tx_rate_limit_kbps"] = tx_rate_limit_kbps
+        if rx_rate_limit_kbps is not None:
+            kwargs["rx_rate_limit_kbps"] = rx_rate_limit_kbps
+        if data_usage_limit_mbytes is not None:
+            kwargs["data_usage_limit_mbytes"] = data_usage_limit_mbytes
+        if authorized_guest_limit is not None:
+            kwargs["authorized_guest_limit"] = authorized_guest_limit
+        created = await async_execute_command(
+            CommandFailure(
+                translation_key="command_failed",
+                message=f"Unable to generate voucher in site {site_id}",
+            ),
+            self.network_client.vouchers.create,
+            site_id,
+            **kwargs,
+        )
+        vouchers = list(created) if isinstance(created, list) else []
+        record = voucher_to_record(vouchers[-1]) if vouchers else None
+        if record is not None:
+            self._publish_latest_voucher(site_id, record)
+        await self._async_refresh_vouchers_after_change(site_id)
+        return vouchers
+
+    async def async_delete_voucher(self, site_id: str, voucher_id: str) -> None:
+        """Delete a voucher, and drop it as the site's latest voucher."""
+        await async_execute_command(
+            CommandFailure(
+                translation_key="command_failed",
+                message=f"Unable to delete voucher {voucher_id}",
+            ),
+            self.network_client.vouchers.delete,
+            site_id,
+            voucher_id,
+        )
+        latest = self.data.get("latest_vouchers", {}).get(site_id)
+        if latest is not None and latest.get("id") == voucher_id:
+            self._publish_latest_voucher(site_id, None)
+        await self._async_refresh_vouchers_after_change(site_id)
+
+    async def _async_refresh_vouchers_after_change(self, site_id: str) -> None:
+        """Refresh a site's vouchers after a change; never fail the change."""
+        try:
+            await self.async_refresh_vouchers(site_id)
+        except UniFiAuthenticationError:
+            self.config_entry.async_start_reauth(self.hass)
+        except (UniFiError, RuntimeError) as err:
+            _LOGGER.warning(
+                "Unable to refresh the vouchers of site %s after a change: %s",
+                site_id,
+                err,
+            )
+        self.async_update_listeners()
 
     def get_site(self, site_id: str) -> dict[str, Any] | None:
         """Get site data by site ID."""

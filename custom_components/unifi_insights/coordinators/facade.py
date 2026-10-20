@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -16,7 +15,6 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from unifi_official_api.innerspace import UniFiInnerSpaceClient
     from unifi_official_api.network import UniFiNetworkClient
-    from unifi_official_api.network.models.voucher import Voucher
     from unifi_official_api.protect import UniFiProtectClient
 
     from .config import UnifiInsightsConfigCoordinator
@@ -29,23 +27,16 @@ from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
-from unifi_official_api import (
-    UniFiAuthenticationError,
-    UniFiError,
-)
 
 from custom_components.unifi_insights.client_wake import select_wake_history
 from custom_components.unifi_insights.const import CONF_CONSOLE_ID, DOMAIN
 from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
     NetworkDeviceFacts,
-    VoucherSettings,
     correlate_innerspace_devices,
     device_facts,
     get_site_gateway_id,
     normalize_innerspace_snapshot,
-    refresh_latest_voucher,
-    voucher_to_record,
 )
 
 from .base import CommandFailure, async_execute_command
@@ -70,7 +61,7 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     - stats: from device_coordinator
     - wifi: from config_coordinator
     - vouchers: from config_coordinator
-    - latest_vouchers: generated in Home Assistant
+    - latest_vouchers: from config_coordinator (generated in Home Assistant)
     - protect: from protect_coordinator (cameras, lights, sensors, etc.)
     - innerspace: from innerspace_coordinator (floor_plans, access_points,
       switches, inventory)
@@ -111,9 +102,6 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._innerspace_coordinator = innerspace_coordinator
         self._site_manager_coordinator = site_manager_coordinator
         self._site_manager_host_id = entry.data.get(CONF_CONSOLE_ID)
-
-        self._voucher_settings: dict[str, VoucherSettings] = {}
-        self._latest_vouchers: dict[str, dict[str, Any]] = {}
 
         # Remove-callbacks returned by async_add_listener() below, released
         # in async_shutdown() so this facade's forwarding listener doesn't
@@ -243,21 +231,8 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             )
         return (id(raw_innerspace), tuple(net_pairs), tuple(prot_pairs))
 
-    def _refresh_latest_vouchers(self) -> None:
-        """Pick up activation / expiry changes of latest vouchers from inventory."""
-        inventory = self._config_coordinator.data.get("vouchers", {})
-        if not isinstance(inventory, Mapping):
-            return
-        for site_id, record in list(self._latest_vouchers.items()):
-            site_inventory = inventory.get(site_id)
-            if isinstance(site_inventory, Mapping):
-                self._latest_vouchers[site_id] = refresh_latest_voucher(
-                    record, site_inventory
-                )
-
     def _aggregate_data(self) -> None:
         """Aggregate data from all coordinators into unified structure."""
-        self._refresh_latest_vouchers()
         devices = self._device_coordinator.data.get("devices", {})
         protect_data = (
             self._protect_coordinator.data
@@ -338,10 +313,7 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "sites": self._config_coordinator.data.get("sites", {}),
             "wifi": self._config_coordinator.data.get("wifi", {}),
             "vouchers": self._config_coordinator.data.get("vouchers", {}),
-            "latest_vouchers": {
-                site_id: dict(record)
-                for site_id, record in self._latest_vouchers.items()
-            },
+            "latest_vouchers": self._config_coordinator.data.get("latest_vouchers", {}),
             "firewall_rules": self._config_coordinator.data.get("firewall_rules", {}),
             "policy_based_routes": self._config_coordinator.data.get(
                 "policy_based_routes", {}
@@ -415,7 +387,7 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @property
     def config_coordinator(self) -> UnifiInsightsConfigCoordinator:
-        """Return the owner of the rule, Wi-Fi and guest commands (ADR-010)."""
+        """Return the owner of the rule, Wi-Fi, guest and voucher commands (ADR-010)."""
         return self._config_coordinator
 
     @property
@@ -459,10 +431,6 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def vouchers_available(self, site_id: str) -> bool:
         """Return True if a site's hotspot vouchers were fetched on the last refresh."""
         return self._config_coordinator.vouchers_available(site_id)
-
-    def get_voucher_settings(self, site_id: str) -> VoucherSettings:
-        """Get or initialize the voucher settings for a site."""
-        return self._voucher_settings.setdefault(site_id, VoucherSettings())
 
     def firewall_available(self, site_id: str) -> bool:
         """Return True if a site's firewall rules were fetched on the last refresh."""
@@ -696,79 +664,6 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ).items():
                 history.setdefault(mac, (name, str(site_id)))
         return history
-
-    async def async_generate_voucher(
-        self,
-        site_id: str,
-        *,
-        name: str,
-        time_limit_minutes: int,
-        count: int = 1,
-        tx_rate_limit_kbps: int | None = None,
-        rx_rate_limit_kbps: int | None = None,
-        data_usage_limit_mbytes: int | None = None,
-        authorized_guest_limit: int | None = None,
-    ) -> list[Voucher]:
-        """Generate voucher(s) for a site."""
-        kwargs: dict[str, Any] = {
-            "name": name,
-            "time_limit_minutes": time_limit_minutes,
-            "count": count,
-        }
-        if tx_rate_limit_kbps is not None:
-            kwargs["tx_rate_limit_kbps"] = tx_rate_limit_kbps
-        if rx_rate_limit_kbps is not None:
-            kwargs["rx_rate_limit_kbps"] = rx_rate_limit_kbps
-        if data_usage_limit_mbytes is not None:
-            kwargs["data_usage_limit_mbytes"] = data_usage_limit_mbytes
-        if authorized_guest_limit is not None:
-            kwargs["authorized_guest_limit"] = authorized_guest_limit
-        created = await async_execute_command(
-            CommandFailure(
-                translation_key="command_failed",
-                message=f"Unable to generate voucher in site {site_id}",
-            ),
-            self.network_client.vouchers.create,
-            site_id,
-            **kwargs,
-        )
-        vouchers = list(created) if isinstance(created, list) else []
-        record = voucher_to_record(vouchers[-1]) if vouchers else None
-        if record is not None:
-            self._latest_vouchers[site_id] = record
-        await self._async_refresh_vouchers(site_id)
-        return vouchers
-
-    async def async_delete_voucher(self, site_id: str, voucher_id: str) -> None:
-        """Delete a voucher."""
-        await async_execute_command(
-            CommandFailure(
-                translation_key="command_failed",
-                message=f"Unable to delete voucher {voucher_id}",
-            ),
-            self.network_client.vouchers.delete,
-            site_id,
-            voucher_id,
-        )
-        latest = self._latest_vouchers.get(site_id)
-        if latest is not None and latest.get("id") == voucher_id:
-            del self._latest_vouchers[site_id]
-        await self._async_refresh_vouchers(site_id)
-
-    async def _async_refresh_vouchers(self, site_id: str) -> None:
-        """Refresh a site's vouchers after change; never fail change itself."""
-        try:
-            await self._config_coordinator.async_refresh_vouchers(site_id)
-        except UniFiAuthenticationError:
-            self.config_entry.async_start_reauth(self.hass)
-        except (UniFiError, RuntimeError) as err:
-            _LOGGER.warning(
-                "Unable to refresh the vouchers of site %s after a change: %s",
-                site_id,
-                err,
-            )
-        self._aggregate_data()
-        self.async_update_listeners()
 
     async def async_get_floor_plan_image(
         self,

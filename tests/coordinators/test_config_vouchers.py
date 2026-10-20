@@ -1,5 +1,5 @@
 # Copyright 2026 UniFi Insights contributors
-"""End-to-end flow tests for hotspot vouchers with real coordinators."""
+"""Tests for hotspot vouchers: config coordinator state, commands and flows."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import traceback
+from dataclasses import FrozenInstanceError
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -39,6 +40,7 @@ from custom_components.unifi_insights.const import (
 )
 from custom_components.unifi_insights.coordinators.config import (
     UnifiInsightsConfigCoordinator,
+    refreshed_latest_vouchers,
 )
 from custom_components.unifi_insights.coordinators.device import (
     UnifiInsightsDeviceCoordinator,
@@ -47,9 +49,11 @@ from custom_components.unifi_insights.coordinators.facade import (
     UnifiInsightsFacadeCoordinator,
 )
 from custom_components.unifi_insights.data_transforms import (
+    VoucherSettings,
     count_active_vouchers,
 )
 from custom_components.unifi_insights.image import UnifiVoucherQrCodeImage
+from tests.fixtures.command_owners import SITE_ID
 from tests.fixtures.coordinator_clients import (
     _create_mock_model,
     _create_mock_network_client,
@@ -60,6 +64,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from homeassistant.core import HomeAssistant
+
+    from tests.fixtures.command_owners import SeededOwners
 
 
 @pytest.mark.asyncio
@@ -160,7 +166,7 @@ async def test_generate_flow_updates_inventory_and_latest_voucher(
     facade.async_add_listener(listener)
 
     # Generate voucher
-    result = await facade.async_generate_voucher(
+    result = await config_coord.async_generate_voucher(
         "site1",
         name="Home Assistant",
         time_limit_minutes=480,
@@ -283,10 +289,11 @@ async def test_slower_full_poll_does_not_regress_newer_targeted_refresh_state(
 
     # Initial setup
     await config_coord.async_refresh()
-    facade._latest_vouchers["site1"] = {
-        "id": "v-1",
-        "code": "1234567890",
-        "expired": False,
+    config_coord.data = {
+        **config_coord.data,
+        "latest_vouchers": {
+            "site1": {"id": "v-1", "code": "1234567890", "expired": False}
+        },
     }
     facade._aggregate_data()
     assert facade.data["latest_vouchers"]["site1"]["expired"] is False
@@ -389,13 +396,13 @@ async def test_root_validation_error_does_not_log_credential(
     voucher_flow: tuple[UnifiInsightsConfigCoordinator, UnifiInsightsFacadeCoordinator],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A root model error stays private through HTTP, endpoint and facade."""
-    _, facade = voucher_flow
+    """A root model error stays private through HTTP, endpoint and command."""
+    config, _ = voucher_flow
     code = "1234567890"
     client = _voucher_transport([{"vouchers": [code]}])
-    facade.network_client.vouchers = client.vouchers
+    config.network_client.vouchers = client.vouchers
     with caplog.at_level(logging.DEBUG), pytest.raises(HomeAssistantError) as caught:
-        await facade.async_generate_voucher(
+        await config.async_generate_voucher(
             "site1", name="Home Assistant", time_limit_minutes=480
         )
     _assert_credential_absent(caplog, code)
@@ -436,7 +443,7 @@ async def test_numeric_code_does_not_log_credential(
     code: object,
 ) -> None:
     """Invalid numeric and composite credential values stay private in DEBUG."""
-    config, facade = voucher_flow
+    config, _ = voucher_flow
     await config.async_refresh()
     body = {"id": "v1", "code": code}
     client = _voucher_transport(
@@ -449,7 +456,7 @@ async def test_numeric_code_does_not_log_credential(
             assert config.vouchers_available("site1") is False
         else:
             with pytest.raises(HomeAssistantError):
-                await facade.async_generate_voucher(
+                await config.async_generate_voucher(
                     "site1", name="Home Assistant", time_limit_minutes=480
                 )
     _assert_credential_absent(caplog, "9876543210")
@@ -475,7 +482,7 @@ async def test_malformed_voucher_body_does_not_log_credential(
     body: Any,
 ) -> None:
     """Malformed envelopes stay private through real transport and endpoint calls."""
-    config, facade = voucher_flow
+    config, _ = voucher_flow
     client = _voucher_transport([body])
     config.network_client.vouchers = client.vouchers
     with caplog.at_level(logging.DEBUG):
@@ -483,7 +490,7 @@ async def test_malformed_voucher_body_does_not_log_credential(
             await client.vouchers.get_all_pages("site1")
         else:
             with pytest.raises(HomeAssistantError):
-                await facade.async_generate_voucher(
+                await config.async_generate_voucher(
                     "site1", name="Home Assistant", time_limit_minutes=480
                 )
     _assert_credential_absent(caplog, "1234567890")
@@ -551,9 +558,12 @@ async def test_real_model_refresh_does_not_redisplay_expired_qr(
     )
     config.network_client.vouchers.get_all_pages.return_value = [known]
     await config.async_refresh()
-    facade._latest_vouchers["site1"] = known.model_dump(
-        by_alias=True, exclude_none=False
-    )
+    config.data = {
+        **config.data,
+        "latest_vouchers": {
+            "site1": known.model_dump(by_alias=True, exclude_none=False)
+        },
+    }
     facade._aggregate_data()
     image = UnifiVoucherQrCodeImage(
         hass,
@@ -595,14 +605,14 @@ async def test_real_model_refresh_does_not_redisplay_expired_qr(
         await image.async_will_remove_from_hass()
 
 
-@pytest.mark.parametrize("boundary", ["config", "facade"])
+@pytest.mark.parametrize("boundary", ["config", "command"])
 async def test_root_validation_error_does_not_log_credential_sanitizers(
     voucher_flow: tuple[UnifiInsightsConfigCoordinator, UnifiInsightsFacadeCoordinator],
     caplog: pytest.LogCaptureFixture,
     boundary: str,
 ) -> None:
-    """Both coordinator sanitizers handle direct empty-location errors safely."""
-    config, facade = voucher_flow
+    """The fetch and command sanitizers handle direct empty-location errors safely."""
+    config, _ = voucher_flow
     code = "1234567890"
     with pytest.raises(ValidationError) as invalid:
         Voucher.model_validate(code)
@@ -613,9 +623,9 @@ async def test_root_validation_error_does_not_log_credential_sanitizers(
                 await config._fetch_optional_section("vouchers", "site1", fetch) is None
             )
         else:
-            facade.network_client.vouchers.create = fetch
+            config.network_client.vouchers.create = fetch
             with pytest.raises(HomeAssistantError) as caught:
-                await facade.async_generate_voucher(
+                await config.async_generate_voucher(
                     "site1", name="Guest", time_limit_minutes=60
                 )
             assert caught.value.__cause__ is None
@@ -988,3 +998,520 @@ class TestConfigCoordinatorVouchers:
         assert coordinator.vouchers_available("default") is False
         assert synthetic_code not in caplog.text
         assert "Invalid voucher data (fields: id)" in caplog.text
+
+
+# --- Voucher commands and state on the config coordinator (ADR-013) ----------
+
+
+def _voucher(voucher_id: str, code: str, name: str = "G") -> Voucher:
+    """Return a library voucher model."""
+    return Voucher.model_validate({"id": voucher_id, "code": code, "name": name})
+
+
+def _seed_latest(
+    config: UnifiInsightsConfigCoordinator, site_id: str, record: dict[str, Any]
+) -> None:
+    """Publish a latest voucher the way a generate does, copy-on-write."""
+    config.data = {
+        **config.data,
+        "latest_vouchers": {**config.data["latest_vouchers"], site_id: record},
+    }
+
+
+async def test_voucher_failure_carries_command_failed(
+    seeded_owners: SeededOwners,
+) -> None:
+    """A voucher command keeps its message and gains the generic key."""
+    delete = seeded_owners.network_client.vouchers.delete
+    cause = UniFiConnectionError("down")
+    delete.side_effect = cause
+
+    with pytest.raises(
+        HomeAssistantError, match=r"^Unable to delete voucher"
+    ) as caught:
+        await seeded_owners.config.async_delete_voucher(SITE_ID, "v1")
+
+    assert caught.value.translation_key == "command_failed"
+    assert caught.value.__cause__ is cause
+    delete.assert_awaited_once_with(SITE_ID, "v1")
+
+
+class TestConfigGenerateVoucher:
+    """Voucher generate and delete, owned by the config coordinator."""
+
+    async def test_generate_voucher_with_rate_limits(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Test async_generate_voucher with rate limits and usage limits."""
+        config = seeded_owners.config
+        config.network_client.vouchers.create.return_value = []
+        await config.async_generate_voucher(
+            site_id=SITE_ID,
+            name="VIP Guest",
+            time_limit_minutes=120,
+            count=2,
+            tx_rate_limit_kbps=1000,
+            rx_rate_limit_kbps=2000,
+            data_usage_limit_mbytes=500,
+        )
+        config.network_client.vouchers.create.assert_awaited_once_with(
+            SITE_ID,
+            name="VIP Guest",
+            time_limit_minutes=120,
+            count=2,
+            tx_rate_limit_kbps=1000,
+            rx_rate_limit_kbps=2000,
+            data_usage_limit_mbytes=500,
+        )
+
+    async def test_generate_voucher_without_limits(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Test async_generate_voucher without optional limits."""
+        config = seeded_owners.config
+        config.network_client.vouchers.create.return_value = []
+        await config.async_generate_voucher(
+            site_id=SITE_ID,
+            name="Standard Guest",
+            time_limit_minutes=60,
+            count=1,
+        )
+        config.network_client.vouchers.create.assert_awaited_once_with(
+            SITE_ID,
+            name="Standard Guest",
+            time_limit_minutes=60,
+            count=1,
+        )
+
+    async def test_generate_voucher_passes_authorized_guest_limit(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Test async_generate_voucher passes authorized_guest_limit to create."""
+        config = seeded_owners.config
+        config.network_client.vouchers.create.return_value = []
+        await config.async_generate_voucher(
+            site_id=SITE_ID,
+            name="Guest",
+            time_limit_minutes=60,
+            count=1,
+            authorized_guest_limit=2,
+        )
+        config.network_client.vouchers.create.assert_awaited_once_with(
+            SITE_ID,
+            name="Guest",
+            time_limit_minutes=60,
+            count=1,
+            authorized_guest_limit=2,
+        )
+
+    async def test_generate_voucher_returns_created_vouchers_and_records_latest(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Test async_generate_voucher returns created vouchers and records latest."""
+        config, facade = seeded_owners.config, seeded_owners.facade
+        v1 = _voucher("v1", "1111111111", "G1")
+        config.network_client.vouchers.create.return_value = [v1]
+        result1 = await config.async_generate_voucher(
+            site_id=SITE_ID, name="G1", time_limit_minutes=60
+        )
+        assert result1 == [v1]
+        assert facade.data["latest_vouchers"][SITE_ID]["id"] == "v1"
+
+        v2 = _voucher("v2", "2222222222", "G2")
+        config.network_client.vouchers.create.return_value = [v2]
+        result2 = await config.async_generate_voucher(
+            site_id=SITE_ID, name="G2", time_limit_minutes=60
+        )
+        assert result2 == [v2]
+        assert facade.data["latest_vouchers"][SITE_ID]["id"] == "v2"
+
+    async def test_generate_voucher_records_last_voucher_of_a_batch(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """When multiple vouchers are created, the last one is recorded as latest."""
+        config = seeded_owners.config
+        config.network_client.vouchers.create.return_value = [
+            _voucher("v1", "1111111111", "Batch"),
+            _voucher("v2", "2222222222", "Batch"),
+        ]
+        await config.async_generate_voucher(
+            site_id=SITE_ID, name="Batch", time_limit_minutes=60, count=2
+        )
+        assert seeded_owners.facade.data["latest_vouchers"][SITE_ID]["id"] == "v2"
+
+    async def test_generate_voucher_with_unusable_result_records_nothing(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Unusable result (MagicMock) does not record latest voucher."""
+        config = seeded_owners.config
+        config.network_client.vouchers.create.return_value = MagicMock()
+        result = await config.async_generate_voucher(
+            site_id=SITE_ID, name="Unusable", time_limit_minutes=60
+        )
+        assert result == []
+        assert seeded_owners.facade.data["latest_vouchers"] == {}
+
+    async def test_generate_voucher_refreshes_that_sites_inventory(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Creating a voucher triggers targeted refresh for that site."""
+        config = seeded_owners.config
+        get_all_pages = config.network_client.vouchers.get_all_pages
+        get_all_pages.reset_mock()
+        config.network_client.vouchers.create.return_value = [
+            _voucher("v1", "1111111111", "G1")
+        ]
+        await config.async_generate_voucher(
+            site_id=SITE_ID, name="G1", time_limit_minutes=60
+        )
+        get_all_pages.assert_awaited_once_with(SITE_ID)
+
+    async def test_generate_voucher_survives_refresh_failure(
+        self,
+        seeded_owners: SeededOwners,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Targeted refresh failure still succeeds without voucher code in log."""
+        config = seeded_owners.config
+        v = _voucher("v1", "1111111111", "G1")
+        config.network_client.vouchers.create.return_value = [v]
+        with (
+            patch.object(
+                config,
+                "async_refresh_vouchers",
+                AsyncMock(side_effect=RuntimeError("Refresh error")),
+            ),
+            caplog.at_level("WARNING"),
+        ):
+            result = await config.async_generate_voucher(
+                site_id=SITE_ID, name="G1", time_limit_minutes=60
+            )
+        assert result == [v]
+        assert seeded_owners.facade.data["latest_vouchers"][SITE_ID]["id"] == "v1"
+        assert f"Unable to refresh the vouchers of site {SITE_ID}" in caplog.text
+        assert "1111111111" not in caplog.text
+
+    async def test_generate_voucher_validation_error_does_not_leak_code_in_logs(
+        self,
+        seeded_owners: SeededOwners,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Pydantic validation error does not leak code in logs."""
+        synthetic_code = "1234567890"
+        with pytest.raises(ValidationError) as validation_info:
+            Voucher.model_validate({"code": synthetic_code})
+        config = seeded_owners.config
+        config.network_client.vouchers.create.side_effect = validation_info.value
+        with (
+            caplog.at_level("DEBUG"),
+            pytest.raises(HomeAssistantError),
+        ):
+            await config.async_generate_voucher(
+                site_id=SITE_ID, name="G1", time_limit_minutes=60
+            )
+
+        assert synthetic_code not in caplog.text
+
+    async def test_generate_voucher_real_endpoint_validation_error_does_not_leak_code(
+        self,
+        seeded_owners: SeededOwners,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Real endpoint validation failure does not leak code in logs."""
+        synthetic_code = "1234567890"
+
+        class _TestClient:
+            def build_api_path(self, path: str) -> str:
+                return path
+
+            async def _post(
+                self,
+                path: str,
+                json_data: Any = None,
+                *,
+                log_body: bool = True,
+            ) -> Any:
+                assert path.endswith("/hotspot/vouchers")
+                assert json_data == {
+                    "count": 1,
+                    "name": "G1",
+                    "timeLimitMinutes": 60,
+                }
+                assert log_body is False
+                return {"vouchers": [{"code": synthetic_code}]}
+
+        config = seeded_owners.config
+        config.network_client.vouchers = VouchersEndpoint(_TestClient())  # type: ignore[assignment]
+        with (
+            caplog.at_level("DEBUG"),
+            pytest.raises(HomeAssistantError),
+        ):
+            await config.async_generate_voucher(
+                site_id=SITE_ID, name="G1", time_limit_minutes=60
+            )
+
+        assert synthetic_code not in caplog.text
+        assert "Invalid voucher data (fields: id)" in caplog.text
+
+    async def test_refresh_vouchers_auth_failure_starts_reauth_and_notifies(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A targeted voucher refresh auth failure starts reauth and notifies."""
+        config, facade = seeded_owners.config, seeded_owners.facade
+        config.network_client.vouchers.get_all_pages.side_effect = (
+            UniFiAuthenticationError("Revoked", status_code=401)
+        )
+        listener = MagicMock()
+        facade.async_add_listener(listener)
+
+        with patch.object(config.config_entry, "async_start_reauth") as start_reauth:
+            await config._async_refresh_vouchers_after_change(SITE_ID)
+
+        start_reauth.assert_called_once_with(config.hass)
+        listener.assert_called_once()
+
+    async def test_refresh_vouchers_expected_failure_notifies(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Expected targeted voucher refresh errors keep the action successful."""
+        config, facade = seeded_owners.config, seeded_owners.facade
+        listener = MagicMock()
+        facade.async_add_listener(listener)
+
+        with patch.object(
+            config,
+            "async_refresh_vouchers",
+            AsyncMock(side_effect=UniFiConnectionError("Down")),
+        ):
+            await config._async_refresh_vouchers_after_change(SITE_ID)
+
+        listener.assert_called_once()
+
+    async def test_refresh_vouchers_unexpected_failure_propagates(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Unexpected targeted voucher refresh errors are not hidden."""
+        config = seeded_owners.config
+        error = TypeError("broken implementation")
+
+        with (
+            patch.object(
+                config, "async_refresh_vouchers", AsyncMock(side_effect=error)
+            ),
+            pytest.raises(TypeError) as exc_info,
+        ):
+            await config._async_refresh_vouchers_after_change(SITE_ID)
+
+        assert exc_info.value is error
+
+    async def test_generate_voucher_api_error_raises_and_skips_refresh(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """API failure raises HomeAssistantError and does not call refresh."""
+        config = seeded_owners.config
+        get_all_pages = config.network_client.vouchers.get_all_pages
+        get_all_pages.reset_mock()
+        config.network_client.vouchers.create.side_effect = RuntimeError(
+            "Network failure"
+        )
+        with pytest.raises(HomeAssistantError, match="Unable to generate voucher"):
+            await config.async_generate_voucher(
+                site_id=SITE_ID, name="G1", time_limit_minutes=60
+            )
+        get_all_pages.assert_not_awaited()
+        assert config.data["latest_vouchers"] == {}
+
+    async def test_delete_voucher_refreshes_and_clears_matching_latest(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Deleting matching voucher clears latest and refreshes inventory."""
+        config = seeded_owners.config
+        _seed_latest(config, SITE_ID, {"id": "v1", "code": "1111111111"})
+        get_all_pages = config.network_client.vouchers.get_all_pages
+        get_all_pages.reset_mock()
+        config.network_client.vouchers.delete.return_value = True
+        await config.async_delete_voucher(SITE_ID, "v1")
+        assert SITE_ID not in config.data["latest_vouchers"]
+        assert SITE_ID not in seeded_owners.facade.data["latest_vouchers"]
+        get_all_pages.assert_awaited_once_with(SITE_ID)
+
+    async def test_delete_voucher_keeps_latest_of_other_voucher(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Deleting another voucher leaves latest intact and refreshes inventory."""
+        config = seeded_owners.config
+        _seed_latest(config, SITE_ID, {"id": "v2", "code": "2222222222"})
+        get_all_pages = config.network_client.vouchers.get_all_pages
+        get_all_pages.reset_mock()
+        config.network_client.vouchers.delete.return_value = True
+        await config.async_delete_voucher(SITE_ID, "v1")
+        assert config.data["latest_vouchers"][SITE_ID]["id"] == "v2"
+        get_all_pages.assert_awaited_once_with(SITE_ID)
+
+    async def test_latest_voucher_is_refreshed_from_inventory(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Latest voucher updates attributes when refreshed from inventory."""
+        config, facade = seeded_owners.config, seeded_owners.facade
+        _seed_latest(config, SITE_ID, {"id": "v1", "code": "1111111111"})
+        # A dict passes _model_to_dict unchanged, keeping the string timestamp.
+        config.network_client.vouchers.get_all_pages.return_value = [
+            {
+                "id": "v1",
+                "code": "1111111111",
+                "expired": True,
+                "activatedAt": "2026-10-09T12:00:00Z",
+            }
+        ]
+        await config.async_refresh_vouchers(SITE_ID)
+        latest = facade.data["latest_vouchers"][SITE_ID]
+        assert latest["expired"] is True
+        assert latest["activatedAt"] == "2026-10-09T12:00:00Z"
+
+    async def test_latest_voucher_is_kept_when_missing_from_inventory(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Latest voucher is kept in memory even if missing from polled inventory."""
+        config, facade = seeded_owners.config, seeded_owners.facade
+        _seed_latest(config, SITE_ID, {"id": "v1", "code": "1111111111"})
+        config.network_client.vouchers.get_all_pages.return_value = []
+        await config.async_refresh()
+        assert config.data["vouchers"][SITE_ID] == {}
+        assert facade.data["latest_vouchers"][SITE_ID]["id"] == "v1"
+
+    def test_latest_voucher_is_kept_when_inventory_is_not_a_mapping(self) -> None:
+        """A malformed voucher inventory leaves the latest voucher untouched."""
+        latest = {"id": "v1", "code": "1111111111"}
+        assert refreshed_latest_vouchers({"s": latest}, None, ("s",)) == {"s": latest}
+        assert refreshed_latest_vouchers({"s": latest}, {"s": None}, ("s",)) == {
+            "s": latest
+        }
+
+    async def test_get_voucher_settings_creates_defaults_once_per_site(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """get_voucher_settings returns existing or initializes default settings."""
+        config = seeded_owners.config
+        s1 = config.get_voucher_settings("site1")
+        assert isinstance(s1, VoucherSettings)
+        assert s1.duration_minutes == 480
+        s2 = config.get_voucher_settings("site1")
+        assert s1 is s2
+
+    async def test_async_generate_voucher(self, seeded_owners: SeededOwners) -> None:
+        """Test async_generate_voucher delegates correctly."""
+        config = seeded_owners.config
+        config.network_client.vouchers.create.return_value = []
+        await config.async_generate_voucher(
+            SITE_ID,
+            count=5,
+            time_limit_minutes=60,
+            tx_rate_limit_kbps=1024,
+            rx_rate_limit_kbps=2048,
+            data_usage_limit_mbytes=500,
+            name="test",
+        )
+        config.network_client.vouchers.create.assert_called_once_with(
+            SITE_ID,
+            count=5,
+            time_limit_minutes=60,
+            tx_rate_limit_kbps=1024,
+            rx_rate_limit_kbps=2048,
+            data_usage_limit_mbytes=500,
+            name="test",
+        )
+
+    async def test_async_delete_voucher(self, seeded_owners: SeededOwners) -> None:
+        """Test async_delete_voucher delegates correctly."""
+        config = seeded_owners.config
+        await config.async_delete_voucher(SITE_ID, "voucher1")
+        config.network_client.vouchers.delete.assert_called_once_with(
+            SITE_ID, "voucher1"
+        )
+
+
+class TestConfigVoucherState:
+    """Voucher settings and latest vouchers are replaced, never changed in place."""
+
+    async def test_set_voucher_setting_replaces_the_settings(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A set replaces the site's settings; the old object stays unchanged."""
+        config = seeded_owners.config
+        before = config.get_voucher_settings(SITE_ID)
+
+        config.set_voucher_setting(SITE_ID, "guest_limit", 3)
+
+        after = config.get_voucher_settings(SITE_ID)
+        assert after is not before
+        assert before == VoucherSettings()
+        assert after == VoucherSettings(guest_limit=3)
+        assert config.get_voucher_settings("other-site") == VoucherSettings()
+
+    def test_voucher_settings_are_frozen(self) -> None:
+        """VoucherSettings cannot be changed in place."""
+        settings = VoucherSettings()
+        with pytest.raises(FrozenInstanceError):
+            settings.guest_limit = 2  # type: ignore[misc]
+
+    async def test_set_voucher_setting_does_not_notify(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Settings live in Home Assistant only, so no listener is notified."""
+        listener = MagicMock()
+        seeded_owners.facade.async_add_listener(listener)
+        seeded_owners.config.set_voucher_setting(SITE_ID, "duration_minutes", 60)
+        listener.assert_not_called()
+
+    async def test_generate_publishes_latest_vouchers_copy_on_write(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A generate publishes a new latest map; older snapshots keep theirs."""
+        config, facade = seeded_owners.config, seeded_owners.facade
+        old_root = config.data
+        old_latest = config.data["latest_vouchers"]
+        old_snapshot = facade.data
+        config.network_client.vouchers.create.return_value = [
+            _voucher("v1", "1111111111")
+        ]
+
+        await config.async_generate_voucher(SITE_ID, name="G", time_limit_minutes=60)
+
+        assert old_latest == {}
+        assert old_root["latest_vouchers"] is old_latest
+        assert old_snapshot["latest_vouchers"] == {}
+        assert config.data["latest_vouchers"] is not old_latest
+        assert facade.data["latest_vouchers"] is config.data["latest_vouchers"]
+
+    async def test_full_refresh_keeps_latest_of_deselected_site(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A site without a committed inventory keeps its latest voucher."""
+        config = seeded_owners.config
+        record = {"id": "v9", "code": "9999999999"}
+        _seed_latest(config, "gone-site", record)
+        await config.async_refresh()
+        assert config.data["latest_vouchers"]["gone-site"] is record
+
+    async def test_refresh_of_unknown_site_publishes_nothing(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A targeted refresh of an unknown site leaves the data root alone."""
+        config = seeded_owners.config
+        root = config.data
+        await config.async_refresh_vouchers("unknown-site")
+        assert config.data is root
+
+    async def test_facade_latest_vouchers_is_the_config_object(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """The facade passes latest vouchers through by reference, across rebuilds."""
+        config, facade = seeded_owners.config, seeded_owners.facade
+        _seed_latest(config, SITE_ID, {"id": "v1", "code": "1111111111"})
+        facade._aggregate_data()
+        latest = config.data["latest_vouchers"]
+        assert facade.data["latest_vouchers"] is latest
+
+        # A device refresh rebuilds the facade but leaves the section alone.
+        await seeded_owners.device.async_refresh()
+        assert facade.data["latest_vouchers"] is latest

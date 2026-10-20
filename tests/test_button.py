@@ -42,6 +42,9 @@ from custom_components.unifi_insights.const import (
     DOMAIN,
     MANUFACTURER,
 )
+from custom_components.unifi_insights.coordinators.config import (
+    UnifiInsightsConfigCoordinator,
+)
 from custom_components.unifi_insights.coordinators.facade import (
     UnifiInsightsFacadeCoordinator,
 )
@@ -1670,18 +1673,17 @@ class TestGenerateVoucherButton:
             "vouchers": {"default": []},
         }
         coord.vouchers_available = MagicMock(return_value=True)
-        coord.get_voucher_settings = MagicMock(
-            return_value=VoucherSettings(
-                duration_minutes=1440,
-                guest_limit=1,
-                download_limit_mbps=0,
-                upload_limit_mbps=0,
-                data_limit_mb=0,
-            )
+        autospec_command_owners(coord)
+        coord.config_coordinator.get_voucher_settings.return_value = VoucherSettings(
+            duration_minutes=1440,
+            guest_limit=1,
+            download_limit_mbps=0,
+            upload_limit_mbps=0,
+            data_limit_mb=0,
         )
-        coord.async_generate_voucher = AsyncMock(
-            return_value=[MagicMock(code="1234567890")]
-        )
+        coord.config_coordinator.async_generate_voucher.return_value = [
+            MagicMock(code="1234567890")
+        ]
         return coord
 
     def test_init_and_properties(self, mock_coordinator):
@@ -1711,8 +1713,9 @@ class TestGenerateVoucherButton:
             unique_id="console_default_generate_voucher",
         )
         await button.async_press()
-        mock_coordinator.get_voucher_settings.assert_called_once_with("default")
-        mock_coordinator.async_generate_voucher.assert_awaited_once_with(
+        owner = mock_coordinator.config_coordinator
+        owner.get_voucher_settings.assert_called_once_with("default")
+        owner.async_generate_voucher.assert_awaited_once_with(
             "default",
             name="Home Assistant",
             count=1,
@@ -1726,7 +1729,7 @@ class TestGenerateVoucherButton:
             "default",
             unique_id="console_default_generate_voucher",
         )
-        mock_coordinator.async_generate_voucher.return_value = []
+        mock_coordinator.config_coordinator.async_generate_voucher.return_value = []
         with pytest.raises(HomeAssistantError) as caught:
             await button.async_press()
         assert caught.value.translation_domain == DOMAIN
@@ -1739,9 +1742,9 @@ class TestGenerateVoucherButton:
             "default",
             unique_id="console_default_generate_voucher",
         )
-        # The facade translates the API failure; the button passes it on.
+        # The config owner translates the API failure; the button passes it on.
         error = HomeAssistantError("Unable to generate voucher in site default")
-        mock_coordinator.async_generate_voucher.side_effect = error
+        mock_coordinator.config_coordinator.async_generate_voucher.side_effect = error
         with pytest.raises(HomeAssistantError) as caught:
             await button.async_press()
         assert caught.value is error
@@ -1783,7 +1786,7 @@ class TestGenerateVoucherButton:
     async def test_button_press_through_real_facade_and_real_endpoint_pins_http(
         self, hass: HomeAssistant
     ) -> None:
-        """Button press through real facade and real endpoint pins POST URL and body."""
+        """Button press through the real owners and endpoint pins POST URL and body."""
         post_response = {
             "vouchers": [
                 {
@@ -1806,27 +1809,30 @@ class TestGenerateVoucherButton:
             connection_type=ConnectionType.LOCAL,
             session=session,  # type: ignore[arg-type]
         )
-        config_coord = MagicMock()
-        config_coord.data = {"sites": {"default": {"id": "default"}}, "vouchers": {}}
-        config_coord.vouchers_available.return_value = True
-        config_coord.async_refresh_vouchers = AsyncMock()
+        entry = MockConfigEntry(domain=DOMAIN, data={})
+        entry.add_to_hass(hass)
+        # No site is cached, so the targeted voucher refresh after each press
+        # sends no request and only the two POSTs reach the session.
+        config_coord = UnifiInsightsConfigCoordinator(hass, client, None, entry)
 
         facade = UnifiInsightsFacadeCoordinator(
             hass=hass,
             network_client=client,
             protect_client=None,
-            entry=MagicMock(),
+            entry=entry,
             config_coordinator=config_coord,
             device_coordinator=MagicMock(),
             protect_coordinator=None,
         )
 
-        settings = facade.get_voucher_settings("default")
-        settings.duration_minutes = 90
-        settings.guest_limit = 3
-        settings.download_limit_mbps = 1.5
-        settings.upload_limit_mbps = 0.5
-        settings.data_limit_mb = 2048
+        for field, value in (
+            ("duration_minutes", 90),
+            ("guest_limit", 3),
+            ("download_limit_mbps", 1.5),
+            ("upload_limit_mbps", 0.5),
+            ("data_limit_mb", 2048),
+        ):
+            config_coord.set_voucher_setting("default", field, value)
 
         button = UnifiGenerateVoucherButton(
             facade,
@@ -1853,10 +1859,13 @@ class TestGenerateVoucherButton:
         }
 
         # Second press: zero limits omitted
-        settings.guest_limit = 0
-        settings.download_limit_mbps = 0.0
-        settings.upload_limit_mbps = 0.0
-        settings.data_limit_mb = 0
+        for field, value in (
+            ("guest_limit", 0),
+            ("download_limit_mbps", 0.0),
+            ("upload_limit_mbps", 0.0),
+            ("data_limit_mb", 0),
+        ):
+            config_coord.set_voucher_setting("default", field, value)
         await button.async_press()
 
         assert len(session.requests) == 2

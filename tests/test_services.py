@@ -147,9 +147,9 @@ _RESULTS: dict[str, tuple[type, Callable[[Any], Any]]] = {
         ),
     ),
     "resolve_network_site_call": (
-        UnifiInsightsFacadeCoordinator,
+        UnifiInsightsConfigCoordinator,
         lambda owner: NetworkSiteTarget(
-            entry=MagicMock(), cache=_cache(), facade_commands=owner, site_id="s1"
+            entry=MagicMock(), cache=_cache(), config_commands=owner, site_id="s1"
         ),
     ),
     "resolve_protect_call": (
@@ -924,15 +924,13 @@ async def test_wiring_network_site(hass: HomeAssistant) -> None:
     """delete_voucher runs on the console whose cache holds the site."""
     _, office = _loaded_console(hass, "Office", {"sites": {"s1": {}}})
     _, garage = _loaded_console(hass, "Garage", {"sites": {"s2": {}}})
-    garage.async_delete_voucher = AsyncMock()
-    office.async_delete_voucher = AsyncMock()
 
     await hass.services.async_call(
         DOMAIN, "delete_voucher", {"site_id": "s2", "voucher_id": "v1"}, blocking=True
     )
 
-    garage.async_delete_voucher.assert_awaited_once_with("s2", "v1")
-    office.async_delete_voucher.assert_not_awaited()
+    garage.config_coordinator.async_delete_voucher.assert_awaited_once_with("s2", "v1")
+    office.config_coordinator.async_delete_voucher.assert_not_awaited()
 
 
 @pytest.mark.usefixtures("services_ready")

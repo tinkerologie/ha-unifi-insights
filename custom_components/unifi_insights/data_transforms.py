@@ -1087,7 +1087,7 @@ VOUCHER_INPUTS: Final[dict[str, VoucherInputSpec]] = {
 }
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class VoucherSettings:
     """Per-site settings held in Home Assistant for voucher generation."""
 

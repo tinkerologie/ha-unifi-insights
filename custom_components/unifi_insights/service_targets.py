@@ -100,7 +100,7 @@ class NetworkSiteTarget:
 
     entry: UnifiInsightsConfigEntry
     cache: UnifiInsightsFacadeCoordinator
-    facade_commands: UnifiInsightsFacadeCoordinator
+    config_commands: UnifiInsightsConfigCoordinator
     site_id: str
 
 
@@ -1554,7 +1554,10 @@ def resolve_network_site_call(
     entry, _ = _select_network_entry(hass, site_id=site_id)
     cache = entry.runtime_data.coordinator
     return NetworkSiteTarget(
-        entry=entry, cache=cache, facade_commands=cache, site_id=site_id
+        entry=entry,
+        cache=cache,
+        config_commands=cache.config_coordinator,
+        site_id=site_id,
     )
 
 

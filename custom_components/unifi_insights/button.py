@@ -836,9 +836,10 @@ class UnifiGenerateVoucherButton(UnifiSiteEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Generate a guest voucher with current HA settings."""
-        settings = self.coordinator.get_voucher_settings(self._site_id)
+        owner = self.coordinator.config_coordinator
+        settings = owner.get_voucher_settings(self._site_id)
         kwargs: dict[str, Any] = voucher_request_kwargs(settings)
-        created = await self.coordinator.async_generate_voucher(
+        created = await owner.async_generate_voucher(
             self._site_id, name=DEFAULT_VOUCHER_NAME, count=1, **kwargs
         )
         if not created:

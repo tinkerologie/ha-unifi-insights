@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -828,12 +829,18 @@ class TestVoucherNumbers:
             "vouchers": {"site1": {}},
         }
         coord.vouchers_available.return_value = True
+        autospec_command_owners(coord)
         settings_map: dict[str, VoucherSettings] = {}
 
         def get_settings(site_id: str) -> VoucherSettings:
             return settings_map.setdefault(site_id, VoucherSettings())
 
-        coord.get_voucher_settings.side_effect = get_settings
+        def set_setting(site_id: str, field: str, value: float) -> None:
+            settings_map[site_id] = replace(get_settings(site_id), **{field: value})
+
+        owner = coord.config_coordinator
+        owner.get_voucher_settings.side_effect = get_settings
+        owner.set_voucher_setting.side_effect = set_setting
         return coord
 
     @pytest.mark.asyncio
@@ -1035,8 +1042,12 @@ class TestVoucherNumbers:
         )
         entity_int.async_write_ha_state = MagicMock()
 
+        owner = voucher_coordinator.config_coordinator
         await entity_int.async_set_native_value(60)
-        settings = voucher_coordinator.get_voucher_settings("site1")
+        owner.set_voucher_setting.assert_called_once_with(
+            "site1", "duration_minutes", 60
+        )
+        settings = owner.get_voucher_settings("site1")
         assert settings.duration_minutes == 60
         assert isinstance(settings.duration_minutes, int)
         entity_int.async_write_ha_state.assert_called_once()
@@ -1053,8 +1064,12 @@ class TestVoucherNumbers:
         entity_float.async_write_ha_state = MagicMock()
 
         await entity_float.async_set_native_value(12.5)
-        assert settings.download_limit_mbps == 12.5
-        assert isinstance(settings.download_limit_mbps, float)
+        replaced = owner.get_voucher_settings("site1")
+        assert replaced.download_limit_mbps == 12.5
+        assert isinstance(replaced.download_limit_mbps, float)
+        assert replaced.duration_minutes == 60
+        # The earlier settings object is replaced, not changed in place.
+        assert settings.download_limit_mbps == 0.0
 
         # No network client call
         assert voucher_coordinator.network_client.mock_calls == []
@@ -1082,7 +1097,7 @@ class TestVoucherNumbers:
         ):
             await entity.async_added_to_hass()
 
-        settings = voucher_coordinator.get_voucher_settings("site1")
+        settings = voucher_coordinator.config_coordinator.get_voucher_settings("site1")
         assert settings.duration_minutes == 30
 
     @pytest.mark.asyncio
@@ -1117,7 +1132,7 @@ class TestVoucherNumbers:
         ):
             await entity.async_added_to_hass()
 
-        settings = voucher_coordinator.get_voucher_settings("site1")
+        settings = voucher_coordinator.config_coordinator.get_voucher_settings("site1")
         assert settings.duration_minutes == 480
 
     def test_voucher_number_availability_follows_vouchers_available(

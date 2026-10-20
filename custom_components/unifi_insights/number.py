@@ -520,7 +520,9 @@ class UnifiVoucherInputNumber(UnifiSiteEntity, RestoreNumber):
     @property
     def native_value(self) -> float | None:
         """Return current native value from settings."""
-        settings = self.coordinator.get_voucher_settings(self._site_id)
+        settings = self.coordinator.config_coordinator.get_voucher_settings(
+            self._site_id
+        )
         val = getattr(settings, VOUCHER_INPUTS[self.entity_description.key].field)
         return float(val) if val is not None else None
 
@@ -531,13 +533,17 @@ class UnifiVoucherInputNumber(UnifiSiteEntity, RestoreNumber):
         if last is not None and last.native_value is not None:
             restored = restore_input(self.entity_description.key, last.native_value)
             if restored is not None:
-                settings = self.coordinator.get_voucher_settings(self._site_id)
-                field = VOUCHER_INPUTS[self.entity_description.key].field
-                setattr(settings, field, restored)
+                self.coordinator.config_coordinator.set_voucher_setting(
+                    self._site_id,
+                    VOUCHER_INPUTS[self.entity_description.key].field,
+                    restored,
+                )
 
     async def async_set_native_value(self, value: float) -> None:
         """Update settings value held in HA without calling external API."""
-        settings = self.coordinator.get_voucher_settings(self._site_id)
-        field = VOUCHER_INPUTS[self.entity_description.key].field
-        setattr(settings, field, cast_input(self.entity_description.key, value))
+        self.coordinator.config_coordinator.set_voucher_setting(
+            self._site_id,
+            VOUCHER_INPUTS[self.entity_description.key].field,
+            cast_input(self.entity_description.key, value),
+        )
         self.async_write_ha_state()

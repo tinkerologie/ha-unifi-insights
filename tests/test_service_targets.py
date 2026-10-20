@@ -665,7 +665,10 @@ async def test_network_site_routing(
     )
 
     assert target == NetworkSiteTarget(
-        entry=entries[expected], cache=facade, facade_commands=facade, site_id=site_id
+        entry=entries[expected],
+        cache=facade,
+        config_commands=facade.config_coordinator,
+        site_id=site_id,
     )
 
 
