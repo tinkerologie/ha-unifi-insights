@@ -5,8 +5,9 @@ WebSocket stream adapters and stream health for the Protect coordinator.
 The Protect coordinator subscribes to two independent WebSocket streams,
 "devices" and "events" (see `UnifiInsightsProtectCoordinator.async_start_websocket`).
 This module turns their raw frames into typed values and tracks each stream's
-health; the coordinator applies the values and owns the subscription
-lifecycle (ADR-007's `protect_ws.py` seam, #340).
+health; the coordinator hands the values to the reconciler in
+`protect_events` (which defines `DeviceFrame` and `EventFrame`) and owns the
+subscription lifecycle (ADR-007's `protect_ws.py` seam, #340).
 
 Frame shapes. The local console sends device updates as
 ``{"type": "update", "item": {"id", "modelKey", ...fields}}`` (confirmed live

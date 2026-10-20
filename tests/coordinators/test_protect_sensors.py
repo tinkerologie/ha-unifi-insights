@@ -256,7 +256,8 @@ class TestIndependentSensorRecovery:
             # _unsub_refresh to now + 30s, meaning the main poll never fires if
             # interval is reset every 2s.
             for i in range(14):
-                coordinator._handle_device_update(
+                send_device(
+                    coordinator,
                     DEVICE_TYPE_CAMERA,
                     {"id": "cam1", "modelKey": "camera", "lastMotion": i},
                 )
@@ -546,7 +547,8 @@ class TestProtectNewerDoorStates:
         await asyncio.sleep(0.01)
 
         # 2. Door opens via WebSocket while REST is in-flight!
-        coordinator._handle_device_update(
+        send_device(
+            coordinator,
             DEVICE_TYPE_SENSOR,
             {
                 "id": "sensor1",
@@ -620,7 +622,8 @@ class TestProtectNewerDoorStates:
 
         # 2. Door opens via WebSocket while REST is in-flight - no
         # openStatusChangedAt in this frame at all.
-        coordinator._handle_device_update(
+        send_device(
+            coordinator,
             DEVICE_TYPE_SENSOR,
             {
                 "id": "sensor1",
@@ -851,7 +854,8 @@ class TestGateStampDiscriminatesFrameContent:
         # Real dispatch path (not poking coordinator.data or internals
         # directly) - a frame carrying ONLY telemetry, no door/motion/
         # tamper/leak field at all.
-        coordinator._handle_device_update(
+        send_device(
+            coordinator,
             DEVICE_TYPE_SENSOR,
             {"id": "sensor1", "temperature": 22.5},
         )
@@ -878,8 +882,8 @@ class TestGateStampDiscriminatesFrameContent:
 
         Before per-group field sets, ANY WS frame carrying a door/motion/
         tamper/leak field - including a motion-only frame - stamped a
-        SINGLE shared `_sensor_last_ws_update[sensor_id]` timestamp, and
-        `_merge_preserved_door_state` then copied back ALL FOUR groups'
+        SINGLE shared per-sensor WebSocket timestamp, and the merge
+        then copied back ALL FOUR groups'
         fields together. A UP-Sense shares one device id across door/
         motion/environment sensing, with motion firing constantly at an
         entryway, so a motion-only frame mid-fetch could suppress a
@@ -918,7 +922,8 @@ class TestGateStampDiscriminatesFrameContent:
         await asyncio.sleep(0.01)
 
         # Motion-only WS frame mid-fetch - no door field at all.
-        coordinator._handle_device_update(
+        send_device(
+            coordinator,
             DEVICE_TYPE_SENSOR,
             {"id": "sensor1", "isMotionDetected": True},
         )
@@ -1125,7 +1130,8 @@ class TestDoorStatePreservationIsBounded:
             coordinator.protect_client.sensors.get_all = delayed
             fetch_task = asyncio.create_task(coordinator._fetch_sensors())
             await asyncio.sleep(0.01)
-            coordinator._handle_device_update(
+            send_device(
+                coordinator,
                 DEVICE_TYPE_SENSOR,
                 {"id": "sensor1", "isOpened": True, "openStatusChangedAt": ts},
             )
@@ -1237,7 +1243,8 @@ class TestDoorStatePreservationIsBounded:
         # the timestamp-comparison branch (2/3) can fire from it, not
         # WS-recency (branch 1) - isolating the door-timestamp cap's
         # warn-once behaviour specifically.
-        coordinator._handle_device_update(
+        send_device(
+            coordinator,
             DEVICE_TYPE_SENSOR,
             {"id": "sensor1", "isOpened": True, "openStatusChangedAt": 2000},
         )

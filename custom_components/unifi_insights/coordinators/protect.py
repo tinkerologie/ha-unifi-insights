@@ -45,9 +45,7 @@ from .protect_events import (
     SIREN_STOP_GUARD_TTL,
     STALE_EVENT_TIMEOUT,
     CommandOverlay,
-    DeviceFrame,
     Escalate,
-    EventFrame,
     Fetched,
     Instant,
     Log,
@@ -365,11 +363,10 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
             ),
             name=f"{DOMAIN}_protect_websocket",
         )
-        # Second, independent subscription (task 1 - the actual fix): without
-        # this, `_handle_event_update`/`_process_event_for_device` have no
-        # caller anywhere, so `lastMotionStart`/`lastMotionEnd`/
-        # `lastSmartDetectTypes` are never written and every motion/smart
-        # -detect binary sensor is permanently OFF. Runs on the same
+        # Second, independent subscription: without it no event frame ever
+        # arrives, so `lastMotionStart`/`lastMotionEnd`/`lastSmartDetectTypes`
+        # are never written and every motion/smart-detect binary sensor is
+        # permanently OFF. Runs on the same
         # ProtectWebSocket instance as the devices subscription above -
         # `ProtectWebSocket._running` is a single shared gate, so a shared
         # `stop()` call (see async_stop_websocket) correctly ends both.
@@ -772,7 +769,9 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
             message, received_at=datetime.now(UTC)
         )
         if frame is not None:
-            self._handle_device_update(frame.model_key, frame.fields)
+            # Not guarded: a device frame that cannot be applied is a bug to
+            # surface, unlike an event frame of a guessed shape (below).
+            self._apply(frame)
 
     @callback
     def _on_websocket_connection_state_change(
@@ -781,20 +780,15 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         """
         Track WS connect/reconnect/disconnect transitions for `stream`.
 
-        `stream` is "devices" or "events" - each subscription is registered
-        with its own typed callback (`_on_devices_connection_state_change` /
-        `_on_events_connection_state_change`) so this always knows which one
-        transitioned, rather than the two subscriptions clobbering one
-        shared flag (review finding 1: that let a devices-only reconnect
-        read identically to a full recovery while the events subscription
-        stayed hung).
+        `stream` is "devices" or "events". Each subscription has its own
+        callback, so a devices-only reconnect never reads as a full recovery
+        while the events subscription stays hung.
 
-        Drives two things: the per-stream half of the health signal
-        (task 5), and stale-latch reconciliation on every (re)connect of
-        EITHER stream (task 2) - a reconnect means that subscription was
-        down for some stretch of time during which an "end" frame could
-        have been missed entirely, so waiting for the next 30s REST poll to
-        notice would leave a latched sensor ON longer than necessary.
+        Drives the per-stream half of the health signal and, on every
+        (re)connect of either stream, the stale-latch sweep: the stream was
+        down for a while and may have missed an "end" frame, so waiting for
+        the next poll would leave a latched sensor on longer than needed.
+        The sweep notifies nobody (kept as it was); the next update shows it.
         """
         self._streams.connection_changed(stream, connected=connected)
         if connected:
@@ -856,16 +850,6 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         return step
 
     @callback
-    def _handle_device_update(
-        self, model_key: str, device_data: dict[str, Any]
-    ) -> None:
-        """Handle device update from WebSocket."""
-        device_id = device_data.get("id")
-        if not device_id:
-            return
-        self._apply(DeviceFrame(model_key, device_id, device_data))
-
-    @callback
     def _on_websocket_event_message(self, message: Any) -> None:
         """Apply a raw "events" frame (parsed by `ProtectStreams`)."""
         parsed = self._streams.parse_event_message(
@@ -884,7 +868,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         if parsed is None:
             return
         try:
-            self._handle_event_update(parsed.event_type, parsed.fields)
+            self._apply(parsed)
         except Exception:
             # The events stream has never been seen live: a wrong schema
             # assumption must never take down the WebSocket reconnect loop.
@@ -895,11 +879,6 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
                 "%s event frame; dropping it and continuing",
                 parsed.event_type,
             )
-
-    @callback
-    def _handle_event_update(self, event_type: str, event_data: dict[str, Any]) -> None:
-        """Handle event update from WebSocket."""
-        self._apply(EventFrame(event_type, event_data.get("id") or "", event_data))
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch Protect data from API."""

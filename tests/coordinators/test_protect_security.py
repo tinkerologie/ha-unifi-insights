@@ -45,7 +45,7 @@ from tests.fixtures.library_responses import (
     SAMPLE_SIREN,
     SAMPLE_THREAD_LINK_STATION,
 )
-from tests.fixtures.protect_ws import send_event
+from tests.fixtures.protect_ws import send_device, send_event
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -401,11 +401,11 @@ class TestProtectSecurityDeviceFamilies:
             "link_station_thread": copy.deepcopy(SAMPLE_THREAD_LINK_STATION)
         }
 
-        coordinator._handle_device_update(
-            "linkstation", {"id": "alarm_hub_1", "state": "DISCONNECTED"}
+        send_device(
+            coordinator, "linkstation", {"id": "alarm_hub_1", "state": "DISCONNECTED"}
         )
-        coordinator._handle_device_update(
-            "linkstation", {"id": "link_station_thread", "name": "Renamed"}
+        send_device(
+            coordinator, "linkstation", {"id": "link_station_thread", "name": "Renamed"}
         )
 
         assert coordinator.data["alarm_hubs"]["alarm_hub_1"]["state"] == "DISCONNECTED"
@@ -427,8 +427,8 @@ class TestProtectSecurityDeviceFamilies:
         collection: str,
     ) -> None:
         """An id no poll has seen yet is routed by the frame's isAlarmHub."""
-        coordinator._handle_device_update(
-            "linkstation", {"id": "new1", "isAlarmHub": is_alarm_hub}
+        send_device(
+            coordinator, "linkstation", {"id": "new1", "isAlarmHub": is_alarm_hub}
         )
 
         assert "new1" in coordinator.data[collection]
@@ -437,9 +437,7 @@ class TestProtectSecurityDeviceFamilies:
         self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Without an id match or isAlarmHub there is no safe target."""
-        coordinator._handle_device_update(
-            "linkstation", {"id": "mystery", "state": "CONNECTED"}
-        )
+        send_device(coordinator, "linkstation", {"id": "mystery", "state": "CONNECTED"})
 
         assert "mystery" not in coordinator.data["alarm_hubs"]
         assert "mystery" not in coordinator.data["link_stations"]
@@ -450,7 +448,8 @@ class TestProtectSecurityDeviceFamilies:
         """A partial alarmHub frame must not wipe armed/battery until next poll."""
         self._seed_hub(coordinator)
 
-        coordinator._handle_device_update(
+        send_device(
+            coordinator,
             "linkstation",
             {"id": "alarm_hub_1", "alarmHub": {"deviceTamperStatus": "tampered"}},
         )
@@ -472,7 +471,8 @@ class TestProtectSecurityDeviceFamilies:
             "link_station_thread": copy.deepcopy(SAMPLE_THREAD_LINK_STATION)
         }
 
-        coordinator._handle_device_update(
+        send_device(
+            coordinator,
             "linkstation",
             {
                 "id": "link_station_thread",
@@ -495,7 +495,8 @@ class TestProtectSecurityDeviceFamilies:
             "link_station_thread": copy.deepcopy(SAMPLE_THREAD_LINK_STATION)
         }
 
-        coordinator._handle_device_update(
+        send_device(
+            coordinator,
             "linkstation",
             {"id": "link_station_thread", "threadState": {"network": None}},
         )
@@ -511,7 +512,8 @@ class TestProtectSecurityDeviceFamilies:
         old_alarm_hub = hub["alarmHub"]
         snapshot = copy.deepcopy(hub)
 
-        coordinator._handle_device_update(
+        send_device(
+            coordinator,
             "linkstation",
             {"id": "alarm_hub_1", "alarmHub": {"deviceTamperStatus": "tampered"}},
         )
@@ -528,8 +530,8 @@ class TestProtectSecurityDeviceFamilies:
         """Fob frames ("fob" modelKey) deep-merge into fobs."""
         coordinator.data["fobs"] = {"fob_1": copy.deepcopy(SAMPLE_KEYPAD_FOB)}
 
-        coordinator._handle_device_update(
-            "fob", {"id": "fob_1", "keypadSettings": {"beepVolume": 20}}
+        send_device(
+            coordinator, "fob", {"id": "fob_1", "keypadSettings": {"beepVolume": 20}}
         )
 
         keypad = coordinator.data["fobs"]["fob_1"]["keypadSettings"]
@@ -584,11 +586,12 @@ class TestProtectSecurityDeviceFamilies:
         self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A frame for a siren the poll has not seen yet creates its entry."""
-        coordinator._handle_device_update(
-            "siren", {"id": "siren_new", "sirenStatus": {"isActive": True}}
+        send_device(
+            coordinator, "siren", {"id": "siren_new", "sirenStatus": {"isActive": True}}
         )
 
         assert coordinator.data["sirens"]["siren_new"] == {
+            "modelKey": "siren",
             "id": "siren_new",
             "sirenStatus": {"isActive": True},
         }
@@ -862,7 +865,8 @@ class TestProtectSecurityDeviceFamilies:
         }
         coordinator.mark_siren_stopped("siren_1")
 
-        coordinator._handle_device_update(
+        send_device(
+            coordinator,
             "siren",
             {
                 "id": "siren_1",
@@ -898,11 +902,11 @@ class TestProtectSecurityDeviceFamilies:
 
         getattr(coordinator.protect_client, collection).get_all = slow_get_all
         if frame_before_request:
-            coordinator._handle_device_update(frame_model_key, copy.deepcopy(frame))
+            send_device(coordinator, frame_model_key, copy.deepcopy(frame))
         task = asyncio.create_task(fetch())
         await started.wait()
         if not frame_before_request:
-            coordinator._handle_device_update(frame_model_key, copy.deepcopy(frame))
+            send_device(coordinator, frame_model_key, copy.deepcopy(frame))
         release.set()
         await task
 
@@ -1048,8 +1052,10 @@ class TestProtectSecurityDeviceFamilies:
         hub = self._seed_hub(coordinator)
         snapshot = copy.deepcopy(hub)
 
-        coordinator._handle_event_update(
-            "alarmHubDeviceTamper", copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
+        send_event(
+            coordinator,
+            "alarmHubDeviceTamper",
+            copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT),
         )
 
         updated = coordinator.data["alarm_hubs"]["alarm_hub_1"]
@@ -1074,7 +1080,7 @@ class TestProtectSecurityDeviceFamilies:
         event = copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
         event["metadata"]["userName"] = user_name
 
-        coordinator._handle_event_update("alarmHubDeviceTamper", event)
+        send_event(coordinator, "alarmHubDeviceTamper", event)
 
         assert coordinator.data["alarm_hubs"]["alarm_hub_1"]["_lastTamperUser"] == (
             expected
@@ -1088,7 +1094,7 @@ class TestProtectSecurityDeviceFamilies:
         event = copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
         event["metadata"]["status"] = {"value": "tampered"}  # no "text"
 
-        coordinator._handle_event_update("alarmHubDeviceTamper", event)
+        send_event(coordinator, "alarmHubDeviceTamper", event)
 
         hub = coordinator.data["alarm_hubs"]["alarm_hub_1"]
         assert hub["alarmHub"]["deviceTamperStatus"] == "restored"
@@ -1102,7 +1108,7 @@ class TestProtectSecurityDeviceFamilies:
         event = copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
         event["metadata"] = None
 
-        coordinator._handle_event_update("alarmHubDeviceTamper", event)
+        send_event(coordinator, "alarmHubDeviceTamper", event)
 
         hub = coordinator.data["alarm_hubs"]["alarm_hub_1"]
         assert hub["alarmHub"]["deviceTamperStatus"] == "restored"
@@ -1116,7 +1122,7 @@ class TestProtectSecurityDeviceFamilies:
         event = copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
         event["device"] = "not_a_hub"
 
-        coordinator._handle_event_update("alarmHubDeviceTamper", event)
+        send_event(coordinator, "alarmHubDeviceTamper", event)
 
         assert coordinator.data["alarm_hubs"] == {}
         assert coordinator._events.tamper == {}
@@ -1130,8 +1136,10 @@ class TestProtectSecurityDeviceFamilies:
         Status stays authoritative from REST.
         """
         self._seed_hub(coordinator)
-        coordinator._handle_event_update(
-            "alarmHubDeviceTamper", copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
+        send_event(
+            coordinator,
+            "alarmHubDeviceTamper",
+            copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT),
         )
         coordinator.protect_client.alarm_hubs.get_all = AsyncMock(
             return_value=[LinkStation.model_validate(SAMPLE_ALARM_HUB)]
@@ -1160,8 +1168,10 @@ class TestProtectSecurityDeviceFamilies:
             return_value=[LinkStation.model_validate(rest_hub)]
         )
 
-        coordinator._handle_event_update(
-            "alarmHubDeviceTamper", copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
+        send_event(
+            coordinator,
+            "alarmHubDeviceTamper",
+            copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT),
         )
         await coordinator._fetch_alarm_hubs()
         await coordinator._fetch_alarm_hubs()
@@ -1183,8 +1193,10 @@ class TestProtectSecurityDeviceFamilies:
         async def get_all_with_tamper_mid_flight(
             *, expected_unsupported: bool
         ) -> list[LinkStation]:
-            coordinator._handle_event_update(
-                "alarmHubDeviceTamper", copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
+            send_event(
+                coordinator,
+                "alarmHubDeviceTamper",
+                copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT),
             )
             return [LinkStation.model_validate(SAMPLE_ALARM_HUB)]  # "restored"
 
@@ -1206,11 +1218,14 @@ class TestProtectSecurityDeviceFamilies:
     ) -> None:
         """An update frame of the same event (e.g. its end) fills gaps only."""
         self._seed_hub(coordinator)
-        coordinator._handle_event_update(
-            "alarmHubDeviceTamper", copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
+        send_event(
+            coordinator,
+            "alarmHubDeviceTamper",
+            copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT),
         )
 
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "alarmHubDeviceTamper",
             {"id": "event_tamper_1", "device": "alarm_hub_1", "end": 1759628200000},
         )
@@ -1225,8 +1240,10 @@ class TestProtectSecurityDeviceFamilies:
     ) -> None:
         """A different event naming nobody must not show the last event's user."""
         self._seed_hub(coordinator)
-        coordinator._handle_event_update(
-            "alarmHubDeviceTamper", copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
+        send_event(
+            coordinator,
+            "alarmHubDeviceTamper",
+            copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT),
         )
         restored = copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
         restored["id"] = "event_tamper_2"
@@ -1234,7 +1251,7 @@ class TestProtectSecurityDeviceFamilies:
         restored["metadata"]["status"] = {"text": "restored"}
         del restored["metadata"]["userName"]
 
-        coordinator._handle_event_update("alarmHubDeviceTamper", restored)
+        send_event(coordinator, "alarmHubDeviceTamper", restored)
 
         hub = coordinator.data["alarm_hubs"]["alarm_hub_1"]
         assert hub["_lastTamperUser"] is None
@@ -1286,7 +1303,7 @@ class TestProtectSecurityDeviceFamilies:
         listener = MagicMock()
         coordinator.async_add_listener(listener)
 
-        coordinator._handle_device_update("relay", {"id": "alarm_hub_1"})
+        send_device(coordinator, "relay", {"id": "alarm_hub_1"})
 
         assert coordinator.data["alarm_hubs"] == before
         assert coordinator.data["fobs"] == {}
@@ -1298,15 +1315,17 @@ class TestProtectSecurityDeviceFamilies:
     ) -> None:
         """A same-event frame that carries its own values wins over the first."""
         self._seed_hub(coordinator)
-        coordinator._handle_event_update(
-            "alarmHubDeviceTamper", copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
+        send_event(
+            coordinator,
+            "alarmHubDeviceTamper",
+            copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT),
         )
         first_received = coordinator._events.tamper["alarm_hub_1"].received
         update = copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT)
         update["metadata"]["status"] = {"text": "restored"}
         update["metadata"]["userName"] = "Owner"
 
-        coordinator._handle_event_update("alarmHubDeviceTamper", update)
+        send_event(coordinator, "alarmHubDeviceTamper", update)
 
         record = coordinator._events.tamper["alarm_hub_1"]
         assert record.status == "restored"

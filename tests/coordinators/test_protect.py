@@ -80,7 +80,7 @@ from tests.fixtures.coordinator_clients import (
     _create_mock_protect_client,
 )
 from tests.fixtures.library_responses import SAMPLE_SIREN
-from tests.fixtures.protect_ws import send_event
+from tests.fixtures.protect_ws import send_device, send_event
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -1630,9 +1630,7 @@ class TestUnifiProtectCoordinator:
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling camera device update."""
-        coordinator._handle_device_update(
-            "camera", {"id": "camera2", "name": "Back Camera"}
-        )
+        send_device(coordinator, "camera", {"id": "camera2", "name": "Back Camera"})
 
         assert "camera2" in coordinator.data["cameras"]
         assert coordinator.data["cameras"]["camera2"]["name"] == "Back Camera"
@@ -1641,9 +1639,7 @@ class TestUnifiProtectCoordinator:
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling light device update."""
-        coordinator._handle_device_update(
-            "light", {"id": "light2", "name": "Porch Light"}
-        )
+        send_device(coordinator, "light", {"id": "light2", "name": "Porch Light"})
 
         assert "light2" in coordinator.data["lights"]
 
@@ -1651,9 +1647,7 @@ class TestUnifiProtectCoordinator:
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling sensor device update."""
-        coordinator._handle_device_update(
-            "sensor", {"id": "sensor2", "name": "Window Sensor"}
-        )
+        send_device(coordinator, "sensor", {"id": "sensor2", "name": "Window Sensor"})
 
         assert "sensor2" in coordinator.data["sensors"]
 
@@ -1661,7 +1655,7 @@ class TestUnifiProtectCoordinator:
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling NVR device update."""
-        coordinator._handle_device_update("nvr", {"id": "nvr2", "name": "NVR 2"})
+        send_device(coordinator, "nvr", {"id": "nvr2", "name": "NVR 2"})
 
         assert "nvr2" in coordinator.data["nvrs"]
 
@@ -1669,9 +1663,7 @@ class TestUnifiProtectCoordinator:
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling viewer device update."""
-        coordinator._handle_device_update(
-            "viewer", {"id": "viewer2", "name": "Viewport 2"}
-        )
+        send_device(coordinator, "viewer", {"id": "viewer2", "name": "Viewport 2"})
 
         assert "viewer2" in coordinator.data["viewers"]
 
@@ -1679,7 +1671,7 @@ class TestUnifiProtectCoordinator:
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling chime device update."""
-        coordinator._handle_device_update("chime", {"id": "chime2", "name": "Chime 2"})
+        send_device(coordinator, "chime", {"id": "chime2", "name": "Chime 2"})
 
         assert "chime2" in coordinator.data["chimes"]
 
@@ -1687,7 +1679,7 @@ class TestUnifiProtectCoordinator:
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling device update without ID."""
-        coordinator._handle_device_update("camera", {"name": "No ID Camera"})
+        send_device(coordinator, "camera", {"name": "No ID Camera"})
 
         # Should not add device without ID
         assert len(coordinator.data["cameras"]) == 0
@@ -1716,17 +1708,13 @@ class TestUnifiProtectCoordinator:
             wraps=coordinator.async_set_updated_data,
         ) as mock_set_data:
             # 1. Update without id returns early and does not notify
-            coordinator._handle_device_update("unknown_type", {"name": "No ID"})
-            coordinator._handle_device_update(
-                "unknown_type", {"id": "", "name": "Empty ID"}
-            )
+            send_device(coordinator, "unknown_type", {"name": "No ID"})
+            send_device(coordinator, "unknown_type", {"id": "", "name": "Empty ID"})
             listener.assert_not_called()
             mock_set_data.assert_not_called()
 
             # 2. Update with id notifies through async_set_updated_data fall-through
-            coordinator._handle_device_update(
-                "unknown_type", {"id": "unk1", "name": "Unknown"}
-            )
+            send_device(coordinator, "unknown_type", {"id": "unk1", "name": "Unknown"})
             listener.assert_called_once()
             mock_set_data.assert_called_once_with(coordinator.data)
             assert coordinator.last_update_success is True
@@ -1746,7 +1734,8 @@ class TestUnifiProtectCoordinator:
         # First add a camera
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Test"}
 
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "motion",
             {
                 "id": "event1",
@@ -1767,7 +1756,8 @@ class TestUnifiProtectCoordinator:
         # First add a camera
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Test"}
 
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "smartDetectZone",
             {
                 "id": "event2",
@@ -1790,7 +1780,8 @@ class TestUnifiProtectCoordinator:
         # First add a camera
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Doorbell"}
 
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "ring",
             {
                 "id": "event3",
@@ -1810,7 +1801,8 @@ class TestUnifiProtectCoordinator:
         # First add a light
         coordinator.data["lights"]["light1"] = {"id": "light1", "name": "Test"}
 
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "motion",
             {
                 "id": "event4",
@@ -1827,7 +1819,7 @@ class TestUnifiProtectCoordinator:
     ):
         """Test handling event without ID."""
         initial_events = dict(coordinator.data["events"])
-        coordinator._handle_event_update("motion", {"device": "camera1"})
+        send_event(coordinator, "motion", {"device": "camera1"})
 
         # Events should not change without event ID
         assert coordinator.data["events"] == initial_events
@@ -1846,44 +1838,47 @@ class TestUnifiProtectCoordinator:
             wraps=coordinator.async_update_listeners,
         ) as notify:
             # 1. Missing or empty event ID is dropped and produces no notification
-            coordinator._handle_event_update("motion", {"device": "camera1"})
-            coordinator._handle_event_update("motion", {"id": "", "device": "camera1"})
+            send_event(coordinator, "motion", {"device": "camera1"})
+            send_event(coordinator, "motion", {"id": "", "device": "camera1"})
             assert coordinator.data["events"].get("motion", {}) == {}
             notify.assert_not_called()
             listener.assert_not_called()
 
             # 2. Distinct IDs accumulate and notify once per accepted event
-            coordinator._handle_event_update(
-                "motion", {"id": "ev1", "device": "camera1", "start": 100}
+            send_event(
+                coordinator, "motion", {"id": "ev1", "device": "camera1", "start": 100}
             )
             assert notify.call_count == 1
             assert listener.call_count == 1
             assert coordinator.data["events"]["motion"]["ev1"] == {
+                "type": "motion",
                 "id": "ev1",
                 "device": "camera1",
                 "start": 100,
             }
 
-            coordinator._handle_event_update(
-                "motion", {"id": "ev2", "device": "camera1", "start": 200}
+            send_event(
+                coordinator, "motion", {"id": "ev2", "device": "camera1", "start": 200}
             )
             assert notify.call_count == 2
             assert listener.call_count == 2
             assert set(coordinator.data["events"]["motion"].keys()) == {"ev1", "ev2"}
             assert coordinator.data["events"]["motion"]["ev2"] == {
+                "type": "motion",
                 "id": "ev2",
                 "device": "camera1",
                 "start": 200,
             }
 
             # 3. Repeated ID replaces previous event and notifies
-            coordinator._handle_event_update(
-                "motion", {"id": "ev1", "device": "camera1", "end": 400}
+            send_event(
+                coordinator, "motion", {"id": "ev1", "device": "camera1", "end": 400}
             )
             assert notify.call_count == 3
             assert listener.call_count == 3
             assert set(coordinator.data["events"]["motion"].keys()) == {"ev1", "ev2"}
             assert coordinator.data["events"]["motion"]["ev1"] == {
+                "type": "motion",
                 "id": "ev1",
                 "device": "camera1",
                 "end": 400,
@@ -1990,7 +1985,8 @@ class TestUnifiProtectCoordinator:
         coordinator.data["lights"] = {}
 
         # Event with device_id that doesn't match any known device type
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "motion",
             {
                 "id": "event_unknown",
@@ -2008,7 +2004,8 @@ class TestUnifiProtectCoordinator:
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling event without device field."""
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "motion",
             {
                 "id": "event_no_device",
@@ -2031,12 +2028,13 @@ class TestUnifiProtectCoordinator:
         UNVALIDATED (task 3): the real `Event` model
         (unifi_official_api.protect.models.event) has no generic "device" field - only
         `camera`/`cameraId` or `sensor`/`sensorId`. Before this fix,
-        `_process_event_for_device` was unreachable dead code in practice
+        applying an event to its device was unreachable in practice
         because it only ever looked for "device".
         """
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Test"}
 
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "motion",
             {"id": "event20", "cameraId": "camera1", "start": 111, "end": None},
         )
@@ -2053,7 +2051,8 @@ class TestUnifiProtectCoordinator:
         """
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Test"}
 
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "smartDetect",
             {
                 "id": "event21",
@@ -2292,7 +2291,7 @@ class TestUnifiProtectCoordinator:
         coordinator: UnifiInsightsProtectCoordinator,
         caplog: pytest.LogCaptureFixture,
     ):
-        """Test an exception from `_handle_event_update` is logged and
+        """Test an exception while applying an event frame is logged and
         swallowed, not propagated into the WS callback (task 3: the events
         path has never run in production, so its schema assumptions must
         degrade safely rather than kill the reconnect loop).
@@ -2300,7 +2299,7 @@ class TestUnifiProtectCoordinator:
         with (
             patch.object(
                 coordinator,
-                "_handle_event_update",
+                "_apply",
                 side_effect=RuntimeError("boom"),
             ),
             caplog.at_level(logging.ERROR),
@@ -2318,7 +2317,8 @@ class TestUnifiProtectCoordinator:
     ):
         """Test reconciliation does not clear a latch that is still young."""
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Test"}
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "motion",
             {"id": "event40", "device": "camera1", "start": 1, "end": None},
         )
@@ -2338,7 +2338,8 @@ class TestUnifiProtectCoordinator:
         than one that never fires (see coordinator module docstring).
         """
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Test"}
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "motion",
             {"id": "event41", "device": "camera1", "start": 1, "end": None},
         )
@@ -2357,7 +2358,8 @@ class TestUnifiProtectCoordinator:
         also turn back off rather than staying latched on a stale type.
         """
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Test"}
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "smartDetectZone",
             {
                 "id": "event42",
@@ -2383,7 +2385,8 @@ class TestUnifiProtectCoordinator:
         """
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Test"}
 
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "smartDetectZone",
             {
                 "id": "event46",
@@ -2401,7 +2404,8 @@ class TestUnifiProtectCoordinator:
     ):
         """Test the same bounded auto-off applies to light motion latches."""
         coordinator.data["lights"]["light1"] = {"id": "light1", "name": "Test"}
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "motion",
             {"id": "event43", "device": "light1", "start": 1, "end": None},
         )
@@ -2419,7 +2423,8 @@ class TestUnifiProtectCoordinator:
         events stream is live.
         """
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Test"}
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "ring",
             {"id": "event44", "device": "camera1", "start": 1, "end": None},
         )
@@ -2436,13 +2441,15 @@ class TestUnifiProtectCoordinator:
         immediately, mirroring the motion latch's normal-clear path.
         """
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Test"}
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "ring",
             {"id": "event47", "device": "camera1", "start": 1, "end": None},
         )
         assert "camera1" in coordinator._events.latches["camera_ring"]
 
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "ring",
             {"id": "event47", "device": "camera1", "start": 1, "end": 2},
         )
@@ -2458,7 +2465,8 @@ class TestUnifiProtectCoordinator:
         the tracker entry instead of raising or recreating the device.
         """
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Test"}
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "motion",
             {"id": "event48", "device": "camera1", "start": 1, "end": None},
         )
@@ -2481,13 +2489,15 @@ class TestUnifiProtectCoordinator:
         reconciliation is a safety net, not the primary clearing path.
         """
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Test"}
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "motion",
             {"id": "event45", "device": "camera1", "start": 1, "end": None},
         )
         assert "camera1" in coordinator._events.latches["camera_motion"]
 
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "motion",
             {"id": "event45", "device": "camera1", "start": 1, "end": 2},
         )
@@ -2857,7 +2867,7 @@ class TestUnifiProtectCoordinator:
         An error means "we could not ask", not "the server says they are gone",
         so it must not feed the empty-response eviction counter. When it did,
         roughly two minutes of HTTP 500s cleared the collection and
-        _cleanup_stale_devices then removed every device in it from the device
+        the registry clean-up then removed every device in it from the device
         registry, losing area assignments and any automation keyed on device_id.
         """
         # collection -> (protect_client attribute, its fetch method, coordinator fetch)
@@ -3304,7 +3314,7 @@ class TestUnifiProtectCoordinator:
         cameras at once, so `get_all()` returns an empty list that looks
         exactly like "no cameras adopted". Left there, the bounded
         empty-response guard clears the collection a few polls later and hands
-        every camera to `_cleanup_stale_devices`. An endpoint that reports the
+        every camera to the registry clean-up. An endpoint that reports the
         result incomplete must not advance that counter.
         """
         coordinator.data["cameras"] = {"camera1": {"id": "camera1"}}
@@ -3565,7 +3575,8 @@ class TestUnifiProtectCoordinator:
         # A live event-derived latch: WebSocket saw a "start" with no "end"
         # yet, so the tracker is armed - mirrors real motion detection.
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Test"}
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "motion",
             {"id": "event49", "device": "camera1", "start": 1, "end": None},
         )
@@ -3602,7 +3613,8 @@ class TestUnifiProtectCoordinator:
         identical dropped-tracker risk as the motion latch above.
         """
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Test"}
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "ring",
             {"id": "event50", "device": "camera1", "start": 1, "end": None},
         )
@@ -3751,11 +3763,13 @@ class TestUnifiProtectCoordinator:
         listener = MagicMock()
         coordinator.async_add_listener(listener)
 
-        coordinator._handle_device_update(
-            "doorlock", {"id": "lock1", "state": "UNLOCKED", "battery": 90}
+        send_device(
+            coordinator, "doorlock", {"id": "lock1", "state": "UNLOCKED", "battery": 90}
         )
 
+        # The frame's own modelKey is kept, as it is for a live frame.
         assert coordinator.data["doorlocks"]["lock1"] == {
+            "modelKey": "doorlock",
             "id": "lock1",
             "name": "Front Door",
             "state": "UNLOCKED",
@@ -3773,11 +3787,10 @@ class TestUnifiProtectCoordinator:
         listener = MagicMock()
         coordinator.async_add_listener(listener)
 
-        coordinator._handle_device_update(
-            "viewport", {"id": "vp1", "name": "Renamed Viewport"}
-        )
+        send_device(coordinator, "viewport", {"id": "vp1", "name": "Renamed Viewport"})
 
         assert coordinator.data["viewports"]["vp1"] == {
+            "modelKey": "viewport",
             "id": "vp1",
             "name": "Renamed Viewport",
             "state": "ONLINE",
@@ -4282,7 +4295,8 @@ class TestProtectCoordinatorEdgeCases:
         coordinator.data["cameras"]["camera1"] = {"id": "camera1"}
 
         # Process unknown event type
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "unknown_event",
             {"id": "event1", "device": "camera1", "start": 123},
         )
@@ -4294,7 +4308,8 @@ class TestProtectCoordinatorEdgeCases:
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling event when device not in data."""
-        coordinator._handle_event_update(
+        send_event(
+            coordinator,
             "motion",
             {"id": "event1", "device": "nonexistent_device", "start": 123},
         )
