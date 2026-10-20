@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util.read_only_dict import ReadOnlyDict
 from unifi_official_api import UniFiConnectionError
 
@@ -25,8 +26,10 @@ from custom_components.unifi_insights.coordinators.device import (
 )
 from custom_components.unifi_insights.coordinators.facade import (
     EMPTY_PROTECT,
+    SITE_SECTIONS,
     FacadeData,
     build_facade_data,
+    capture_availability,
 )
 from custom_components.unifi_insights.coordinators.protect import (
     UnifiInsightsProtectCoordinator,
@@ -35,6 +38,7 @@ from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
     build_site_network_facts,
 )
+from tests.fixtures.command_owners import SITE_ID
 from tests.fixtures.coordinator_clients import (
     RULE_SECTION_PARAMS,
     _create_mock_network_client,
@@ -46,7 +50,7 @@ from tests.fixtures.library_responses import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Awaitable, Callable
 
     from homeassistant.core import HomeAssistant
     from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -1300,6 +1304,15 @@ class TestCoordinatorDataFlow:
 # --- Pure snapshot builder (ADR-013) ------------------------------------------
 
 NOW = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
+AVAILABLE = capture_availability(
+    device=True,
+    config=True,
+    protect=True,
+    innerspace=True,
+    network=True,
+    failed_sections=frozenset(),
+    site_ids=(),
+)
 
 
 def test_build_facade_data_passes_the_owners_sections_through() -> None:
@@ -1323,6 +1336,7 @@ def test_build_facade_data_passes_the_owners_sections_through() -> None:
         device,
         protect,
         innerspace,
+        availability=AVAILABLE,
         site_manager=None,
         site_manager_host_id=None,
         now=NOW,
@@ -1337,6 +1351,7 @@ def test_build_facade_data_passes_the_owners_sections_through() -> None:
     assert snapshot["protect"] is protect
     assert snapshot["innerspace"] is innerspace
     assert snapshot["last_update"] == NOW
+    assert snapshot["availability"] == AVAILABLE
     assert snapshot["firewall_rules"] == {}
     assert snapshot["clients"] == {}
     assert "site_manager" not in snapshot
@@ -1350,7 +1365,14 @@ def test_build_facade_data_passes_the_owners_sections_through() -> None:
 def test_build_facade_data_without_protect_uses_the_stand_in() -> None:
     """A console without Protect gets the shared empty Protect data."""
     snapshot = build_facade_data(
-        {}, {}, None, {}, site_manager=None, site_manager_host_id=None, now=NOW
+        {},
+        {},
+        None,
+        {},
+        availability=AVAILABLE,
+        site_manager=None,
+        site_manager_host_id=None,
+        now=NOW,
     )
 
     assert snapshot["protect"] is EMPTY_PROTECT
@@ -1369,8 +1391,171 @@ def test_build_facade_data_selects_the_entry_site_manager_host(
     account = {"hosts": {"host-1": {"id": "host-1"}}}
 
     snapshot = build_facade_data(
-        {}, {}, None, {}, site_manager=account, site_manager_host_id=host_id, now=NOW
+        {},
+        {},
+        None,
+        {},
+        availability=AVAILABLE,
+        site_manager=account,
+        site_manager_host_id=host_id,
+        now=NOW,
     )
 
     assert snapshot["site_manager"] == {**account, "selected_host_id": selected}
     assert "selected_host_id" not in account
+
+
+# --- Captured availability (ADR-013) ------------------------------------------
+
+# The facade method that answers each site section live.
+SECTION_METHODS = {
+    "wifi": "wifi_available",
+    "firewall_rules": "firewall_available",
+    "vouchers": "vouchers_available",
+    "port_forwards": "port_forwards_available",
+    "traffic_rules": "traffic_rules_available",
+    "nat_rules": "nat_rules_available",
+    "static_routes": "static_routes_available",
+    "internet_activity": "internet_activity_available",
+}
+
+
+def test_section_methods_cover_every_site_section() -> None:
+    """Every captured site section has a live facade method."""
+    assert set(SECTION_METHODS) == set(SITE_SECTIONS)
+
+
+@pytest.mark.parametrize("config", [True, False])
+def test_capture_availability_per_site(*, config: bool) -> None:
+    """A failed section is unavailable for its site only, and all with config."""
+    availability = capture_availability(
+        device=True,
+        config=config,
+        protect=False,
+        innerspace=True,
+        network=True,
+        failed_sections=frozenset({("wifi", "site1"), ("vouchers", "gone")}),
+        site_ids=("site1", "site2"),
+    )
+
+    assert availability["config"] is config
+    assert availability["protect"] is False
+    assert set(availability["sites"]) == {"site1", "site2", "gone"}
+    for site_id, failed in (("site1", "wifi"), ("site2", None), ("gone", "vouchers")):
+        for section in SITE_SECTIONS:
+            expected = config and section != failed
+            assert availability["sites"][site_id][section] is expected, (
+                site_id,
+                section,
+            )
+
+
+def _assert_captured_matches_live(facade: UnifiInsightsFacadeCoordinator) -> None:
+    """Assert the snapshot's availability is what the live properties answer."""
+    availability = facade.data["availability"]
+    assert availability["device"] is facade.device_available
+    assert availability["config"] is facade.config_available
+    assert availability["protect"] is facade.protect_available
+    assert availability["innerspace"] is facade.innerspace_available
+    assert availability["network"] is facade.network_available
+    for site_id in (*facade.data["sites"], "unknown-site"):
+        captured = availability["sites"].get(site_id, {})
+        for section, method in SECTION_METHODS.items():
+            assert captured.get(section, availability["config"]) is getattr(
+                facade, method
+            )(site_id), (site_id, section)
+
+
+async def _fail_wifi(owners: SeededOwners) -> None:
+    """Refresh the config with the site's WiFi fetch failing."""
+    owners.network_client.wifi.get_all.side_effect = UniFiConnectionError("down")
+    await owners.config.async_refresh()
+
+
+async def _fail_config(owners: SeededOwners) -> None:
+    """Fail the whole config refresh."""
+    owners.network_client.sites.get_all.side_effect = UniFiConnectionError("down")
+    await owners.config.async_refresh()
+
+
+async def _fail_vouchers(owners: SeededOwners) -> None:
+    """Fail the targeted voucher refresh of one site."""
+    owners.network_client.vouchers.get_all_pages.side_effect = UniFiConnectionError(
+        "down"
+    )
+    await owners.config.async_refresh_vouchers(SITE_ID)
+
+
+async def _recover_vouchers(owners: SeededOwners) -> None:
+    """Fail the targeted voucher refresh, then refresh it successfully."""
+    await _fail_vouchers(owners)
+    owners.network_client.vouchers.get_all_pages.side_effect = None
+    await owners.config.async_refresh_vouchers(SITE_ID)
+
+
+async def _fail_device(owners: SeededOwners) -> None:
+    """Fail the device refresh."""
+    owners.network_client.devices.get_all.side_effect = UniFiConnectionError("down")
+    await owners.device.async_refresh()
+
+
+async def _fail_protect(owners: SeededOwners) -> None:
+    """Record a failed Protect update, as a lost Protect session does."""
+    owners.protect.async_set_update_error(UpdateFailed("down"))
+
+
+async def _refresh_all(owners: SeededOwners) -> None:
+    """Refresh every owner successfully."""
+    await owners.facade.async_request_refresh()
+
+
+@pytest.mark.parametrize(
+    ("update", "changed"),
+    [
+        pytest.param(_refresh_all, None, id="refresh_all"),
+        pytest.param(_fail_wifi, ("sites", SITE_ID, "wifi"), id="wifi_failed"),
+        pytest.param(_fail_config, ("config",), id="config_failed"),
+        pytest.param(_fail_vouchers, ("sites", SITE_ID, "vouchers"), id="vouchers"),
+        pytest.param(_recover_vouchers, None, id="vouchers_recovered"),
+        pytest.param(_fail_device, ("device",), id="device_failed"),
+        pytest.param(_fail_protect, ("protect",), id="protect_failed"),
+    ],
+)
+async def test_captured_availability_follows_each_owner_update(
+    seeded_owners: SeededOwners,
+    update: Callable[[SeededOwners], Awaitable[None]],
+    changed: tuple[str, ...] | None,
+) -> None:
+    """After each owner update the snapshot carries the live availability."""
+    facade = seeded_owners.facade
+    _assert_captured_matches_live(facade)
+
+    await update(seeded_owners)
+
+    _assert_captured_matches_live(facade)
+    if changed is not None:
+        value: Any = facade.data["availability"]
+        for key in changed:
+            value = value[key]
+        assert value is False
+
+
+async def test_captured_availability_without_protect_or_innerspace(
+    seeded_owners: SeededOwners,
+) -> None:
+    """A console without Protect or InnerSpace captures both as available."""
+    facade = UnifiInsightsFacadeCoordinator(
+        seeded_owners.facade.hass,
+        seeded_owners.network_client,
+        None,
+        seeded_owners.entry,
+        seeded_owners.config,
+        device_coordinator=seeded_owners.device,
+        protect_coordinator=None,
+    )
+    try:
+        _assert_captured_matches_live(facade)
+        assert facade.data["availability"]["protect"] is True
+        assert facade.data["availability"]["innerspace"] is True
+    finally:
+        await facade.async_shutdown()

@@ -207,6 +207,11 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
         """Return True if the Network application is available on the console."""
         return self._network_available
 
+    @property
+    def failed_sections(self) -> frozenset[tuple[str, str]]:
+        """Return the (section, site ID) pairs the last refresh failed to fetch."""
+        return frozenset(self._failed_sections)
+
     def wifi_available(self, site_id: str) -> bool:
         """Return True if the last refresh fetched WiFi networks for a site."""
         return self._section_available("wifi", site_id)

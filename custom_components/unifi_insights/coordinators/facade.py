@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final, NotRequired, ReadOnly, TypedDict, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
     from collections.abc import Set as AbstractSet
 
     from homeassistant.config_entries import ConfigEntry
@@ -50,6 +50,35 @@ _LOGGER = logging.getLogger(__name__)
 
 # Sections keyed by site ID whose records are mappings.
 type SiteSection = Mapping[str, Mapping[str, Any]]
+
+# The per-site config sections whose last fetch the config coordinator tracks.
+SITE_SECTIONS: Final = (
+    "wifi",
+    "firewall_rules",
+    "vouchers",
+    "port_forwards",
+    "traffic_rules",
+    "nat_rules",
+    "static_routes",
+    "internet_activity",
+)
+
+
+class FacadeAvailability(TypedDict):
+    """
+    The availability one snapshot was built with.
+
+    ``sites`` maps each site ID to whether each of ``SITE_SECTIONS`` was
+    fetched on the last config refresh. A site it does not list has the
+    config coordinator's availability.
+    """
+
+    device: ReadOnly[bool]
+    config: ReadOnly[bool]
+    protect: ReadOnly[bool]
+    innerspace: ReadOnly[bool]
+    network: ReadOnly[bool]
+    sites: ReadOnly[Mapping[str, Mapping[str, bool]]]
 
 
 class FacadeData(TypedDict):
@@ -94,6 +123,7 @@ class FacadeData(TypedDict):
     # The InnerSpace view, derived from the InnerSpace, device and Protect data
     innerspace: ReadOnly[Mapping[str, Any]]
     last_update: ReadOnly[datetime]
+    availability: ReadOnly[FacadeAvailability]
     # Only with a Site Manager coordinator
     site_manager: ReadOnly[NotRequired[Mapping[str, Any]]]
 
@@ -147,12 +177,51 @@ EMPTY_PROTECT: Final[Mapping[str, Mapping[str, Any]]] = ReadOnlyDict(
 )
 
 
+def capture_availability(
+    *,
+    device: bool,
+    config: bool,
+    protect: bool,
+    innerspace: bool,
+    network: bool,
+    failed_sections: AbstractSet[tuple[str, str]],
+    site_ids: Iterable[str],
+) -> FacadeAvailability:
+    """
+    Capture the owners' availability for one snapshot.
+
+    A section of a site is available when the config coordinator is and the
+    section was not among ``failed_sections`` on its last refresh, as the
+    facade's ``*_available(site_id)`` methods answer.
+    """
+    sites = {*site_ids, *(site_id for _, site_id in failed_sections)}
+    return {
+        "device": device,
+        "config": config,
+        "protect": protect,
+        "innerspace": innerspace,
+        "network": network,
+        "sites": ReadOnlyDict(
+            {
+                site_id: ReadOnlyDict(
+                    {
+                        section: config and (section, site_id) not in failed_sections
+                        for section in SITE_SECTIONS
+                    }
+                )
+                for site_id in sites
+            }
+        ),
+    }
+
+
 def build_facade_data(
     config: Mapping[str, Any],
     device: Mapping[str, Any],
     protect: Mapping[str, Any] | None,
     innerspace: Mapping[str, Any],
     *,
+    availability: FacadeAvailability,
     site_manager: Mapping[str, Any] | None,
     site_manager_host_id: str | None,
     now: datetime,
@@ -162,8 +231,9 @@ def build_facade_data(
 
     Pure: it reads only its arguments and copies no section. ``protect`` is
     None without a Protect coordinator, ``innerspace`` is the derived
-    InnerSpace view, and ``site_manager`` is the Site Manager account data, or
-    None without a Site Manager coordinator.
+    InnerSpace view, ``availability`` is what ``capture_availability``
+    captured, and ``site_manager`` is the Site Manager account data, or None
+    without a Site Manager coordinator.
     """
     data: dict[str, Any] = {
         **{section: config.get(section, {}) for section in _CONFIG_SECTIONS},
@@ -177,6 +247,7 @@ def build_facade_data(
         "protect": EMPTY_PROTECT if protect is None else protect,
         "innerspace": innerspace,
         "last_update": now,
+        "availability": ReadOnlyDict(availability),
     }
     if site_manager is not None:
         data["site_manager"] = {
@@ -430,6 +501,18 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
         self._cached_innerspace_data = innerspace_data
         return innerspace_data
 
+    def _capture_availability(self) -> FacadeAvailability:
+        """Capture the availability the delegating properties report now."""
+        return capture_availability(
+            device=bool(self.device_available),
+            config=bool(self.config_available),
+            protect=bool(self.protect_available),
+            innerspace=bool(self.innerspace_available),
+            network=bool(self.network_available),
+            failed_sections=self._config_coordinator.failed_sections,
+            site_ids=self._config_coordinator.data.get("sites", {}),
+        )
+
     def _aggregate_data(self) -> None:
         """Publish a new snapshot built from the owners' current data."""
         device = self._device_coordinator.data
@@ -442,6 +525,7 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
                 device.get("devices", {}),
                 EMPTY_PROTECT if protect is None else protect,
             ),
+            availability=self._capture_availability(),
             site_manager=(
                 self._site_manager_coordinator.data
                 if self._site_manager_coordinator
