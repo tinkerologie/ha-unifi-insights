@@ -51,7 +51,10 @@ from .const import (
 )
 from .innerspace_transforms import (
     _normalize_innerspace_mac,
+    build_innerspace_view,
     correlate_innerspace_devices,
+    innerspace_correlation_key,
+    innerspace_view_inputs,
     normalize_innerspace_snapshot,
     parse_floor_plan_asset_path,
     transform_innerspace_device,
@@ -819,6 +822,7 @@ __all__ = [
     "SiteNetworkFacts",
     "_normalize_innerspace_mac",
     "as_bits_per_second",
+    "build_innerspace_view",
     "build_site_network_facts",
     "bytes_to_bits_per_second",
     "client_connection_type",
@@ -831,6 +835,8 @@ __all__ = [
     "first_not_none",
     "get_field",
     "get_site_gateway_id",
+    "innerspace_correlation_key",
+    "innerspace_view_inputs",
     "is_volatile_storage_mount",
     "normalize_innerspace_snapshot",
     "normalize_legacy_storage",

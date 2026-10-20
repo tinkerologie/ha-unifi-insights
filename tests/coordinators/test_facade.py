@@ -209,60 +209,140 @@ def facade(
     )
 
 
-class TestFacadeBuildInnerspaceCorrKey:
-    """Tests for _build_innerspace_corr_key."""
+class TestFacadeInnerSpaceMemo:
+    """The InnerSpace view is rebuilt only when what it reads changed (ADR-013)."""
 
-    def test_build_innerspace_corr_key_full(self) -> None:
-        """Test building correlation key with devices and protect data."""
-        raw_innerspace = {"raw": 1}
-        devices = {
-            "site1": {
-                "dev1": {"macAddress": "00:11:22:33:44:55"},
-                "dev2": {"mac_address": "00:11:22:33:44:66"},
-                "dev3": {"mac": "00:11:22:33:44:77"},
-                "dev_invalid": "not_a_dict",
-            },
-            "site2": "not_a_dict",
-        }
-        protect_data = {
-            "cameras": {"cam1": {"mac": "11:22:33:44:55:66"}},
-            "lights": {"light1": {"macAddress": "22:33:44:55:66:77"}},
-            "sensors": {"sens1": {"mac_address": "33:44:55:66:77:88"}},
-            "nvrs": {"nvr1": {"mac": "44:55:66:77:88:99"}},
-            "doorlocks": {"lock1": {"mac": "55:66:77:88:99:AA"}},
-            "viewports": {"vp1": {"mac": "66:77:88:99:AA:BB"}},
-        }
-        key = UnifiInsightsFacadeCoordinator._build_innerspace_corr_key(
-            raw_innerspace, devices, protect_data
-        )
-        assert isinstance(key, tuple)
-        assert len(key) == 3
-        assert key[0] == id(raw_innerspace)
-        assert ("site1", "dev1", "00:11:22:33:44:55") in key[1]
-        assert ("cameras", "cam1", "11:22:33:44:55:66") in key[2]
+    @staticmethod
+    def _rebuild(facade: UnifiInsightsFacadeCoordinator) -> Any:
+        """Rebuild the snapshot and return its InnerSpace view."""
+        facade._aggregate_data()
+        return facade.data["innerspace"]
 
-    def test_build_innerspace_corr_key_non_dict_inputs(self) -> None:
-        """Test building correlation key with non-dict devices and protect data."""
-        raw_innerspace = {"raw": 2}
-        key = UnifiInsightsFacadeCoordinator._build_innerspace_corr_key(
-            raw_innerspace, "not_dict", None
-        )
-        assert key == (id(raw_innerspace), (), ())
-
-
-class TestFacadeInnerSpaceCaching:
-    """Tests for InnerSpace data aggregation caching."""
-
-    def test_aggregate_data_innerspace_cache_hit(
+    def test_unchanged_inputs_reuse_the_view(
         self, facade: UnifiInsightsFacadeCoordinator
     ) -> None:
-        """Test that repeated _aggregate_data calls reuse cached innerspace data."""
-        facade._aggregate_data()
-        assert facade._cached_innerspace_data is not None
-        cached_before = facade._cached_innerspace_data
+        """A rebuild with the same objects returns the same view, uncomputed."""
+        before = facade.data["innerspace"]
+        with patch(
+            "custom_components.unifi_insights.coordinators.facade."
+            "innerspace_correlation_key"
+        ) as key:
+            assert self._rebuild(facade) is before
+        key.assert_not_called()
 
-        facade._aggregate_data()
-        assert facade.data["innerspace"] is cached_before
+    def test_unrelated_protect_frame_reuses_the_view(
+        self,
+        facade: UnifiInsightsFacadeCoordinator,
+        mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
+    ) -> None:
+        """A frame that replaces only events reads no device field."""
+        protect_coord = mock_sub_coordinators[2]
+        before = facade.data["innerspace"]
+        protect_coord.data = {**protect_coord.data, "events": {"motion": {}}}
+
+        with patch(
+            "custom_components.unifi_insights.coordinators.facade."
+            "innerspace_correlation_key"
+        ) as key:
+            assert self._rebuild(facade) is before
+        key.assert_not_called()
+
+    @pytest.mark.parametrize("collection", ["cameras", "nvrs"])
+    def test_replaced_collection_with_the_same_devices_reuses_the_view(
+        self,
+        facade: UnifiInsightsFacadeCoordinator,
+        mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
+        collection: str,
+    ) -> None:
+        """A frame that replaces a collection with the same MACs rebuilds nothing."""
+        protect_coord = mock_sub_coordinators[2]
+        before = facade.data["innerspace"]
+        protect_coord.data = {
+            **protect_coord.data,
+            collection: {**protect_coord.data[collection]},
+        }
+
+        with patch(
+            "custom_components.unifi_insights.coordinators.facade.build_innerspace_view"
+        ) as build:
+            assert self._rebuild(facade) is before
+        build.assert_not_called()
+
+    def test_changed_protect_mac_rebuilds_the_view(
+        self,
+        facade: UnifiInsightsFacadeCoordinator,
+        mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
+    ) -> None:
+        """A camera whose MAC now matches an InnerSpace record is correlated."""
+        _, _, protect_coord, innerspace_coord = mock_sub_coordinators
+        innerspace_coord.data = {
+            **innerspace_coord.data,
+            "access_points": {"ap1": {"name": "AP Hall", "mac": "AA:00:00:00:00:01"}},
+        }
+        before = self._rebuild(facade)
+        assert before["correlations"]["ap1"] is None
+
+        protect_coord.data = {
+            **protect_coord.data,
+            "cameras": {"cam1": {"id": "cam1", "mac": "AA:00:00:00:00:01"}},
+        }
+        after = self._rebuild(facade)
+
+        assert after is not before
+        assert after["correlations"]["ap1"]["device_id"] == "cam1"
+        assert self._rebuild(facade) is after
+
+    def test_new_device_poll_rebuilds_only_on_changed_fields(
+        self,
+        facade: UnifiInsightsFacadeCoordinator,
+        mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
+    ) -> None:
+        """A poll with the same devices reuses the view; a changed MAC rebuilds it."""
+        device_coord = mock_sub_coordinators[1]
+        before = facade.data["innerspace"]
+
+        device_coord.data = {
+            **device_coord.data,
+            "devices": {"site1": {**device_coord.data["devices"]["site1"]}},
+        }
+        assert self._rebuild(facade) is before
+
+        device_coord.data = {
+            **device_coord.data,
+            "devices": {
+                "site1": {"dev1": {"id": "dev1", "macAddress": "00:11:22:33:44:66"}}
+            },
+        }
+        assert self._rebuild(facade) is not before
+
+    def test_new_innerspace_data_rebuilds_the_view(
+        self,
+        facade: UnifiInsightsFacadeCoordinator,
+        mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
+    ) -> None:
+        """New InnerSpace data is always correlated again."""
+        innerspace_coord = mock_sub_coordinators[3]
+        before = facade.data["innerspace"]
+        innerspace_coord.data = {**innerspace_coord.data}
+
+        after = self._rebuild(facade)
+
+        assert after is not before
+        assert after == before
+
+    def test_without_innerspace_the_empty_view_is_reused(
+        self,
+        facade: UnifiInsightsFacadeCoordinator,
+        mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
+    ) -> None:
+        """Without InnerSpace data the empty view is built once."""
+        innerspace_coord = mock_sub_coordinators[3]
+        innerspace_coord.data = {}
+        empty = self._rebuild(facade)
+
+        assert empty["devices"] == {}
+        assert empty["last_update"] is None
+        assert self._rebuild(facade) is empty
 
 
 class TestFacadeAsyncRefreshChildren:
@@ -330,21 +410,6 @@ class TestFacadeVoucherReads:
             "_async_refresh_vouchers",
         ):
             assert not hasattr(facade, name), name
-
-
-def test_build_innerspace_corr_key_skips_non_dict_devices() -> None:
-    """Test that _build_innerspace_corr_key handles non-dict entries defensively."""
-    protect_data = {
-        "cameras": {
-            "cam_bad": None,
-            "cam_good": {"mac": "11:22:33:44:55:66"},
-        }
-    }
-    key = UnifiInsightsFacadeCoordinator._build_innerspace_corr_key(
-        {}, {}, protect_data
-    )
-    assert len(key[2]) == 1
-    assert key[2][0] == ("cameras", "cam_good", "11:22:33:44:55:66")
 
 
 class TestFacadeNetworkFacts:

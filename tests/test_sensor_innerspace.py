@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -27,7 +28,10 @@ from custom_components.unifi_insights.diagnostics import (
 from custom_components.unifi_insights.innerspace_transforms import (
     _normalize_innerspace_mac,
     _to_mapping,
+    build_innerspace_view,
     correlate_innerspace_devices,
+    innerspace_correlation_key,
+    innerspace_view_inputs,
     normalize_innerspace_snapshot,
     parse_floor_plan_asset_path,
     transform_innerspace_device,
@@ -803,3 +807,99 @@ def test_innerspace_entity_matched_protect_device_missing_from_protect_section(
         mock_coordinator, INNERSPACE_PLACEMENT_DESCRIPTION, "is-inv-1"
     )
     assert sensor.device_info["identifiers"] == {(DOMAIN, "innerspace_is-inv-1")}
+
+
+# --- InnerSpace view (ADR-013) ----------------------------------------------
+
+VIEW_RAW = {
+    "project": {"id": "proj-1"},
+    "floor_plans": {"fp-1": {"id": "fp-1", "site_id": "s1"}},
+    "access_points": {
+        "ap-1": {"id": "ap-1", "mac": "02:00:00:00:00:01", "site_id": "s1"},
+        "ap-bad": "not-a-dict",
+    },
+    "switches": {"sw-1": {"id": "sw-1", "mac": "02:00:00:00:00:02"}},
+    "inventory": {"inv-1": {"id": "inv-1", "mac": "02:00:00:00:00:03"}},
+    "last_update": "2026-10-20T00:00:00+00:00",
+}
+VIEW_DEVICES = {
+    "s1": {
+        "dev-ap": {"id": "dev-ap", "macAddress": "02:00:00:00:00:01", "model": "U7"},
+        "dev-sw": {"id": "dev-sw", "mac": "02:00:00:00:00:02", "type": "usw"},
+        "dev-bad": "not-a-dict",
+    },
+    "bad-site": "not-a-dict",
+}
+VIEW_PROTECT = {
+    "cameras": {"cam-1": {"id": "cam-1", "macAddress": "02:00:00:00:00:03"}},
+    "lights": {"bad": None},
+    "events": {"motion": {}},
+}
+
+
+def test_build_innerspace_view_correlates_without_changing_its_inputs() -> None:
+    """The view correlates copies; the coordinators' data is left as it was."""
+    raw, devices, protect = (
+        copy.deepcopy(VIEW_RAW),
+        copy.deepcopy(VIEW_DEVICES),
+        copy.deepcopy(VIEW_PROTECT),
+    )
+
+    view = build_innerspace_view(raw, devices, protect)
+
+    assert (raw, devices, protect) == (VIEW_RAW, VIEW_DEVICES, VIEW_PROTECT)
+    assert view["project"] == {"id": "proj-1"}
+    assert view["floor_plans"] == VIEW_RAW["floor_plans"]
+    assert view["floor_plans"] is not raw["floor_plans"]
+    assert set(view["placed_devices"]) == {"ap-1", "sw-1"}
+    assert set(view["devices"]) == {"ap-1", "sw-1", "inv-1"}
+    assert view["devices"]["ap-1"] is view["access_points"]["ap-1"]
+    assert view["access_points"]["ap-1"] is not raw["access_points"]["ap-1"]
+    assert view["last_update"] == VIEW_RAW["last_update"]
+    assert view["correlations"]["ap-1"]["device_id"] == "dev-ap"
+    assert view["correlations"]["sw-1"]["device_id"] == "dev-sw"
+    assert view["correlations"]["inv-1"]["device_id"] == "cam-1"
+    assert view["access_points"]["ap-1"]["matched_domain"] == "network"
+    assert view["inventory"]["inv-1"]["matched_protect_type"] == "camera"
+
+
+@pytest.mark.parametrize("raw", [None, {}])
+def test_build_innerspace_view_without_data_is_empty(raw: Any) -> None:
+    """Without InnerSpace data the view is the empty normalized snapshot."""
+    view = build_innerspace_view(raw, VIEW_DEVICES, VIEW_PROTECT)
+
+    assert view == {**normalize_innerspace_snapshot(), "last_update": None}
+
+
+def test_build_innerspace_view_ignores_malformed_device_sections() -> None:
+    """Non-mapping Network or Protect data correlates nothing."""
+    view = build_innerspace_view(VIEW_RAW, "not-a-dict", None)
+
+    assert set(view["correlations"].values()) == {None}
+
+
+def test_innerspace_view_inputs_name_the_objects_read() -> None:
+    """The memo inputs are the raw data, devices and correlated collections."""
+    inputs = innerspace_view_inputs(VIEW_RAW, VIEW_DEVICES, VIEW_PROTECT)
+
+    assert inputs[0] is VIEW_RAW
+    assert inputs[1] is VIEW_DEVICES
+    assert VIEW_PROTECT["cameras"] in inputs
+    assert all(item is not VIEW_PROTECT["events"] for item in inputs)
+    assert innerspace_view_inputs(None, VIEW_DEVICES, VIEW_PROTECT) == (None,)
+    assert innerspace_view_inputs(VIEW_RAW, VIEW_DEVICES, None)[2:] == (None,)
+
+
+def test_innerspace_correlation_key_holds_what_correlation_reads() -> None:
+    """The key lists each device's MAC, id and type, skipping malformed entries."""
+    network, protect = innerspace_correlation_key(VIEW_DEVICES, VIEW_PROTECT)
+
+    assert network == (
+        ("s1", "dev-ap", "02:00:00:00:00:01", "dev-ap", "U7"),
+        ("s1", "dev-sw", "02:00:00:00:00:02", "dev-sw", "usw"),
+    )
+    assert protect == (("cameras", "cam-1", "02:00:00:00:00:03", "cam-1"),)
+    assert innerspace_correlation_key("not-a-dict", None) == ((), ())
+    assert innerspace_correlation_key(
+        copy.deepcopy(VIEW_DEVICES), copy.deepcopy(VIEW_PROTECT)
+    ) == (network, protect)

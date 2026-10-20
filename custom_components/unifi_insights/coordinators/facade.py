@@ -37,10 +37,11 @@ from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
     NetworkDeviceFacts,
     SiteNetworkFacts,
-    correlate_innerspace_devices,
+    build_innerspace_view,
     device_facts,
     get_site_gateway_id,
-    normalize_innerspace_snapshot,
+    innerspace_correlation_key,
+    innerspace_view_inputs,
 )
 
 from .base import CommandFailure, async_execute_command
@@ -323,8 +324,11 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
         # in async_shutdown() so this facade's forwarding listener doesn't
         # outlive it on the sub-coordinators (see _setup_listeners).
         self._sub_coordinator_unsubs: list[Callable[[], None]] = []
-        self._innerspace_corr_key: tuple[Any, ...] | None = None
-        self._cached_innerspace_data: dict[str, Any] | None = None
+        # The InnerSpace view memo: the objects the view was built from, held
+        # (not their id()) so a freed object's address cannot match a new one.
+        self._innerspace_inputs: tuple[object, ...] | None = None
+        self._innerspace_key: tuple[Any, ...] | None = None
+        self._innerspace_view_memo: Mapping[str, Any] = {}
 
         # Register listeners to update when any coordinator updates
         self._setup_listeners()
@@ -398,108 +402,44 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
         self._aggregate_data()
         self.async_update_listeners()
 
-    @staticmethod
-    def _build_innerspace_corr_key(
-        raw_innerspace: dict[str, Any],
-        devices: Any,
-        protect_data: Any,
-    ) -> tuple[Any, ...]:
-        """Build a lightweight cache key for InnerSpace MAC correlation."""
-        net_pairs: list[tuple[str, str, Any]] = []
-        if isinstance(devices, dict):
-            for site_id, site_devs in sorted(devices.items()):
-                if isinstance(site_devs, dict):
-                    for dev_id, dev in sorted(site_devs.items()):
-                        if isinstance(dev, dict):
-                            net_pairs.append(
-                                (
-                                    str(site_id),
-                                    str(dev_id),
-                                    dev.get("macAddress")
-                                    or dev.get("mac_address")
-                                    or dev.get("mac"),
-                                )
-                            )
-        prot_pairs: list[tuple[str, str, Any]] = []
-        if isinstance(protect_data, dict):
-            for col_name in (
-                "cameras",
-                "lights",
-                "sensors",
-                "nvrs",
-                "viewers",
-                "chimes",
-                "doorlocks",
-                "viewports",
-            ):
-                col = protect_data.get(col_name)
-                if isinstance(col, dict):
-                    for dev_id, dev in sorted(col.items()):
-                        if isinstance(dev, dict):
-                            prot_pairs.append(
-                                (
-                                    col_name,
-                                    str(dev_id),
-                                    dev.get("mac")
-                                    or dev.get("macAddress")
-                                    or dev.get("mac_address"),
-                                )
-                            )
-        return (id(raw_innerspace), tuple(net_pairs), tuple(prot_pairs))
-
     def _innerspace_view(
         self, devices: Any, protect_data: Mapping[str, Any]
-    ) -> dict[str, Any]:
-        """Return the InnerSpace view, correlated with Network and Protect devices."""
-        if not (self._innerspace_coordinator and self._innerspace_coordinator.data):
-            self._innerspace_corr_key = None
-            self._cached_innerspace_data = None
-            return {**normalize_innerspace_snapshot(), "last_update": None}
-        raw_innerspace = self._innerspace_coordinator.data
-        corr_key = self._build_innerspace_corr_key(
-            raw_innerspace, devices, protect_data
+    ) -> Mapping[str, Any]:
+        """
+        Return the InnerSpace view, rebuilt only when what it reads changed.
+
+        A derived memo, not domain state (ADR-013), checked in two steps:
+
+        1. The identity of the InnerSpace data, the ``devices`` section and
+           each correlated Protect collection, all published copy-on-write.
+           A Protect frame that replaces only ``events``, or a collection the
+           view does not read, costs nothing.
+        2. When one of them was replaced, the device fields the correlation
+           reads (``innerspace_correlation_key``). A Protect frame replaces
+           ``cameras`` on every camera update and a device poll replaces
+           ``devices``, but the MACs rarely change, and comparing them costs
+           what the previous MAC key did on every rebuild, where correlating
+           costs about ten times more.
+        """
+        raw = (
+            self._innerspace_coordinator.data if self._innerspace_coordinator else None
         )
+        inputs = innerspace_view_inputs(raw, devices, protect_data)
+        memo = self._innerspace_inputs
         if (
-            self._cached_innerspace_data is not None
-            and self._innerspace_corr_key == corr_key
+            memo is not None
+            and len(memo) == len(inputs)
+            and all(old is new for old, new in zip(memo, inputs, strict=True))
         ):
-            return self._cached_innerspace_data
-        devices_map: dict[str, dict[str, Any]] = {}
-        access_points_map = {
-            str(rec_id): dict(rec)
-            for rec_id, rec in raw_innerspace.get("access_points", {}).items()
-            if isinstance(rec, dict)
-        }
-        switches_map = {
-            str(rec_id): dict(rec)
-            for rec_id, rec in raw_innerspace.get("switches", {}).items()
-            if isinstance(rec, dict)
-        }
-        inventory_map = {
-            str(rec_id): dict(rec)
-            for rec_id, rec in raw_innerspace.get("inventory", {}).items()
-            if isinstance(rec, dict)
-        }
-        for section_map in (access_points_map, switches_map, inventory_map):
-            devices_map.update(section_map)
-        innerspace_data: dict[str, Any] = {
-            "project": raw_innerspace.get("project"),
-            "floor_plans": dict(raw_innerspace.get("floor_plans", {})),
-            "access_points": access_points_map,
-            "switches": switches_map,
-            "inventory": inventory_map,
-            "placed_devices": {**access_points_map, **switches_map},
-            "devices": devices_map,
-            "last_update": raw_innerspace.get("last_update"),
-        }
-        innerspace_data["correlations"] = correlate_innerspace_devices(
-            innerspace_data,
-            network_devices=devices if isinstance(devices, dict) else None,
-            protect_devices=protect_data if isinstance(protect_data, dict) else None,
-        )
-        self._innerspace_corr_key = corr_key
-        self._cached_innerspace_data = innerspace_data
-        return innerspace_data
+            return self._innerspace_view_memo
+        key = innerspace_correlation_key(devices, protect_data) if raw else None
+        if memo is None or memo[0] is not raw or key != self._innerspace_key:
+            self._innerspace_view_memo = build_innerspace_view(
+                raw, devices, protect_data
+            )
+            self._innerspace_key = key
+        self._innerspace_inputs = inputs
+        return self._innerspace_view_memo
 
     def _capture_availability(self) -> FacadeAvailability:
         """Capture the availability the delegating properties report now."""

@@ -4,12 +4,25 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from typing import Any
+from typing import Any, Final
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 from unifi_official_api.innerspace.client import is_valid_asset_segment
 
 _MAC_HEX_LEN = 12
+
+# The Protect collections correlated with InnerSpace records, with the device
+# type each match reports.
+PROTECT_CORRELATION_COLLECTIONS: Final = (
+    ("cameras", "camera"),
+    ("lights", "light"),
+    ("sensors", "sensor"),
+    ("nvrs", "nvr"),
+    ("viewers", "viewer"),
+    ("chimes", "chime"),
+    ("doorlocks", "doorlock"),
+    ("viewports", "viewport"),
+)
 
 
 def _to_mapping(record: Any) -> dict[str, Any]:
@@ -402,17 +415,7 @@ def _index_protect_devices_by_mac(
 ) -> dict[str, list[dict[str, Any]]]:
     """Index Protect devices across all collections by normalized MAC address."""
     prot_index_all: dict[str, list[dict[str, Any]]] = {}
-    protect_collections = (
-        ("cameras", "camera"),
-        ("lights", "light"),
-        ("sensors", "sensor"),
-        ("nvrs", "nvr"),
-        ("viewers", "viewer"),
-        ("chimes", "chime"),
-        ("doorlocks", "doorlock"),
-        ("viewports", "viewport"),
-    )
-    for collection_key, dtype in protect_collections:
+    for collection_key, dtype in PROTECT_CORRELATION_COLLECTIONS:
         col = prot.get(collection_key)
         if not isinstance(col, dict):
             continue
@@ -536,6 +539,115 @@ def correlate_innerspace_devices(
                 correlations[record_id] = None
 
     return correlations
+
+
+def innerspace_view_inputs(
+    raw: Mapping[str, Any] | None, network_devices: Any, protect_data: Any
+) -> tuple[object, ...]:
+    """
+    Return the objects ``build_innerspace_view`` reads, for an identity memo.
+
+    The owners publish copy-on-write, so the same objects mean the same view.
+    Without InnerSpace data the view reads nothing else.
+    """
+    if not raw:
+        return (raw,)
+    collections = (
+        tuple(
+            protect_data.get(collection)
+            for collection, _ in PROTECT_CORRELATION_COLLECTIONS
+        )
+        if isinstance(protect_data, Mapping)
+        else (protect_data,)
+    )
+    return (raw, network_devices, *collections)
+
+
+def innerspace_correlation_key(
+    network_devices: Any, protect_data: Any
+) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+    """
+    Return every device field the MAC correlation reads, as a comparable key.
+
+    Two calls that return equal keys correlate the same InnerSpace records to
+    the same Network and Protect devices.
+    """
+    network: tuple[Any, ...] = ()
+    if isinstance(network_devices, dict):
+        network = tuple(
+            (
+                site_id,
+                dev_id,
+                dev.get("macAddress") or dev.get("mac_address") or dev.get("mac"),
+                dev.get("id"),
+                dev.get("type") or dev.get("model"),
+            )
+            for site_id, site_devices in network_devices.items()
+            if isinstance(site_devices, dict)
+            for dev_id, dev in site_devices.items()
+            if isinstance(dev, dict)
+        )
+    protect: tuple[Any, ...] = ()
+    if isinstance(protect_data, dict):
+        protect = tuple(
+            (
+                collection,
+                dev_id,
+                dev.get("mac") or dev.get("macAddress") or dev.get("mac_address"),
+                dev.get("id"),
+            )
+            for collection, _ in PROTECT_CORRELATION_COLLECTIONS
+            if isinstance(devices := protect_data.get(collection), dict)
+            for dev_id, dev in devices.items()
+            if isinstance(dev, dict)
+        )
+    return network, protect
+
+
+def build_innerspace_view(
+    raw: Mapping[str, Any] | None, network_devices: Any, protect_data: Any
+) -> dict[str, Any]:
+    """
+    Build the InnerSpace view the facade publishes, correlated by MAC address.
+
+    ``raw`` is the InnerSpace coordinator's data, ``network_devices`` the
+    device coordinator's ``devices`` section and ``protect_data`` the Protect
+    data. The inputs are never changed: each placed and inventory record is
+    copied before ``correlate_innerspace_devices`` writes its match into it.
+    """
+    if not raw:
+        return {**normalize_innerspace_snapshot(), "last_update": None}
+    access_points = {
+        str(rec_id): dict(rec)
+        for rec_id, rec in raw.get("access_points", {}).items()
+        if isinstance(rec, dict)
+    }
+    switches = {
+        str(rec_id): dict(rec)
+        for rec_id, rec in raw.get("switches", {}).items()
+        if isinstance(rec, dict)
+    }
+    inventory = {
+        str(rec_id): dict(rec)
+        for rec_id, rec in raw.get("inventory", {}).items()
+        if isinstance(rec, dict)
+    }
+    view: dict[str, Any] = {
+        "project": raw.get("project"),
+        "floor_plans": dict(raw.get("floor_plans", {})),
+        "access_points": access_points,
+        "switches": switches,
+        "inventory": inventory,
+        "placed_devices": {**access_points, **switches},
+        "devices": {**access_points, **switches, **inventory},
+        "last_update": raw.get("last_update"),
+    }
+    view["correlations"] = correlate_innerspace_devices(
+        view,
+        network_devices=network_devices if isinstance(network_devices, dict) else None,
+        protect_devices=protect_data if isinstance(protect_data, dict) else None,
+    )
+    return view
 
 
 def normalize_innerspace_snapshot(
