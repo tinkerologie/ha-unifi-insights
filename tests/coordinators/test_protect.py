@@ -1661,65 +1661,51 @@ class TestUnifiProtectCoordinator:
         with pytest.raises(UpdateFailed):
             await coordinator._async_update_data()
 
-    def test_handle_device_update_camera(
-        self, coordinator: UnifiInsightsProtectCoordinator
-    ):
+    def test_device_frame_camera(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test handling camera device update."""
         send_device(coordinator, "camera", {"id": "camera2", "name": "Back Camera"})
 
         assert "camera2" in coordinator.data["cameras"]
         assert coordinator.data["cameras"]["camera2"]["name"] == "Back Camera"
 
-    def test_handle_device_update_light(
-        self, coordinator: UnifiInsightsProtectCoordinator
-    ):
+    def test_device_frame_light(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test handling light device update."""
         send_device(coordinator, "light", {"id": "light2", "name": "Porch Light"})
 
         assert "light2" in coordinator.data["lights"]
 
-    def test_handle_device_update_sensor(
-        self, coordinator: UnifiInsightsProtectCoordinator
-    ):
+    def test_device_frame_sensor(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test handling sensor device update."""
         send_device(coordinator, "sensor", {"id": "sensor2", "name": "Window Sensor"})
 
         assert "sensor2" in coordinator.data["sensors"]
 
-    def test_handle_device_update_nvr(
-        self, coordinator: UnifiInsightsProtectCoordinator
-    ):
+    def test_device_frame_nvr(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test handling NVR device update."""
         send_device(coordinator, "nvr", {"id": "nvr2", "name": "NVR 2"})
 
         assert "nvr2" in coordinator.data["nvrs"]
 
-    def test_handle_device_update_viewer(
-        self, coordinator: UnifiInsightsProtectCoordinator
-    ):
+    def test_device_frame_viewer(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test handling viewer device update."""
         send_device(coordinator, "viewer", {"id": "viewer2", "name": "Viewport 2"})
 
         assert "viewer2" in coordinator.data["viewers"]
 
-    def test_handle_device_update_chime(
-        self, coordinator: UnifiInsightsProtectCoordinator
-    ):
+    def test_device_frame_chime(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test handling chime device update."""
         send_device(coordinator, "chime", {"id": "chime2", "name": "Chime 2"})
 
         assert "chime2" in coordinator.data["chimes"]
 
-    def test_handle_device_update_no_id(
-        self, coordinator: UnifiInsightsProtectCoordinator
-    ):
+    def test_device_frame_no_id(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test handling device update without ID."""
         send_device(coordinator, "camera", {"name": "No ID Camera"})
 
         # Should not add device without ID
         assert len(coordinator.data["cameras"]) == 0
 
-    def test_handle_device_update_unknown_model_type(
+    def test_device_frame_unknown_model_type(
         self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Test handling unknown device model type notifies listeners and
@@ -1762,9 +1748,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["viewers"] == snapshot_viewers
         assert coordinator.data["chimes"] == snapshot_chimes
 
-    def test_handle_event_update_motion(
-        self, coordinator: UnifiInsightsProtectCoordinator
-    ):
+    def test_event_frame_motion(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test handling motion event."""
         # First add a camera
         coordinator.data["cameras"]["camera1"] = {"id": "camera1", "name": "Test"}
@@ -1784,7 +1768,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["cameras"]["camera1"]["lastMotionStart"] == 1234567890
         assert coordinator.data["cameras"]["camera1"]["lastMotionEnd"] is None
 
-    def test_handle_event_update_smart_detect(
+    def test_event_frame_smart_detect(
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling smart detection event."""
@@ -1808,7 +1792,7 @@ class TestUnifiProtectCoordinator:
             "vehicle",
         ]
 
-    def test_handle_event_update_doorbell_ring(
+    def test_event_frame_doorbell_ring(
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling doorbell ring event."""
@@ -1829,7 +1813,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["cameras"]["camera1"]["lastRingStart"] == 1234567890
         assert coordinator.data["cameras"]["camera1"]["lastRingEnd"] is None
 
-    def test_handle_event_update_light_motion(
+    def test_event_frame_light_motion(
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling light motion event."""
@@ -1849,9 +1833,7 @@ class TestUnifiProtectCoordinator:
 
         assert coordinator.data["lights"]["light1"]["lastMotionStart"] == 1234567890
 
-    def test_handle_event_update_no_id(
-        self, coordinator: UnifiInsightsProtectCoordinator
-    ):
+    def test_event_frame_no_id(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test handling event without ID."""
         initial_events = dict(coordinator.data["events"])
         send_event(coordinator, "motion", {"device": "camera1"})
@@ -1859,7 +1841,7 @@ class TestUnifiProtectCoordinator:
         # Events should not change without event ID
         assert coordinator.data["events"] == initial_events
 
-    def test_handle_event_update_event_id_semantics(
+    def test_event_frame_event_id_semantics(
         self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Test event ID semantics: missing/empty IDs dropped, distinct IDs accumulate,
@@ -1964,7 +1946,7 @@ class TestUnifiProtectCoordinator:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_cleanup_stale_devices(
+    async def test_missing_device_eviction(
         self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test stale device cleanup."""
@@ -2011,7 +1993,7 @@ class TestUnifiProtectCoordinator:
         )
         assert coordinator.websocket_task is None
 
-    def test_handle_event_update_unknown_device(
+    def test_event_frame_unknown_device(
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling event for unknown device - no device_id match."""
@@ -2035,7 +2017,7 @@ class TestUnifiProtectCoordinator:
         assert "motion" in coordinator.data["events"]
         assert "event_unknown" in coordinator.data["events"]["motion"]
 
-    def test_handle_event_update_no_device_id(
+    def test_event_frame_no_device_id(
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test handling event without device field."""
@@ -2054,7 +2036,7 @@ class TestUnifiProtectCoordinator:
         assert "motion" in coordinator.data["events"]
         assert "event_no_device" in coordinator.data["events"]["motion"]
 
-    def test_handle_event_update_resolves_camera_id_field(
+    def test_event_frame_resolves_camera_id_field(
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test device id resolution tolerates "cameraId" (models/event.py's
@@ -2076,7 +2058,7 @@ class TestUnifiProtectCoordinator:
 
         assert coordinator.data["cameras"]["camera1"]["lastMotionStart"] == 111
 
-    def test_handle_event_update_smart_detect_type_alias(
+    def test_event_frame_smart_detect_type_alias(
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test the "smartDetect" event type (models/event.py's
@@ -2492,7 +2474,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.data["cameras"]["camera1"]["lastRingEnd"] == 2
         assert "camera1" not in coordinator._events.latches["camera_ring"]
 
-    def test_reconcile_stale_events_skips_tracker_for_removed_device(
+    def test_latch_sweep_skips_tracker_for_removed_device(
         self, coordinator: UnifiInsightsProtectCoordinator, freezer
     ):
         """Test reconciliation for a stale tracker entry whose device has
@@ -2541,7 +2523,7 @@ class TestUnifiProtectCoordinator:
         assert "camera1" not in coordinator._events.latches["camera_motion"]
 
     @pytest.mark.asyncio
-    async def test_reconcile_stale_events_runs_on_periodic_poll(
+    async def test_latch_sweep_runs_on_periodic_poll(
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test the periodic REST poll also reconciles stale latches,
@@ -2557,7 +2539,7 @@ class TestUnifiProtectCoordinator:
         # Before the first fetch, so it runs against the pre-poll cameras.
         assert inputs[0] == PollStarted()
 
-    def test_reconcile_stale_events_runs_on_websocket_reconnect(
+    def test_latch_sweep_runs_on_websocket_reconnect(
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test a WS (re)connect triggers reconciliation - a missed "end"
@@ -2727,7 +2709,7 @@ class TestUnifiProtectCoordinator:
         # devices stream alone.
         assert health["connected"] is False
 
-    def test_cleanup_stale_devices_no_match(
+    def test_missing_device_no_match(
         self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test stale device cleanup when device not found in registry."""
@@ -2848,7 +2830,7 @@ class TestUnifiProtectCoordinator:
         await coordinator._fetch_sensors()
         assert coordinator.data["sensors"] == {}
 
-    async def test_update_device_collection_handles_non_dict_existing(
+    async def test_rest_answer_handles_non_dict_existing(
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """An empty answer over a collection that is not a dict leaves it empty."""
@@ -3202,7 +3184,7 @@ class TestUnifiProtectCoordinator:
             await getattr(coordinator, method)()
 
     @pytest.mark.asyncio
-    async def test_cleanup_stale_devices_preserves_devices_on_transient_empty(
+    async def test_missing_device_preserves_devices_on_transient_empty(
         self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test stale device cleanup preserves devices during transient empty poll."""
@@ -3223,7 +3205,7 @@ class TestUnifiProtectCoordinator:
             mock_registry.return_value.async_update_device.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_cleanup_stale_devices_removes_device_after_max_consecutive_empty(
+    async def test_missing_device_removes_device_after_max_consecutive_empty(
         self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test stale device cleanup removes devices after max empty polls."""
@@ -3363,7 +3345,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator._events.families["cameras"].empty_fetches == 0
 
     @pytest.mark.asyncio
-    async def test_cleanup_stale_devices_defers_removal_on_brief_absence(
+    async def test_missing_device_defers_removal_on_brief_absence(
         self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test a device missing from one poll is not purged from the registry.
@@ -3385,7 +3367,7 @@ class TestUnifiProtectCoordinator:
             mock_registry.return_value.async_update_device.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_cleanup_stale_devices_removes_device_after_sustained_absence(
+    async def test_missing_device_removes_device_after_sustained_absence(
         self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test a device absent past the grace window is still evicted.
@@ -3411,7 +3393,7 @@ class TestUnifiProtectCoordinator:
             )
 
     @pytest.mark.asyncio
-    async def test_cleanup_stale_devices_resets_absence_counter_on_return(
+    async def test_missing_device_resets_absence_counter_on_return(
         self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test a device that reappears restarts its grace window.
@@ -3788,9 +3770,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator._sensor_reconcile_task is None
         assert coordinator._sensor_reconnect_task is None
 
-    def test_handle_device_update_doorlock(
-        self, coordinator: UnifiInsightsProtectCoordinator
-    ):
+    def test_device_frame_doorlock(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test handling doorlock device raw dictionary merge."""
         coordinator.data["doorlocks"] = {
             "lock1": {"id": "lock1", "name": "Front Door", "state": "LOCKED"}
@@ -3812,9 +3792,7 @@ class TestUnifiProtectCoordinator:
         }
         listener.assert_called_once()
 
-    def test_handle_device_update_viewport(
-        self, coordinator: UnifiInsightsProtectCoordinator
-    ):
+    def test_device_frame_viewport(self, coordinator: UnifiInsightsProtectCoordinator):
         """Test handling viewport device raw dictionary merge."""
         coordinator.data["viewports"] = {
             "vp1": {"id": "vp1", "name": "Viewport 1", "state": "ONLINE"}
