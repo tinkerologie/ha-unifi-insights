@@ -1298,7 +1298,7 @@ async def test_public_export_includes_access_only_when_configured(
 
 
 @pytest.mark.usefixtures("enable_custom_integrations")
-async def test_carrier_fabric_diagnostics_redaction(hass):
+async def test_carrier_fabric_diagnostics_redaction(hass: HomeAssistant) -> None:
     """Test Carrier Fabric diagnostics exports allowlisted fields and redacts PII."""
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -1430,7 +1430,9 @@ async def test_carrier_fabric_diagnostics_redaction(hass):
 
 
 @pytest.mark.usefixtures("enable_custom_integrations")
-async def test_carrier_fabric_diagnostics_exception_reported(hass):
+async def test_carrier_fabric_diagnostics_exception_reported(
+    hass: HomeAssistant,
+) -> None:
     """Test Carrier Fabric diagnostics captures last exception type."""
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -1459,7 +1461,9 @@ async def test_carrier_fabric_diagnostics_exception_reported(hass):
 
 
 @pytest.mark.usefixtures("enable_custom_integrations")
-async def test_carrier_fabric_diagnostics_drops_non_allowlisted_nested_data(hass):
+async def test_carrier_fabric_diagnostics_drops_non_allowlisted_nested_data(
+    hass: HomeAssistant,
+) -> None:
     """A non-allowlisted nested object never reaches the export, whatever its keys."""
     entry = MockConfigEntry(
         domain=DOMAIN,

@@ -19,6 +19,7 @@ from pytest_homeassistant_custom_component.common import flush_store
 
 from custom_components.unifi_insights.topology import (
     _NODE_KEYS,
+    _STORAGE_KEY,
     MAX_CLIENTS_PER_SITE,
     async_get_node_key,
     async_load_node_keys,
@@ -1214,7 +1215,7 @@ def test_each_gateway_gets_its_own_wan_nodes() -> None:
 
 # Tests for the per-entry topology node-id keys.
 
-STORAGE_KEY = "unifi_insights.topology_keys"
+STORAGE_KEY = _STORAGE_KEY
 
 
 async def _flush(hass: HomeAssistant) -> None:

@@ -1395,7 +1395,7 @@ async def test_unload_entry_platform_unload_fails_keeps_clients_open(
 
 
 @pytest.fixture
-def carrier_entry(hass):
+def carrier_entry(hass: HomeAssistant) -> MockConfigEntry:
     """Create a mock Carrier Fabric config entry."""
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -1412,7 +1412,9 @@ def carrier_entry(hass):
 
 
 @pytest.mark.usefixtures("enable_custom_integrations")
-async def test_carrier_fabric_setup_and_unload_success(hass, carrier_entry):
+async def test_carrier_fabric_setup_and_unload_success(
+    hass: HomeAssistant, carrier_entry: MockConfigEntry
+) -> None:
     """Test full setup, platform forwarding, and unload sequence."""
     mock_client = MagicMock()
     mock_client.close = AsyncMock()
@@ -1457,7 +1459,9 @@ async def test_carrier_fabric_setup_and_unload_success(hass, carrier_entry):
 
 
 @pytest.mark.usefixtures("enable_custom_integrations")
-async def test_carrier_fabric_setup_probe_auth_failed(hass, carrier_entry):
+async def test_carrier_fabric_setup_probe_auth_failed(
+    hass: HomeAssistant, carrier_entry: MockConfigEntry
+) -> None:
     """Test setup raises ConfigEntryAuthFailed when probe reports AUTH_FAILED."""
     mock_client = MagicMock()
     mock_client.close = AsyncMock()
@@ -1482,7 +1486,9 @@ async def test_carrier_fabric_setup_probe_auth_failed(hass, carrier_entry):
 
 
 @pytest.mark.usefixtures("enable_custom_integrations")
-async def test_carrier_fabric_setup_probe_unreachable(hass, carrier_entry):
+async def test_carrier_fabric_setup_probe_unreachable(
+    hass: HomeAssistant, carrier_entry: MockConfigEntry
+) -> None:
     """Test setup raises ConfigEntryNotReady when probe reports UNREACHABLE."""
     mock_client = MagicMock()
     mock_client.close = AsyncMock()
@@ -1541,7 +1547,9 @@ async def test_carrier_fabric_setup_first_refresh_failure_closes_client(
 
 
 @pytest.mark.usefixtures("enable_custom_integrations")
-async def test_carrier_fabric_options_update_listener(hass, carrier_entry):
+async def test_carrier_fabric_options_update_listener(
+    hass: HomeAssistant, carrier_entry: MockConfigEntry
+) -> None:
     """Test updating options triggers reload of entry."""
     mock_client = MagicMock()
     mock_client.close = AsyncMock()
@@ -1582,7 +1590,9 @@ async def test_carrier_fabric_options_update_listener(hass, carrier_entry):
 
 
 @pytest.mark.usefixtures("enable_custom_integrations")
-async def test_carrier_fabric_device_removal(hass, carrier_entry):
+async def test_carrier_fabric_device_removal(
+    hass: HomeAssistant, carrier_entry: MockConfigEntry
+) -> None:
     """Test device removal rules for Carrier Fabric."""
     mock_coordinator = MagicMock()
     mock_coordinator.data = {
@@ -1714,7 +1724,9 @@ async def test_carrier_fabric_setup_backfills_missing_org_id_from_probe(
 
 
 @pytest.mark.usefixtures("enable_custom_integrations")
-async def test_carrier_fabric_setup_probe_unsupported(hass, carrier_entry):
+async def test_carrier_fabric_setup_probe_unsupported(
+    hass: HomeAssistant, carrier_entry: MockConfigEntry
+) -> None:
     """Test setup raises ConfigEntryNotReady when probe reports UNSUPPORTED."""
     mock_client = MagicMock()
     mock_client.close = AsyncMock()
