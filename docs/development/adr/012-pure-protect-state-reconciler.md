@@ -64,7 +64,7 @@ The state behind those rules sat in 15 private trackers, read with two clocks. T
 
 - `coordinators/protect.py` is about 1,770 lines, which ends ADR-009's size exception. `protect_events.py` is about 1,690 and `protect_ws.py` about 300.
 - Tests reach the coordinator through its real seams: frames through the WebSocket callbacks, REST through the client mocks, polls through the public refresh. Eight characterization scenarios in `tests/coordinators/test_protect_scenarios.py` passed unchanged through the whole refactor.
-- Listeners can never see a half-applied step, and an event frame that raises while it is applied commits nothing.
+- Listeners can never see a half-applied step. An input that makes `reconcile` raise commits nothing; once it returns, `_apply` commits the new state and cache before running the effects, so an effect that fails (a listener or the registry removal raising) does not roll the step back.
 
 ### Negative
 
