@@ -36,6 +36,7 @@ from custom_components.unifi_insights.const import (
 from custom_components.unifi_insights.dashboard_snapshots import (
     WINDOWS,
     build_performance_snapshot,
+    build_protect_snapshot,
     build_site_health_snapshot,
     build_unavailable_performance,
     build_unavailable_site_health,
@@ -52,7 +53,7 @@ from custom_components.unifi_insights.websocket_api import (
     _device_in_entry,
     _generic_site_payload,
     _generic_site_unavailable,
-    _protect_change_signal,
+    _protect_collections,
     _RequestError,
     ws_protect_subscribe,
     ws_site_health_subscribe,
@@ -734,13 +735,13 @@ async def test_subscribe_builder_error_does_not_break_listeners(
     assert "Unexpected error updating listener" not in caplog.text
 
 
-async def test_timeline_subscribe_pushes_on_in_place_protect_event_update(
+async def test_timeline_subscribe_pushes_on_a_new_protect_event(
     hass: HomeAssistant, init_integration: MockConfigEntry, hass_ws_client
 ) -> None:
-    """Timeline stream updates when Protect events mutate in place."""
-    data = _seed(init_integration)
+    """Timeline stream updates when a Protect frame publishes a new event."""
+    _seed(init_integration)
     facade = init_integration.runtime_data.coordinator
-    data = _publish(init_integration, protect={"events": {"motion": {}}})
+    _publish(init_integration, protect={"events": {"motion": {}}})
     client = await hass_ws_client(hass)
 
     await client.send_json(
@@ -759,12 +760,22 @@ async def test_timeline_subscribe_pushes_on_in_place_protect_event_update(
     assert initial["type"] == "event"
     assert initial["event"]["included"] == 0
 
-    data["protect"]["events"]["motion"]["evt-1"] = {
-        "id": "evt-1",
-        "device_id": "uuid-ap",
-        "name": "AP",
-        "timestamp": 4_102_444_800_000,
-    }
+    # The Protect cache is copy-on-write: the frame replaces the events map.
+    _publish(
+        init_integration,
+        protect={
+            "events": {
+                "motion": {
+                    "evt-1": {
+                        "id": "evt-1",
+                        "device_id": "uuid-ap",
+                        "name": "AP",
+                        "timestamp": 4_102_444_800_000,
+                    }
+                }
+            }
+        },
+    )
     facade.async_update_listeners()
 
     update = await client.receive_json()
@@ -1218,7 +1229,13 @@ async def test_protect_sources_and_get_and_subscribe(
     assert initial["type"] == "event"
     assert initial["event"]["status"] == "ok"
 
-    data["protect"]["nvrs"]["nvr-1"]["storage"]["healthy"] = False
+    _publish(
+        init_integration,
+        protect={
+            **data["protect"],
+            "nvrs": {"nvr-1": {"storage": {"healthy": False, "used": 40.0}}},
+        },
+    )
     facade.async_update_listeners()
     updated = await client.receive_json()
     assert updated["type"] == "event"
@@ -1415,10 +1432,78 @@ async def test_protect_payload_protect_coordinator_none(
     assert msg["result"]["status"] == "no_protect"
 
 
-def test_protect_change_signal_non_dict() -> None:
-    """Test _protect_change_signal returns 0 for non-dict inputs."""
-    assert _protect_change_signal(None) == 0
-    assert _protect_change_signal("not_a_dict") == 0
+async def test_protect_subscribe_gates_rebuilds_on_collection_identity(
+    hass: HomeAssistant, init_integration: MockConfigEntry, hass_ws_client
+) -> None:
+    """Only a frame that replaces cameras, chimes or NVRs rebuilds the stream."""
+    _seed(init_integration)
+    facade = init_integration.runtime_data.coordinator
+    data = _publish(
+        init_integration,
+        protect={
+            "cameras": {"cam-1": {"name": "Front", "state": "CONNECTED"}},
+            "chimes": {},
+            "nvrs": {},
+            "sensors": {},
+            "events": {},
+        },
+    )
+    facade.async_update_listeners()
+    await hass.async_block_till_done()
+    client = await hass_ws_client(hass)
+    await client.send_json(
+        {
+            "id": 1,
+            "type": "unifi_insights/protect/subscribe",
+            "entry_id": init_integration.entry_id,
+        }
+    )
+    assert (await client.receive_json())["success"]
+    assert (await client.receive_json())["type"] == "event"
+
+    with patch(
+        "custom_components.unifi_insights.websocket_api.build_protect_snapshot",
+        wraps=build_protect_snapshot,
+    ) as builder:
+        # A new snapshot with the same Protect collections.
+        data = _publish(init_integration, protect={**data["protect"]})
+        facade.async_update_listeners()
+        await _assert_no_event(client, 2)
+        assert builder.call_count == 0
+
+        # A frame that replaces only sensors and events. (A new sensor would
+        # register entities, which rebuilds on its own.)
+        data = _publish(
+            init_integration,
+            protect={
+                **data["protect"],
+                "sensors": {},
+                "events": {"motion": {}},
+            },
+        )
+        facade.async_update_listeners()
+        await _assert_no_event(client, 3)
+        assert builder.call_count == 0
+
+        # A frame that changes a camera replaces the cameras map.
+        _publish(
+            init_integration,
+            protect={
+                **data["protect"],
+                "cameras": {"cam-1": {"name": "Front", "state": "DISCONNECTED"}},
+            },
+        )
+        facade.async_update_listeners()
+        pushed = await client.receive_json()
+        assert builder.call_count == 1
+
+    assert pushed["type"] == "event"
+
+
+def test_protect_collections_non_mapping() -> None:
+    """Without Protect data every gated collection reads as None."""
+    assert _protect_collections(None) == (None, None, None)
+    assert _protect_collections("not_a_dict", keys=("events",)) == (None,)
 
 
 def test_generic_site_payload_unsupported_and_site_disabled(
@@ -1493,8 +1578,15 @@ async def test_protect_subscription_forwarder_branches(
     await _assert_no_event(client, 321)
 
     # 2. Rebuild exception in _async_forward: fail at the snapshot-builder
-    # boundary so the real _protect_payload path still runs up to it.
-    data["protect"]["nvrs"]["nvr-1"]["storage"]["used"] = 45.0
+    # boundary so the real _protect_payload path still runs up to it. The
+    # NVR update replaces the nvrs map, as a copy-on-write Protect frame does.
+    data = _publish(
+        init_integration,
+        protect={
+            **data["protect"],
+            "nvrs": {"nvr-1": {"storage": {"healthy": True, "used": 45.0}}},
+        },
+    )
     with (
         caplog.at_level(logging.ERROR),
         patch(

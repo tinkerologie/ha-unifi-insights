@@ -15,6 +15,7 @@ serves a single node resolved on the server.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -40,7 +41,6 @@ from .dashboard_snapshots import (
     build_unavailable_protect_snapshot,
     build_unavailable_site_health,
     build_unavailable_timeline,
-    content_revision,
 )
 from .data_transforms import NETWORK_FACTS_KEY
 from .device_tracker import _client_tracker_entries, _mac_from_unique_id
@@ -67,7 +67,7 @@ else:
     import voluptuous as vol
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable
 
     from homeassistant.core import HomeAssistant
 
@@ -420,10 +420,10 @@ def _runtime_snapshot_inputs(
     stats = data.get("stats")
     clients = data.get("clients")
     network_facts = data.get(NETWORK_FACTS_KEY)
-    protect_signal = (
-        _protect_change_signal(data.get("protect"), keys=("events",))
+    protect_events = (
+        _protect_collections(data.get("protect"), keys=("events",))
         if payload_type == "timeline"
-        else 0
+        else (None,)
     )
     return (
         sites,
@@ -431,7 +431,7 @@ def _runtime_snapshot_inputs(
         stats.get(site_id) if isinstance(stats, dict) else None,
         clients.get(site_id) if isinstance(clients, dict) else None,
         network_facts.get(site_id) if isinstance(network_facts, dict) else None,
-        protect_signal,
+        *protect_events,
         data.get("internet_activity"),
         data.get("internet_activity_unavailable"),
         runtime.coordinator.device_available,
@@ -442,16 +442,21 @@ def _runtime_snapshot_inputs(
     )
 
 
-def _protect_change_signal(
+def _protect_collections(
     value: object,
     *,
     keys: tuple[str, ...] = ("cameras", "chimes", "nvrs"),
-) -> int:
-    """Return a value-based signal for in-place Protect mutations."""
-    if not isinstance(value, dict):
-        return 0
-    signal = content_revision({key: value.get(key) for key in keys})
-    return int(signal, 16)
+) -> tuple[object, ...]:
+    """
+    Return the Protect collections a snapshot reads, for identity gating.
+
+    The Protect cache is copy-on-write (ADR-012): a frame replaces every
+    collection it changes and leaves the others as they were, so a collection
+    that is the same object as last time is unchanged.
+    """
+    if not isinstance(value, Mapping):
+        return (None,) * len(keys)
+    return tuple(value.get(key) for key in keys)
 
 
 def _runtime_protect_inputs(
@@ -461,7 +466,7 @@ def _runtime_protect_inputs(
     runtime = entry.runtime_data
     data = runtime.coordinator.data
     return (
-        _protect_change_signal(data.get("protect")),
+        *_protect_collections(data.get("protect")),
         runtime.coordinator.protect_available,
         len(dr.async_get(hass).devices),
         len(er.async_get(hass).entities),
