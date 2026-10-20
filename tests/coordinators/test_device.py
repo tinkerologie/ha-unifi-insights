@@ -2734,3 +2734,19 @@ class TestUnifiDeviceCoordinator:
         # Object identity is preserved for sitewide unassigned clients
         assert clients_dict["bad_list"] is client_bad_list
         assert clients_dict["camel_priority"] is client_camel_priority
+
+
+async def test_failed_refresh_publishes_nothing(seeded_owners: SeededOwners) -> None:
+    """A failed refresh leaves the data root and its section maps as they were."""
+    device = seeded_owners.device
+    root_before = device.data
+    devices_before = device.data["devices"]
+    seeded_owners.network_client.devices.get_all.side_effect = UniFiConnectionError(
+        "down"
+    )
+
+    await device.async_refresh()
+
+    assert not device.last_update_success
+    assert device.data is root_before
+    assert root_before["devices"] is devices_before

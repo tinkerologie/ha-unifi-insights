@@ -328,48 +328,39 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
                 for site_id, site in all_sites.items()
             }
             sites = self._filter_selected_sites(all_sites)
-            self.data["sites"] = sites
 
             if not sites:
-                self.data.update(
-                    wifi={},
-                    firewall_rules={},
-                    vouchers={},
-                    policy_based_routes={},
-                    vpn_clients={},
-                    port_forwards={},
-                    traffic_rules={},
-                    nat_rules={},
-                    static_routes={},
-                    site_vpns={},
-                    network_info={},
-                    client_links={},
-                    internet_activity={},
-                    internet_activity_unavailable=set(),
-                    legacy_site_names={},
-                    legacy_mapping_failed=False,
-                    last_update=datetime.now(tz=UTC),
-                )
-                self._update_rule_changes({})
+                cleared: dict[str, Any] = {
+                    **self.data,
+                    "sites": sites,
+                    "wifi": {},
+                    "firewall_rules": {},
+                    "vouchers": {},
+                    "policy_based_routes": {},
+                    "vpn_clients": {},
+                    "port_forwards": {},
+                    "traffic_rules": {},
+                    "nat_rules": {},
+                    "static_routes": {},
+                    "site_vpns": {},
+                    "network_info": {},
+                    "client_links": {},
+                    "internet_activity": {},
+                    "internet_activity_unavailable": set(),
+                    "legacy_site_names": {},
+                    "legacy_mapping_failed": False,
+                    "last_update": datetime.now(tz=UTC),
+                }
+                cleared["rule_changes"] = self._rule_changes(cleared, {})
+                self.data = cleared
                 self._available = True
                 return self.data
 
-            for key in (
-                "wifi",
-                "firewall_rules",
-                "vouchers",
-                "policy_based_routes",
-                "vpn_clients",
-                "port_forwards",
-                "traffic_rules",
-                "nat_rules",
-                "static_routes",
-                "site_vpns",
-            ):
-                self.data[key] = {
-                    k: v for k, v in self.data[key].items() if k in self.data["sites"]
-                }
-
+            # Nothing is published until every section is fetched: the new
+            # sites and sections are kept local and replace the data root
+            # once, after the last await (see below). The facade passes the
+            # published sections on by reference, so a rebuild during this
+            # refresh keeps seeing the previous, consistent set.
             legacy_site_names: dict[str, str] = {}
             legacy_mapping_failed = False
             try:
@@ -486,7 +477,14 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
                         raise rule_result
                     rule_sections_by_site[section][site_id] = rule_result
 
-            committed_vouchers = dict(self.data.get("vouchers", {}))
+            # Read after the last await, so an inventory a targeted voucher
+            # refresh published meanwhile is kept for its site; deselected
+            # sites are dropped.
+            committed_vouchers = {
+                site_id: inventory
+                for site_id, inventory in self.data.get("vouchers", {}).items()
+                if site_id in sites
+            }
             for site_id, (v_seq, inv) in vouchers_by_site.items():
                 if v_seq >= self._voucher_site_committed_seq.get(site_id, 0):
                     self._voucher_site_committed_seq[site_id] = v_seq
@@ -496,23 +494,24 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
                 else:
                     failed_sections.discard(("vouchers", site_id))
 
-            self.data.update(
-                sites=sites,
-                wifi=wifi_by_site,
-                firewall_rules=firewall_by_site,
-                vouchers=committed_vouchers,
-                internet_activity=internet_activity_by_site,
-                internet_activity_unavailable={
+            committed: dict[str, Any] = {
+                **self.data,
+                "sites": sites,
+                "wifi": wifi_by_site,
+                "firewall_rules": firewall_by_site,
+                "vouchers": committed_vouchers,
+                "internet_activity": internet_activity_by_site,
+                "internet_activity_unavailable": {
                     s for sec, s in failed_sections if sec == "internet_activity"
                 },
-                policy_based_routes=routes_by_site,
-                vpn_clients=vpn_clients_by_site,
+                "policy_based_routes": routes_by_site,
+                "vpn_clients": vpn_clients_by_site,
                 **rule_sections_by_site,
-                site_vpns=site_vpns_by_site,
-                client_links=client_links_by_site,
-                legacy_site_names=published_legacy_site_names,
-                legacy_mapping_failed=legacy_mapping_failed,
-            )
+                "site_vpns": site_vpns_by_site,
+                "client_links": client_links_by_site,
+                "legacy_site_names": published_legacy_site_names,
+                "legacy_mapping_failed": legacy_mapping_failed,
+            }
             for section, site_id in self._failed_sections - failed_sections:
                 _LOGGER.info(
                     "Config coordinator: %s fetch for site %s recovered",
@@ -520,7 +519,8 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
                     site_id,
                 )
             self._failed_sections = failed_sections
-            self._update_rule_changes(section_outcomes)
+            committed["rule_changes"] = self._rule_changes(committed, section_outcomes)
+            self.data = committed
             self._available = True
             return self.data
 
@@ -537,18 +537,24 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
 
         return self.data  # pragma: no cover
 
-    def _update_rule_changes(self, outcomes: dict[tuple[str, str], str]) -> None:
+    def _rule_changes(
+        self, data: Mapping[str, Any], outcomes: dict[tuple[str, str], str]
+    ) -> dict[str, list[dict[str, Any]]]:
         """
         Diff the rule sections against their last authoritative snapshot.
 
-        Runs only after a refresh has committed its data. A bug in the audit
+        Runs on the data a refresh is about to commit. A bug in the audit
         must never fail the refresh that every rule switch depends on, so any
         error is logged and the previous change list is kept.
         """
         try:
-            self.data["rule_changes"] = self._rule_audit.process(self.data, outcomes)
+            return self._rule_audit.process(data, outcomes)
         except Exception:
             _LOGGER.exception("Config coordinator: rule change detection failed")
+            previous: dict[str, list[dict[str, Any]]] = self.data.get(
+                "rule_changes", {}
+            )
+            return previous
 
     async def async_refresh_vouchers(self, site_id: str) -> None:
         """Re-fetch one site's voucher inventory without full config refresh."""
@@ -560,9 +566,9 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
         inventory = await async_fetch_site_vouchers(self, site_id, failed)
         if v_seq >= self._voucher_site_committed_seq.get(site_id, 0):
             self._voucher_site_committed_seq[site_id] = v_seq
-            self.data["vouchers"] = {
-                **self.data.get("vouchers", {}),
-                site_id: inventory,
+            self.data = {
+                **self.data,
+                "vouchers": {**self.data.get("vouchers", {}), site_id: inventory},
             }
             self._failed_sections.discard(("vouchers", site_id))
             self._failed_sections |= failed

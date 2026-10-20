@@ -445,11 +445,16 @@ class TestComputePortRatesBranches:
                 }
             }
         }
-        mock_device_coordinator._compute_port_rates()
+        result = mock_device_coordinator._compute_port_rates(
+            mock_device_coordinator.data["stats"]
+        )
         assert "dev1" in mock_device_coordinator._prev_port_bytes
         assert (
             mock_device_coordinator._prev_port_bytes["dev1"][1][1]["tx_bytes"] == 1000
         )
+        # The reused record is passed through as it is.
+        stats = mock_device_coordinator.data["stats"]["site1"]["dev1"]
+        assert result["site1"]["dev1"] is stats
 
     def test_reused_stats_not_in_previous(self, mock_device_coordinator):
         """Do not error when device in reused_stats has no previous entry."""
@@ -462,8 +467,12 @@ class TestComputePortRatesBranches:
                 }
             }
         }
-        mock_device_coordinator._compute_port_rates()
+        result = mock_device_coordinator._compute_port_rates(
+            mock_device_coordinator.data["stats"]
+        )
         assert "dev1" not in mock_device_coordinator._prev_port_bytes
+        stats = mock_device_coordinator.data["stats"]["site1"]["dev1"]
+        assert result["site1"]["dev1"] is stats
 
     @pytest.mark.parametrize("offset", [0.0, 10.0], ids=["zero", "negative"])
     def test_elapsed_zero_or_negative(self, mock_device_coordinator, offset: float):
@@ -480,8 +489,10 @@ class TestComputePortRatesBranches:
             }
         }
         with patch("time.monotonic", return_value=now):
-            mock_device_coordinator._compute_port_rates()
-        stats = mock_device_coordinator.data["stats"]["site1"]["dev1"]
+            result = mock_device_coordinator._compute_port_rates(
+                mock_device_coordinator.data["stats"]
+            )
+        stats = result["site1"]["dev1"]
         assert "port_rates" not in stats
 
     def test_negative_deltas_counter_reset(self, mock_device_coordinator):
@@ -498,8 +509,10 @@ class TestComputePortRatesBranches:
             }
         }
         with patch("time.monotonic", return_value=now):
-            mock_device_coordinator._compute_port_rates()
-        stats = mock_device_coordinator.data["stats"]["site1"]["dev1"]
+            result = mock_device_coordinator._compute_port_rates(
+                mock_device_coordinator.data["stats"]
+            )
+        stats = result["site1"]["dev1"]
         assert "port_rates" not in stats
 
     def test_compute_port_rates_port_churn_new_port_skipped(
@@ -523,8 +536,16 @@ class TestComputePortRatesBranches:
             }
         }
         with patch("time.monotonic", return_value=now):
-            mock_device_coordinator._compute_port_rates()
-        stats = mock_device_coordinator.data["stats"]["site1"]["dev1"]
+            result = mock_device_coordinator._compute_port_rates(
+                mock_device_coordinator.data["stats"]
+            )
+        stats = result["site1"]["dev1"]
         assert "port_rates" in stats
         assert 1 in stats["port_rates"]
         assert 2 not in stats["port_rates"]
+        # The rates go on a copy; the input maps and record are not written.
+        assert result is not mock_device_coordinator.data["stats"]
+        assert result["site1"] is not mock_device_coordinator.data["stats"]["site1"]
+        assert (
+            "port_rates" not in mock_device_coordinator.data["stats"]["site1"]["dev1"]
+        )

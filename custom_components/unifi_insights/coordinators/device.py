@@ -1152,19 +1152,24 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             # reporting last-known values. Site-level fetch failures below
             # still keep a polled site's previous data.
             # The facts map is replaced like the others, so an empty site list
-            # also leaves it empty.
-            for key in (
-                "devices",
-                "stats",
-                "clients",
-                "vpn_connections",
-                NETWORK_FACTS_KEY,
-            ):
-                self.data[key] = {
+            # also leaves it empty. The maps are new and stay local until the
+            # single publish below: the facade passes the published maps on
+            # by reference, so writing into them would change snapshots it
+            # has already handed out.
+            sections: dict[str, dict[str, Any]] = {
+                key: {
                     site_id: value
                     for site_id, value in self.data[key].items()
                     if site_id in site_ids
                 }
+                for key in (
+                    "devices",
+                    "stats",
+                    "clients",
+                    "vpn_connections",
+                    NETWORK_FACTS_KEY,
+                )
+            }
             self._vpn_connection_failures = {
                 site_id: count
                 for site_id, count in self._vpn_connection_failures.items()
@@ -1184,7 +1189,11 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                     "Device coordinator: No sites available from config coordinator"
                 )
                 self._available = True
-                self.data["last_update"] = datetime.now(tz=UTC)
+                self.data = {
+                    **self.data,
+                    **sections,
+                    "last_update": datetime.now(tz=UTC),
+                }
                 return self.data
 
             _LOGGER.debug(
@@ -1256,18 +1265,18 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 result for result in results if not isinstance(result, BaseException)
             ]
 
-            # Update data structure with results
+            # Put the results into the local section maps
             for site_id, (devices_dict, stats_dict, clients_dict), vpn in zip(
                 site_ids, site_results, vpn_results, strict=True
             ):
-                self.data["devices"][site_id] = devices_dict
-                self.data["stats"][site_id] = stats_dict
-                self.data["clients"][site_id] = clients_dict
+                sections["devices"][site_id] = devices_dict
+                sections["stats"][site_id] = stats_dict
+                sections["clients"][site_id] = clients_dict
                 connections = self._vpn_connections_or_previous(site_id, vpn)
                 if connections is None:
-                    self.data["vpn_connections"].pop(site_id, None)
+                    sections["vpn_connections"].pop(site_id, None)
                 else:
-                    self.data["vpn_connections"][site_id] = connections
+                    sections["vpn_connections"][site_id] = connections
 
                 _LOGGER.debug(
                     "Device coordinator: Processed site %s - %d devices, %d clients",
@@ -1277,16 +1286,16 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 )
 
             # Compute per-port byte rates from deltas
-            self._compute_port_rates()
+            sections["stats"] = self._compute_port_rates(sections["stats"])
 
-            # Publish the read model from the final, enriched maps. It is a
+            # Build the read model from the final, enriched maps. It is a
             # new map each refresh: WebSocket change detection compares by
             # identity. A failed refresh never gets here, so the last
             # committed facts stay with the last committed devices and stats.
-            self.data[NETWORK_FACTS_KEY] = {
+            sections[NETWORK_FACTS_KEY] = {
                 site_id: build_site_network_facts(
-                    self.data["devices"].get(site_id),
-                    self.data["stats"].get(site_id),
+                    sections["devices"].get(site_id),
+                    sections["stats"].get(site_id),
                 )
                 for site_id in site_ids
             }
@@ -1294,7 +1303,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             # Forget failure counts for devices that are no longer reported.
             current_device_ids = {
                 device_id
-                for site_stats in self.data["stats"].values()
+                for site_stats in sections["stats"].values()
                 for device_id in site_stats
             }
             self._stats_failures = {
@@ -1304,7 +1313,13 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             }
 
             self._available = True
-            self.data["last_update"] = datetime.now(tz=UTC)
+            # Publish once, after the last await, as a new root: a snapshot
+            # taken during the refresh keeps the previous maps unchanged.
+            self.data = {
+                **self.data,
+                **sections,
+                "last_update": datetime.now(tz=UTC),
+            }
 
             # Clean up stale devices (Gold requirement)
             self._cleanup_stale_devices()
@@ -1334,9 +1349,11 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
         # Should never reach here due to raises above
         return self.data  # pragma: no cover
 
-    def _compute_port_rates(self) -> None:
+    def _compute_port_rates(
+        self, stats_by_site: Mapping[str, Mapping[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
         """
-        Compute per-port byte rates from consecutive poll deltas.
+        Return ``stats_by_site`` with per-port byte rates from poll deltas.
 
         Each device keeps its own last sample time. A device whose statistics
         were reused this poll (see ``_process_device``) is skipped and its
@@ -1344,12 +1361,17 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
         counters would report a rate of 0, and the next fresh poll would then
         divide two polls' worth of bytes by one poll's elapsed time. Its
         reused stats keep the port_rates from the last real sample.
+
+        The result is new maps: a record that gains ``port_rates`` is
+        replaced by a copy, and no input map or record is written to.
         """
         now = time.monotonic()
         previous = self._prev_port_bytes
         current: dict[str, tuple[float, dict[int, dict[str, int]]]] = {}
+        result: dict[str, dict[str, Any]] = {}
 
-        for stats_dict in self.data.get("stats", {}).values():
+        for site_id, stats_dict in stats_by_site.items():
+            site_stats = result[site_id] = dict(stats_dict)
             for device_id, stats in stats_dict.items():
                 if not isinstance(stats, dict):
                     continue
@@ -1390,10 +1412,11 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                     }
 
                 if port_rates:
-                    stats["port_rates"] = port_rates
+                    site_stats[device_id] = {**stats, "port_rates": port_rates}
 
         # Update stored state for next poll
         self._prev_port_bytes = current
+        return result
 
     def _cleanup_stale_devices(self) -> None:
         """Remove stale network devices from the device registry (Gold requirement)."""

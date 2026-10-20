@@ -204,17 +204,15 @@ async def test_owner_update_keeps_untouched_sections(
         assert after[key] is not before[key], key
 
 
-async def test_mid_refresh_snapshot_changes_later_quirk(
+async def test_mid_refresh_snapshot_keeps_its_contents(
     seeded_owners: SeededOwners,
 ) -> None:
     """
-    A snapshot taken during a device refresh changes when the refresh ends.
+    A snapshot taken during a device refresh is unchanged when the refresh ends.
 
-    Today the refresh prunes its sections into new maps before its API calls,
-    then writes each site's results into those maps afterwards. A facade
-    rebuild in between holds the pruned maps, so its per-site entries are
-    swapped under it when the refresh completes, and the owner's root is the
-    same dict before and after.
+    The refresh builds its sections locally and publishes them once, as a new
+    root, after its last API call. A facade rebuild in between keeps the
+    previous maps, and the previous root is left as it was.
     """
     device = seeded_owners.device
     facade = seeded_owners.facade
@@ -236,23 +234,24 @@ async def test_mid_refresh_snapshot_changes_later_quirk(
 
     assert device.last_update_success
     assert seen_then[SITE_ID] is site_devices_before
-    assert mid["devices"][SITE_ID] is not site_devices_before
-    assert mid["devices"][SITE_ID] is device.data["devices"][SITE_ID]
-    assert mid["stats"][SITE_ID] is not site_stats_before
-    assert mid["stats"][SITE_ID] is device.data["stats"][SITE_ID]
-    assert device.data is root_before
+    assert mid["devices"][SITE_ID] is site_devices_before
+    assert mid["devices"][SITE_ID] is not device.data["devices"][SITE_ID]
+    assert mid["stats"][SITE_ID] is site_stats_before
+    assert mid["stats"][SITE_ID] is not device.data["stats"][SITE_ID]
+    assert device.data is not root_before
+    assert root_before["devices"][SITE_ID] is site_devices_before
 
 
-async def test_mid_config_refresh_snapshot_sees_new_sites_quirk(
+async def test_mid_config_refresh_snapshot_keeps_previous_sites(
     seeded_owners: SeededOwners,
 ) -> None:
     """
-    A snapshot taken during a config refresh already holds its new sites.
+    A snapshot taken during a config refresh keeps the previous sites.
 
-    Today the refresh writes the new site map into its published root right
-    after listing the sites, before its other API calls. A facade rebuild in
-    between publishes those sites beside the previous sections, and the
-    owner's root is the same dict before and after.
+    The refresh keeps its new sites and sections local and publishes them
+    once, as a new root, after its last API call. A facade rebuild in between
+    sees the previous, consistent set, and the previous root is left as it
+    was.
     """
     config = seeded_owners.config
     facade = seeded_owners.facade
@@ -273,7 +272,8 @@ async def test_mid_config_refresh_snapshot_sees_new_sites_quirk(
     await _while_in_flight(gate, config.async_refresh(), rebuild)
 
     assert config.last_update_success
-    assert mid["sites"] is not sites_before
-    assert mid["sites"][SITE_ID]["name"] == "Renamed"
-    assert mid["sites"] is config.data["sites"]
-    assert config.data is root_before
+    assert mid["sites"] is sites_before
+    assert mid["sites"][SITE_ID]["name"] == "Default"
+    assert config.data["sites"][SITE_ID]["name"] == "Renamed"
+    assert config.data is not root_before
+    assert root_before["sites"] is sites_before

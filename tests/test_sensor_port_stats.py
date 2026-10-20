@@ -142,7 +142,9 @@ class TestEndToEndLegacyPortStatsPath:
             }
         }
         with patch("time.monotonic", return_value=t0):
-            device_coord._compute_port_rates()
+            device_coord.data["stats"] = device_coord._compute_port_rates(
+                device_coord.data["stats"]
+            )
 
         # Second sample 10 seconds later:
         # Port 1: +10,000 bytes tx (1,000 B/s), +20,000 bytes rx (2,000 B/s)
@@ -155,7 +157,9 @@ class TestEndToEndLegacyPortStatsPath:
             3: {"tx_bytes": 60000, "rx_bytes": 70000},
         }
         with patch("time.monotonic", return_value=t1):
-            device_coord._compute_port_rates()
+            device_coord.data["stats"] = device_coord._compute_port_rates(
+                device_coord.data["stats"]
+            )
 
         rates = device_coord.data["stats"]["site1"]["device1"]["port_rates"]
         assert rates[1]["tx_bytes_rate"] == 1000.0

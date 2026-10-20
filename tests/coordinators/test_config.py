@@ -2619,3 +2619,41 @@ class TestUnifiConfigCoordinator:
             dummy_coord, "site1", "default", set()
         )
         assert "w1" in wifi_res
+
+
+class TestCopyOnWritePublish:
+    """The config owner replaces its data root; it never writes into it."""
+
+    @pytest.mark.usefixtures("enable_custom_integrations")
+    async def test_failed_refresh_publishes_nothing(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A refresh that fails after listing new sites leaves the root as it was."""
+        config = seeded_owners.config
+        root_before = config.data
+        sites_before = config.data["sites"]
+        _two_sites(seeded_owners)
+        seeded_owners.network_client.routes.list_routes.side_effect = (
+            UniFiAuthenticationError("revoked")
+        )
+
+        await config.async_refresh()
+
+        assert not config.last_update_success
+        assert config.data is root_before
+        assert root_before["sites"] is sites_before
+        assert BRANCH_ID not in config.data["sites"]
+
+    async def test_voucher_refresh_replaces_the_root(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A targeted voucher refresh publishes a new root, not a written one."""
+        config = seeded_owners.config
+        root_before = config.data
+        vouchers_before = config.data["vouchers"]
+
+        await config.async_refresh_vouchers(SITE_ID)
+
+        assert config.data is not root_before
+        assert root_before["vouchers"] is vouchers_before
+        assert config.data["vouchers"] is not vouchers_before
