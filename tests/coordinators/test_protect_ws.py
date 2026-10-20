@@ -72,6 +72,16 @@ def test_parse_device_message(message: Any, expected: DeviceFrame | None) -> Non
             EventFrame("ring", "e2", {"eventType": "ring", "id": "e2"}),
             id="flat",
         ),
+        pytest.param(
+            {"type": "add", "action": {"type": "ring", "id": "e3", "device": "c1"}},
+            EventFrame("ring", "e3", {"type": "ring", "id": "e3", "device": "c1"}),
+            id="action-container",
+        ),
+        pytest.param(
+            {"type": "add", "payload": {"event_type": "motion", "id": "e4"}},
+            EventFrame("motion", "e4", {"event_type": "motion", "id": "e4"}),
+            id="snake-case-event-type",
+        ),
         pytest.param({"type": "add", "item": {"id": "e1"}}, None, id="no-type"),
         pytest.param({"type": "add", "item": {"type": "motion"}}, None, id="no-id"),
         pytest.param("text", None, id="not-a-dict"),
@@ -101,6 +111,20 @@ def test_rate_limit_notice(window_ms: Any, cooldown: float) -> None:
         received_at=AT,
     )
     assert parsed == RateLimited(cooldown, None, window_ms)
+
+
+def test_rate_limit_notice_with_snake_case_window_and_limit() -> None:
+    """A flat notice using ``window_ms`` and a limit is parsed the same way."""
+    parsed = ProtectStreams().parse_event_message(
+        {
+            "error": "Too many requests",
+            "name": "TOO_MANY_REQUESTS_ERROR",
+            "window_ms": 4000,
+            "limit": 20,
+        },
+        received_at=AT,
+    )
+    assert parsed == RateLimited(4.0, 20, 4000)
 
 
 def test_unparseable_frames_warn_once_per_stream(
