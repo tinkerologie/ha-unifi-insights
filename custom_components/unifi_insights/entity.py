@@ -46,6 +46,10 @@ from .data_transforms import (
     first_not_none,
     get_field,
     get_site_gateway_id,
+    network_device,
+    network_device_stats,
+    protect_device,
+    site_record,
 )
 
 if TYPE_CHECKING:
@@ -105,10 +109,10 @@ def build_site_device_info(
     if gateway_id is not None:
         return {"identifiers": {(DOMAIN, f"{site_id}_{gateway_id}")}}
 
-    site_data = coordinator_data.get("sites", {}).get(site_id, {})
-    meta = site_data.get("meta", {}) if isinstance(site_data, dict) else {}
+    site_data = site_record(coordinator_data, site_id) or {}
+    meta = site_data.get("meta")
     site_name = (meta.get("name") if isinstance(meta, dict) else None) or (
-        site_data.get("name", site_id) if isinstance(site_data, dict) else site_id
+        site_data.get("name", site_id)
     )
 
     return {
@@ -208,8 +212,10 @@ class UnifiInsightsEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         self._site_id = site_id
         self._device_id = device_id
 
-        # Get device data
-        device_data = coordinator.data["devices"][site_id][device_id]
+        device_data = network_device(coordinator.data, site_id, device_id)
+        if device_data is None:
+            msg = f"Network device {device_id} is not in site {site_id}"
+            raise KeyError(msg)
         device_name = get_field(
             device_data, "name", default=f"UniFi Device {device_id}"
         )
@@ -288,9 +294,8 @@ class UnifiInsightsEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
     @property
     def device_data(self) -> dict[str, Any] | None:
         """Return device data."""
-        devices = self.coordinator.data["devices"].get(self._site_id, {})
-        result = devices.get(self._device_id)
-        return result if isinstance(result, dict) else None
+        record = network_device(self.coordinator.data, self._site_id, self._device_id)
+        return record if isinstance(record, dict) else None
 
     @property
     def device_facts(self) -> NetworkDeviceFacts | None:
@@ -300,9 +305,10 @@ class UnifiInsightsEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
     @property
     def device_stats(self) -> dict[str, Any] | None:
         """Return device statistics."""
-        stats = self.coordinator.data["stats"].get(self._site_id, {})
-        result = stats.get(self._device_id)
-        return result if isinstance(result, dict) else None
+        record = network_device_stats(
+            self.coordinator.data, self._site_id, self._device_id
+        )
+        return record if isinstance(record, dict) else None
 
 
 class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
@@ -323,8 +329,8 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         self._device_id = device_id
         self._entity_type = entity_type
 
-        # Get device data
-        device_data = coordinator.data["protect"][f"{device_type}s"].get(device_id, {})
+        collection = f"{device_type}s"
+        device_data = protect_device(coordinator.data, collection, device_id) or {}
         device_name = device_data.get(
             "name", f"UniFi {device_type.capitalize()} {device_id}"
         )
@@ -351,14 +357,14 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         # Check if this device has a corresponding network device
         network_device_id = None
         network_site_id = None
+        matched_network_device: Mapping[str, Any] = {}
 
         # For cameras and NVRs, try to find a matching network device by MAC address
         # This ensures devices like UDM-Pro show as a single device in HA
         # Use the original device ID for MAC lookup in case of dual-camera
         lookup_device_id = original_device_id if parent_camera_id else device_id
-        lookup_device_data = coordinator.data["protect"][f"{device_type}s"].get(
-            lookup_device_id, device_data
-        )
+        lookup_record = protect_device(coordinator.data, collection, lookup_device_id)
+        lookup_device_data = device_data if lookup_record is None else lookup_record
 
         # Match cameras and NVRs to network devices by MAC
         should_match_mac = (
@@ -374,6 +380,7 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
                         if net_device.get("macAddress") == device_mac:
                             network_device_id = net_device_id
                             network_site_id = site_id
+                            matched_network_device = net_device
                             _LOGGER.debug(
                                 "Matched network device %s at site %s for %s %s",
                                 net_device_id,
@@ -390,9 +397,7 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         if network_device_id and network_site_id:
             # Use the network device's identifiers to ensure all entities
             # appear under the same device
-            network_device = coordinator.data["devices"][network_site_id][
-                network_device_id
-            ]
+            network_device = matched_network_device
             network_device_name = network_device.get(
                 "name", f"UniFi Device {network_device_id}"
             )
@@ -480,13 +485,10 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         # expiring) - gate on the protect coordinator's last_update_success.
         if not self.coordinator.protect_available:
             return False
-        device_data = self.coordinator.data["protect"][f"{self._device_type}s"].get(
-            self._device_id
+        device_data = protect_device(
+            self.coordinator.data, f"{self._device_type}s", self._device_id
         )
-        if not device_data or not isinstance(device_data, dict):
-            return False
-        state = device_data.get("state")
-        return isinstance(state, str) and state == "CONNECTED"
+        return device_data is not None and device_data.get("state") == "CONNECTED"
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -510,10 +512,10 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
     @property
     def device_data(self) -> dict[str, Any] | None:
         """Return device data."""
-        data = self.coordinator.data["protect"][f"{self._device_type}s"].get(
-            self._device_id
+        record = protect_device(
+            self.coordinator.data, f"{self._device_type}s", self._device_id
         )
-        return data if isinstance(data, dict) else None
+        return record if isinstance(record, dict) else None
 
 
 class UnifiSiteEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
@@ -851,7 +853,9 @@ class UnifiInnerSpaceEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
             matched_domain == "network"
             and isinstance(matched_site_id, str)
             and isinstance(matched_device_id, str)
-            and self.coordinator.get_device(matched_site_id, matched_device_id)
+            and network_device(
+                self.coordinator.data, matched_site_id, matched_device_id
+            )
             is not None
         ):
             return {
@@ -862,22 +866,16 @@ class UnifiInnerSpaceEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
             matched_domain == "protect"
             and isinstance(matched_protect_type, str)
             and isinstance(matched_device_id, str)
-        ):
-            protect_section = self.coordinator.data.get("protect", {}).get(
-                f"{matched_protect_type}s", {}
+            and protect_device(
+                self.coordinator.data, f"{matched_protect_type}s", matched_device_id
             )
-            if (
-                isinstance(protect_section, dict)
-                and matched_device_id in protect_section
-            ):
-                return {
-                    "identifiers": {
-                        (
-                            DOMAIN,
-                            f"protect_{matched_protect_type}_{matched_device_id}",
-                        )
-                    },
-                }
+            is not None
+        ):
+            return {
+                "identifiers": {
+                    (DOMAIN, f"protect_{matched_protect_type}_{matched_device_id}")
+                },
+            }
 
         name = (
             record.get("name")
