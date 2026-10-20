@@ -37,6 +37,8 @@ from typing import TYPE_CHECKING, Any, Final, Literal, override
 
 from unifi_official_api.const import PROTECT_RATE_LIMIT_WINDOW
 
+from .protect_events import DeviceFrame, EventFrame, pick_field
+
 if TYPE_CHECKING:
     from datetime import datetime
 
@@ -51,23 +53,6 @@ ENVELOPE_ONLY_KEYS: Final = frozenset({"type", "action", "payload", "item"})
 _RATE_LIMIT_ERROR: Final = "TOO_MANY_REQUESTS_ERROR"
 
 
-def pick_field(containers: list[dict[str, Any]], *keys: str) -> Any:
-    """
-    Return the first truthy value for any of `keys`, in container order.
-
-    A frame's identifying fields (modelKey/id for devices, type/id for
-    events) may live at the top level, under "item", under "payload", or split
-    across an "action" header. Truthy on purpose (ADR-009 §1): an empty string
-    id is no id.
-    """
-    for container in containers:
-        for key in keys:
-            value = container.get(key)
-            if value:
-                return value
-    return None
-
-
 class WebSocketConnectionStateCallback(partial[None]):
     """Adapt the API's positional boolean to the coordinator's named argument."""
 
@@ -75,24 +60,6 @@ class WebSocketConnectionStateCallback(partial[None]):
     def __call__(self, connected: bool) -> None:
         """Forward the connection state using the coordinator's named argument."""
         super().__call__(connected=connected)
-
-
-@dataclass(frozen=True, slots=True)
-class DeviceFrame:
-    """A device update from the "devices" stream."""
-
-    model_key: str
-    device_id: str
-    fields: dict[str, Any]
-
-
-@dataclass(frozen=True, slots=True)
-class EventFrame:
-    """An event from the "events" stream."""
-
-    event_type: str
-    event_id: str
-    fields: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
