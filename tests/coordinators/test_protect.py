@@ -2542,9 +2542,7 @@ class TestUnifiProtectCoordinator:
         assert coordinator.websocket_health["events"]["last_message_at"] is None
 
         assert coordinator.websocket_health["connected"] is False
-        assert coordinator.websocket_health["connected"] is False
         # The top-level "any wire alive" timestamp still advances.
-        assert coordinator.websocket_health["last_message_at"] is not None
         assert coordinator.websocket_health["last_message_at"] is not None
 
     def test_websocket_health_updates_on_events_frame(
