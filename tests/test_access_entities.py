@@ -35,7 +35,7 @@ from custom_components.unifi_insights.entity import (
     door_device_info,
     doorbell_device_info,
 )
-from tests.test_access_coordinator import (
+from tests.fixtures.access import (
     DEVICES,
     DOORS,
     ENTRY_DATA,

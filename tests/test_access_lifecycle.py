@@ -48,7 +48,7 @@ from custom_components.unifi_insights.coordinators.access import (
     UnifiInsightsAccessCoordinator,
 )
 from custom_components.unifi_insights.entity import access_unique_id
-from tests.test_access_coordinator import DEVICES, DOORS, NAMESPACE, _client
+from tests.fixtures.access import DEVICES, DOORS, NAMESPACE, _client
 from tests.test_access_webhook import _sign, _unlock_event
 
 

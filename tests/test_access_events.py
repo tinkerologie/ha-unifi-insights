@@ -18,7 +18,7 @@ from custom_components.unifi_insights.coordinators.access import (
     access_result_signal,
     async_dispatch_access_result,
 )
-from tests.test_access_coordinator import DEVICES, DOORS, ENTRY_DATA, _client, _ready
+from tests.fixtures.access import DEVICES, DOORS, ENTRY_DATA, _client, _ready
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

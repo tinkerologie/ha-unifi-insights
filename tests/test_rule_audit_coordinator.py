@@ -31,7 +31,7 @@ from custom_components.unifi_insights.coordinators.config_sections import (
     SECTION_OUTCOME_FAILED,
     async_fetch_site_routes,
 )
-from tests.test_coordinators import (
+from tests.fixtures.coordinator_clients import (
     _create_mock_model,
     _create_mock_network_client,
 )
