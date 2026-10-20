@@ -23,17 +23,6 @@ from homeassistant.helpers.entity_registry import (
 )
 from homeassistant.helpers.typing import UNDEFINED
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-if TYPE_CHECKING:
-    from homeassistant.components.sensor import SensorEntity
-    from homeassistant.core import HomeAssistant
-    from homeassistant.helpers import entity_registry as er
-
-    from custom_components.unifi_insights.sensor import (
-        UnifiInsightsSensorEntityDescription,
-        UnifiStorageSensorEntityDescription,
-    )
-
 from unifi_official_api.protect.models.sensor import (
     Sensor as ProtectSensorModel,
 )
@@ -91,6 +80,16 @@ from tests.fixtures.library_responses import (
     SAMPLE_KEYPAD_FOB,
     SAMPLE_THREAD_LINK_STATION,
 )
+
+if TYPE_CHECKING:
+    from homeassistant.components.sensor import SensorEntity
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.unifi_insights.sensor import (
+        UnifiInsightsSensorEntityDescription,
+        UnifiStorageSensorEntityDescription,
+    )
 
 
 def _create_mock_model(**kwargs):

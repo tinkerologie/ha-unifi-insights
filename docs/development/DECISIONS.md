@@ -27,7 +27,7 @@ An accepted ADR is never edited to change its meaning. A new ADR supersedes it i
 | [004](./adr/004-stable-console-identity-for-unique-ids.md)           | Stable console identity for config entry unique IDs           | Accepted              | 2026-10-16 |
 | [005](./adr/005-bundled-dashboard-cards-with-versioned-contracts.md) | Bundled dashboard cards with versioned WebSocket contracts    | Accepted              | 2026-10-16 |
 | [006](./adr/006-three-layer-diagnostics-redaction.md)                | Three-layer diagnostics redaction                             | Accepted              | 2026-10-16 |
-| [007](./adr/007-flat-home-assistant-module-layout.md)                | Flat Home Assistant module layout                             | Accepted              | 2026-10-16 |
+| [007](./adr/007-flat-home-assistant-module-layout.md)                | Flat Home Assistant module layout                             | Accepted              | 2026-10-20 |
 | [008](./adr/008-depend-on-unifi-official-api-from-pypi.md)           | Depend on `unifi-official-api` from PyPI                      | Accepted              | 2026-10-19 |
 | [009](./adr/009-amend-flat-module-layout.md)                         | Amendments to the flat module layout for the deepening issues | Accepted              | 2026-10-19 |
 | [010](./adr/010-one-owner-per-write-command.md)                      | One owner per write command                                   | Accepted              | 2026-10-19 |

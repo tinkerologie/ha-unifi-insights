@@ -7,22 +7,13 @@ import copy
 import json
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock
 
 import pytest
+from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.components.diagnostics.const import REDACTED
 from homeassistant.const import CONF_API_KEY
 from homeassistant.helpers.json import ExtendedJSONEncoder, JSONEncoder
-
-if TYPE_CHECKING:
-    from unittest.mock import MagicMock
-
-    from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
-
-from homeassistant.components.diagnostics import async_redact_data
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from unifi_official_api import UniFiResponseError, __version__
 from unifi_official_api.access.models import AccessDevice, AccessDoor, AccessUser
@@ -81,6 +72,9 @@ from tests.fixtures.network_rule_responses import (
     static_route_record,
     traffic_rule_record,
 )
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
 
 
 async def test_diagnostics(

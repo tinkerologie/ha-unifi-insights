@@ -8,10 +8,6 @@ import pytest
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
 from homeassistant.helpers.entity import EntityDescription
 
-if TYPE_CHECKING:
-    from homeassistant.core import HomeAssistant
-
-
 from custom_components.unifi_insights.const import (
     DEVICE_TYPE_CAMERA,
     DEVICE_TYPE_LIGHT,
@@ -30,6 +26,9 @@ from custom_components.unifi_insights.entity import (
     is_device_online,
     is_gateway_device,
 )
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
 
 
 class TestGetField:

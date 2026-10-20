@@ -19,10 +19,6 @@ from homeassistant.helpers.entity_registry import (
     async_get as async_get_entity_registry,
 )
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-if TYPE_CHECKING:
-    from homeassistant.core import HomeAssistant
-
 from unifi_official_api.network.models.routes import (
     PolicyBasedRoute,
 )
@@ -62,6 +58,9 @@ from custom_components.unifi_insights.switch import (
     async_setup_entry,
 )
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
 
 
 class TestParallelUpdates:

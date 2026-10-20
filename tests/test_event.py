@@ -3,21 +3,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from homeassistant.components.event import EventDeviceClass
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
-
-    from homeassistant.core import HomeAssistant
-    from homeassistant.helpers.entity import Entity
-    from homeassistant.helpers.entity_platform import AddEntitiesCallback
-
-from typing import TYPE_CHECKING, Any
-
 from homeassistant.const import CONF_API_KEY, EVENT_STATE_CHANGED, EntityCategory
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.util import dt as dt_util
@@ -59,6 +49,13 @@ from custom_components.unifi_insights.event import (
     discover_network_rule_change_events,
 )
 from tests.fixtures.access import DEVICES, DOORS, ENTRY_DATA, _client, _ready
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.entity import Entity
+    from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 
 class TestParallelUpdates:

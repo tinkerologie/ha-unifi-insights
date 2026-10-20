@@ -6,9 +6,6 @@ from __future__ import annotations
 
 import copy
 from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from homeassistant.core import HomeAssistant
 from unittest.mock import MagicMock
 
 import pytest
@@ -35,6 +32,10 @@ from custom_components.unifi_insights.sensor import (
     UnifiStorageSensor,
     discover_storage_sensors,
 )
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+
 
 UDM_STORAGE: list[dict[str, Any]] = [
     {

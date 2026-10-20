@@ -1174,7 +1174,6 @@ class TestUnifiDeviceCoordinator:
         assert "default" in result["devices"]
 
     @pytest.mark.asyncio
-    @pytest.mark.asyncio
     async def test_mac_keyed_device_skips_statistics_keeps_legacy_metrics(
         self, coordinator: UnifiInsightsDeviceCoordinator
     ):

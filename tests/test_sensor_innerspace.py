@@ -11,10 +11,6 @@ from homeassistant.components.diagnostics import REDACTED
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-if TYPE_CHECKING:
-    from homeassistant.core import HomeAssistant
-
 from unifi_official_api.auth import ApiKeyAuth, LocalAuth
 from unifi_official_api.const import ConnectionType
 from unifi_official_api.exceptions import UniFiValidationError
@@ -47,6 +43,9 @@ from custom_components.unifi_insights.sensor import (
 from custom_components.unifi_insights.sensor import (
     async_setup_entry as async_setup_sensor,
 )
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
 
 
 def _strings(value: Any) -> list[str]:

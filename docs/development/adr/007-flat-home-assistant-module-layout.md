@@ -141,7 +141,7 @@ A new module is justified only when it introduces a new platform, a new coordina
 ```text
 tests/
 ├── conftest.py
-├── fixtures/                   # unchanged
+├── fixtures/                   # shared test data (library responses, access.py, coordinator_clients.py, ...)
 ├── coordinators/               # one test module per coordinator module
 │   ├── test_base.py, test_config.py, test_device.py, test_protect.py, test_protect_ws.py,
 │   │   test_protect_events.py, test_facade.py, test_access.py, test_innerspace.py,

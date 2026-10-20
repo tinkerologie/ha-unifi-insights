@@ -11,20 +11,14 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pydantic import ValidationError
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
-    from homeassistant.core import HomeAssistant
-
-from typing import TYPE_CHECKING
-
 from homeassistant.const import CONF_API_KEY
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
+from pydantic import ValidationError
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 from unifi_official_api import (
     ApiKeyAuth,
     ConnectionType,
@@ -61,6 +55,11 @@ from tests.fixtures.coordinator_clients import (
     _create_mock_network_client,
     _create_mock_protect_client,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from homeassistant.core import HomeAssistant
 
 
 def _voucher_model(data: dict) -> MagicMock:

@@ -19,12 +19,6 @@ from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
-    from homeassistant.core import HomeAssistant
-
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
@@ -47,6 +41,11 @@ from custom_components.unifi_insights.coordinators.protect import (
     _normalize_epoch_seconds,
 )
 from tests.conftest import set_mock_device_lookup
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from homeassistant.core import HomeAssistant
 
 
 def _create_mock_model(data: dict[str, Any]) -> MagicMock:
