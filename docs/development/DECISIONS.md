@@ -33,6 +33,7 @@ An accepted ADR is never edited to change its meaning. A new ADR supersedes it i
 | [010](./adr/010-one-owner-per-write-command.md)                      | One owner per write command                                   | Accepted              | 2026-10-19 |
 | [011](./adr/011-platform-modules-and-flat-layout-homes.md)           | Platform module size and homes for the remaining helpers      | Accepted              | 2026-10-20 |
 | [012](./adr/012-pure-protect-state-reconciler.md)                    | A pure reconciler for Protect state                           | Accepted              | 2026-10-20 |
+| [013](./adr/013-typed-read-only-facade-snapshot.md)                  | A typed, read-only facade snapshot                            | Accepted              | 2026-10-20 |
 
 ### Multi-coordinator architecture behind a facade
 
@@ -68,7 +69,7 @@ ADR-007 is amended for the deepening issues #337, #338 and #339. `get_field()` a
 
 ### One owner per write command
 
-Each write belongs to the coordinator that owns the data it changes: config (rules, Wi-Fi, guest authorisation), device (restart, PoE, outlets, clients), Protect (cameras, lights, chimes, viewers, alarms, sirens, talkback), Access and Carrier Fabric (unchanged), and the facade only for vouchers and `async_refresh_or_raise`. The owner runs the call through the shared `async_execute_command` in `coordinators/base.py`, raises translated errors, publishes a copy-on-write overlay and applies one recorded reconciliation policy; a failed refresh never fails a successful write. The config coordinator publishes the legacy site-name mapping and owns the only resolver, which never guesses `"default"`. Entities and services call owners with typed calls, replacing the string dispatch and its fallbacks. The Protect commands fit inside ADR-009's 3,500-line cap. Implemented in [#338](https://github.com/tinkerologie/ha-unifi-insights/issues/338). [ADR-010](./adr/010-one-owner-per-write-command.md)
+Each write belongs to the coordinator that owns the data it changes: config (rules, Wi-Fi, guest authorisation), device (restart, PoE, outlets, clients), Protect (cameras, lights, chimes, viewers, alarms, sirens, talkback), Access and Carrier Fabric (unchanged), and the facade only for `async_refresh_or_raise` (ADR-013 moved the voucher commands to config). The owner runs the call through the shared `async_execute_command` in `coordinators/base.py`, raises translated errors, publishes a copy-on-write overlay and applies one recorded reconciliation policy; a failed refresh never fails a successful write. The config coordinator publishes the legacy site-name mapping and owns the only resolver, which never guesses `"default"`. Entities and services call owners with typed calls, replacing the string dispatch and its fallbacks. The Protect commands fit inside ADR-009's 3,500-line cap. Implemented in [#338](https://github.com/tinkerologie/ha-unifi-insights/issues/338). [ADR-010](./adr/010-one-owner-per-write-command.md)
 
 ### Platform module size and homes for the remaining helpers
 
@@ -78,13 +79,17 @@ The 17 platform modules are exempt from ADR-007's 2,000-line budget and are boun
 
 `coordinators/protect_events.py` decides how every WebSocket frame, REST device answer, poll boundary, siren stop and command overlay changes the Protect cache (liveviews, which have nothing to reconcile, are written by the coordinator): `reconcile(state, cache, input, now)` returns a new frozen state, a copy-on-write cache and effects as data (`PublishUpdate`, `RemoveDevice`, `Escalate`, `Log`). It imports nothing from Home Assistant or the API library and never reads a clock; `now` carries both the monotonic and the wall clock. `coordinators/protect_ws.py` parses frames and tracks stream health. The coordinator does the I/O, and its `_apply()` is the only writer of the state. Notification calls and the latent quirks are unchanged, each quirk pinned by a test and tracked in its own issue (#379, #381 to #384). `coordinators/protect.py` drops from 3,482 to about 1,770 lines, ending ADR-009's exception. Implemented in [#340](https://github.com/tinkerologie/ha-unifi-insights/issues/340). [ADR-012](./adr/012-pure-protect-state-reconciler.md)
 
+### A typed, read-only facade snapshot
+
+The facade becomes a typed, read-only projection that holds no domain state, amending ADR-002 and ADR-010's ownership table. `FacadeData` is a `TypedDict` with `ReadOnly` keys and `Mapping` sections, published as a top-level `ReadOnlyDict`: no runtime cost, unchanged section identity and JSON, nested writes caught by strict mypy, and test builders that deep-freeze so an entity write fails in tests. Owners publish copy-on-write. The voucher settings (now a frozen `VoucherSettings`), the latest generated vouchers and the generate and delete commands move to the config coordinator, which already owns the voucher inventory. Pure lookups go to `data_transforms.py`, availability is captured in the snapshot, Protect WebSocket streams gate by identity, and the InnerSpace view stays an identity-keyed memo. A deep freeze (about 3 to 6 ms per rebuild), `MappingProxyType`, a frozen dataclass and a `ReadOnlyDict` subclass (`@final`) were rejected. Lands in a series of PRs under [#342](https://github.com/tinkerologie/ha-unifi-insights/issues/342). [ADR-013](./adr/013-typed-read-only-facade-snapshot.md)
+
 ## Future considerations
 
 ### Facade coordinator
 
 **Status:** kept
 
-`UnifiInsightsFacadeCoordinator` exists so entities and services read one `data` mapping. It is the largest coordinator module after Protect and duplicates some lookups that the specialized coordinators already own. Once ADR-007 lands and entities use declarative `EntityDescription` fields, revisit whether entities can subscribe to their owning coordinator directly.
+`UnifiInsightsFacadeCoordinator` exists so entities and services read one `data` mapping. ADR-013 makes it a typed, read-only projection that holds no domain state: the voucher state and commands moved to the config coordinator, and it keeps aggregation, availability, `async_refresh_or_raise` and pure reads and exports. Once entities read through the snapshot lookups, revisit whether they can subscribe to their owning coordinator directly.
 
 ### Repairs
 

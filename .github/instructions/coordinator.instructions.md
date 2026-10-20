@@ -21,8 +21,8 @@ This integration uses a multi-coordinator architecture under `custom_components/
 - **Carrier Fabric Coordinator** (`coordinators/carrier_fabric.py`) — UniFi Carrier Fabric OLTs, ONUs, subscribers, and alarms
 - **Config sections** (`coordinators/config_sections.py`) — Config coordinator section fetchers, including per-site internet activity reports
 - **Rule audit and export** (`coordinators/rule_audit.py`) — Network rule change auditing and snapshot export
-- Voucher state parsing lives in `data_transforms.py` (pure, no coordinator)
-- **Facade Coordinator** (`coordinators/facade.py`) — Unified view combining sub-coordinators for entity platforms; it holds only the voucher commands and `async_refresh_or_raise`
+- Voucher state parsing lives in `data_transforms.py` (pure, no coordinator); the voucher settings, the latest generated vouchers and the voucher commands belong to the config coordinator (ADR-013)
+- **Facade Coordinator** (`coordinators/facade.py`) — Unified view combining sub-coordinators for entity platforms; it holds no domain state and keeps only `async_refresh_or_raise`. Pass each owner's sections through by reference; never copy or write into them
 
 ## Write Commands (ADR-010)
 
