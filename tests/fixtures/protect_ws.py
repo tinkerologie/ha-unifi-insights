@@ -49,10 +49,17 @@ class FakeProtectWebSocket:
         """End every subscription."""
         self.stopped = True
 
-    async def wait_subscribed(self, *streams: str) -> None:
-        """Wait until every named stream has subscribed."""
-        async with self._subscribed:
-            await self._subscribed.wait_for(lambda: set(streams) <= set(self._messages))
+    async def wait_subscribed(self, *streams: str, timeout: float = 5) -> None:
+        """Wait until every named stream has subscribed, or fail naming the rest."""
+        try:
+            async with asyncio.timeout(timeout), self._subscribed:
+                await self._subscribed.wait_for(
+                    lambda: set(streams) <= set(self._messages)
+                )
+        except TimeoutError:
+            missing = sorted(set(streams) - set(self._messages))
+            msg = f"streams never subscribed: {missing}"
+            raise AssertionError(msg) from None
 
     def raw(self, stream: str, message: Any) -> None:
         """Deliver a raw message on ``stream``."""
