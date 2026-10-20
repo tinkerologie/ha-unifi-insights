@@ -31,10 +31,12 @@ The state behind those rules sat in 15 private trackers, read with two clocks. T
    - The inputs are typed: `DeviceFrame`, `EventFrame`, `RestBatch(RequestStamp, outcome)`, `PollStarted`, `StreamReconnected`, `PollCompleted`, `SirenStopped` and `CommandOverlay`.
    - The effects are data: `PublishUpdate(mark_success)`, `RemoveDevice`, `Escalate` and `Log`.
    - The module imports nothing from Home Assistant or `unifi_official_api`, imports no `time` and never reads a clock. A test parses it and enforces this.
+
 2. **`coordinators/protect_ws.py` parses frames and tracks stream health.** It turns a raw frame into a `DeviceFrame`, `EventFrame`, `RateLimited` or nothing, keeps each stream's health, and owns the warn-once flags.
 3. **The coordinator does the I/O and carries out the effects.** `coordinators/protect.py` keeps the REST fetches, the family support bookkeeping, the global alarm manager probe, the WebSocket lifecycle, the timers, the debouncer and the commands.
    - `_apply(input)` is the only writer of the reconciler state. It commits the new state and cache, then runs the effects in order.
    - A fetcher stamps its request with `begin_request` before the `await` and applies the answer with no `await` in between.
+   - Liveviews are the one REST answer that does not go through the reconciler: they have no frames, latches or eviction, so the coordinator writes them itself, copy-on-write.
    - No coordinator code holds `self.data` or the reconciler state across an `await` to write from it.
 4. **The cache is copy-on-write everywhere** (as ADR-010 does for overlays). A step returns a new root when anything changed and shares every untouched collection and record. The notification calls stay exactly as they were: a device frame calls `async_set_updated_data`, which also re-arms the poll timer; an event frame, a siren stop and a command overlay call `async_update_listeners`; a REST answer, a poll boundary and a reconnect notify nobody.
 5. **Behavior is preserved, quirks included.** Each quirk found in the review is pinned by a test whose ID contains `quirk` and has its own follow-up issue (see Consequences). Fixing one is a separate, reviewed change.

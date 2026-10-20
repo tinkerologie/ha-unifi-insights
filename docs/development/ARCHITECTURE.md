@@ -90,7 +90,7 @@ The facade coordinator has no update interval. It subscribes to the specialized 
 
 ### Protect state reconciliation
 
-The Protect coordinator has two sources that race each other: the "devices" and "events" WebSocket streams and the 30 s REST poll. `coordinators/protect_events.py` holds every decision about how one of them changes the cache, as one pure function (see [ADR-012](./adr/012-pure-protect-state-reconciler.md)):
+The Protect coordinator has two sources that race each other: the "devices" and "events" WebSocket streams and the 30 s REST poll. `coordinators/protect_events.py` holds every decision about how one of them changes the cache, as one pure function (see [ADR-012](./adr/012-pure-protect-state-reconciler.md)). The one exception is liveviews: they have no frames, latches or eviction to reconcile, so `protect.py` writes each liveview answer itself, copy-on-write.
 
 ```python
 reconcile(state, cache, input, now) -> Step(state, cache, effects)
