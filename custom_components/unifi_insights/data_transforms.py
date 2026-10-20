@@ -660,6 +660,78 @@ def get_site_gateway_id(data: Mapping[str, Any], site_id: str) -> str | None:
     return site_facts.gateway_id if site_facts is not None else None
 
 
+# --- Facade snapshot lookups (ADR-013) ---------------------------------------
+#
+# Pure reads of one record from the facade snapshot (or any mapping shaped
+# like it). Each returns None for a missing or malformed section or record
+# and never raises, so readers need no guards of their own.
+
+
+def _record(data: object, *path: str) -> Mapping[str, Any] | None:
+    """Return the mapping at ``path`` under ``data``, or None."""
+    value = data
+    for key in path:
+        if not isinstance(value, Mapping):
+            return None
+        value = value.get(key)
+    return value if isinstance(value, Mapping) else None
+
+
+def network_device(
+    data: Mapping[str, Any], site_id: str, device_id: str
+) -> Mapping[str, Any] | None:
+    """Return one Network device's record, or None."""
+    return _record(data, "devices", site_id, device_id)
+
+
+def network_device_stats(
+    data: Mapping[str, Any], site_id: str, device_id: str
+) -> Mapping[str, Any] | None:
+    """Return one Network device's statistics, or None."""
+    return _record(data, "stats", site_id, device_id)
+
+
+def network_client(
+    data: Mapping[str, Any], site_id: str, client_id: str
+) -> Mapping[str, Any] | None:
+    """Return one Network client's record by its client ID, or None."""
+    return _record(data, "clients", site_id, client_id)
+
+
+def site_record(data: Mapping[str, Any], site_id: str) -> Mapping[str, Any] | None:
+    """Return one site's record, or None."""
+    return _record(data, "sites", site_id)
+
+
+def rule_record(
+    data: Mapping[str, Any], kind: str, site_id: str, rule_id: str
+) -> Mapping[str, Any] | None:
+    """
+    Return one network rule's record, or None.
+
+    ``kind`` is the rule section the record lives in, such as
+    ``"firewall_rules"``, ``"port_forwards"`` or ``"vpn_clients"``.
+    """
+    return _record(data, kind, site_id, rule_id)
+
+
+def protect_device(
+    data: Mapping[str, Any], collection: str, device_id: str
+) -> Mapping[str, Any] | None:
+    """
+    Return one Protect device's record, or None.
+
+    ``collection`` is the Protect collection, such as ``"cameras"`` or
+    ``"chimes"``.
+    """
+    return _record(data, "protect", collection, device_id)
+
+
+def latest_voucher(data: Mapping[str, Any], site_id: str) -> Mapping[str, Any] | None:
+    """Return the latest voucher generated for a site, or None."""
+    return _record(data, "latest_vouchers", site_id)
+
+
 def current_chime_ringtone_id(chime_data: Any) -> str | None:
     """Read one reported ringtone ID only when every ring setting agrees."""
     if not isinstance(chime_data, dict):

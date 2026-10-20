@@ -42,6 +42,9 @@ from custom_components.unifi_insights.data_transforms import (
     get_site_gateway_id,
     innerspace_correlation_key,
     innerspace_view_inputs,
+    network_device,
+    network_device_stats,
+    site_record,
 )
 
 from .base import CommandFailure, async_execute_command
@@ -487,21 +490,19 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
             now=datetime.now(tz=UTC),
         )
 
-    def get_site(self, site_id: str) -> dict[str, Any] | None:
-        """Get site data by site ID (delegates to config coordinator)."""
-        return self._config_coordinator.get_site(site_id)
+    def get_site(self, site_id: str) -> Mapping[str, Any] | None:
+        """Return a site's record from the snapshot, or None."""
+        return site_record(self.data, site_id)
 
-    def get_device(self, site_id: str, device_id: str) -> dict[str, Any] | None:
-        """Get device data by site ID and device ID."""
-        devices = self.data.get("devices", {}).get(site_id, {})
-        result = devices.get(device_id)
-        return result if isinstance(result, dict) else None
+    def get_device(self, site_id: str, device_id: str) -> Mapping[str, Any] | None:
+        """Return a Network device's record from the snapshot, or None."""
+        return network_device(self.data, site_id, device_id)
 
-    def get_device_stats(self, site_id: str, device_id: str) -> dict[str, Any] | None:
-        """Get device statistics by site ID and device ID."""
-        stats = self.data.get("stats", {}).get(site_id, {})
-        result = stats.get(device_id)
-        return result if isinstance(result, dict) else None
+    def get_device_stats(
+        self, site_id: str, device_id: str
+    ) -> Mapping[str, Any] | None:
+        """Return a Network device's statistics from the snapshot, or None."""
+        return network_device_stats(self.data, site_id, device_id)
 
     def get_device_facts(
         self, site_id: str, device_id: str
