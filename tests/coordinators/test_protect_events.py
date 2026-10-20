@@ -597,12 +597,10 @@ def test_preservation_copies_rest_records_it_changes() -> None:
 
 
 @pytest.mark.parametrize(
-    ("family", "model_key", "record_id", "frame", "rest", "message"),
+    ("family", "frame", "rest", "message"),
     [
         pytest.param(
             "nvrs",
-            "nvr",
-            "n1",
             {"armMode": {"status": "armed"}},
             {"id": "n1", "armMode": {"status": "disarmed", "armProfileId": "p1"}},
             "the NVR arrived",
@@ -610,8 +608,6 @@ def test_preservation_copies_rest_records_it_changes() -> None:
         ),
         pytest.param(
             "sirens",
-            "siren",
-            "sr1",
             {"sirenStatus": {"isActive": True}},
             siren(active=False),
             "for sirens arrived",
@@ -619,21 +615,18 @@ def test_preservation_copies_rest_records_it_changes() -> None:
         ),
     ],
 )
-def test_answer_requested_before_a_frame_is_dropped(  # noqa: PLR0917
-    family: Family,
-    model_key: str,
-    record_id: str,
-    frame: dict[str, Any],
-    rest: dict[str, Any],
-    message: str,
+def test_answer_requested_before_a_frame_is_dropped(
+    family: Family, frame: dict[str, Any], rest: dict[str, Any], message: str
 ) -> None:
     """A frame that lands while the request is out beats the older answer."""
+    record_id = rest["id"]
     seed = cache(**{family: {record_id: copy.deepcopy(rest)}})
     result = run(
         seed,
         [
             Begin(family, 1.0),
-            (2.0, device(model_key, record_id, **frame)),
+            # The model key is the family's singular ("nvr", "siren").
+            (2.0, device(family[:-1], record_id, **frame)),
             Answer(family, Fetched({record_id: rest}), 3.0),
         ],
     )

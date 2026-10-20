@@ -72,21 +72,37 @@ Every client receives Home Assistant's shared `aiohttp` session through `async_g
 
 Each config entry owns a set of `DataUpdateCoordinator` subclasses, one per data domain, with intervals chosen for that domain's cost and volatility (see [ADR-002](./adr/002-multi-coordinator-architecture-behind-a-facade.md)):
 
-| Coordinator                             | Module                           | Interval         | Scope                                                     |
-| --------------------------------------- | -------------------------------- | ---------------- | --------------------------------------------------------- |
-| `UnifiInsightsConfigCoordinator`        | `coordinators/config.py`         | 5 min            | Sites, WiFi, networks, firewall, ACL, DNS, vouchers, VPN  |
-| `UnifiInsightsDeviceCoordinator`        | `coordinators/device.py`         | 30 s             | Network device and client metrics                         |
-| `UnifiInsightsProtectCoordinator`       | `coordinators/protect.py`        | 30 s + WebSocket | Cameras, lights, sensors, chimes, NVR, viewers, liveviews |
-| `UnifiInsightsAccessCoordinator`        | `coordinators/access.py`         | 30 s + webhook   | Doors, users, emergency status                            |
-| `UnifiInsightsInnerSpaceCoordinator`    | `coordinators/innerspace.py`     | 5 min            | Floor plans and placements                                |
-| `UnifiInsightsSiteManagerCoordinator`   | `coordinators/site_manager.py`   | 10 min           | Cloud console and ISP metrics (shared per cloud key)      |
-| `UnifiInsightsMobilityCoordinator`      | `coordinators/mobility.py`       | 5 min (1 h idle) | Mobility workspaces and routers                           |
-| `UnifiInsightsCarrierFabricCoordinator` | `coordinators/carrier_fabric.py` | 5 min            | Carrier Fabric organizations (standalone entry)           |
-| `UnifiInsightsFacadeCoordinator`        | `coordinators/facade.py`         | push only        | Unified read view over the coordinators above             |
+| Coordinator                             | Module                           | Interval         | Scope                                                                                                                           |
+| --------------------------------------- | -------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `UnifiInsightsConfigCoordinator`        | `coordinators/config.py`         | 5 min            | Sites, WiFi, networks, firewall, ACL, DNS, vouchers, VPN                                                                        |
+| `UnifiInsightsDeviceCoordinator`        | `coordinators/device.py`         | 30 s             | Network device and client metrics                                                                                               |
+| `UnifiInsightsProtectCoordinator`       | `coordinators/protect.py`        | 30 s + WebSocket | Cameras, lights, sensors, chimes, NVR, viewers, liveviews (frames parsed in `protect_ws.py`, reconciled in `protect_events.py`) |
+| `UnifiInsightsAccessCoordinator`        | `coordinators/access.py`         | 30 s + webhook   | Doors, users, emergency status                                                                                                  |
+| `UnifiInsightsInnerSpaceCoordinator`    | `coordinators/innerspace.py`     | 5 min            | Floor plans and placements                                                                                                      |
+| `UnifiInsightsSiteManagerCoordinator`   | `coordinators/site_manager.py`   | 10 min           | Cloud console and ISP metrics (shared per cloud key)                                                                            |
+| `UnifiInsightsMobilityCoordinator`      | `coordinators/mobility.py`       | 5 min (1 h idle) | Mobility workspaces and routers                                                                                                 |
+| `UnifiInsightsCarrierFabricCoordinator` | `coordinators/carrier_fabric.py` | 5 min            | Carrier Fabric organizations (standalone entry)                                                                                 |
+| `UnifiInsightsFacadeCoordinator`        | `coordinators/facade.py`         | push only        | Unified read view over the coordinators above                                                                                   |
 
 All coordinators inherit `UnifiInsightsBaseCoordinator` (`coordinators/base.py`) for shared error mapping: authentication failures raise `ConfigEntryAuthFailed` (triggers reauth) and connection or server failures raise `UpdateFailed` (retry next interval). The device, Protect and InnerSpace coordinators detach registry devices the console no longer reports through the base class's `_remove_stale_device`; each keeps its own rule for when a device counts as stale (Protect waits `MAX_CONSECUTIVE_MISSING_POLLS` polls).
 
 The facade coordinator has no update interval. It subscribes to the specialized coordinators, aggregates their snapshots into one `data` mapping, and fans out a single listener notification. Entities and services read from the facade so they do not need to know which coordinator owns a field.
+
+### Protect state reconciliation
+
+The Protect coordinator has two sources that race each other: the "devices" and "events" WebSocket streams and the 30 s REST poll. `coordinators/protect_events.py` holds every decision about how one of them changes the cache, as one pure function:
+
+```python
+reconcile(state, cache, input, now) -> Step(state, cache, effects)
+```
+
+- **Inputs.** A `DeviceFrame` or `EventFrame` (parsed by `protect_ws.py`), a `RestBatch` (one REST answer: `Fetched`, `NotFound`, `TransientError` or `NoAnswer`, with the `RequestStamp` taken by `begin_request` before the request's await), `PollStarted` and `PollCompleted` around the main poll, `StreamReconnected`, `SirenStopped` and a command's `CommandOverlay`.
+- **State.** A frozen `ReconcilerState`: the motion, smart-detect and ring latches, per-sensor WebSocket recency and preserve counters, alarm hub tamper records, siren stop guards, the NVR and siren WebSocket generations, and each family's empty-answer, error and missing-poll counts.
+- **Effects.** `PublishUpdate` (`async_set_updated_data` for device frames, `async_update_listeners` otherwise), `RemoveDevice` (registry removal through the base coordinator), `Escalate` (the fetcher re-raises a transient error that outlasted its window) and `Log` (written to the `coordinators.protect` logger).
+- **Copy-on-write.** The cache is never changed in place: a step that changes something returns a new root that shares every untouched collection and record, and a step that changes nothing returns the same object.
+- **Clocks.** The coordinator reads both clocks once per input into an `Instant`: monotonic time for request stamps, WebSocket recency, the tamper race and the siren guard lifetime; wall time for the latch timeout and the siren stop fallback.
+
+The coordinator's `_apply(input)` is the only writer of the state: it commits the new state and cache, then runs the effects in order. The module imports nothing from Home Assistant, the API library or the clock, which an AST test enforces, so `tests/coordinators/test_protect_events.py` drives it table by table.
 
 ### Command path
 
@@ -181,7 +197,7 @@ Six Lovelace cards are built from `frontend/src/` with Vite into `custom_compone
 
 ### Push channels
 
-- **Protect WebSocket** (`unifi_official_api.protect.websocket`): device and event updates with heartbeat and health checks, falling back to the 30 s poll. `coordinators/protect_ws.py` turns both streams' raw frames into typed `DeviceFrame`, `EventFrame` and `RateLimited` values and tracks each stream's health (`websocket_health` in diagnostics); the Protect coordinator applies them.
+- **Protect WebSocket** (`unifi_official_api.protect.websocket`): device and event updates with heartbeat and health checks, falling back to the 30 s poll. `coordinators/protect_ws.py` turns both streams' raw frames into typed `DeviceFrame`, `EventFrame` and `RateLimited` values and tracks each stream's health (`websocket_health` in diagnostics); the Protect coordinator applies them through the reconciler (see [Protect state reconciliation](#protect-state-reconciliation)).
 - **Access webhook** (`access_webhook.py`): signed access-granted and access-denied results delivered through Home Assistant's `webhook` component.
 
 ### Diagnostics
