@@ -31,7 +31,8 @@ pytest --cov-report=xml && python script/check_coverage_per_file.py coverage.xml
 
 ## Fixtures & Setup Patterns
 
-- Use shared fixtures in `tests/conftest.py`
+- Use shared fixtures in `tests/conftest.py`; put test data shared between test files in `tests/fixtures/`, never import from another test module
+- Name test files after the module they cover: `tests/<pkg>/test_<module>.py` (for example `tests/coordinators/test_protect.py`). Add a feature suffix (`test_sensor_ports.py`) only when the module's tests exceed about 2,000 lines (ADR-007)
 - Mock at the API client boundary (`network_client`, `protect_client`, `access_client`, `innerspace_client`, `site_manager_client`, `mobility_client`, `carrier_fabric_client`, or `probe.py`), not internal coordinator methods
 - Access runtime state via `entry.runtime_data`, never `hass.data[DOMAIN]`
 

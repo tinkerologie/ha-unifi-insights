@@ -41,7 +41,8 @@ custom_components/unifi_insights/
 └── py.typed
 
 frontend/                       # TypeScript + Lit sources for the Lovelace cards (Vite build)
-tests/                          # pytest suite, 95% per-file branch coverage enforced in CI
+tests/                          # pytest suite mirroring the package (tests/coordinators/, test_<module>.py),
+                                # shared data in tests/fixtures/; 95% per-file branch coverage in CI
 script/                         # develop, lint, mypy, test, hassfest, query-api, setup
 blueprints/                     # Example automation blueprints shipped with the integration
 docs/development/               # This document, DECISIONS.md and adr/

@@ -18,8 +18,8 @@
 #   ./script/test -v
 #   ./script/test --cov
 #   ./script/test --cov-html
-#   ./script/test --cov -k test_coordinators
-#   ./script/test tests/test_api_wrapper.py
+#   ./script/test --cov tests/coordinators
+#   ./script/test tests/test_sensor.py
 
 set -euo pipefail
 

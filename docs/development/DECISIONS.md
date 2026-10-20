@@ -27,7 +27,7 @@ An accepted ADR is never edited to change its meaning. A new ADR supersedes it i
 | [004](./adr/004-stable-console-identity-for-unique-ids.md)           | Stable console identity for config entry unique IDs           | Accepted              | 2026-10-16 |
 | [005](./adr/005-bundled-dashboard-cards-with-versioned-contracts.md) | Bundled dashboard cards with versioned WebSocket contracts    | Accepted              | 2026-10-16 |
 | [006](./adr/006-three-layer-diagnostics-redaction.md)                | Three-layer diagnostics redaction                             | Accepted              | 2026-10-16 |
-| [007](./adr/007-flat-home-assistant-module-layout.md)                | Flat Home Assistant module layout                             | Proposed              | 2026-10-16 |
+| [007](./adr/007-flat-home-assistant-module-layout.md)                | Flat Home Assistant module layout                             | Accepted              | 2026-10-16 |
 | [008](./adr/008-depend-on-unifi-official-api-from-pypi.md)           | Depend on `unifi-official-api` from PyPI                      | Accepted              | 2026-10-19 |
 | [009](./adr/009-amend-flat-module-layout.md)                         | Amendments to the flat module layout for the deepening issues | Accepted              | 2026-10-19 |
 | [010](./adr/010-one-owner-per-write-command.md)                      | One owner per write command                                   | Accepted              | 2026-10-19 |
@@ -53,7 +53,7 @@ The six Lovelace cards are compiled from `frontend/` and served by the integrati
 
 Diagnostics pass through `TO_REDACT`, then `CLIENT_TO_REDACT` / `WIFI_TO_REDACT`, then `_anonymize_macs()`. A new field is safe by default because the layers run on the whole payload, not on a hand-picked list of keys. [ADR-006](./adr/006-three-layer-diagnostics-redaction.md)
 
-### Flat Home Assistant module layout (proposed)
+### Flat Home Assistant module layout
 
 Consolidate 57 root modules into 33 by moving every base entity into `entity.py`, every platform entity into its standard platform module, pure helpers into `data_transforms.py`, dashboard builders into `dashboard_snapshots.py`, and topology helpers into `topology.py`. `coordinators/` is the only subpackage now that #345 removed the vendored `api/` (199 to 71 Python files, and 48 after #341). No module goes over about 2,000 lines: when one grows past that, deepen it rather than split it, and land the file moves after #337 to #339. Tracked in [#341](https://github.com/tinkerologie/ha-unifi-insights/issues/341), part of [#343](https://github.com/tinkerologie/ha-unifi-insights/issues/343). [ADR-007](./adr/007-flat-home-assistant-module-layout.md)
 

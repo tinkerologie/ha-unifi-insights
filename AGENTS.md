@@ -418,7 +418,7 @@ Aim for zero validation errors in generated code.
 
 **Test structure:**
 
-- `tests/` mirrors `custom_components/unifi_insights/` structure
+- `tests/` mirrors `custom_components/unifi_insights/`: `tests/<pkg>/test_<module>.py`, with a feature suffix only once a module's tests exceed about 2,000 lines; shared test data lives in `tests/fixtures/` (ADR-007)
 - Use fixtures for common setup (Home Assistant mock, coordinator, etc.)
 - Mock external API calls
 - Every module must be ≥95% (branch coverage enabled, checked per file in CI with `python script/check_coverage_per_file.py coverage.xml --fail-under 95`)

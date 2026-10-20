@@ -1,7 +1,7 @@
 # ADR-007: Flat Home Assistant module layout
 
-**Date:** 2026-10-16 (revised 2026-10-17: size budget and `api/` end state; revised 2026-10-19: `api/` removed by #345)
-**Status:** Proposed (implementation tracked in [#341](https://github.com/tinkerologie/ha-unifi-insights/issues/341), part of [#343](https://github.com/tinkerologie/ha-unifi-insights/issues/343); originally [#330](https://github.com/tinkerologie/ha-unifi-insights/issues/330)) Amended by [ADR-009](./009-amend-flat-module-layout.md) and [ADR-011](./011-platform-modules-and-flat-layout-homes.md).
+**Date:** 2026-10-16 (revised 2026-10-17: size budget and `api/` end state; revised 2026-10-19: `api/` removed by #345; accepted 2026-10-20 when #341 landed)
+**Status:** Accepted (implemented by [#341](https://github.com/tinkerologie/ha-unifi-insights/issues/341), part of [#343](https://github.com/tinkerologie/ha-unifi-insights/issues/343); originally [#330](https://github.com/tinkerologie/ha-unifi-insights/issues/330)) Amended by [ADR-009](./009-amend-flat-module-layout.md) and [ADR-011](./011-platform-modules-and-flat-layout-homes.md).
 
 ## Context
 
@@ -134,7 +134,7 @@ Home Assistant requires device communication to live in a library published on P
 
 A new module is justified only when it introduces a new platform, a new coordinator, or a new Home Assistant surface. A new feature on an existing platform is a new `EntityDescription` table and class in that platform file.
 
-### Test layout (proposed, separate PR)
+### Test layout
 
 `tests/` is 84 flat files and 93,000 lines (after #345 removed the vendored client tests), with `test_coordinators.py` alone at 12,000 lines. Mirror the package instead:
 
@@ -150,6 +150,14 @@ tests/
 ```
 
 Rule: `tests/<pkg>/test_<module>.py` mirrors `custom_components/unifi_insights/<pkg>/<module>.py`. A test module may be split with a feature suffix (`test_sensor_ports.py`) only when it exceeds about 2,000 lines. Feature-named test files that don't match a module (`test_access_*.py`, `test_carrier_fabric_*.py`, `test_mobility_*.py` and similar) are folded into the test module of the code they cover. The per-file coverage gate stays at 95%.
+
+Implemented in #341 part 3, which kept every test and its name (the collected test IDs are identical before and after):
+
+- `test_coordinators.py` is split by coordinator into `tests/coordinators/`, and the coordinator feature files moved there (for example `test_access.py`, `test_rule_audit_export.py`, `test_protect_sensors.py`).
+- Small feature files are folded into their module's test file; a folded file's `pytestmark` is applied to its own tests only.
+- Feature files whose module's tests already exceed about 2,000 lines keep a suffix (`test_sensor_carrier_fabric.py`, `test_config_flow_access.py`, `test_init_access.py`).
+- Test data shared between files lives in `tests/fixtures/` (`access.py`, `coordinator_clients.py`), so no test module imports another.
+- Four files test no Python module and keep their names: `test_translations.py` (`strings.json`, `icons.json`), `test_blueprints_execution.py` and `test_blueprints_schema.py` (`blueprints/`), and `test_check_coverage_per_file.py` (`script/`).
 
 ### Documentation layout
 
@@ -187,8 +195,8 @@ docs/development/
 
 ### Negative
 
-- Platform files are still larger than the 200 to 400 line guidance in `AGENTS.md`. That guidance should be reworded to "one section per data source, and no module over about 2,000 lines" once this lands.
-- `AGENTS.md`, `.github/instructions/*.instructions.md`, `.github/prompts/*`, and `.github/labeler.yml` list the current satellites and must be updated in a follow-up issue after #341 merges (they were updated for the current layout in #332 and are out of scope for #341).
+- Platform files are larger than the old 200 to 400 line guidance in `AGENTS.md`. #341 replaced it with the ADR-011 rule (one section per data source; non-platform modules under about 2,000 lines).
+- `AGENTS.md`, `.github/instructions/*.instructions.md` and `.github/prompts/*` listed the satellites; #341 updated them with the moves (`.github/labeler.yml` matches by directory and needed no change).
 
 ### Neutral
 
