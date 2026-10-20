@@ -849,6 +849,23 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
                     pass
         return step
 
+    def _apply_reporting_errors(
+        self, event: ReconcilerInput, report: Callable[[Exception], None]
+    ) -> bool:
+        """
+        Apply a REST answer; report an unexpected failure like a fetch error.
+
+        These fetchers have always kept the poll going when their answer
+        could not be merged into the cache, so a bad record cannot fail the
+        whole Protect poll. A failed step commits nothing.
+        """
+        try:
+            self._apply(event)
+        except Exception as err:
+            report(err)
+            return False
+        return True
+
     @callback
     def _on_websocket_event_message(self, message: Any) -> None:
         """Apply a raw "events" frame (parsed by `ProtectStreams`)."""
@@ -1081,8 +1098,13 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         except Exception as err:
             _LOGGER.warning("Protect coordinator: Error fetching sensors: %s", err)
             return
-        self._apply(RestBatch(stamp, outcome))
-        if isinstance(outcome, Fetched):
+        applied = self._apply_reporting_errors(
+            RestBatch(stamp, outcome),
+            lambda err: _LOGGER.warning(
+                "Protect coordinator: Error fetching sensors: %s", err
+            ),
+        )
+        if applied and isinstance(outcome, Fetched):
             _LOGGER.debug(
                 "Protect coordinator: Successfully fetched %d sensors",
                 len(sensors_models),
@@ -1111,7 +1133,12 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         except Exception as err:
             _LOGGER.debug("Protect coordinator: Error fetching NVR: %s", err)
             return
-        self._apply(RestBatch(stamp, outcome))
+        self._apply_reporting_errors(
+            RestBatch(stamp, outcome),
+            lambda err: _LOGGER.debug(
+                "Protect coordinator: Error fetching NVR: %s", err
+            ),
+        )
 
     async def _fetch_chimes(self) -> None:
         """Fetch chime data."""
@@ -1137,8 +1164,11 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         except Exception as err:
             self._log_family_fetch_error("chimes", err)
             return
-        self._apply(RestBatch(stamp, outcome))
-        if isinstance(outcome, Fetched):
+        applied = self._apply_reporting_errors(
+            RestBatch(stamp, outcome),
+            lambda err: self._log_family_fetch_error("chimes", err),
+        )
+        if applied and isinstance(outcome, Fetched):
             self._log_family_fetch_recovery("chimes")
             _LOGGER.debug(
                 "Protect coordinator: Successfully fetched %d chimes",

@@ -1145,6 +1145,41 @@ class TestUnifiProtectCoordinator:
             await coordinator.async_refresh()
         assert sum(r.levelno >= logging.WARNING for r in caplog.records) == 2
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("fetch", "collection", "level", "message"),
+        [
+            ("_fetch_sensors", "sensors", logging.WARNING, "Error fetching sensors"),
+            ("_fetch_nvr", "nvrs", logging.DEBUG, "Error fetching NVR"),
+            ("_fetch_chimes", "chimes", logging.WARNING, "Error fetching chimes"),
+        ],
+    )
+    async def test_a_failed_merge_is_reported_like_a_fetch_error(
+        self,
+        coordinator: UnifiInsightsProtectCoordinator,
+        caplog: pytest.LogCaptureFixture,
+        *,
+        fetch: str,
+        collection: str,
+        level: int,
+        message: str,
+    ) -> None:
+        """A REST answer that cannot be merged keeps the cache and the poll going."""
+        before = copy.deepcopy(coordinator.data[collection])
+        with (
+            caplog.at_level(logging.DEBUG),
+            patch(
+                "custom_components.unifi_insights.coordinators.protect.reconcile",
+                side_effect=RuntimeError("bad record"),
+            ),
+        ):
+            await getattr(coordinator, fetch)()
+
+        assert coordinator.data[collection] == before
+        assert any(
+            r.levelno == level and message in r.getMessage() for r in caplog.records
+        )
+
     @pytest.fixture
     async def coordinator_no_protect(
         self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
