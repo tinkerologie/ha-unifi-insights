@@ -13,7 +13,7 @@ This integration uses a multi-coordinator architecture under `custom_components/
 - **Base Coordinator** (`coordinators/base.py`) — Abstract base with shared error handling, backoff, and availability logging
 - **Config Coordinator** (`coordinators/config.py` & `coordinators/config_sections.py`) — Site, WiFi, firewall, ACL, traffic, NAT, QoS, DNS, VPN, and network configuration data (slow polling)
 - **Device Coordinator** (`coordinators/device.py`) — Network device metrics, ports, PoE, SFP, and connected clients (30s default polling)
-- **Protect Coordinator** (`coordinators/protect.py`) — Cameras, lights, sensors, NVRs, chimes, viewers, liveviews, and real-time WebSocket event stream
+- **Protect Coordinator** (`coordinators/protect.py`) — Cameras, lights, sensors, NVRs, chimes, viewers, liveviews, and real-time WebSocket event stream. Frames are parsed in `protect_ws.py`; every cache decision (frame merges, stale REST answers, latches, siren guards, eviction) is made by the pure reconciler in `protect_events.py` and applied through the coordinator's `_apply()` (ADR-012). Never change `self.data` in place or hold it across an `await` to write from it.
 - **Access Coordinator** (`coordinators/access.py`) — UniFi Access doors, locks, readers, hubs, and access events
 - **InnerSpace Coordinator** (`coordinators/innerspace.py`) — UniFi InnerSpace floor plans, zones, and spatial occupancy/environment data
 - **Site Manager Coordinator** (`coordinators/site_manager.py`) — UniFi Site Manager cloud multi-site health and ISP metrics

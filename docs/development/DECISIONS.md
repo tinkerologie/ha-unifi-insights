@@ -63,7 +63,7 @@ Consolidate 57 root modules into 33 by moving every base entity into `entity.py`
 
 ### Amendments to the flat module layout
 
-ADR-007 is amended for the deepening issues #337, #338 and #339. `get_field()` and `first_not_none()` live in `data_transforms.py`, re-exported by `entity.py`. `data_transforms.normalize_mac()` is the canonical MAC parser for reading device data, and four identity-specific MAC policies stay separate and tested. `service_targets.py` is an allowed 34th root module. `coordinators/protect.py` has a size exception capped at 3,500 lines until #340 splits it. [ADR-009](./adr/009-amend-flat-module-layout.md)
+ADR-007 is amended for the deepening issues #337, #338 and #339. `get_field()` and `first_not_none()` live in `data_transforms.py`, re-exported by `entity.py`. `data_transforms.normalize_mac()` is the canonical MAC parser for reading device data, and four identity-specific MAC policies stay separate and tested. `service_targets.py` is an allowed 34th root module. `coordinators/protect.py` had a size exception capped at 3,500 lines, which ended when #340 split it (ADR-012). [ADR-009](./adr/009-amend-flat-module-layout.md)
 
 ### One owner per write command
 
@@ -72,6 +72,10 @@ Each write belongs to the coordinator that owns the data it changes: config (rul
 ### Platform module size and homes for the remaining helpers
 
 The 17 platform modules are exempt from ADR-007's 2,000-line budget and are bounded by role instead: setup, description tables, entity classes and discovery, in one section per data source. Pure value extraction goes to `data_transforms.py` and base classes to `entity.py`. `sensor.py` is about 3,700 lines after the satellites merge. `async_get_device_entry()` and the site entity identity helpers move to `console_identity.py` (an `entity.py` home would create an import cycle with the coordinators), `get_port_label()` and `is_doorbell_camera_model()` to `data_transforms.py`. `data_transforms.py` may import `homeassistant.util.*` and only the pure integration modules, enforced by a test. Decided in the design review of [#341](https://github.com/tinkerologie/ha-unifi-insights/issues/341). [ADR-011](./adr/011-platform-modules-and-flat-layout-homes.md)
+
+### A pure reconciler for Protect state
+
+`coordinators/protect_events.py` decides how every WebSocket frame, REST answer, poll boundary, siren stop and command overlay changes the Protect cache: `reconcile(state, cache, input, now)` returns a new frozen state, a copy-on-write cache and effects as data (`PublishUpdate`, `RemoveDevice`, `Escalate`, `Log`). It imports nothing from Home Assistant or the API library and never reads a clock; `now` carries both the monotonic and the wall clock. `coordinators/protect_ws.py` parses frames and tracks stream health. The coordinator does the I/O, and its `_apply()` is the only writer of the state. Notification calls and the latent quirks are unchanged, each quirk pinned by a test and tracked in its own issue (#379, #381 to #384). `coordinators/protect.py` drops from 3,482 to about 1,770 lines, ending ADR-009's exception. Implemented in [#340](https://github.com/tinkerologie/ha-unifi-insights/issues/340). [ADR-012](./adr/012-pure-protect-state-reconciler.md)
 
 ## Future considerations
 

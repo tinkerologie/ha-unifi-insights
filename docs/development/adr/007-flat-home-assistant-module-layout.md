@@ -85,7 +85,7 @@ custom_components/unifi_insights/
 │   ├── device.py               # pure normalization helpers move to data_transforms.py
 │   ├── protect.py              # REST polling and orchestration
 │   ├── protect_ws.py           # NEW: WebSocket stream adapters and health state machine
-│   ├── protect_events.py       # NEW: sensor/door latching, motion/ring/smart-detect timers
+│   ├── protect_events.py       # NEW: pure reconciler for frames, REST answers and timers (ADR-012)
 │   ├── facade.py
 │   ├── access.py
 │   ├── innerspace.py

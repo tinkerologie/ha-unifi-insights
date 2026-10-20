@@ -1,7 +1,7 @@
 # ADR-009: Amendments to the flat module layout for the deepening issues
 
 **Date:** 2026-10-19
-**Status:** Accepted (amends [ADR-007](./007-flat-home-assistant-module-layout.md); decided in the design review of [#337](https://github.com/tinkerologie/ha-unifi-insights/issues/337), [#338](https://github.com/tinkerologie/ha-unifi-insights/issues/338) and [#339](https://github.com/tinkerologie/ha-unifi-insights/issues/339), part of [#343](https://github.com/tinkerologie/ha-unifi-insights/issues/343))
+**Status:** Accepted (amends [ADR-007](./007-flat-home-assistant-module-layout.md); decided in the design review of [#337](https://github.com/tinkerologie/ha-unifi-insights/issues/337), [#338](https://github.com/tinkerologie/ha-unifi-insights/issues/338) and [#339](https://github.com/tinkerologie/ha-unifi-insights/issues/339), part of [#343](https://github.com/tinkerologie/ha-unifi-insights/issues/343)). Point 4 ended when [#340](https://github.com/tinkerologie/ha-unifi-insights/issues/340) landed: `coordinators/protect.py` is back under the 2,000-line budget ([ADR-012](./012-pure-protect-state-reconciler.md)).
 
 ## Context
 

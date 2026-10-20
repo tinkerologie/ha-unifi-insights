@@ -4,7 +4,7 @@ This document describes the technical architecture of the UniFi Insights custom 
 
 For AI agent instructions, see [`AGENTS.md`](/AGENTS.md). For the decision log, see [`DECISIONS.md`](./DECISIONS.md) and the full records in [`adr/`](./adr/).
 
-> **Status:** this describes `main` as of 2026-10-20, with the ADR-007 module layout in place (#341). The Protect coordinator is being split along ADR-007's `protect_ws.py` / `protect_events.py` seam in [#340](https://github.com/tinkerologie/ha-unifi-insights/issues/340).
+> **Status:** this describes `main` as of 2026-10-20, with the ADR-007 module layout in place (#341). The Protect coordinator is split along ADR-007's `protect_ws.py` / `protect_events.py` seam (#340, [ADR-012](./adr/012-pure-protect-state-reconciler.md)).
 
 ## Directory structure
 
@@ -90,7 +90,7 @@ The facade coordinator has no update interval. It subscribes to the specialized 
 
 ### Protect state reconciliation
 
-The Protect coordinator has two sources that race each other: the "devices" and "events" WebSocket streams and the 30 s REST poll. `coordinators/protect_events.py` holds every decision about how one of them changes the cache, as one pure function:
+The Protect coordinator has two sources that race each other: the "devices" and "events" WebSocket streams and the 30 s REST poll. `coordinators/protect_events.py` holds every decision about how one of them changes the cache, as one pure function (see [ADR-012](./adr/012-pure-protect-state-reconciler.md)):
 
 ```python
 reconcile(state, cache, input, now) -> Step(state, cache, effects)
