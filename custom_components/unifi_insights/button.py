@@ -711,9 +711,8 @@ class UnifiClientWakeButton(
     @callback
     def async_update_history_name(self, fallback_name: str | None) -> None:
         """Apply a history name while preferring the current live client name."""
-        live = find_client_by_mac(
-            section_by_site(self.coordinator.data, "clients"), self._mac
-        )
+        snapshot: Mapping[str, Any] = self.coordinator.data
+        live = find_client_by_mac((snapshot or {}).get("clients"), self._mac)
         live_name = first_non_blank_text(live[1], "name", "hostname") if live else None
         client_name = live_name or (
             fallback_name.strip()
