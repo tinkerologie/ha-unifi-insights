@@ -614,6 +614,14 @@ async def test_owner_error_reaches_the_caller_unchanged(
         ("not loaded", "native", "client_not_connected", None),
         ({"clients": "not loaded"}, "native", "client_not_connected", None),
         ({"clients": {"s1": "not loaded"}}, "native", "client_not_connected", None),
+        ({"clients": {}}, "native", "client_not_connected", None),
+        ({"clients": {"s1": {}}}, "native", "client_not_connected", None),
+        (
+            {"clients": {"s1": {"native": "bad"}}},
+            "native",
+            "client_not_connected",
+            None,
+        ),
         (_WIRELESS_CLIENT, "", "client_not_connected", None),
         (
             {"clients": {"s1": {"native": {"connected": False, "type": "WIRELESS"}}}},

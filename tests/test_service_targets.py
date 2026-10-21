@@ -65,6 +65,7 @@ from custom_components.unifi_insights.service_targets import (
     _extract_target_id,
     _mac_key,
     _protect_owns_resource,
+    _resolve_native_client_id,
     _resolve_network_client_id,
     _resolve_network_device_id,
     _resolve_protect_resource_id,
@@ -1560,6 +1561,19 @@ def _entry_with(data: Any, *, runtime: bool = True) -> MagicMock:
         ({"devices": {"s1": {}}}, False, False),
         ({"devices": {"s1": {"d1": {}}}}, True, True),
         ({"devices": {"s1": {}, "s2": {"d1": {}}}}, False, True),
+        ({"devices": {"s1": {"d1": "invalid"}}}, False, False),
+        ({"devices": {"s2": {"d1": {}}}}, True, True),
+    ],
+    ids=[
+        "no-data",
+        "malformed-data",
+        "malformed-section",
+        "malformed-site",
+        "no-record",
+        "record",
+        "record-in-other-site",
+        "malformed-record",
+        "no-site",
     ],
 )
 def test_device_ownership_states(data: Any, *, has: bool, owns: bool) -> None:
@@ -1577,6 +1591,17 @@ def test_device_ownership_states(data: Any, *, has: bool, owns: bool) -> None:
         ({"clients": {"s1": "invalid"}}, True, False),
         ({"clients": {"s1": {"c1": {}}}}, True, True),
         ({"clients": {"s1": {}, "s2": {"x": {"mac": "C1"}}}}, False, True),
+        ({"clients": {"s1": {"c1": "invalid"}}}, False, False),
+        ({"clients": {"s2": {"c1": {}}}}, True, True),
+    ],
+    ids=[
+        "no-data",
+        "malformed-section",
+        "malformed-site",
+        "record",
+        "record-in-other-site",
+        "malformed-record",
+        "no-site",
     ],
 )
 def test_client_ownership_states(data: Any, *, has: bool, owns: bool) -> None:
@@ -1593,6 +1618,79 @@ def test_ownership_without_a_site_scans_every_site() -> None:
     assert _entry_owns_device(entry, None, "d2") is False
     assert _entry_has_client(entry, None, "c1") is True
     assert _entry_owns_client(entry, None, "nope") is False
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        ({"clients": {"s1": {"native": {"mac": "AA:BB:CC:DD:EE:01"}}}}, "native"),
+        ({"clients": {"s1": {"aa:bb:cc:dd:ee:01": {}}}}, "aa:bb:cc:dd:ee:01"),
+        ({}, "aa:bb:cc:dd:ee:01"),
+        ({"clients": "invalid"}, "aa:bb:cc:dd:ee:01"),
+        ({"clients": {}}, "aa:bb:cc:dd:ee:01"),
+        ({"clients": {"s1": "invalid"}}, "aa:bb:cc:dd:ee:01"),
+        ({"clients": {"s1": {"native": "invalid"}}}, "aa:bb:cc:dd:ee:01"),
+    ],
+    ids=[
+        "by-mac",
+        "native-id",
+        "no-section",
+        "malformed-section",
+        "no-site",
+        "malformed-site",
+        "malformed-record",
+    ],
+)
+def test_resolve_native_client_id(data: Any, expected: str) -> None:
+    """A MAC resolves to the cached native ID; anything else stays as given."""
+    cache = MagicMock(data=data)
+    assert _resolve_native_client_id(cache, "s1", "aa:bb:cc:dd:ee:01") == expected
+
+
+@pytest.mark.parametrize(
+    ("data", "has", "owns"),
+    [
+        ({}, True, False),
+        ({"devices": "invalid", "clients": "invalid"}, True, False),
+        (
+            {"devices": {"s1": "invalid"}, "clients": {"s1": "invalid"}},
+            False,
+            False,
+        ),
+        (
+            {
+                "devices": {"s1": {"r1": "invalid"}},
+                "clients": {"s1": {"r1": "invalid"}},
+            },
+            False,
+            False,
+        ),
+        (
+            {
+                "devices": {"s1": "invalid", "s2": {"r1": {}}},
+                "clients": {"s1": "invalid", "s2": {"r1": {}}},
+            },
+            True,
+            True,
+        ),
+    ],
+    ids=[
+        "no-section",
+        "malformed-section",
+        "malformed-site",
+        "malformed-record",
+        "record-beside-malformed-site",
+    ],
+)
+def test_ownership_without_a_site_skips_malformed_data(
+    data: Any, *, has: bool, owns: bool
+) -> None:
+    """Without a site, a malformed section, site or record proves nothing."""
+    entry = _entry_with(data)
+    assert _entry_has_device(entry, None, "r1") is has
+    assert _entry_owns_device(entry, None, "r1") is owns
+    assert _entry_has_client(entry, None, "r1") is has
+    assert _entry_owns_client(entry, None, "r1") is owns
 
 
 @pytest.mark.parametrize(

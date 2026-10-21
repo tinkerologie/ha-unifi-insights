@@ -16,7 +16,9 @@ from custom_components.unifi_insights.data_transforms import (
     protect_collection,
     protect_device,
     rule_record,
+    section_by_site,
     site_record,
+    site_section,
 )
 
 if TYPE_CHECKING:
@@ -184,3 +186,86 @@ def test_protect_collection_reads_any_mapping() -> None:
     )
 
     assert protect_collection(data, "lights") == {"light-1": LIGHT}
+
+
+# --- Site-keyed sections -----------------------------------------------------
+
+WIFI = {"id": "wifi-1", "name": "Home"}
+SECTIONS: dict[str, Any] = {
+    "devices": {
+        SITE: {"dev-1": DEVICE, "dev-bad": "not-a-mapping", "dev-null": None},
+        "site-2": {},
+        "site-null": None,
+        "site-bad": "not-a-mapping",
+    },
+    "wifi": {SITE: MappingProxyType({"wifi-1": WIFI})},
+    "clients": None,
+    "stats": "not-a-mapping",
+}
+
+
+@pytest.mark.parametrize(
+    ("section", "site_id", "expected"),
+    [
+        pytest.param("devices", SITE, {"dev-1": DEVICE}, id="skips_malformed_records"),
+        pytest.param("devices", "site-2", {}, id="empty"),
+        pytest.param("wifi", SITE, {"wifi-1": WIFI}, id="read_only_site"),
+    ],
+)
+def test_site_section_returns_the_dict_records(
+    section: str, site_id: str, expected: dict[str, Any]
+) -> None:
+    """Only one site's dict records come back, as the published objects."""
+    records = site_section(SECTIONS, section, site_id)
+
+    assert records == expected
+    assert records is not None
+    for record_id, record in expected.items():
+        assert records[record_id] is record
+
+
+@pytest.mark.parametrize(
+    ("data", "section", "site_id"),
+    [
+        pytest.param(SECTIONS, "devices", "site-9", id="unknown_site"),
+        pytest.param(SECTIONS, "devices", "site-null", id="null_site"),
+        pytest.param(SECTIONS, "devices", "site-bad", id="malformed_site"),
+        pytest.param(SECTIONS, "clients", SITE, id="null_section"),
+        pytest.param(SECTIONS, "stats", SITE, id="malformed_section"),
+        pytest.param(SECTIONS, "sites", SITE, id="no_section"),
+        pytest.param(None, "devices", SITE, id="no_data"),
+    ],
+)
+def test_site_section_not_loaded_is_none(data: Any, section: str, site_id: str) -> None:
+    """A missing or malformed section or site is None, never empty."""
+    assert site_section(data, section, site_id) is None
+
+
+def test_section_by_site_skips_malformed_sites_and_records() -> None:
+    """Every site that is a mapping comes back, with only its dict records."""
+    by_site = section_by_site(SECTIONS, "devices")
+
+    assert by_site == {SITE: {"dev-1": DEVICE}, "site-2": {}}
+    assert by_site is not None
+    assert by_site[SITE]["dev-1"] is DEVICE
+
+
+def test_section_by_site_reads_any_mapping() -> None:
+    """Read-only sections and sites read the same; records stay dicts."""
+    data = MappingProxyType({"wifi": MappingProxyType({SITE: SECTIONS["wifi"][SITE]})})
+
+    assert section_by_site(data, "wifi") == {SITE: {"wifi-1": WIFI}}
+
+
+@pytest.mark.parametrize(
+    ("data", "section"),
+    [
+        pytest.param(SECTIONS, "clients", id="null_section"),
+        pytest.param(SECTIONS, "stats", id="malformed_section"),
+        pytest.param(SECTIONS, "sites", id="no_section"),
+        pytest.param(None, "devices", id="no_data"),
+    ],
+)
+def test_section_by_site_not_loaded_is_none(data: Any, section: str) -> None:
+    """A missing or malformed section is None, never empty."""
+    assert section_by_site(data, section) is None
