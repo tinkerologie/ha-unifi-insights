@@ -68,7 +68,9 @@ from tests.fixtures.facade_data import (
     with_device_stats_fields,
     with_latest_voucher,
     with_network_device,
+    with_protect_collection,
     with_protect_device,
+    with_protect_fields,
     with_rule,
 )
 from tests.fixtures.library_responses import (
@@ -1814,3 +1816,34 @@ def test_with_device_stats_republishes_published_facts() -> None:
     facts = device_facts(data, "site1", "gw")
     assert facts is not None
     assert facts.cpu_pct == 42.0
+
+
+def test_with_protect_fields_replace_only_the_given_fields() -> None:
+    """The Protect field builder merges into the current record, or starts empty."""
+    camera = {"id": "cam1", "name": "Front", "isMicEnabled": True}
+    base = with_camera(facade_data(), "cam1", camera)
+
+    data = with_protect_fields(base, "cameras", "cam1", isMicEnabled=False)
+
+    assert data["protect"]["cameras"]["cam1"] == {**camera, "isMicEnabled": False}
+    assert base["protect"]["cameras"]["cam1"] == camera
+    added = with_protect_fields(base, "lights", "light1", ledLevel=3)
+    assert added["protect"]["lights"]["light1"] == {"ledLevel": 3}
+    with pytest.raises(RuntimeError):
+        data["protect"]["cameras"]["cam1"]["name"] = "Back"
+
+
+def test_with_protect_collection_replaces_one_collection() -> None:
+    """A whole Protect collection is replaced, frozen, leaving the others."""
+    base = with_camera(facade_data(), "cam1", {"id": "cam1"})
+
+    data = with_protect_collection(base, "chimes", {"chime1": {"id": "chime1"}})
+
+    assert data["protect"]["chimes"] == {"chime1": {"id": "chime1"}}
+    assert data["protect"]["cameras"] is base["protect"]["cameras"]
+    assert base["protect"]["chimes"] == {}
+    with pytest.raises(RuntimeError):
+        data["protect"]["chimes"]["chime1"]["id"] = "other"
+    assert with_protect_collection(base, "cameras", None)["protect"]["cameras"] is None
+    bare = with_protect_collection({}, "sensors", {})
+    assert bare["protect"] == {"sensors": {}}

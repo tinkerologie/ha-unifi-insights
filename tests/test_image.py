@@ -31,10 +31,14 @@ from custom_components.unifi_insights.image import (
     async_setup_entry,
 )
 from custom_components.unifi_insights.innerspace_transforms import strip_url_query
-from tests.fixtures.facade_data import set_availability
+from tests.fixtures.facade_data import set_availability, with_rule, with_sections
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from homeassistant.core import Event, HomeAssistant
+
+    from custom_components.unifi_insights.coordinators.facade import FacadeData
 
 QR_PAYLOAD: str = "WIFI:T:WPA;S:TestNet;P:secret123;;"
 
@@ -64,12 +68,51 @@ def mock_coordinator() -> MagicMock:
     return coordinator
 
 
+def _with_wifi1(data: Mapping[str, Any], record: Mapping[str, Any]) -> FacadeData:
+    """Return ``data`` with site1's ``wifi1`` network replaced."""
+    return with_rule(data, "wifi", "site1", "wifi1", record)
+
+
+def _without_qr_code(data: Mapping[str, Any]) -> FacadeData:
+    """Return ``data`` with site1's ``wifi1`` network lacking a QR payload."""
+    record = data["wifi"]["site1"]["wifi1"]
+    return _with_wifi1(data, {k: v for k, v in record.items() if k != "qr_code"})
+
+
+def _with_qr_code(data: Mapping[str, Any], payload: str) -> FacadeData:
+    """Return ``data`` with site1's ``wifi1`` network carrying ``payload``."""
+    return _with_wifi1(data, {**data["wifi"]["site1"]["wifi1"], "qr_code": payload})
+
+
+def _with_floor_plans(data: Mapping[str, Any], floor_plans: Any) -> FacadeData:
+    """Return ``data`` with the InnerSpace floor plans replaced."""
+    return with_sections(
+        data, innerspace={**data["innerspace"], "floor_plans": floor_plans}
+    )
+
+
+def _with_floor_plan_fields(
+    data: Mapping[str, Any], plan_id: str, **fields: Any
+) -> FacadeData:
+    """Return ``data`` with fields of one InnerSpace floor plan replaced."""
+    plans = data["innerspace"]["floor_plans"]
+    return _with_floor_plans(data, {**plans, plan_id: {**plans[plan_id], **fields}})
+
+
+def _without_floor_plan(data: Mapping[str, Any], plan_id: str) -> FacadeData:
+    """Return ``data`` without one InnerSpace floor plan."""
+    plans = data["innerspace"]["floor_plans"]
+    return _with_floor_plans(
+        data, {key: plan for key, plan in plans.items() if key != plan_id}
+    )
+
+
 class TestAsyncSetupEntry:
     """Tests for async_setup_entry."""
 
     @pytest.mark.asyncio
     async def test_setup_creates_qr_entities_only_with_payload(
-        self, hass: HomeAssistant, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Only networks with a resolved QR payload get an image entity."""
         mock_entry = MagicMock()
@@ -87,10 +130,10 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_no_entities_without_payloads(
-        self, hass: HomeAssistant, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """No entities are added when no network has a QR payload."""
-        mock_coordinator.data["wifi"]["site1"]["wifi1"].pop("qr_code")
+        mock_coordinator.data = _without_qr_code(mock_coordinator.data)
 
         mock_entry = MagicMock()
         mock_entry.data = {"console_id": "console"}
@@ -104,10 +147,10 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_returns_early_when_wifi_not_a_dict(
-        self, hass: HomeAssistant, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """No entities are added and no exception raised when wifi data is malformed."""
-        mock_coordinator.data["wifi"] = "not-a-dict"
+        mock_coordinator.data = with_sections(mock_coordinator.data, wifi="not-a-dict")
 
         mock_entry = MagicMock()
         mock_entry.data = {"console_id": "console"}
@@ -124,7 +167,7 @@ class TestUnifiWifiQrCodeImage:
     """Tests for the UnifiWifiQrCodeImage entity."""
 
     def _make_entity(
-        self, hass: HomeAssistant, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> UnifiWifiQrCodeImage:
         return UnifiWifiQrCodeImage(
             hass=hass,
@@ -133,7 +176,9 @@ class TestUnifiWifiQrCodeImage:
             wifi_id="wifi1",
         )
 
-    def test_initialization(self, hass: HomeAssistant, mock_coordinator) -> None:
+    def test_initialization(
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test unique ID, translation key, and device info."""
         entity = self._make_entity(hass, mock_coordinator)
 
@@ -145,22 +190,22 @@ class TestUnifiWifiQrCodeImage:
         assert entity._attr_device_info["name"] == "WiFi: TestNet"
 
     def test_available_with_payload(
-        self, hass: HomeAssistant, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Entity is available while a payload exists and updates succeed."""
         entity = self._make_entity(hass, mock_coordinator)
         assert entity.available is True
 
     def test_unavailable_without_payload(
-        self, hass: HomeAssistant, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Entity becomes unavailable when the payload disappears."""
         entity = self._make_entity(hass, mock_coordinator)
-        mock_coordinator.data["wifi"]["site1"]["wifi1"].pop("qr_code")
+        mock_coordinator.data = _without_qr_code(mock_coordinator.data)
         assert entity.available is False
 
     def test_unavailable_on_failed_update(
-        self, hass: HomeAssistant, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Entity is unavailable when the coordinator update failed."""
         entity = self._make_entity(hass, mock_coordinator)
@@ -169,7 +214,7 @@ class TestUnifiWifiQrCodeImage:
 
     @pytest.mark.asyncio
     async def test_async_image_returns_png(
-        self, hass: HomeAssistant, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """async_image renders a PNG for the current payload."""
         entity = self._make_entity(hass, mock_coordinator)
@@ -181,7 +226,7 @@ class TestUnifiWifiQrCodeImage:
 
     @pytest.mark.asyncio
     async def test_async_image_cached_until_payload_changes(
-        self, hass: HomeAssistant, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """The rendered PNG is cached for an unchanged payload."""
         entity = self._make_entity(hass, mock_coordinator)
@@ -190,8 +235,8 @@ class TestUnifiWifiQrCodeImage:
         second = await entity.async_image()
         assert first is second
 
-        mock_coordinator.data["wifi"]["site1"]["wifi1"]["qr_code"] = (
-            "WIFI:T:WPA;S:TestNet;P:newsecret;;"
+        mock_coordinator.data = _with_qr_code(
+            mock_coordinator.data, "WIFI:T:WPA;S:TestNet;P:newsecret;;"
         )
         third = await entity.async_image()
         assert third is not None
@@ -199,16 +244,16 @@ class TestUnifiWifiQrCodeImage:
 
     @pytest.mark.asyncio
     async def test_async_image_none_without_payload(
-        self, hass: HomeAssistant, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """async_image returns None when no payload is available."""
         entity = self._make_entity(hass, mock_coordinator)
-        mock_coordinator.data["wifi"]["site1"]["wifi1"].pop("qr_code")
+        mock_coordinator.data = _without_qr_code(mock_coordinator.data)
 
         assert await entity.async_image() is None
 
     def test_coordinator_update_refreshes_timestamp_on_change(
-        self, hass: HomeAssistant, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """A payload change bumps image_last_updated; no change keeps it."""
         entity = self._make_entity(hass, mock_coordinator)
@@ -217,8 +262,8 @@ class TestUnifiWifiQrCodeImage:
             initial = entity._attr_image_last_updated
 
             # Payload changed since the cached render → timestamp bumps
-            mock_coordinator.data["wifi"]["site1"]["wifi1"]["qr_code"] = (
-                "WIFI:T:WPA;S:TestNet;P:rotated;;"
+            mock_coordinator.data = _with_qr_code(
+                mock_coordinator.data, "WIFI:T:WPA;S:TestNet;P:rotated;;"
             )
             entity._handle_coordinator_update()
             changed = entity._attr_image_last_updated
@@ -367,7 +412,9 @@ class TestUnifiFloorPlanImage:
         assert entity_no_url.available is False
 
         # When floor plan is removed from coordinator data
-        innerspace_coordinator.data["innerspace"]["floor_plans"].pop("fp-1")
+        innerspace_coordinator.data = _without_floor_plan(
+            innerspace_coordinator.data, "fp-1"
+        )
         assert entity.available is False
 
     @pytest.mark.asyncio
@@ -517,8 +564,11 @@ class TestUnifiFloorPlanImage:
     ) -> None:
         """A token in the image URL query or fragment never reaches state or logs."""
         base = "/proxy/innerspace/integration/v1/assets/fp-1/ground.png"
-        plan = innerspace_coordinator.data["innerspace"]["floor_plans"]["fp-1"]
-        plan["image_url"] = f"{base}?token=SECRET123&x=1#frag-secret"
+        innerspace_coordinator.data = _with_floor_plan_fields(
+            innerspace_coordinator.data,
+            "fp-1",
+            image_url=f"{base}?token=SECRET123&x=1#frag-secret",
+        )
         entity = self._make_entity(hass, innerspace_coordinator, "fp-1")
         innerspace_coordinator.async_get_floor_plan_image = AsyncMock(
             side_effect=UniFiNotFoundError("Not found", status_code=404)
@@ -531,7 +581,11 @@ class TestUnifiFloorPlanImage:
         assert "SECRET123" not in caplog.text
         assert "frag-secret" not in caplog.text
 
-        plan["image_url"] = "/proxy/innerspace/no-asset-path?token=SECRET456"
+        innerspace_coordinator.data = _with_floor_plan_fields(
+            innerspace_coordinator.data,
+            "fp-1",
+            image_url="/proxy/innerspace/no-asset-path?token=SECRET456",
+        )
         entity = self._make_entity(hass, innerspace_coordinator, "fp-1")
         with caplog.at_level(logging.DEBUG):
             assert await entity.async_image() is None
@@ -637,9 +691,11 @@ class TestUnifiFloorPlanImage:
         assert innerspace_coordinator.async_get_floor_plan_image.await_count == 1
 
         # A new image URL abandons the retry and starts clean
-        innerspace_coordinator.data["innerspace"]["floor_plans"]["fp-1"][
-            "image_url"
-        ] = "/proxy/innerspace/integration/v1/assets/fp-1/v2.png"
+        innerspace_coordinator.data = _with_floor_plan_fields(
+            innerspace_coordinator.data,
+            "fp-1",
+            image_url="/proxy/innerspace/integration/v1/assets/fp-1/v2.png",
+        )
         entity._handle_coordinator_update()
         await asyncio.sleep(0)
         assert first.cancelled()
@@ -670,9 +726,12 @@ class TestUnifiFloorPlanImage:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Invalid image URL marks entity unavailable and logs debug once."""
-        fp = innerspace_coordinator.data["innerspace"]["floor_plans"]["fp-1"]
-        fp["image_url"] = (
-            "/proxy/innerspace/integration/v1/invalid_prefix/fp-1/ground.png"
+        innerspace_coordinator.data = _with_floor_plan_fields(
+            innerspace_coordinator.data,
+            "fp-1",
+            image_url=(
+                "/proxy/innerspace/integration/v1/invalid_prefix/fp-1/ground.png"
+            ),
         )
         entity = self._make_entity(hass, innerspace_coordinator, "fp-1")
         innerspace_coordinator.async_get_floor_plan_image = AsyncMock()
@@ -705,9 +764,12 @@ class TestUnifiFloorPlanImage:
         self, hass: HomeAssistant, innerspace_coordinator: MagicMock
     ) -> None:
         """async_image uses plan_id parsed from image_url instead of entity _plan_id."""
-        fp = innerspace_coordinator.data["innerspace"]["floor_plans"]["fp-1"]
-        fp["image_url"] = (
-            "/proxy/innerspace/integration/v1/assets/shared-plan-42/ground.png"
+        innerspace_coordinator.data = _with_floor_plan_fields(
+            innerspace_coordinator.data,
+            "fp-1",
+            image_url=(
+                "/proxy/innerspace/integration/v1/assets/shared-plan-42/ground.png"
+            ),
         )
         entity = self._make_entity(hass, innerspace_coordinator, "fp-1")
         innerspace_coordinator.async_get_floor_plan_image = AsyncMock(
@@ -732,10 +794,11 @@ class TestUnifiFloorPlanImage:
         entity._cached_bytes = b"cached"
 
         # Update floor plan in coordinator data with new name and new image_url
-        fp_data = innerspace_coordinator.data["innerspace"]["floor_plans"]["fp-1"]
-        fp_data["name"] = "Renamed Floor"
-        fp_data["image_url"] = (
-            "/proxy/innerspace/integration/v1/assets/fp-1/v2_ground.png"
+        innerspace_coordinator.data = _with_floor_plan_fields(
+            innerspace_coordinator.data,
+            "fp-1",
+            name="Renamed Floor",
+            image_url="/proxy/innerspace/integration/v1/assets/fp-1/v2_ground.png",
         )
 
         with patch.object(entity, "async_write_ha_state"):
@@ -755,10 +818,14 @@ class TestUnifiFloorPlanImage:
         assert entity._attr_image_last_updated == ts_before
 
         # Update when plan has empty name or is missing
-        fp_data["name"] = ""
+        innerspace_coordinator.data = _with_floor_plan_fields(
+            innerspace_coordinator.data, "fp-1", name=""
+        )
         with patch.object(entity, "async_write_ha_state"):
             entity._handle_coordinator_update()
-        del innerspace_coordinator.data["innerspace"]["floor_plans"]["fp-1"]
+        innerspace_coordinator.data = _without_floor_plan(
+            innerspace_coordinator.data, "fp-1"
+        )
         with patch.object(entity, "async_write_ha_state"):
             entity._handle_coordinator_update()
 
@@ -794,9 +861,12 @@ class TestUnifiFloorPlanImage:
         self, hass: HomeAssistant, innerspace_coordinator: MagicMock
     ) -> None:
         """async_setup_entry creates both WiFi QR and floor plan image entities."""
-        innerspace_coordinator.data["wifi"] = {
-            "s1": {"w1": {"id": "w1", "name": "WiFi Net", "qr_code": "WIFI:..."}}
-        }
+        innerspace_coordinator.data = with_sections(
+            innerspace_coordinator.data,
+            wifi={
+                "s1": {"w1": {"id": "w1", "name": "WiFi Net", "qr_code": "WIFI:..."}}
+            },
+        )
         mock_entry = MagicMock()
         mock_entry.data = {"console_id": "console"}
         mock_entry.runtime_data = MagicMock()
@@ -853,9 +923,11 @@ class TestUnifiFloorPlanImage:
         assert len(added) == 1
 
         # Once the plan reports an image, the next update creates it, once
-        innerspace_coordinator.data["innerspace"]["floor_plans"]["fp-2"][
-            "image_url"
-        ] = "/proxy/innerspace/integration/v1/assets/fp-2/second.png"
+        innerspace_coordinator.data = _with_floor_plan_fields(
+            innerspace_coordinator.data,
+            "fp-2",
+            image_url="/proxy/innerspace/integration/v1/assets/fp-2/second.png",
+        )
         listener()
         await hass.async_block_till_done()
         listener()
@@ -887,9 +959,9 @@ class TestUnifiFloorPlanImage:
     ) -> None:
         """Test async_image returns None when image_url has no filename."""
         entity = self._make_entity(hass, innerspace_coordinator, "fp-1")
-        innerspace_coordinator.data["innerspace"]["floor_plans"]["fp-1"][
-            "image_url"
-        ] = "http://host/"
+        innerspace_coordinator.data = _with_floor_plan_fields(
+            innerspace_coordinator.data, "fp-1", image_url="http://host/"
+        )
         assert await entity.async_image() is None
 
     @pytest.mark.asyncio
@@ -910,9 +982,14 @@ class TestUnifiFloorPlanImage:
         self, hass: HomeAssistant, innerspace_coordinator: MagicMock
     ) -> None:
         """Verify discovery skips invalid entries and ignores already-added plans."""
-        fp_dict = innerspace_coordinator.data["innerspace"]["floor_plans"]
-        fp_dict["bad_key"] = "not-a-dict"
-        fp_dict[123] = {"name": "Bad ID"}
+        innerspace_coordinator.data = _with_floor_plans(
+            innerspace_coordinator.data,
+            {
+                **innerspace_coordinator.data["innerspace"]["floor_plans"],
+                "bad_key": "not-a-dict",
+                123: {"name": "Bad ID"},
+            },
+        )
 
         mock_entry = MagicMock()
         mock_entry.data = {"console_id": "console"}
@@ -931,7 +1008,9 @@ class TestUnifiFloorPlanImage:
         async_add_entities.assert_not_called()
 
         # Listener update when floor_plans is not a dict
-        innerspace_coordinator.data["innerspace"]["floor_plans"] = None
+        innerspace_coordinator.data = _with_floor_plans(
+            innerspace_coordinator.data, None
+        )
         listener()
         async_add_entities.assert_not_called()
 
@@ -940,7 +1019,7 @@ class TestUnifiVoucherQrCodeImage:
     """Tests for UnifiVoucherQrCodeImage entity."""
 
     @pytest.fixture
-    def mock_coordinator(self):
+    def mock_coordinator(self) -> MagicMock:
         coord = MagicMock()
         coord.data = {
             "sites": {"default": {"desc": "Default"}},
@@ -1005,7 +1084,7 @@ class TestUnifiVoucherQrCodeImage:
         assert await entity.async_image() is not None
 
         # Remove latest voucher
-        mock_coordinator.data["latest_vouchers"] = {}
+        mock_coordinator.data = with_sections(mock_coordinator.data, latest_vouchers={})
         with patch.object(entity, "async_write_ha_state"):
             entity._handle_coordinator_update()
         assert entity.available is False
@@ -1066,8 +1145,11 @@ class TestUnifiVoucherQrCodeImage:
             "expired": False,
             "expiresAt": "2026-10-09T12:00:00Z",
         }
-        mock_coordinator.data["latest_vouchers"] = {"default": record}
-        mock_coordinator.data["vouchers"] = {"default": {}}
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            latest_vouchers={"default": record},
+            vouchers={"default": {}},
+        )
 
         entity = UnifiVoucherQrCodeImage(
             hass,
@@ -1112,53 +1194,70 @@ class TestUnifiVoucherQrCodeImage:
         )
 
         # 1. Non-mapping latest_vouchers
-        mock_coordinator.data["latest_vouchers"] = None
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data, latest_vouchers=None
+        )
         entity._reschedule_expiration_timer()
         assert entity._current_payload() is None
 
         # 2. Expired record
-        mock_coordinator.data["latest_vouchers"] = {
-            "default": {"id": "v1", "code": "1234567890", "expired": True}
-        }
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            latest_vouchers={
+                "default": {"id": "v1", "code": "1234567890", "expired": True}
+            },
+        )
         entity._reschedule_expiration_timer()
 
         # 3. Missing expiresAt
-        mock_coordinator.data["latest_vouchers"] = {
-            "default": {"id": "v1", "code": "1234567890", "expired": False}
-        }
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            latest_vouchers={
+                "default": {"id": "v1", "code": "1234567890", "expired": False}
+            },
+        )
         entity._reschedule_expiration_timer()
 
         # 4. Past expiresAt
-        mock_coordinator.data["latest_vouchers"] = {
-            "default": {
-                "id": "v1",
-                "code": "1234567890",
-                "expired": False,
-                "expiresAt": "2020-01-01T00:00:00Z",
-            }
-        }
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            latest_vouchers={
+                "default": {
+                    "id": "v1",
+                    "code": "1234567890",
+                    "expired": False,
+                    "expiresAt": "2020-01-01T00:00:00Z",
+                }
+            },
+        )
         entity._reschedule_expiration_timer()
 
         # 5. Invalid timestamp
-        mock_coordinator.data["latest_vouchers"] = {
-            "default": {
-                "id": "v1",
-                "code": "1234567890",
-                "expired": False,
-                "expiresAt": "invalid-date",
-            }
-        }
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            latest_vouchers={
+                "default": {
+                    "id": "v1",
+                    "code": "1234567890",
+                    "expired": False,
+                    "expiresAt": "invalid-date",
+                }
+            },
+        )
         entity._reschedule_expiration_timer()
 
         # 6. Valid future record scheduled and cancelled
-        mock_coordinator.data["latest_vouchers"] = {
-            "default": {
-                "id": "v1",
-                "code": "1234567890",
-                "expired": False,
-                "expiresAt": "2099-01-01T00:00:00Z",
-            }
-        }
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            latest_vouchers={
+                "default": {
+                    "id": "v1",
+                    "code": "1234567890",
+                    "expired": False,
+                    "expiresAt": "2099-01-01T00:00:00Z",
+                }
+            },
+        )
         entity._reschedule_expiration_timer()
         assert entity._expiration_unsub is not None
         entity._cancel_expiration_timer()
@@ -1169,14 +1268,17 @@ class TestUnifiVoucherQrCodeImage:
         self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """No expiration timer is scheduled for an entity without hass."""
-        mock_coordinator.data["latest_vouchers"] = {
-            "default": {
-                "id": "v1",
-                "code": "1234567890",
-                "expired": False,
-                "expiresAt": "2099-01-01T00:00:00Z",
-            }
-        }
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            latest_vouchers={
+                "default": {
+                    "id": "v1",
+                    "code": "1234567890",
+                    "expired": False,
+                    "expiresAt": "2099-01-01T00:00:00Z",
+                }
+            },
+        )
         entity = UnifiVoucherQrCodeImage(
             hass,
             mock_coordinator,
@@ -1192,7 +1294,7 @@ class TestUnifiVoucherQrCodeImage:
         self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Expiring before any payload was observed keeps the image timestamp."""
-        mock_coordinator.data["latest_vouchers"] = {}
+        mock_coordinator.data = with_sections(mock_coordinator.data, latest_vouchers={})
         entity = UnifiVoucherQrCodeImage(
             hass,
             mock_coordinator,
@@ -1214,9 +1316,12 @@ class TestUnifiVoucherQrCodeImage:
         self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Image timestamp remains stable when observed payload does not change."""
-        mock_coordinator.data["latest_vouchers"] = {
-            "default": {"id": "v1", "code": "1234567890", "expired": False}
-        }
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            latest_vouchers={
+                "default": {"id": "v1", "code": "1234567890", "expired": False}
+            },
+        )
         entity = UnifiVoucherQrCodeImage(
             hass,
             mock_coordinator,
@@ -1245,9 +1350,12 @@ class TestUnifiVoucherQrCodeImage:
         assert img2 is img1
 
         # 4. New code: timestamp advances, cached bytes invalidated
-        mock_coordinator.data["latest_vouchers"] = {
-            "default": {"id": "v2", "code": "9876543210", "expired": False}
-        }
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            latest_vouchers={
+                "default": {"id": "v2", "code": "9876543210", "expired": False}
+            },
+        )
         with patch.object(entity, "async_write_ha_state"):
             entity._handle_coordinator_update()
         assert entity.image_last_updated > initial_ts
@@ -1256,7 +1364,7 @@ class TestUnifiVoucherQrCodeImage:
         assert img3 != img1
 
         # 5. Disappearance: available False, image None
-        mock_coordinator.data["latest_vouchers"] = {}
+        mock_coordinator.data = with_sections(mock_coordinator.data, latest_vouchers={})
         with patch.object(entity, "async_write_ha_state"):
             entity._handle_coordinator_update()
         assert entity.available is False

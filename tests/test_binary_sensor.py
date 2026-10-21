@@ -31,6 +31,14 @@ from custom_components.unifi_insights.const import (
     DEVICE_TYPE_SENSOR,
 )
 from custom_components.unifi_insights.data_transforms import NetworkPortFacts
+from tests.fixtures.facade_data import (
+    with_camera,
+    with_device_fields,
+    with_network_device,
+    with_protect_collection,
+    with_protect_fields,
+    with_sections,
+)
 from tests.fixtures.library_responses import (
     SAMPLE_ALARM_HUB,
     SAMPLE_THREAD_LINK_STATION,
@@ -264,7 +272,9 @@ class TestUnifiInsightsBinarySensor:
 
         assert sensor.is_on is False
 
-    async def test_device_status_no_data(self, hass: HomeAssistant, mock_coordinator):
+    async def test_device_status_no_data(
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test device status when data removed."""
         description = next(s for s in BINARY_SENSOR_TYPES if s.key == "device_status")
 
@@ -276,7 +286,13 @@ class TestUnifiInsightsBinarySensor:
         )
 
         # Remove device data
-        mock_coordinator.data["devices"]["site1"]["device1"] = None
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            devices={
+                **mock_coordinator.data["devices"],
+                "site1": {**mock_coordinator.data["devices"]["site1"], "device1": None},
+            },
+        )
 
         assert sensor.is_on is None
 
@@ -491,10 +507,12 @@ class TestUnifiProtectBinarySensor:
         assert sensor.is_on is True
 
     async def test_camera_microphone_is_mic_enabled_true(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test camera microphone binary sensor when isMicEnabled is True."""
-        mock_coordinator.data["protect"]["cameras"]["camera1"]["isMicEnabled"] = True
+        mock_coordinator.data = with_protect_fields(
+            mock_coordinator.data, "cameras", "camera1", isMicEnabled=True
+        )
         description = next(
             s for s in BINARY_SENSOR_TYPES if s.key == "camera_microphone"
         )
@@ -509,11 +527,16 @@ class TestUnifiProtectBinarySensor:
         assert sensor.entity_description.entity_category == EntityCategory.DIAGNOSTIC
 
     async def test_camera_microphone_precedence_over_legacy(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test isMicEnabled False takes precedence over legacy micEnabled True."""
-        mock_coordinator.data["protect"]["cameras"]["camera1"]["isMicEnabled"] = False
-        mock_coordinator.data["protect"]["cameras"]["camera1"]["micEnabled"] = True
+        mock_coordinator.data = with_protect_fields(
+            mock_coordinator.data,
+            "cameras",
+            "camera1",
+            isMicEnabled=False,
+            micEnabled=True,
+        )
         description = next(
             s for s in BINARY_SENSOR_TYPES if s.key == "camera_microphone"
         )
@@ -525,11 +548,16 @@ class TestUnifiProtectBinarySensor:
         assert sensor.is_on is False
 
     async def test_camera_microphone_legacy_fallback(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test legacy micEnabled fallback when isMicEnabled is None."""
-        mock_coordinator.data["protect"]["cameras"]["camera1"]["isMicEnabled"] = None
-        mock_coordinator.data["protect"]["cameras"]["camera1"]["micEnabled"] = True
+        mock_coordinator.data = with_protect_fields(
+            mock_coordinator.data,
+            "cameras",
+            "camera1",
+            isMicEnabled=None,
+            micEnabled=True,
+        )
         description = next(
             s for s in BINARY_SENSOR_TYPES if s.key == "camera_microphone"
         )
@@ -540,7 +568,9 @@ class TestUnifiProtectBinarySensor:
         )
         assert sensor.is_on is True
 
-        mock_coordinator.data["protect"]["cameras"]["camera1"]["micEnabled"] = False
+        mock_coordinator.data = with_protect_fields(
+            mock_coordinator.data, "cameras", "camera1", micEnabled=False
+        )
         sensor_off = UnifiProtectBinarySensor(
             coordinator=mock_coordinator,
             description=description,
@@ -549,11 +579,19 @@ class TestUnifiProtectBinarySensor:
         assert sensor_off.is_on is False
 
     async def test_camera_microphone_both_missing_defaults_off(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test camera microphone defaults to False when both fields are missing."""
-        mock_coordinator.data["protect"]["cameras"]["camera1"].pop("isMicEnabled", None)
-        mock_coordinator.data["protect"]["cameras"]["camera1"].pop("micEnabled", None)
+        camera = mock_coordinator.data["protect"]["cameras"]["camera1"]
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data,
+            "camera1",
+            {
+                key: value
+                for key, value in camera.items()
+                if key not in ("isMicEnabled", "micEnabled")
+            },
+        )
         description = next(
             s for s in BINARY_SENSOR_TYPES if s.key == "camera_microphone"
         )
@@ -669,7 +707,9 @@ class TestUnifiProtectBinarySensor:
 
         assert sensor.is_on is False
 
-    async def test_protect_sensor_no_data(self, hass: HomeAssistant, mock_coordinator):
+    async def test_protect_sensor_no_data(
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test protect sensor when data removed."""
         description = next(s for s in BINARY_SENSOR_TYPES if s.key == "camera_motion")
 
@@ -680,7 +720,11 @@ class TestUnifiProtectBinarySensor:
         )
 
         # Remove camera data
-        mock_coordinator.data["protect"]["cameras"]["camera1"] = None
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "cameras",
+            {**mock_coordinator.data["protect"]["cameras"], "camera1": None},
+        )
 
         assert sensor.is_on is None
 
@@ -770,12 +814,15 @@ class TestAsyncSetupEntry:
         return entry
 
     async def test_setup_entry_creates_protect_security_binary_sensors(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Alarm hub tamper is discovered at setup, and on later updates."""
-        mock_coordinator.data["protect"]["alarm_hubs"] = {
-            "alarm_hub_1": SAMPLE_ALARM_HUB
-        }
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data, "alarm_hubs", {"alarm_hub_1": SAMPLE_ALARM_HUB}
+        )
         listeners: list = []
         mock_coordinator.async_add_listener = listeners.append
         added_entities: list = []
@@ -784,9 +831,11 @@ class TestAsyncSetupEntry:
             added_entities.extend(new_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
-        mock_coordinator.data["protect"]["link_stations"] = {
-            "link_station_thread": SAMPLE_THREAD_LINK_STATION
-        }
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "link_stations",
+            {"link_station_thread": SAMPLE_THREAD_LINK_STATION},
+        )
         for listener in listeners:
             listener()
 
@@ -836,17 +885,25 @@ class TestAsyncSetupEntry:
         assert len(device_sensors) > 0
 
     async def test_setup_entry_wan_status_for_feature_only_gateway(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """A gateway recognised only by its features still gets WAN status."""
-        mock_coordinator.data["devices"]["site1"]["device2"] = {
-            "id": "device2",
-            "name": "Gateway",
-            "model": "Unknown",
-            "features": ["gateway"],
-            "state": "ONLINE",
-            "macAddress": "11:22:33:44:55:66",
-        }
+        mock_coordinator.data = with_network_device(
+            mock_coordinator.data,
+            "site1",
+            "device2",
+            {
+                "id": "device2",
+                "name": "Gateway",
+                "model": "Unknown",
+                "features": ["gateway"],
+                "state": "ONLINE",
+                "macAddress": "11:22:33:44:55:66",
+            },
+        )
         added_entities: list = []
 
         def add_entities(new_entities, **kwargs):
@@ -1009,8 +1066,8 @@ class TestWanLinkBinarySensor:
         assert len(wan_sensors) == 2
 
     async def test_state_unknown_when_wan_disappears(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """A WAN missing from the latest data reports unknown, not off."""
         sensor = UnifiInsightsWanLinkBinarySensor(
             coordinator=mock_coordinator,
@@ -1019,28 +1076,47 @@ class TestWanLinkBinarySensor:
             wan_key="wan",
             wan_name="WAN",
         )
-        del mock_coordinator.data["devices"]["site1"]["gw"]["wans"]
+        gw = mock_coordinator.data["devices"]["site1"]["gw"]
+        mock_coordinator.data = with_network_device(
+            mock_coordinator.data,
+            "site1",
+            "gw",
+            {key: value for key, value in gw.items() if key != "wans"},
+        )
 
         assert sensor.is_on is None
         assert sensor.extra_state_attributes is None
 
-        mock_coordinator.data["devices"]["site1"]["gw"]["wans"] = None
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data, "site1", "gw", wans=None
+        )
         assert sensor.is_on is None
 
-        mock_coordinator.data["devices"]["site1"]["gw"]["wans"] = [{"key": "wan2"}]
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data, "site1", "gw", wans=[{"key": "wan2"}]
+        )
         assert sensor.is_on is None
 
     async def test_setup_entry_skips_malformed_wans(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Malformed WAN entries or a non-list WAN field create no sensors."""
-        gw = mock_coordinator.data["devices"]["site1"]["gw"]
-        gw["wans"] = ["wan", {"name": "No key"}, {"key": "wan", "name": "WAN"}]
-        mock_coordinator.data["devices"]["site1"]["gw_other"] = {
-            **gw,
-            "id": "gw_other",
-            "wans": {"wan": {"status": "online"}},
+        gw = {
+            **mock_coordinator.data["devices"]["site1"]["gw"],
+            "wans": ["wan", {"name": "No key"}, {"key": "wan", "name": "WAN"}],
         }
+        mock_coordinator.data = with_network_device(
+            mock_coordinator.data, "site1", "gw", gw
+        )
+        mock_coordinator.data = with_network_device(
+            mock_coordinator.data,
+            "site1",
+            "gw_other",
+            {**gw, "id": "gw_other", "wans": {"wan": {"status": "online"}}},
+        )
         added_entities: list = []
 
         def add_entities(new_entities, **kwargs):
@@ -1173,21 +1249,37 @@ class TestSiteToSiteVpnBinarySensor:
         ],
     )
     async def test_missing_or_not_connected_tunnel_is_off(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry, connections
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+        connections: dict[str, Any],
+    ) -> None:
         """A tunnel absent from the list, or not CONNECTED, is off."""
-        mock_coordinator.data["vpn_connections"]["site1"] = connections
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            vpn_connections={
+                **mock_coordinator.data["vpn_connections"],
+                "site1": connections,
+            },
+        )
         (sensor,) = await self._setup(hass, mock_config_entry)
 
         assert sensor.is_on is False
 
     @pytest.mark.parametrize("vpn_connections", [{}, {"site1": None}, None])
     async def test_unknown_when_connection_state_is_unknown(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry, vpn_connections
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+        vpn_connections: dict[str, Any] | None,
+    ) -> None:
         """Unreadable connection state reads unknown rather than disconnected."""
         (sensor,) = await self._setup(hass, mock_config_entry)
-        mock_coordinator.data["vpn_connections"] = vpn_connections
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data, vpn_connections=vpn_connections
+        )
 
         assert sensor.is_on is None
         assert sensor.extra_state_attributes == {
@@ -1196,45 +1288,85 @@ class TestSiteToSiteVpnBinarySensor:
         }
 
     async def test_unavailable_once_tunnel_is_removed(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """A tunnel deleted on the console makes its sensor unavailable."""
         (sensor,) = await self._setup(hass, mock_config_entry)
         assert sensor.available is True
 
-        del mock_coordinator.data["site_vpns"]["site1"]["tun1"]
+        site_vpns = mock_coordinator.data["site_vpns"]["site1"]
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            site_vpns={
+                "site1": {
+                    key: value for key, value in site_vpns.items() if key != "tun1"
+                }
+            },
+        )
         assert sensor.available is False
-        mock_coordinator.data["site_vpns"] = None
+        mock_coordinator.data = with_sections(mock_coordinator.data, site_vpns=None)
         assert sensor.available is False
 
     async def test_created_on_device_reporting_wans(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """An unrecognised model that reports WAN links still gets the sensors."""
-        gw = mock_coordinator.data["devices"]["site1"]["gw"]
-        gw["model"] = "Unknown"
-        gw["wans"] = [{"key": "wan", "name": "WAN", "connected": True}]
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "gw",
+            model="Unknown",
+            wans=[{"key": "wan", "name": "WAN", "connected": True}],
+        )
 
         (sensor,) = await self._setup(hass, mock_config_entry)
 
         assert sensor._device_id == "gw"
 
     async def test_not_created_without_gateway_or_tunnels(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """No gateway, or no configured tunnels, means no sensors."""
-        mock_coordinator.data["site_vpns"] = {"site1": {}}
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data, site_vpns={"site1": {}}
+        )
         assert await self._setup(hass, mock_config_entry) == []
 
-        mock_coordinator.data["site_vpns"] = {"site1": {"tun1": {"name": "Office"}}}
-        del mock_coordinator.data["devices"]["site1"]["gw"]
+        site_devices = mock_coordinator.data["devices"]["site1"]
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            site_vpns={"site1": {"tun1": {"name": "Office"}}},
+            devices={
+                "site1": {
+                    key: value for key, value in site_devices.items() if key != "gw"
+                }
+            },
+        )
         assert await self._setup(hass, mock_config_entry) == []
 
     async def test_name_falls_back_to_tunnel_id(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """A tunnel without a name is labelled by its id."""
-        mock_coordinator.data["site_vpns"]["site1"]["tun1"]["name"] = None
+        site_vpns = mock_coordinator.data["site_vpns"]["site1"]
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            site_vpns={
+                "site1": {**site_vpns, "tun1": {**site_vpns["tun1"], "name": None}}
+            },
+        )
 
         (sensor,) = await self._setup(hass, mock_config_entry)
 
@@ -1322,7 +1454,7 @@ class TestIsSmartDetectActive:
 class TestProtectBinarySensorUpdateFromDataNoData:
     """Tests for _update_from_data when device_data is None."""
 
-    def test_update_from_data_with_no_device_data(self):
+    def test_update_from_data_with_no_device_data(self) -> None:
         """Test _update_from_data returns early when device_data is None."""
         coordinator = MagicMock()
         coordinator.protect_client = MagicMock()
@@ -1346,11 +1478,11 @@ class TestProtectBinarySensorUpdateFromDataNoData:
         description = next(d for d in BINARY_SENSOR_TYPES if d.key == "camera_motion")
 
         # First add camera data to create entity
-        coordinator.data["protect"]["cameras"]["cam1"] = {
-            "id": "cam1",
-            "name": "Test Camera",
-            "state": "CONNECTED",
-        }
+        coordinator.data = with_camera(
+            coordinator.data,
+            "cam1",
+            {"id": "cam1", "name": "Test Camera", "state": "CONNECTED"},
+        )
 
         entity = UnifiProtectBinarySensor(
             coordinator=coordinator,
@@ -1359,7 +1491,7 @@ class TestProtectBinarySensorUpdateFromDataNoData:
         )
 
         # Now remove camera data
-        del coordinator.data["protect"]["cameras"]["cam1"]
+        coordinator.data = with_protect_collection(coordinator.data, "cameras", {})
 
         # _update_from_data should return early without error
         entity._update_from_data()
@@ -1776,7 +1908,7 @@ class TestUnifiPortBinarySensor:
         assert sensor.is_on is None
 
     async def test_sfp_no_device_data(
-        self, hass: HomeAssistant, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Test SFP binary sensor when device data is absent."""
         sensor = UnifiPortBinarySensor(
@@ -1786,22 +1918,40 @@ class TestUnifiPortBinarySensor:
             port_idx=25,
             port_label="SFP+ 1",
         )
-        mock_coordinator.data["devices"]["site1"].pop("device1", None)
+        site_devices = mock_coordinator.data["devices"]["site1"]
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            devices={
+                **mock_coordinator.data["devices"],
+                "site1": {
+                    key: value
+                    for key, value in site_devices.items()
+                    if key != "device1"
+                },
+            },
+        )
         assert sensor._find_port_data() is None
         assert sensor.is_on is None
 
     async def test_sfp_extra_attributes_partial_and_empty_fields(
-        self, hass: HomeAssistant, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Test extra_state_attributes when SFP fields are partially absent or falsy."""
-        mock_coordinator.data["devices"]["site1"]["device1"]["ports"].append(
-            {
-                "idx": 27,
-                "sfp_found": True,
-                "sfp_part": "UF-RJ45-1G",
-                "sfp_vendor": None,
-                "sfp_serial": "",
-            }
+        ports = mock_coordinator.data["devices"]["site1"]["device1"]["ports"]
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            ports=[
+                *ports,
+                {
+                    "idx": 27,
+                    "sfp_found": True,
+                    "sfp_part": "UF-RJ45-1G",
+                    "sfp_vendor": None,
+                    "sfp_serial": "",
+                },
+            ],
         )
         sensor = UnifiPortBinarySensor(
             coordinator=mock_coordinator,
@@ -1836,26 +1986,34 @@ class TestUnifiPortBinarySensor:
         assert len(sfp_sensors) == 2
 
     async def test_setup_skips_malformed_ports_and_dedupes(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Malformed/non-SFP/duplicate ports are skipped; only valid ones are added."""
-        mock_coordinator.data["devices"]["site1"]["device1"]["ports"] = [
-            "not-a-dict",  # skipped: not a dict
-            {"idx": 30, "media": 123},  # skipped: media not a string
-            {"idx": 31, "media": "Copper"},  # skipped: media doesn't start with SFP
-            {"media": "SFP+"},  # skipped: no idx/port_idx
-            {"idx": 25, "media": "SFP+", "name": "SFP+ 1"},  # added
-            {"idx": 25, "media": "SFP+", "name": "SFP+ 1 dup"},  # skipped: dup key
-        ]
-        mock_coordinator.data["devices"]["site2"] = {
-            "device2": {
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            ports=[
+                "not-a-dict",  # skipped: not a dict
+                {"idx": 30, "media": 123},  # skipped: media not a string
+                {"idx": 31, "media": "Copper"},  # skipped: media doesn't start with SFP
+                {"media": "SFP+"},  # skipped: no idx/port_idx
+                {"idx": 25, "media": "SFP+", "name": "SFP+ 1"},  # added
+                {"idx": 25, "media": "SFP+", "name": "SFP+ 1 dup"},  # skipped: dup key
+            ],
+        )
+        mock_coordinator.data = with_network_device(
+            mock_coordinator.data,
+            "site2",
+            "device2",
+            {
                 "id": "device2",
                 "name": "Non-list Ports Device",
                 "model": "USW-Lite-8-PoE",
                 "state": "ONLINE",
                 "ports": "not-a-list",
             },
-        }
+        )
 
         config_entry = MagicMock()
         config_entry.runtime_data = MagicMock()
@@ -2027,11 +2185,15 @@ class TestProtectBinarySensorCapabilityFiltering:
 
 @pytest.mark.parametrize("description", BINARY_SENSOR_TYPES, ids=lambda desc: desc.key)
 def test_every_binary_sensor_description_preserves_effective_category(
-    hass: HomeAssistant, mock_coordinator, description
-):
+    hass: HomeAssistant,
+    mock_coordinator: MagicMock,
+    description: UnifiInsightsBinarySensorEntityDescription,
+) -> None:
     """Description categories replace the old forced category without overrides."""
     mock_coordinator.hass = hass
-    mock_coordinator.data["devices"] = {"site1": {"device1": {"name": "Switch"}}}
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data, devices={"site1": {"device1": {"name": "Switch"}}}
+    )
     sensor = UnifiInsightsBinarySensor(
         mock_coordinator, description, "site1", "device1"
     )
@@ -2060,11 +2222,21 @@ def test_every_binary_sensor_description_preserves_effective_category(
     ],
 )
 def test_dynamic_binary_sensor_description_categories(
-    hass: HomeAssistant, mock_coordinator, sensor_class, args, expected
-):
+    hass: HomeAssistant,
+    mock_coordinator: MagicMock,
+    sensor_class: type[
+        UnifiPortBinarySensor
+        | UnifiInsightsWanLinkBinarySensor
+        | UnifiInsightsSiteToSiteVpnBinarySensor
+    ],
+    args: tuple[Any, ...],
+    expected: EntityCategory | None,
+) -> None:
     """Also lock categories for descriptions constructed per port/WAN/tunnel."""
     mock_coordinator.hass = hass
-    mock_coordinator.data["devices"] = {"site1": {"device1": {"name": "Switch"}}}
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data, devices={"site1": {"device1": {"name": "Switch"}}}
+    )
     sensor = sensor_class(mock_coordinator, "site1", "device1", *args)
     assert sensor.entity_description.entity_category == expected
     assert sensor.entity_category == expected

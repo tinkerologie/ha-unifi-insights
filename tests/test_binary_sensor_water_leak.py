@@ -1,7 +1,7 @@
 # Copyright 2026 UniFi Insights contributors
 """Tests for leak detection via featureFlags.waterLeak (USL-Environmental)."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,6 +14,9 @@ from custom_components.unifi_insights.binary_sensor import (
     _supports_internal_leak,
     _water_leak_channel_count,
     async_setup_entry,
+)
+from tests.fixtures.facade_data import (
+    with_protect_fields,
 )
 
 if TYPE_CHECKING:
@@ -122,6 +125,13 @@ class TestWaterLeakHelpers:
         assert _is_external_leak_detected(data) is expected
 
 
+def _publish_sensor_fields(coordinator: MagicMock, **fields: Any) -> None:
+    """Publish a snapshot with fields of the Environmental sensor replaced."""
+    coordinator.data = with_protect_fields(
+        coordinator.data, "sensors", "env_sensor", **fields
+    )
+
+
 class TestWaterLeakEntityCreation:
     """Integration-style test: entities are created for the Environmental sensor."""
 
@@ -154,8 +164,8 @@ class TestWaterLeakEntityCreation:
         return coordinator
 
     async def test_environmental_gets_internal_and_external_leak(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Both leak entities are created and report dry/wet independently."""
         config_entry = MagicMock()
         config_entry.runtime_data = MagicMock()
@@ -178,22 +188,23 @@ class TestWaterLeakEntityCreation:
         assert by_key["sensor_leak_external"].is_on is False
         assert "sensor_door" not in by_key
 
-        sensor_data = mock_coordinator.data["protect"]["sensors"]["env_sensor"]
-        sensor_data["leakDetectedAt"] = 1758600000000
+        _publish_sensor_fields(mock_coordinator, leakDetectedAt=1758600000000)
         assert by_key["sensor_leak"].is_on is True
         assert by_key["sensor_leak_external"].is_on is False
 
-        sensor_data["leakDetectedAt"] = None
-        sensor_data["externalLeakDetectedAt"] = 1758600000000
+        _publish_sensor_fields(
+            mock_coordinator,
+            leakDetectedAt=None,
+            externalLeakDetectedAt=1758600000000,
+        )
         assert by_key["sensor_leak"].is_on is False
         assert by_key["sensor_leak_external"].is_on is True
 
     async def test_leak_attributes_expose_both_channels(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Leak state attributes report internal and external channel."""
-        sensor = mock_coordinator.data["protect"]["sensors"]["env_sensor"]
-        sensor["externalLeakDetectedAt"] = 1758600000000
+        _publish_sensor_fields(mock_coordinator, externalLeakDetectedAt=1758600000000)
 
         config_entry = MagicMock()
         config_entry.runtime_data = MagicMock()

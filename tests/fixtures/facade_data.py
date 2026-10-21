@@ -283,6 +283,30 @@ def with_protect_device(
     )
 
 
+def with_protect_fields(
+    data: Mapping[str, Any], collection: str, device_id: str, **fields: Any
+) -> FacadeData:
+    """Return ``data`` with fields of a Protect device's record replaced."""
+    record = _record_at(data, "protect", collection, device_id)
+    return with_protect_device(data, collection, device_id, {**record, **fields})
+
+
+def with_protect_collection(
+    data: Mapping[str, Any], collection: str, records: Any
+) -> FacadeData:
+    """
+    Return ``data`` with a whole Protect collection replaced.
+
+    ``records`` may be any value, so a test can publish a malformed
+    collection (None, a string) as well as a mapping of records.
+    """
+    protect = data.get("protect")
+    protect = protect if isinstance(protect, Mapping) else {}
+    return with_sections(
+        data, protect=ReadOnlyDict({**protect, collection: frozen(records)})
+    )
+
+
 def with_camera(
     data: Mapping[str, Any], camera_id: str, record: Mapping[str, Any]
 ) -> FacadeData:
