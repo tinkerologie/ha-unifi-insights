@@ -67,6 +67,7 @@ from custom_components.unifi_insights.topology import (
     device_kind as topology_device_kind,
 )
 from tests.fixtures.facade_data import (
+    frozen,
     set_availability,
     with_network_device,
     with_sections,
@@ -133,15 +134,17 @@ def _coordinator(
     return coordinator
 
 
-def _published(data: Mapping[str, Any]) -> dict[str, Any]:
+def _published(data: Mapping[str, Any]) -> Any:
     """Return ``data`` with the facts published like the device coordinator does."""
-    return {
-        **data,
-        NETWORK_FACTS_KEY: {
-            site_id: build_site_network_facts(devices, data["stats"].get(site_id))
-            for site_id, devices in data["devices"].items()
-        },
-    }
+    return frozen(
+        {
+            **data,
+            NETWORK_FACTS_KEY: {
+                site_id: build_site_network_facts(devices, data["stats"].get(site_id))
+                for site_id, devices in data["devices"].items()
+            },
+        }
+    )
 
 
 def _entry(coordinator: MagicMock) -> MagicMock:
