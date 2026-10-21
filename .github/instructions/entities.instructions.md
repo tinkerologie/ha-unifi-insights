@@ -8,8 +8,8 @@ applyTo: "custom_components/unifi_insights/alarm_control_panel.py, custom_compon
 
 ## Base Entity Classes
 
-- **`UnifiInsightsEntity`** (`entity.py`) — Network devices; availability via Device coordinator health and `serviceable` / `is_device_serviceable`. `is_device_online` remains the strict connectivity check.
-- **`UnifiProtectEntity`** (`entity.py`) — Protect devices; availability via `state == CONNECTED`.
+- **`UnifiInsightsEntity`** (`entity.py`) — Network devices; availability via the snapshot's captured device availability (`owner_available(coordinator.data, "device")`) and `serviceable` / `is_device_serviceable`. `is_device_online` remains the strict connectivity check.
+- **`UnifiProtectEntity`** (`entity.py`) — Protect devices; availability via the snapshot's captured Protect availability (`owner_available(coordinator.data, "protect")`) and `state == CONNECTED`.
 - **`UnifiAccessEntity` / `UnifiAccessDoorEntity`** (`entity.py`) — UniFi Access doors, readers, and hubs.
 - **`UnifiInnerSpaceEntity`** (`entity.py`) — UniFi InnerSpace floor plans and spatial sensors.
 - **`UnifiCarrierFabricEntity` / `UnifiCarrierFabricSubscriberEntity`** (`entity.py`) — UniFi Carrier Fabric OLTs, ONUs, and subscribers.
@@ -66,6 +66,8 @@ async def async_setup_entry(
 ## Data Access & Availability
 
 - ALWAYS read from `coordinator.data` — never call API clients from an entity, in state properties or in actions.
+- Read facade records through the lookups in `data_transforms.py` (`network_device`, `network_device_stats`, `network_client`, `site_record`, `rule_record`, `protect_device`, `latest_voucher`), never by indexing `coordinator.data` directly. The snapshot is read-only (ADR-013): never write into it. `protect_collection`, `site_section` and `section_by_site` copy, so don't call them on per-update paths (state properties, `available`, listeners that run on every update).
+- Read coordinator availability from the snapshot with `owner_available` / `site_section_available`, not from the facade's live `*_available` properties.
 - **Write commands (ADR-010):** call the owning coordinator directly with a typed call — `self.coordinator.config_coordinator`, `self.coordinator.device_coordinator`, `self.coordinator.require_protect_coordinator()`, or the Access coordinator for Access entities. Never look a command up by name, never fall back to an API client, and never refresh or patch cached data from the entity. The owner publishes the written fields, so derive state from `coordinator.data` instead of setting `_attr_*` after the call.
 - Translate a display name or an observed option into the native ID before calling the owner, and raise a translated `ServiceValidationError` when it is unknown.
 - Use `get_field(data, "camelCase", "snake_case")` and `first_not_none(...)` so falsy values (`0`, `False`, `0.0`) are preserved instead of falling back via `or`.

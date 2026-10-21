@@ -33,7 +33,7 @@ An accepted ADR is never edited to change its meaning. A new ADR supersedes it i
 | [010](./adr/010-one-owner-per-write-command.md)                      | One owner per write command                                   | Accepted              | 2026-10-19 |
 | [011](./adr/011-platform-modules-and-flat-layout-homes.md)           | Platform module size and homes for the remaining helpers      | Accepted              | 2026-10-20 |
 | [012](./adr/012-pure-protect-state-reconciler.md)                    | A pure reconciler for Protect state                           | Accepted              | 2026-10-20 |
-| [013](./adr/013-typed-read-only-facade-snapshot.md)                  | A typed, read-only facade snapshot                            | Accepted              | 2026-10-20 |
+| [013](./adr/013-typed-read-only-facade-snapshot.md)                  | A typed, read-only facade snapshot                            | Accepted              | 2026-10-21 |
 
 ### Multi-coordinator architecture behind a facade
 
@@ -81,7 +81,7 @@ The 17 platform modules are exempt from ADR-007's 2,000-line budget and are boun
 
 ### A typed, read-only facade snapshot
 
-The facade becomes a typed, read-only projection that holds no domain state, amending ADR-002 and ADR-010's ownership table. `FacadeData` is a `TypedDict` with `ReadOnly` keys and `Mapping` sections, published as a top-level `ReadOnlyDict`: no runtime cost, unchanged section identity and JSON, nested writes caught by strict mypy, and test builders that deep-freeze so an entity write fails in tests. Owners publish copy-on-write. The voucher settings (now a frozen `VoucherSettings`), the latest generated vouchers and the generate and delete commands move to the config coordinator, which already owns the voucher inventory. Pure lookups go to `data_transforms.py`, availability is captured in the snapshot, Protect WebSocket streams gate by identity, and the InnerSpace view stays an identity-keyed memo. A deep freeze (about 3 to 6 ms per rebuild), `MappingProxyType`, a frozen dataclass and a `ReadOnlyDict` subclass (`@final`) were rejected. Lands in a series of PRs under [#342](https://github.com/tinkerologie/ha-unifi-insights/issues/342). [ADR-013](./adr/013-typed-read-only-facade-snapshot.md)
+The facade becomes a typed, read-only projection that holds no domain state, amending ADR-002 and ADR-010's ownership table. `FacadeData` is a `TypedDict` with `ReadOnly` keys and `Mapping` sections, published as a top-level `ReadOnlyDict`: no runtime cost, unchanged section identity and JSON, nested writes caught by strict mypy, and test builders that deep-freeze so an entity write fails in tests. Owners publish copy-on-write. The voucher settings (now a frozen `VoucherSettings`), the latest generated vouchers and the generate and delete commands move to the config coordinator, which already owns the voucher inventory. Pure lookups go to `data_transforms.py`, availability is captured in the snapshot, Protect WebSocket streams gate by identity, and the InnerSpace view stays an identity-keyed memo. A deep freeze (about 3 to 6 ms per rebuild), `MappingProxyType`, a frozen dataclass and a `ReadOnlyDict` subclass (`@final`) were rejected. Implemented in [#342](https://github.com/tinkerologie/ha-unifi-insights/issues/342) (#386 to #405): readers use the lookups and the captured availability, the copying lookups stay off per-update paths, and the facade's `get_site`, `get_device`, `get_device_stats` and per-site `*_available` methods are gone. [ADR-013](./adr/013-typed-read-only-facade-snapshot.md)
 
 ## Future considerations
 
@@ -89,7 +89,7 @@ The facade becomes a typed, read-only projection that holds no domain state, ame
 
 **Status:** kept
 
-`UnifiInsightsFacadeCoordinator` exists so entities and services read one `data` mapping. ADR-013 makes it a typed, read-only projection that holds no domain state: the voucher state and commands moved to the config coordinator, and it keeps aggregation, availability, `async_refresh_or_raise` and pure reads and exports. Once entities read through the snapshot lookups, revisit whether they can subscribe to their owning coordinator directly.
+`UnifiInsightsFacadeCoordinator` exists so entities and services read one `data` mapping. ADR-013 makes it a typed, read-only projection that holds no domain state: the voucher state and commands moved to the config coordinator, and it keeps aggregation, availability, `async_refresh_or_raise` and pure reads and exports. Entities now read through the snapshot lookups (#342); whether they can subscribe to their owning coordinator directly is still open.
 
 ### Repairs
 

@@ -4,7 +4,7 @@ This document describes the technical architecture of the UniFi Insights custom 
 
 For AI agent instructions, see [`AGENTS.md`](/AGENTS.md). For the decision log, see [`DECISIONS.md`](./DECISIONS.md) and the full records in [`adr/`](./adr/).
 
-> **Status:** this describes `main` as of 2026-10-20, with the ADR-007 module layout in place (#341). The Protect coordinator is split along ADR-007's `protect_ws.py` / `protect_events.py` seam (#340, [ADR-012](./adr/012-pure-protect-state-reconciler.md)).
+> **Status:** this describes `main` as of 2026-10-21, with the ADR-007 module layout in place (#341). The Protect coordinator is split along ADR-007's `protect_ws.py` / `protect_events.py` seam (#340, [ADR-012](./adr/012-pure-protect-state-reconciler.md)), and the facade publishes a typed, read-only snapshot (#342, [ADR-013](./adr/013-typed-read-only-facade-snapshot.md)).
 
 ## Directory structure
 
@@ -88,7 +88,12 @@ All coordinators inherit `UnifiInsightsBaseCoordinator` (`coordinators/base.py`)
 
 The facade coordinator has no update interval. It subscribes to the specialized coordinators, aggregates their snapshots into one `data` mapping, and fans out a single listener notification. Entities and services read from the facade so they do not need to know which coordinator owns a field.
 
-The facade's `data` is a `FacadeData` snapshot ([ADR-013](./adr/013-typed-read-only-facade-snapshot.md)): a `TypedDict` with `ReadOnly` keys and `Mapping` sections, so a write into it is a strict-mypy error, published as a `ReadOnlyDict` root. The pure `build_facade_data` builds each snapshot from the owners' data without copying a section, so the WebSocket streams can compare sections by identity. Each snapshot also captures the owners' availability (`availability`: device, config, Protect, InnerSpace and Network, and per site each tracked config section), and the InnerSpace view is a memo rebuilt only when the objects it reads change. The pure lookups in `data_transforms.py` (`network_device`, `network_device_stats`, `network_client`, `site_record`, `rule_record`, `protect_device`, `latest_voucher`) read one record from a snapshot and return None instead of raising; tests build snapshots with `tests/fixtures/facade_data.py`.
+The facade's `data` is a `FacadeData` snapshot ([ADR-013](./adr/013-typed-read-only-facade-snapshot.md)): a `TypedDict` with `ReadOnly` keys and `Mapping` sections, so a write into it is a strict-mypy error. The root is a `ReadOnlyDict`, and the pure `build_facade_data` passes each owner's sections through by reference, never copying or writing into them; the InnerSpace view is a memo rebuilt only when the objects it reads change.
+
+- **Lookups.** Readers go through the pure lookups in `data_transforms.py`, which return None for a missing or malformed section or record and never raise: `network_device`, `network_device_stats`, `network_client`, `site_record`, `rule_record`, `protect_device` and `latest_voucher` return the published record; `protect_collection`, `site_section` and `section_by_site` return new dicts of a collection's records, so they stay off per-entity, per-update paths and off the WebSocket gating inputs.
+- **Availability.** Each snapshot captures the owners' availability in `data["availability"]` (device, config, Protect, InnerSpace and Network, and per site each tracked config section). Entities read it with `owner_available(data, owner)` and `site_section_available(data, site_id, section)`, so state and availability come from the same snapshot. The facade's owner-level `*_available` properties remain for the capture, the WebSocket API and diagnostics.
+- **WebSocket gating.** The dashboard streams skip a rebuild when every input section is the same object as last time; the Protect streams compare the identity of the copy-on-write Protect collections.
+- **Tests.** Snapshots are built and frozen with `tests/fixtures/facade_data.py`.
 
 ### Protect state reconciliation
 

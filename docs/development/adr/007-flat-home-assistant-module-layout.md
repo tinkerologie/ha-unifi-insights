@@ -1,7 +1,7 @@
 # ADR-007: Flat Home Assistant module layout
 
 **Date:** 2026-10-16 (revised 2026-10-17: size budget and `api/` end state; revised 2026-10-19: `api/` removed by #345; accepted 2026-10-20 when #341 landed)
-**Status:** Accepted (implemented by [#341](https://github.com/tinkerologie/ha-unifi-insights/issues/341), part of [#343](https://github.com/tinkerologie/ha-unifi-insights/issues/343); originally [#330](https://github.com/tinkerologie/ha-unifi-insights/issues/330)) Amended by [ADR-009](./009-amend-flat-module-layout.md) and [ADR-011](./011-platform-modules-and-flat-layout-homes.md).
+**Status:** Accepted (implemented by [#341](https://github.com/tinkerologie/ha-unifi-insights/issues/341), part of [#343](https://github.com/tinkerologie/ha-unifi-insights/issues/343)) Amended by [ADR-009](./009-amend-flat-module-layout.md) and [ADR-011](./011-platform-modules-and-flat-layout-homes.md).
 
 ## Context
 
@@ -13,7 +13,7 @@ Home Assistant's guidance is explicit:
 - The [`common-modules`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/common-modules/) rule places base entities in `entity.py` so "it is easier to find" them.
 - Home Assistant Core's two UniFi integrations show the accepted shapes: `unifiprotect` is flat (`data.py`, `utils.py`, `views.py` beside the platforms); `unifi` keeps one `hub/` subpackage for its multi-part hub.
 
-`AGENTS.md` forbids `helpers/`, `common/`, `shared/`, `lib/`, and any new top-level package without approval. #330 first described the move-only consolidation. It was closed and split into the sub-issues of #343, with the file moves in #341. This ADR records the target layout so it doesn't drift again.
+`AGENTS.md` forbids `helpers/`, `common/`, `shared/`, `lib/`, and any new top-level package without approval. #343 splits the work into sub-issues: dead-code removal in #334, the Quality Scale fixes in #335 and #336, and the move-only consolidation in #341. This ADR records the target layout so it doesn't drift again.
 
 ## Decision
 

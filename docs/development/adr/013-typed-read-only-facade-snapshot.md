@@ -1,6 +1,6 @@
 # ADR-013: A typed, read-only facade snapshot
 
-**Date:** 2026-10-20
+**Date:** 2026-10-20 (implementation recorded 2026-10-21)
 **Status:** Accepted (decided in the [design review](https://github.com/tinkerologie/ha-unifi-insights/issues/342#issuecomment-6284319707) of [#342](https://github.com/tinkerologie/ha-unifi-insights/issues/342), part of [#343](https://github.com/tinkerologie/ha-unifi-insights/issues/343); amends [ADR-002](./002-multi-coordinator-architecture-behind-a-facade.md) and the ownership table of [ADR-010](./010-one-owner-per-write-command.md))
 
 ## Context
@@ -49,6 +49,25 @@ The work lands as a series of pull requests under #342, in this order, without d
 - The remaining documentation.
 
 Every `unique_id` and WebSocket contract stays unchanged; `tests/test_unique_ids.py` and `tests/coordinators/test_facade_identity.py` pin them.
+
+## Implementation
+
+Recorded 2026-10-21. Every part landed under #342 as planned:
+
+- **Characterization:** `tests/test_unique_ids.py` and `tests/coordinators/test_facade_identity.py` in #386.
+- **Copy-on-write owners** (point 2): the device and config refreshes publish once, after their last `await`, in #387.
+- **Vouchers to config** (points 3 and 4): this ADR and the voucher move in #388.
+- **Snapshot** (points 1, 7, 8 and 9): `FacadeData`, the pure `build_facade_data`, captured availability, the InnerSpace memo (`build_innerspace_view` in `innerspace_transforms.py`) and Protect identity gating in #389.
+- **Lookups and builders** (points 5 and 6): the lookups and `tests/fixtures/facade_data.py` in #390.
+- **Readers** (point 5): `entity.py` in #396, the Protect platforms in #397 (adding `protect_collection`), the Network platforms in #398 (adding `site_section` and `section_by_site`), and the WebSocket API and dashboards in #399.
+- **Captured availability** (point 7): entities read `owner_available` and `site_section_available` from the snapshot in #401.
+- **Test builders** (point 6): the test modules build snapshots with the builders in #402, #403, #404 and #405; #405 also freezes `mock_coordinator.data`.
+
+Deviations found on the way:
+
+- **Copying lookups stay off hot paths.** `protect_collection`, `site_section` and `section_by_site` return new dicts of the records published as dicts. They are not used on per-entity, per-update paths (the device tracker's client read and the Wake button's name lookup stay allocation-free) or on the WebSocket identity-gating inputs, which must see the owners' objects.
+- **Facade accessors removed.** The facade's `get_site`, `get_device` and `get_device_stats` (#398) and its per-site `*_available` methods (#401) are gone. The owner-level `device_available`, `config_available`, `protect_available`, `innerspace_available` and `network_available` properties stay: the availability capture, the WebSocket API and diagnostics read them.
+- **Diagnostics unchanged.** `diagnostics.py` keeps dumping the sections as published, without the lookups, so its output and redaction (ADR-006) did not change.
 
 ## Alternatives considered
 

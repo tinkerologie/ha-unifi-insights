@@ -5,7 +5,7 @@
 
 ## Context
 
-UniFi Insights has grown to 17 platforms, 9 coordinators, 7 vendored API clients, and 6 dashboard cards. The reasons behind structural choices (why a facade coordinator exists, why the API client is vendored, why the config entry unique ID is a MAC) live in commit messages, closed issues, and `AGENTS.md`. New contributors and AI agents re-litigate them, and [#330](https://github.com/tinkerologie/ha-unifi-insights/issues/330) showed that the module layout drifted because no document said what the intended layout was.
+UniFi Insights has grown to 17 platforms, 9 coordinators, 7 vendored API clients, and 6 dashboard cards. The reasons behind structural choices (why a facade coordinator exists, why the API client is vendored, why the config entry unique ID is a MAC) live in commit messages, closed issues, and `AGENTS.md`. New contributors and AI agents re-litigate them, and [#341](https://github.com/tinkerologie/ha-unifi-insights/issues/341) showed that the module layout drifted because no document said what the intended layout was.
 
 The sibling `ha-unraid` project keeps `docs/development/ARCHITECTURE.md`, `docs/development/DECISIONS.md`, and an `adr/` folder. This repository already ships a `Create ADR` prompt under `.github/prompts/` that defines an ADR template.
 

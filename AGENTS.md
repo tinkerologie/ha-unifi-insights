@@ -304,6 +304,8 @@ All base classes live in `entity.py` (`UnifiAccessEntity`, `UnifiInnerSpaceEntit
 - **`UnifiInsightsEntity`** — Network devices; availability gated on the snapshot's captured device availability (`owner_available(coordinator.data, "device")`) and `serviceable` / `is_device_serviceable(device_data)`; `is_device_online` remains the strict connectivity check
 - **`UnifiProtectEntity`** — Protect devices; availability gated on the snapshot's captured Protect availability (`owner_available(coordinator.data, "protect")`) and `state == "CONNECTED"`
 
+Read facade records through the lookups in `data_transforms.py` (`network_device`, `protect_device`, `site_record`, ...), never by indexing `coordinator.data` directly, and never write into the snapshot (ADR-013). `protect_collection`, `site_section` and `section_by_site` copy, so keep them off per-update paths.
+
 ## Home Assistant Patterns (2026.10+ Standards)
 
 **Config flow (`config_flow.py`):**
