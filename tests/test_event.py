@@ -51,6 +51,7 @@ from custom_components.unifi_insights.event import (
 from tests.fixtures.access import DEVICES, DOORS, ENTRY_DATA, _client, _ready
 from tests.fixtures.facade_data import (
     set_availability,
+    with_protect_collection,
     with_protect_device,
     with_protect_fields,
     with_sections,
@@ -75,7 +76,7 @@ def _without_protect_device(
         for key, value in data["protect"][collection].items()
         if key != device_id
     }
-    return with_sections(data, protect={**data["protect"], collection: records})
+    return with_protect_collection(data, collection, records)
 
 
 class TestParallelUpdates:

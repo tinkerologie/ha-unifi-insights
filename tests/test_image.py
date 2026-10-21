@@ -31,7 +31,12 @@ from custom_components.unifi_insights.image import (
     async_setup_entry,
 )
 from custom_components.unifi_insights.innerspace_transforms import strip_url_query
-from tests.fixtures.facade_data import set_availability, with_rule, with_sections
+from tests.fixtures.facade_data import (
+    frozen,
+    set_availability,
+    with_rule,
+    with_sections,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -87,7 +92,7 @@ def _with_qr_code(data: Mapping[str, Any], payload: str) -> FacadeData:
 def _with_floor_plans(data: Mapping[str, Any], floor_plans: Any) -> FacadeData:
     """Return ``data`` with the InnerSpace floor plans replaced."""
     return with_sections(
-        data, innerspace={**data["innerspace"], "floor_plans": floor_plans}
+        data, innerspace=frozen({**data["innerspace"], "floor_plans": floor_plans})
     )
 
 

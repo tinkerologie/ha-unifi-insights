@@ -22,6 +22,7 @@ from custom_components.unifi_insights.device_tracker import (
 )
 from tests.fixtures.facade_data import (
     facade_data,
+    frozen,
     set_availability,
     with_client,
     with_sections,
@@ -41,7 +42,9 @@ def _with_site_clients(
     data: Mapping[str, Any], site_id: str, clients: Any
 ) -> FacadeData:
     """Return ``data`` with one site's clients replaced."""
-    return with_sections(data, clients={**data.get("clients", {}), site_id: clients})
+    return with_sections(
+        data, clients=frozen({**data.get("clients", {}), site_id: clients})
+    )
 
 
 def _with_client_fields(
