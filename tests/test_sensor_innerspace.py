@@ -47,7 +47,12 @@ from custom_components.unifi_insights.sensor import (
 from custom_components.unifi_insights.sensor import (
     async_setup_entry as async_setup_sensor,
 )
-from tests.fixtures.facade_data import with_sections
+from tests.fixtures.facade_data import (
+    facade_data,
+    with_camera,
+    with_network_device,
+    with_sections,
+)
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -898,3 +903,78 @@ def test_innerspace_correlation_key_holds_what_correlation_reads() -> None:
     assert innerspace_correlation_key(
         copy.deepcopy(VIEW_DEVICES), copy.deepcopy(VIEW_PROTECT)
     ) == (network, protect)
+
+
+_NETWORK_MATCH = {
+    "id": "rec-1",
+    "matched_domain": "network",
+    "matched_site_id": "site-1",
+    "matched_device_id": "net-1",
+}
+_PROTECT_MATCH = {
+    "id": "rec-1",
+    "matched_domain": "protect",
+    "matched_protect_type": "camera",
+    "matched_device_id": "cam-1",
+}
+
+
+def _innerspace_snapshot(record: dict[str, Any], **sections: Any) -> Any:
+    """Return a snapshot holding one InnerSpace record and ``sections``."""
+    return facade_data(innerspace={"devices": {"rec-1": record}}, **sections)
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        pytest.param(
+            with_network_device(
+                _innerspace_snapshot(_NETWORK_MATCH), "site-1", "net-1", {"id": "net-1"}
+            ),
+            "site-1_net-1",
+            id="network-match",
+        ),
+        pytest.param(
+            _innerspace_snapshot(_NETWORK_MATCH), "innerspace_rec-1", id="network-gone"
+        ),
+        pytest.param(
+            _innerspace_snapshot(_NETWORK_MATCH, devices={"site-1": {"net-1": "bad"}}),
+            "innerspace_rec-1",
+            id="network-record-malformed",
+        ),
+        pytest.param(
+            _innerspace_snapshot(_NETWORK_MATCH, devices={"site-1": "bad"}),
+            "innerspace_rec-1",
+            id="network-site-malformed",
+        ),
+        pytest.param(
+            with_camera(_innerspace_snapshot(_PROTECT_MATCH), "cam-1", {"id": "cam-1"}),
+            "protect_camera_cam-1",
+            id="protect-match",
+        ),
+        pytest.param(
+            _innerspace_snapshot(_PROTECT_MATCH), "innerspace_rec-1", id="protect-gone"
+        ),
+        pytest.param(
+            _innerspace_snapshot(_PROTECT_MATCH, protect={"cameras": {"cam-1": "bad"}}),
+            "innerspace_rec-1",
+            id="protect-record-malformed",
+        ),
+        pytest.param(
+            _innerspace_snapshot(_PROTECT_MATCH, protect="bad"),
+            "innerspace_rec-1",
+            id="protect-section-malformed",
+        ),
+    ],
+)
+def test_innerspace_device_info_needs_the_matched_record(
+    data: Any, expected: str
+) -> None:
+    """A match attaches only while the matched Network or Protect record exists."""
+    coordinator = MagicMock()
+    coordinator.data = data
+    entity = UnifiInnerSpaceEntity(
+        coordinator, INNERSPACE_PLACEMENT_DESCRIPTION, "rec-1"
+    )
+
+    assert entity.device_info["identifiers"] == {(DOMAIN, expected)}
