@@ -54,7 +54,13 @@ from custom_components.unifi_insights.data_transforms import (
     get_port_label,
 )
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
-from tests.fixtures.facade_data import set_availability
+from tests.fixtures.facade_data import (
+    set_availability,
+    with_client,
+    with_device_fields,
+    with_network_device,
+    with_sections,
+)
 from tests.fixtures.http_fakes import FakeJsonResponse, FakeQueuedSession
 
 if TYPE_CHECKING:
@@ -282,14 +288,15 @@ class TestUnifiClientReconnectButton:
 
     @pytest.mark.parametrize("mac", [None, ""])
     async def test_reconnect_placeholder_falls_back_with_empty_mac(
-        self, hass: HomeAssistant, mock_coordinator, mac
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock, mac: str | None
+    ) -> None:
         """A present but empty MAC still falls back to the stable client ID."""
-        mock_coordinator.data["clients"]["site1"]["client1"] = {
-            "name": None,
-            "hostname": None,
-            "mac": mac,
-        }
+        mock_coordinator.data = with_client(
+            mock_coordinator.data,
+            "site1",
+            "client1",
+            {"name": None, "hostname": None, "mac": mac},
+        )
         button = UnifiClientReconnectButton(mock_coordinator, "site1", "client1")
         assert button.translation_placeholders == {"client_name": "client1"}
         assert button.unique_id == "site1_client1_reconnect"
@@ -751,17 +758,25 @@ class TestAsyncSetupEntry:
         assert len(chime_buttons) == 0
 
     async def test_setup_entry_skips_non_switching_devices(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Test that setup skips devices without switching feature."""
         # Add device without switching feature
-        mock_coordinator.data["devices"]["site1"]["device2"] = {
-            "id": "device2",
-            "name": "Access Point",
-            "model": "UAP-AC-PRO",
-            "state": "ONLINE",
-            "features": ["accessPoint"],  # No switching
-        }
+        mock_coordinator.data = with_network_device(
+            mock_coordinator.data,
+            "site1",
+            "device2",
+            {
+                "id": "device2",
+                "name": "Access Point",
+                "model": "UAP-AC-PRO",
+                "state": "ONLINE",
+                "features": ["accessPoint"],  # No switching
+            },
+        )
 
         added_entities: list = []
 
@@ -839,17 +854,19 @@ class TestAsyncSetupEntry:
         )
 
     async def test_setup_entry_dedupes_client_reconnect_button_on_rediscovery(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Reconnect buttons are only created once per client across rediscovery."""
         mock_config_entry.options = {CONF_CLIENT_CONTROL: True}
-        mock_coordinator.data["clients"]["site1"] = {
-            "client1": {
-                "id": "client1",
-                "mac": "aa:bb:cc:dd:ee:ff",
-                "name": "Test Client",
-            }
-        }
+        mock_coordinator.data = with_client(
+            mock_coordinator.data,
+            "site1",
+            "client1",
+            {"id": "client1", "mac": "aa:bb:cc:dd:ee:ff", "name": "Test Client"},
+        )
 
         added_entities: list = []
 
@@ -872,11 +889,16 @@ class TestAsyncSetupEntry:
         assert len(reconnect_buttons) == 1
 
     async def test_setup_entry_clients_not_a_dict_is_skipped(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """A non-dict top-level clients collection is skipped without raising."""
         mock_config_entry.options = {CONF_CLIENT_CONTROL: True}
-        mock_coordinator.data["clients"] = "not-a-dict"
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data, clients="not-a-dict"
+        )
 
         added_entities: list = []
 
@@ -1223,8 +1245,8 @@ class TestUnifiInsightsButtonAvailableEdgeCases:
         return coordinator
 
     async def test_available_devices_not_dict(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test available returns False when devices is not a dict."""
         button = UnifiInsightsButton(
             coordinator=mock_coordinator,
@@ -1234,12 +1256,14 @@ class TestUnifiInsightsButtonAvailableEdgeCases:
         )
 
         # Set devices to non-dict value
-        mock_coordinator.data["devices"] = "not a dict"
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data, devices="not a dict"
+        )
         assert button.available is False
 
     async def test_available_site_devices_not_dict(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test available returns False when site_devices is not a dict."""
         button = UnifiInsightsButton(
             coordinator=mock_coordinator,
@@ -1249,12 +1273,14 @@ class TestUnifiInsightsButtonAvailableEdgeCases:
         )
 
         # Set site devices to non-dict value
-        mock_coordinator.data["devices"]["site1"] = "not a dict"
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data, devices={"site1": "not a dict"}
+        )
         assert button.available is False
 
     async def test_available_device_data_not_dict(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test available returns False when device_data is not a dict."""
         button = UnifiInsightsButton(
             coordinator=mock_coordinator,
@@ -1264,7 +1290,9 @@ class TestUnifiInsightsButtonAvailableEdgeCases:
         )
 
         # Set device data to non-dict value
-        mock_coordinator.data["devices"]["site1"]["device1"] = "not a dict"
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data, devices={"site1": {"device1": "not a dict"}}
+        )
         assert button.available is False
 
 
@@ -1401,24 +1429,37 @@ class TestUnifiInsightsPoePowerCycleButton:
         assert button.available is True
 
         # PoE disabled after setup -> button becomes unavailable
-        ports = mock_coordinator.data["devices"]["site1"]["device1"]["interfaces"][
-            "ports"
-        ]
-        ports[0]["poe"]["enabled"] = False
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            interfaces={
+                "ports": [{"idx": 1, "name": "Port 1", "poe": {"enabled": False}}]
+            },
+        )
         assert button.available is False
 
         # Port disappears -> button becomes unavailable
-        mock_coordinator.data["devices"]["site1"]["device1"]["interfaces"]["ports"] = []
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data, "site1", "device1", interfaces={"ports": []}
+        )
         assert button.available is False
 
         # Port reappears with PoE enabled -> button becomes available again
-        mock_coordinator.data["devices"]["site1"]["device1"]["interfaces"]["ports"] = [
-            {"idx": 1, "name": "Port 1", "poe": {"enabled": True}}
-        ]
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            interfaces={
+                "ports": [{"idx": 1, "name": "Port 1", "poe": {"enabled": True}}]
+            },
+        )
         assert button.available is True
 
         # Device offline -> button becomes unavailable
-        mock_coordinator.data["devices"]["site1"]["device1"]["state"] = "OFFLINE"
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data, "site1", "device1", state="OFFLINE"
+        )
         assert button.available is False
 
     async def test_poe_power_cycle_button_press_uses_owner(
@@ -2511,7 +2552,9 @@ class TestWakeButtonSetup:
         assert len(wake_buttons) == 0
 
         # Change client to WIRED and notify coordinator listener
-        coordinator.data["clients"]["site1"]["c1"]["type"] = "WIRED"
+        coordinator.data = with_client(
+            coordinator.data, "site1", "c1", {"type": "WIRED", "macAddress": mac}
+        )
         for listener in listeners:
             listener()
 

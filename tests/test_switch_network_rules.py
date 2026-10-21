@@ -24,7 +24,12 @@ from custom_components.unifi_insights.switch import (
     discover_network_rule_switches,
 )
 from tests.fixtures.command_owners import autospec_command_owners
-from tests.fixtures.facade_data import set_availability
+from tests.fixtures.facade_data import (
+    facade_data,
+    set_availability,
+    with_rule,
+    with_sections,
+)
 from tests.fixtures.network_rule_responses import (
     nat_rule_record,
     port_forward_record,
@@ -43,26 +48,19 @@ def mock_coordinator() -> MagicMock:
     coordinator.protect_client = None
     coordinator.network_client = MagicMock()
     coordinator.network_client.base_url = "https://192.168.1.1"
-    coordinator.data = {
-        "sites": {"site1": {"id": "site1", "name": "Default"}},
-        "devices": {},
-        "clients": {},
-        "stats": {},
-        "wifi": {},
-        "firewall_rules": {},
-        "policy_based_routes": {},
-        "vpn_clients": {},
-        "port_forwards": {
+    coordinator.data = facade_data(
+        sites={"site1": {"id": "site1", "name": "Default"}},
+        port_forwards={
             "site1": {
                 "pf1": port_forward_record(_id="pf1", name="Plex"),
             }
         },
-        "traffic_rules": {
+        traffic_rules={
             "site1": {
                 "tr1": traffic_rule_record(_id="tr1", description="Bedtime"),
             }
         },
-        "protect": {
+        protect={
             "cameras": {},
             "lights": {},
             "sensors": {},
@@ -71,7 +69,7 @@ def mock_coordinator() -> MagicMock:
             "chimes": {},
             "liveviews": {},
         },
-    }
+    )
     return coordinator
 
 
@@ -103,17 +101,20 @@ def test_discovery_skips_malformed_sites_records_and_non_bool_enabled(
     mock_coordinator: MagicMock,
 ) -> None:
     """Non-dict collections, non-dict records, and non-bool enabled are skipped."""
-    mock_coordinator.data["port_forwards"] = {
-        "site_not_dict": "not-a-dict",
-        "site1": {
-            "rule_not_dict": "not-a-dict",
-            "rule_no_enabled": {"name": "No enabled"},
-            "rule_str_enabled": {"name": "Str enabled", "enabled": "true"},
-            "rule_int_enabled": {"name": "Int enabled", "enabled": 1},
-            "rule_none_enabled": {"name": "None enabled", "enabled": None},
-            "valid_rule": {"name": "Valid", "enabled": True},
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data,
+        port_forwards={
+            "site_not_dict": "not-a-dict",
+            "site1": {
+                "rule_not_dict": "not-a-dict",
+                "rule_no_enabled": {"name": "No enabled"},
+                "rule_str_enabled": {"name": "Str enabled", "enabled": "true"},
+                "rule_int_enabled": {"name": "Int enabled", "enabled": 1},
+                "rule_none_enabled": {"name": "None enabled", "enabled": None},
+                "valid_rule": {"name": "Valid", "enabled": True},
+            },
         },
-    }
+    )
     known_keys: set[tuple[Any, ...]] = set()
     entities = discover_network_rule_switches(mock_coordinator, known_keys)
     pf_entities = [e for e in entities if e.entity_description.key == "port_forward"]
@@ -147,11 +148,13 @@ async def test_discovery_adds_new_rule_on_listener_tick_without_duplicates(
     listener()
     assert async_add_entities.call_count == call_count
 
-    mock_coordinator.data["port_forwards"]["site1"]["pf2"] = {
-        "_id": "pf2",
-        "name": "SSH",
-        "enabled": False,
-    }
+    mock_coordinator.data = with_rule(
+        mock_coordinator.data,
+        "port_forwards",
+        "site1",
+        "pf2",
+        {"_id": "pf2", "name": "SSH", "enabled": False},
+    )
     listener()
     assert async_add_entities.call_count == call_count + 1
     new_added = async_add_entities.call_args[0][0]
@@ -175,9 +178,14 @@ def test_unique_id_and_named_translation(
     rule_name: str,
 ) -> None:
     """Named rule populates unique_id, translation_key and trimmed rule_name."""
-    mock_coordinator.data[desc.data_key] = {
-        "site1": {rule_id: {desc.name_fields[0]: rule_name, "enabled": True}}
-    }
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data,
+        **{
+            desc.data_key: {
+                "site1": {rule_id: {desc.name_fields[0]: rule_name, "enabled": True}}
+            }
+        },
+    )
     switch = UnifiInsightsNetworkRuleSwitch(mock_coordinator, desc, "site1", rule_id)
     assert switch.unique_id == f"site1_{rule_id}_{desc.unique_id_suffix}"
     assert switch.translation_key == desc.translation_key
@@ -195,9 +203,14 @@ def test_unnamed_rule_uses_rule_id_placeholder(
     name_val: str | None,
 ) -> None:
     """Unnamed rule falls back to unnamed translation and rule_id placeholder."""
-    mock_coordinator.data[desc.data_key] = {
-        "site1": {"r1": {desc.name_fields[0]: name_val, "enabled": True}}
-    }
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data,
+        **{
+            desc.data_key: {
+                "site1": {"r1": {desc.name_fields[0]: name_val, "enabled": True}}
+            }
+        },
+    )
     switch = UnifiInsightsNetworkRuleSwitch(mock_coordinator, desc, "site1", "r1")
     assert switch.translation_key == desc.unnamed_translation_key
     assert switch.translation_placeholders == {"rule_id": "r1"}
@@ -205,9 +218,10 @@ def test_unnamed_rule_uses_rule_id_placeholder(
 
 def test_device_info_uses_site_gateway(mock_coordinator: MagicMock) -> None:
     """Switch attaches to site gateway device when present."""
-    mock_coordinator.data["devices"] = {
-        "site1": {"gw1": {"model": "UDM-Pro", "name": "Gateway"}}
-    }
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data,
+        devices={"site1": {"gw1": {"model": "UDM-Pro", "name": "Gateway"}}},
+    )
     switch = UnifiInsightsNetworkRuleSwitch(
         mock_coordinator, PORT_FORWARD_SWITCH, "site1", "pf1"
     )
@@ -217,7 +231,7 @@ def test_device_info_uses_site_gateway(mock_coordinator: MagicMock) -> None:
 
 def test_device_info_falls_back_to_site_device(mock_coordinator: MagicMock) -> None:
     """Switch falls back to site device grouping when no gateway is found."""
-    mock_coordinator.data["devices"] = {"site1": {}}
+    mock_coordinator.data = with_sections(mock_coordinator.data, devices={"site1": {}})
     switch = UnifiInsightsNetworkRuleSwitch(
         mock_coordinator, PORT_FORWARD_SWITCH, "site1", "pf1"
     )
@@ -250,10 +264,10 @@ def test_available_requires_section_rule_and_bool_enabled(
         mock_coordinator,
         failed_sections=() if section_avail else {("port_forwards", "site1")},
     )
-    if rule_data is None:
-        mock_coordinator.data["port_forwards"] = {"site1": {}}
-    else:
-        mock_coordinator.data["port_forwards"] = {"site1": {"pf1": rule_data}}
+    site_rules = {} if rule_data is None else {"pf1": rule_data}
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data, port_forwards={"site1": site_rules}
+    )
     switch = UnifiInsightsNetworkRuleSwitch(
         mock_coordinator, PORT_FORWARD_SWITCH, "site1", "pf1"
     )
@@ -267,7 +281,13 @@ def test_is_on_follows_enabled(
     expected: bool,  # noqa: FBT001
 ) -> None:
     """is_on follows enabled bool state."""
-    mock_coordinator.data["port_forwards"]["site1"]["pf1"]["enabled"] = enabled
+    mock_coordinator.data = with_rule(
+        mock_coordinator.data,
+        "port_forwards",
+        "site1",
+        "pf1",
+        {**mock_coordinator.data["port_forwards"]["site1"]["pf1"], "enabled": enabled},
+    )
     switch = UnifiInsightsNetworkRuleSwitch(
         mock_coordinator, PORT_FORWARD_SWITCH, "site1", "pf1"
     )
@@ -278,15 +298,21 @@ def test_port_forward_attributes_exclude_addresses(
     mock_coordinator: MagicMock,
 ) -> None:
     """Port forward extra state attributes contain metadata but no IP addresses."""
-    mock_coordinator.data["port_forwards"]["site1"]["pf1"] = port_forward_record(
-        _id="pf1",
-        name="Plex",
-        enabled=True,
-        src_limiting_enabled=True,
-        fwd="192.168.1.50",
-        src="198.51.100.0/24",
-        destination_ip="203.0.113.7",
-        destination_ips=["203.0.113.8"],
+    mock_coordinator.data = with_rule(
+        mock_coordinator.data,
+        "port_forwards",
+        "site1",
+        "pf1",
+        port_forward_record(
+            _id="pf1",
+            name="Plex",
+            enabled=True,
+            src_limiting_enabled=True,
+            fwd="192.168.1.50",
+            src="198.51.100.0/24",
+            destination_ip="203.0.113.7",
+            destination_ips=["203.0.113.8"],
+        ),
     )
     switch = UnifiInsightsNetworkRuleSwitch(
         mock_coordinator, PORT_FORWARD_SWITCH, "site1", "pf1"
@@ -342,9 +368,14 @@ async def test_turn_on_off_calls_the_config_owner(
     """turn_on / turn_off await the typed config-owner command and nothing else."""
     autospec_command_owners(mock_coordinator)
     mock_coordinator.async_request_refresh = AsyncMock()
-    if desc.data_key not in mock_coordinator.data:
-        mock_coordinator.data[desc.data_key] = {"site1": {rule_id: {"enabled": True}}}
-    mock_coordinator.data[desc.data_key]["site1"][rule_id]["enabled"] = not turn_on
+    record = mock_coordinator.data[desc.data_key].get("site1", {}).get(rule_id, {})
+    mock_coordinator.data = with_rule(
+        mock_coordinator.data,
+        desc.data_key,
+        "site1",
+        rule_id,
+        {**record, "enabled": not turn_on},
+    )
 
     switch = UnifiInsightsNetworkRuleSwitch(mock_coordinator, desc, "site1", rule_id)
 
@@ -430,16 +461,19 @@ async def test_setup_entry_adds_nat_rule_and_static_route_switches(
     hass: HomeAssistant, mock_coordinator: MagicMock
 ) -> None:
     """Platform setup adds NAT rule and static route switches."""
-    mock_coordinator.data["nat_rules"] = {
-        "site1": {
-            "nat-dns": nat_rule_record(_id="nat-dns"),
-        }
-    }
-    mock_coordinator.data["static_routes"] = {
-        "site1": {
-            "route-lab": static_route_record(_id="route-lab"),
-        }
-    }
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data,
+        nat_rules={
+            "site1": {
+                "nat-dns": nat_rule_record(_id="nat-dns"),
+            }
+        },
+        static_routes={
+            "site1": {
+                "route-lab": static_route_record(_id="route-lab"),
+            }
+        },
+    )
     mock_entry = MagicMock()
     mock_entry.options = {}
     mock_entry.entry_id = "test_entry_id"
@@ -471,15 +505,18 @@ def test_discovery_hides_predefined_nat_rules(
     r5 = nat_rule_record(_id="r5")
     del r5["is_predefined"]
     del r5["setting_preference"]
-    mock_coordinator.data["nat_rules"] = {
-        "site1": {
-            "r1": nat_rule_record(_id="r1", is_predefined=True),
-            "r2": nat_rule_record(_id="r2", setting_preference="auto"),
-            "r3": nat_rule_record(_id="r3", setting_preference=None),
-            "r4": nat_rule_record(_id="r4"),
-            "r5": r5,
-        }
-    }
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data,
+        nat_rules={
+            "site1": {
+                "r1": nat_rule_record(_id="r1", is_predefined=True),
+                "r2": nat_rule_record(_id="r2", setting_preference="auto"),
+                "r3": nat_rule_record(_id="r3", setting_preference=None),
+                "r4": nat_rule_record(_id="r4"),
+                "r5": r5,
+            }
+        },
+    )
     known_keys: set[tuple[Any, ...]] = set()
     entities = discover_network_rule_switches(mock_coordinator, known_keys)
     nat_entities = [e for e in entities if e.entity_description.key == "nat_rule"]
@@ -511,11 +548,14 @@ def test_nat_rule_attributes_exclude_addresses(
     mock_coordinator: MagicMock,
 ) -> None:
     """NAT rule extra state attributes contain metadata but no IP addresses."""
-    mock_coordinator.data["nat_rules"] = {
-        "site1": {
-            "nat-dns": nat_rule_record(),
-        }
-    }
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data,
+        nat_rules={
+            "site1": {
+                "nat-dns": nat_rule_record(),
+            }
+        },
+    )
     switch = UnifiInsightsNetworkRuleSwitch(
         mock_coordinator, NAT_RULE_SWITCH, "site1", "nat-dns"
     )
@@ -537,11 +577,14 @@ def test_static_route_attributes_exclude_addresses(
     mock_coordinator: MagicMock,
 ) -> None:
     """Static route extra state attributes contain type and distance but no IPs/MACs."""
-    mock_coordinator.data["static_routes"] = {
-        "site1": {
-            "route-lab": static_route_record(),
-        }
-    }
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data,
+        static_routes={
+            "site1": {
+                "route-lab": static_route_record(),
+            }
+        },
+    )
     switch = UnifiInsightsNetworkRuleSwitch(
         mock_coordinator, STATIC_ROUTE_SWITCH, "site1", "route-lab"
     )
@@ -557,18 +600,23 @@ def test_nat_rule_switch_unavailable_after_rule_turns_predefined(
     mock_coordinator: MagicMock,
 ) -> None:
     """NAT rule switch becomes unavailable when rule turns predefined."""
-    mock_coordinator.data["nat_rules"] = {
-        "site1": {
-            "nat1": {"description": "DNS", "enabled": True, "is_predefined": False}
-        }
-    }
+    nat_rule = {"description": "DNS", "enabled": True, "is_predefined": False}
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data, nat_rules={"site1": {"nat1": nat_rule}}
+    )
     switch = UnifiInsightsNetworkRuleSwitch(
         mock_coordinator, NAT_RULE_SWITCH, "site1", "nat1"
     )
     assert switch.available is True
 
     # Rule transitions to predefined on next update
-    mock_coordinator.data["nat_rules"]["site1"]["nat1"]["is_predefined"] = True
+    mock_coordinator.data = with_rule(
+        mock_coordinator.data,
+        "nat_rules",
+        "site1",
+        "nat1",
+        {**nat_rule, "is_predefined": True},
+    )
     assert switch.available is False
 
 
@@ -586,18 +634,21 @@ def test_discovery_skips_nat_rule_and_static_route_with_non_bool_enabled(
         for val in ("true", "false", 1, 0)
     ]
 
-    mock_coordinator.data["nat_rules"] = {
-        "site1": {
-            rec["_id"]: NatRule.model_validate(rec).model_dump(by_alias=True)
-            for rec in nat_raw
-        }
-    }
-    mock_coordinator.data["static_routes"] = {
-        "site1": {
-            rec["_id"]: StaticRoute.model_validate(rec).model_dump(by_alias=True)
-            for rec in route_raw
-        }
-    }
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data,
+        nat_rules={
+            "site1": {
+                rec["_id"]: NatRule.model_validate(rec).model_dump(by_alias=True)
+                for rec in nat_raw
+            }
+        },
+        static_routes={
+            "site1": {
+                rec["_id"]: StaticRoute.model_validate(rec).model_dump(by_alias=True)
+                for rec in route_raw
+            }
+        },
+    )
     known_keys: set[tuple[Any, ...]] = set()
     entities = discover_network_rule_switches(mock_coordinator, known_keys)
     target_entities = [
@@ -615,10 +666,13 @@ def test_rule_switch_availability_follows_its_own_section(
     desc: UnifiInsightsNetworkRuleSwitchEntityDescription,
 ) -> None:
     """Switch availability follows its own section availability function."""
-    mock_coordinator.data["port_forwards"] = {"site1": {"pf1": {"enabled": True}}}
-    mock_coordinator.data["traffic_rules"] = {"site1": {"tr1": {"enabled": True}}}
-    mock_coordinator.data["nat_rules"] = {"site1": {"nat1": {"enabled": True}}}
-    mock_coordinator.data["static_routes"] = {"site1": {"sr1": {"enabled": True}}}
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data,
+        port_forwards={"site1": {"pf1": {"enabled": True}}},
+        traffic_rules={"site1": {"tr1": {"enabled": True}}},
+        nat_rules={"site1": {"nat1": {"enabled": True}}},
+        static_routes={"site1": {"sr1": {"enabled": True}}},
+    )
 
     rule_ids = {
         PORT_FORWARD_SWITCH.key: "pf1",

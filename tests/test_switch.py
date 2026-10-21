@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -58,10 +58,59 @@ from custom_components.unifi_insights.switch import (
     async_setup_entry,
 )
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
-from tests.fixtures.facade_data import set_availability
+from tests.fixtures.facade_data import (
+    set_availability,
+    with_camera,
+    with_client,
+    with_device_fields,
+    with_network_device,
+    with_rule,
+    with_sections,
+    without_sections,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from homeassistant.core import HomeAssistant
+
+    from custom_components.unifi_insights.coordinators.facade import FacadeData
+
+
+def _with_cameras(data: Mapping[str, Any], cameras: Any) -> FacadeData:
+    """Return ``data`` with its Protect cameras collection replaced."""
+    return with_sections(data, protect={**data["protect"], "cameras": cameras})
+
+
+def _with_camera_fields(
+    data: Mapping[str, Any], camera_id: str, **fields: Any
+) -> FacadeData:
+    """Return ``data`` with fields of a Protect camera's record replaced."""
+    record = data["protect"]["cameras"][camera_id]
+    return with_camera(data, camera_id, {**record, **fields})
+
+
+def _with_client_fields(
+    data: Mapping[str, Any], site_id: str, client_id: str, **fields: Any
+) -> FacadeData:
+    """Return ``data`` with fields of a Network client's record replaced."""
+    record = data["clients"][site_id][client_id]
+    return with_client(data, site_id, client_id, {**record, **fields})
+
+
+def _with_record_fields(
+    data: Mapping[str, Any], section: str, site_id: str, record_id: str, **fields: Any
+) -> FacadeData:
+    """Return ``data`` with fields of a per-site record of ``section`` replaced."""
+    record = data[section][site_id][record_id]
+    return with_rule(data, section, site_id, record_id, {**record, **fields})
+
+
+def _with_site_records(
+    data: Mapping[str, Any], section: str, site_id: str, records: Any
+) -> FacadeData:
+    """Return ``data`` with one site's records of ``section`` replaced."""
+    return with_sections(data, **{section: {**data[section], site_id: records}})
 
 
 class TestParallelUpdates:
@@ -124,16 +173,20 @@ class TestAsyncSetupEntry:
         async_add_entities.assert_called_once_with([])
 
     @pytest.mark.asyncio
-    async def test_setup_entry_with_cameras(self, hass, mock_coordinator) -> None:
+    async def test_setup_entry_with_cameras(
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test setup with cameras present."""
-        mock_coordinator.data["protect"]["cameras"] = {
-            "camera1": {
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data,
+            "camera1",
+            {
                 "id": "camera1",
                 "name": "Test Camera",
                 "state": "CONNECTED",
                 "isMicEnabled": True,
-            }
-        }
+            },
+        )
 
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
@@ -152,18 +205,29 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_with_multiple_cameras(
-        self, hass, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Test setup with multiple cameras."""
-        mock_coordinator.data["protect"]["cameras"] = {
-            "camera1": {"id": "camera1", "name": "Front Camera", "state": "CONNECTED"},
-            "camera2": {"id": "camera2", "name": "Back Camera", "state": "CONNECTED"},
-            "camera3": {
-                "id": "camera3",
-                "name": "Side Camera",
-                "state": "DISCONNECTED",
+        mock_coordinator.data = _with_cameras(
+            mock_coordinator.data,
+            {
+                "camera1": {
+                    "id": "camera1",
+                    "name": "Front Camera",
+                    "state": "CONNECTED",
+                },
+                "camera2": {
+                    "id": "camera2",
+                    "name": "Back Camera",
+                    "state": "CONNECTED",
+                },
+                "camera3": {
+                    "id": "camera3",
+                    "name": "Side Camera",
+                    "state": "DISCONNECTED",
+                },
             },
-        }
+        )
 
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
@@ -179,15 +243,18 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_top_level_collections_not_dicts_are_skipped(
-        self, hass, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Malformed (non-dict) top-level collections are skipped without
         raising, producing no switches for any of them."""
-        mock_coordinator.data["clients"] = "not-a-dict"
-        mock_coordinator.data["wifi"] = "not-a-dict"
-        mock_coordinator.data["firewall_rules"] = "not-a-dict"
-        mock_coordinator.data["policy_based_routes"] = "not-a-dict"
-        mock_coordinator.data["vpn_clients"] = "not-a-dict"
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            clients="not-a-dict",
+            wifi="not-a-dict",
+            firewall_rules="not-a-dict",
+            policy_based_routes="not-a-dict",
+            vpn_clients="not-a-dict",
+        )
 
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
@@ -203,18 +270,20 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_high_fps_dedupe_on_rediscovery(
-        self, hass, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Re-running discovery for a capable camera does not duplicate the
         high FPS switch."""
-        mock_coordinator.data["protect"]["cameras"] = {
-            "camera1": {
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data,
+            "camera1",
+            {
                 "id": "camera1",
                 "name": "Test Camera",
                 "state": "CONNECTED",
                 "featureFlags": {"hasHighFpsCapability": True},
-            }
-        }
+            },
+        )
 
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
@@ -238,13 +307,16 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_client_block_switch_dedupe_on_rediscovery(
-        self, hass, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Re-running discovery for an unchanged client does not duplicate
         the block switch."""
-        mock_coordinator.data["clients"]["site1"] = {
-            "client1": {"id": "client1", "mac": "aa:bb:cc:dd:ee:ff", "name": "PC"}
-        }
+        mock_coordinator.data = with_client(
+            mock_coordinator.data,
+            "site1",
+            "client1",
+            {"id": "client1", "mac": "aa:bb:cc:dd:ee:ff", "name": "PC"},
+        )
 
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
@@ -408,10 +480,15 @@ class TestPruneOrphanedSwitchEntities:
         ("data_key", "suffix", "availability_attr"), _ORPHAN_TYPE_PARAMS
     )
     def test_missing_data_key_prunes_nothing(
-        self, hass, mock_coordinator, data_key, suffix, availability_attr
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        data_key: str,
+        suffix: str,
+        availability_attr: str,
     ) -> None:
         """Coordinator data missing the collection entirely -> zero pruned."""
-        del mock_coordinator.data[data_key]
+        mock_coordinator.data = without_sections(mock_coordinator.data, data_key)
 
         stale_entry = self._reg_entry(f"site1_stale{suffix}")
         registry = self._prune(hass, mock_coordinator, [stale_entry])
@@ -422,11 +499,16 @@ class TestPruneOrphanedSwitchEntities:
         ("data_key", "suffix", "availability_attr"), _ORPHAN_TYPE_PARAMS
     )
     def test_missing_site_key_prunes_nothing(
-        self, hass, mock_coordinator, data_key, suffix, availability_attr
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        data_key: str,
+        suffix: str,
+        availability_attr: str,
     ) -> None:
         """Collection present but the entry's site_id key is absent from it
         -> zero pruned (looks identical to a transient fetch failure)."""
-        mock_coordinator.data[data_key] = {}
+        mock_coordinator.data = with_sections(mock_coordinator.data, **{data_key: {}})
 
         stale_entry = self._reg_entry(f"site1_stale{suffix}")
         registry = self._prune(hass, mock_coordinator, [stale_entry])
@@ -437,10 +519,17 @@ class TestPruneOrphanedSwitchEntities:
         ("data_key", "suffix", "availability_attr"), _ORPHAN_TYPE_PARAMS
     )
     def test_site_value_not_dict_prunes_nothing(
-        self, hass, mock_coordinator, data_key, suffix, availability_attr
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        data_key: str,
+        suffix: str,
+        availability_attr: str,
     ) -> None:
         """Site key present but its value is not a dict -> zero pruned."""
-        mock_coordinator.data[data_key] = {"site1": "not-a-dict"}
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data, **{data_key: {"site1": "not-a-dict"}}
+        )
 
         stale_entry = self._reg_entry(f"site1_stale{suffix}")
         registry = self._prune(hass, mock_coordinator, [stale_entry])
@@ -467,12 +556,19 @@ class TestPruneOrphanedSwitchEntities:
         ("data_key", "suffix", "availability_attr"), _ORPHAN_TYPE_PARAMS
     )
     def test_other_sites_unique_id_untouched_when_only_one_site_qualified(
-        self, hass, mock_coordinator, data_key, suffix, availability_attr
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        data_key: str,
+        suffix: str,
+        availability_attr: str,
     ) -> None:
         """An entry whose site prefix does not match any qualified site is
         left alone, even though a *different* site in the same collection
         is qualified and has stale ids of its own pruned."""
-        mock_coordinator.data[data_key]["site2"] = "not-a-dict"
+        mock_coordinator.data = _with_site_records(
+            mock_coordinator.data, data_key, "site2", "not-a-dict"
+        )
 
         stale_site1 = self._reg_entry(f"site1_stale{suffix}")
         site2_entry = self._reg_entry(f"site2_stale{suffix}")
@@ -485,7 +581,12 @@ class TestPruneOrphanedSwitchEntities:
         ("data_key", "suffix", "availability_attr"), _ORPHAN_TYPE_PARAMS
     )
     def test_empty_site_collection_prunes_nothing(
-        self, hass, mock_coordinator, data_key, suffix, availability_attr
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        data_key: str,
+        suffix: str,
+        availability_attr: str,
     ) -> None:
         """An EMPTY per-site collection must never trigger a prune.
 
@@ -497,7 +598,9 @@ class TestPruneOrphanedSwitchEntities:
         deleted" would irreversibly remove every row of this type for the
         site on a single startup timeout.
         """
-        mock_coordinator.data[data_key]["site1"] = {}
+        mock_coordinator.data = _with_site_records(
+            mock_coordinator.data, data_key, "site1", {}
+        )
 
         entry_a = self._reg_entry(f"site1_route_a{suffix}")
         entry_b = self._reg_entry(f"site1_route_b{suffix}")
@@ -510,7 +613,12 @@ class TestPruneOrphanedSwitchEntities:
         ("data_key", "suffix", "availability_attr"), _ORPHAN_TYPE_PARAMS
     )
     def test_overlapping_site_ids_are_not_pruned_by_prefix_collision(
-        self, hass, mock_coordinator, data_key, suffix, availability_attr
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        data_key: str,
+        suffix: str,
+        availability_attr: str,
     ) -> None:
         """A site id that is a prefix of another must not claim its rows.
 
@@ -520,8 +628,13 @@ class TestPruneOrphanedSwitchEntities:
         deleted on evidence that says nothing about them. Ownership must
         be unambiguous before anything is removed.
         """
-        mock_coordinator.data[data_key]["site1_backup"] = {}
-        mock_coordinator.data.setdefault("sites", {})["site1_backup"] = {}
+        mock_coordinator.data = _with_site_records(
+            mock_coordinator.data, data_key, "site1_backup", {}
+        )
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            sites={**mock_coordinator.data.get("sites", {}), "site1_backup": {}},
+        )
 
         backup_entry = self._reg_entry(f"site1_backup_route1{suffix}")
         stale_site1 = self._reg_entry(f"site1_stale{suffix}")
@@ -551,35 +664,40 @@ class TestPruneOrphanedSwitchEntities:
         }
 
     def test_prune_removes_nat_rule_switch_that_turned_predefined(
-        self, hass, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Registry row for NAT rule switch is pruned when rule turns predefined."""
-        mock_coordinator.data["nat_rules"] = {
-            "site1": {"nat1": {"is_predefined": True}}
-        }
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            nat_rules={"site1": {"nat1": {"is_predefined": True}}},
+        )
         reg_entry = self._reg_entry("site1_nat1_nat_rule")
         registry = self._prune(hass, mock_coordinator, [reg_entry])
 
         registry.async_remove.assert_called_once_with(reg_entry.entity_id)
 
     def test_prune_keeps_nat_rule_switch_when_section_unavailable(
-        self, hass, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Predefined NAT rule row is kept when section availability is False."""
         set_availability(mock_coordinator, failed_sections={("nat_rules", "site1")})
-        mock_coordinator.data["nat_rules"] = {
-            "site1": {"nat1": {"is_predefined": True}}
-        }
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            nat_rules={"site1": {"nat1": {"is_predefined": True}}},
+        )
         reg_entry = self._reg_entry("site1_nat1_nat_rule")
         registry = self._prune(hass, mock_coordinator, [reg_entry])
 
         registry.async_remove.assert_not_called()
 
     def test_prune_keeps_nat_rule_switch_when_collection_empty(
-        self, hass, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """NAT rule switch is kept when collection is empty."""
-        mock_coordinator.data["nat_rules"] = {"site1": {}}
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data, nat_rules={"site1": {}}
+        )
+
         reg_entry = self._reg_entry("site1_nat1_nat_rule")
         registry = self._prune(hass, mock_coordinator, [reg_entry])
 
@@ -640,14 +758,17 @@ class TestObsoleteMicrophoneSwitchCleanup:
         self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Assert that camera discovery does not create a microphone switch."""
-        mock_coordinator.data["protect"]["cameras"] = {
-            "camera1": {
-                "id": "camera1",
-                "name": "Front Camera",
-                "state": "CONNECTED",
-                "isMicEnabled": True,
-            }
-        }
+        mock_coordinator.data = _with_cameras(
+            mock_coordinator.data,
+            {
+                "camera1": {
+                    "id": "camera1",
+                    "name": "Front Camera",
+                    "state": "CONNECTED",
+                    "isMicEnabled": True,
+                }
+            },
+        )
         mock_entry = MagicMock()
         mock_entry.entry_id = "test_entry"
         mock_entry.options = {CONF_CLIENT_CONTROL: False}
@@ -670,7 +791,7 @@ class TestObsoleteMicrophoneSwitchCleanup:
         """Assert that setup removes obsolete microphone switch entries
         and preserves other switches.
         """
-        mock_coordinator.data["protect"]["cameras"] = {}
+        mock_coordinator.data = _with_cameras(mock_coordinator.data, {})
         mock_entry = MockConfigEntry(
             domain=DOMAIN,
             title="UniFi Protect Test",
@@ -784,10 +905,12 @@ class TestUnifiClientBlockSwitch:
         # Should use the uplink device's identifiers
         assert switch._attr_device_info["identifiers"] == {(DOMAIN, "site1_device1")}
 
-    def test_switch_fallback_no_uplink(self, mock_coordinator) -> None:
+    def test_switch_fallback_no_uplink(self, mock_coordinator: MagicMock) -> None:
         """Test switch creates own device when no uplink."""
         # Remove uplink device ID
-        mock_coordinator.data["clients"]["site1"]["client1"]["uplinkDeviceId"] = None
+        mock_coordinator.data = _with_client_fields(
+            mock_coordinator.data, "site1", "client1", uplinkDeviceId=None
+        )
 
         switch = UnifiClientBlockSwitch(
             coordinator=mock_coordinator,
@@ -799,7 +922,7 @@ class TestUnifiClientBlockSwitch:
         assert switch._attr_device_info["identifiers"] == {(DOMAIN, "client_client1")}
         assert switch._attr_device_info["name"] == "Jukebox"
 
-    def test_switch_available(self, mock_coordinator) -> None:
+    def test_switch_available(self, mock_coordinator: MagicMock) -> None:
         """Test switch availability."""
         switch = UnifiClientBlockSwitch(
             coordinator=mock_coordinator,
@@ -811,7 +934,9 @@ class TestUnifiClientBlockSwitch:
         assert switch.available is True
 
         # Should be unavailable when client doesn't exist
-        mock_coordinator.data["clients"]["site1"]["client1"] = {}
+        mock_coordinator.data = with_client(
+            mock_coordinator.data, "site1", "client1", {}
+        )
         assert switch.available is False
 
     def test_switch_available_follows_captured_device_availability(
@@ -839,9 +964,11 @@ class TestUnifiClientBlockSwitch:
         # Not blocked = ON (allowed)
         assert switch.is_on is True
 
-    def test_switch_is_off_when_blocked(self, mock_coordinator) -> None:
+    def test_switch_is_off_when_blocked(self, mock_coordinator: MagicMock) -> None:
         """Test switch is OFF when client is blocked."""
-        mock_coordinator.data["clients"]["site1"]["client1"]["blocked"] = True
+        mock_coordinator.data = _with_client_fields(
+            mock_coordinator.data, "site1", "client1", blocked=True
+        )
 
         switch = UnifiClientBlockSwitch(
             coordinator=mock_coordinator,
@@ -853,9 +980,11 @@ class TestUnifiClientBlockSwitch:
         assert switch.is_on is False
 
     @pytest.mark.asyncio
-    async def test_turn_on_unblocks_client(self, mock_coordinator) -> None:
+    async def test_turn_on_unblocks_client(self, mock_coordinator: MagicMock) -> None:
         """Test turning ON unblocks the client."""
-        mock_coordinator.data["clients"]["site1"]["client1"]["blocked"] = True
+        mock_coordinator.data = _with_client_fields(
+            mock_coordinator.data, "site1", "client1", blocked=True
+        )
 
         switch = UnifiClientBlockSwitch(
             coordinator=mock_coordinator,
@@ -976,9 +1105,11 @@ class TestUnifiWifiSwitch:
 
         assert switch.is_on is True
 
-    def test_switch_is_off_when_disabled(self, mock_coordinator) -> None:
+    def test_switch_is_off_when_disabled(self, mock_coordinator: MagicMock) -> None:
         """Test switch is OFF when WiFi is disabled."""
-        mock_coordinator.data["wifi"]["site1"]["wifi1"]["enabled"] = False
+        mock_coordinator.data = _with_record_fields(
+            mock_coordinator.data, "wifi", "site1", "wifi1", enabled=False
+        )
         wifi_data = mock_coordinator.data["wifi"]["site1"]["wifi1"]
 
         switch = UnifiWifiSwitch(
@@ -1008,9 +1139,11 @@ class TestUnifiWifiSwitch:
         assert attrs["is_guest"] is False
 
     @pytest.mark.asyncio
-    async def test_turn_on_enables_wifi(self, mock_coordinator) -> None:
+    async def test_turn_on_enables_wifi(self, mock_coordinator: MagicMock) -> None:
         """Test turning ON enables the WiFi network."""
-        mock_coordinator.data["wifi"]["site1"]["wifi1"]["enabled"] = False
+        mock_coordinator.data = _with_record_fields(
+            mock_coordinator.data, "wifi", "site1", "wifi1", enabled=False
+        )
         wifi_data = mock_coordinator.data["wifi"]["site1"]["wifi1"]
 
         switch = UnifiWifiSwitch(
@@ -1080,10 +1213,14 @@ class TestUnifiWifiSwitch:
         set_availability(mock_coordinator, failed_sections={("wifi", "other")})
         assert switch.available is True
 
-    def test_available_falls_back_to_initial_data(self, mock_coordinator) -> None:
+    def test_available_falls_back_to_initial_data(
+        self, mock_coordinator: MagicMock
+    ) -> None:
         """Test switch uses initial data when coordinator data is empty."""
         wifi_data = mock_coordinator.data["wifi"]["site1"]["wifi1"].copy()
-        mock_coordinator.data["wifi"]["site1"]["wifi1"] = {}
+        mock_coordinator.data = with_rule(
+            mock_coordinator.data, "wifi", "site1", "wifi1", {}
+        )
 
         switch = UnifiWifiSwitch(
             coordinator=mock_coordinator,
@@ -1182,14 +1319,16 @@ class TestUnifiFirewallRuleSwitch:
         assert switch.entity_category == EntityCategory.CONFIG
         assert switch._attr_device_info["identifiers"] == {(DOMAIN, "site1_gateway1")}
 
-    def test_is_on(self, mock_coordinator) -> None:
+    def test_is_on(self, mock_coordinator: MagicMock) -> None:
         """Test firewall switch state mirrors rule enabled state."""
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
         )
 
         assert switch.is_on is True
-        mock_coordinator.data["firewall_rules"]["site1"]["rule1"]["enabled"] = False
+        mock_coordinator.data = _with_record_fields(
+            mock_coordinator.data, "firewall_rules", "site1", "rule1", enabled=False
+        )
         assert switch.is_on is False
 
     def test_extra_state_attributes(self, mock_coordinator) -> None:
@@ -1206,7 +1345,7 @@ class TestUnifiFirewallRuleSwitch:
         assert attrs["destination_zone_id"] == "external"
         assert attrs["logging"] is True
 
-    def test_icon_changes_with_state(self, mock_coordinator) -> None:
+    def test_icon_changes_with_state(self, mock_coordinator: MagicMock) -> None:
         """Test firewall switch icon reflects enabled state."""
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
@@ -1214,13 +1353,17 @@ class TestUnifiFirewallRuleSwitch:
 
         # The state icons come from icons.json.
         assert switch.icon is None
-        mock_coordinator.data["firewall_rules"]["site1"]["rule1"]["enabled"] = False
+        mock_coordinator.data = _with_record_fields(
+            mock_coordinator.data, "firewall_rules", "site1", "rule1", enabled=False
+        )
         assert switch.icon is None
 
     @pytest.mark.asyncio
-    async def test_turn_on_updates_rule(self, mock_coordinator) -> None:
+    async def test_turn_on_updates_rule(self, mock_coordinator: MagicMock) -> None:
         """Test enabling a firewall rule."""
-        mock_coordinator.data["firewall_rules"]["site1"]["rule1"]["enabled"] = False
+        mock_coordinator.data = _with_record_fields(
+            mock_coordinator.data, "firewall_rules", "site1", "rule1", enabled=False
+        )
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
         )
@@ -1254,9 +1397,13 @@ class TestUnifiFirewallRuleSwitch:
         switch.async_write_ha_state.assert_not_called()
         mock_coordinator.async_request_refresh.assert_not_awaited()
 
-    def test_fallback_device_info_without_gateway(self, mock_coordinator) -> None:
+    def test_fallback_device_info_without_gateway(
+        self, mock_coordinator: MagicMock
+    ) -> None:
         """Test fallback device registry entry when no gateway device is found."""
-        mock_coordinator.data["devices"]["site1"] = {}
+        mock_coordinator.data = _with_site_records(
+            mock_coordinator.data, "devices", "site1", {}
+        )
 
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
@@ -1268,13 +1415,17 @@ class TestUnifiFirewallRuleSwitch:
         assert switch._attr_device_info["name"] == "Firewall Policies (Default)"
 
     @pytest.mark.asyncio
-    async def test_turn_on_error_does_not_write_state(self, mock_coordinator) -> None:
+    async def test_turn_on_error_does_not_write_state(
+        self, mock_coordinator: MagicMock
+    ) -> None:
         """Test firewall update failures propagate without writing state."""
         config = mock_coordinator.config_coordinator
         config.async_set_firewall_rule_enabled.side_effect = HomeAssistantError(
             "Unable to update firewall rule rule1"
         )
-        mock_coordinator.data["firewall_rules"]["site1"]["rule1"]["enabled"] = False
+        mock_coordinator.data = _with_record_fields(
+            mock_coordinator.data, "firewall_rules", "site1", "rule1", enabled=False
+        )
 
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
@@ -1383,11 +1534,13 @@ class TestAsyncSetupEntryFirewallRules:
 
     @pytest.mark.asyncio
     async def test_setup_entry_firewall_rules_malformed_record_and_dedupe(
-        self, hass, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """A malformed rule record is skipped, and rediscovery on unchanged
         data does not duplicate the remaining switches."""
-        mock_coordinator.data["firewall_rules"]["site1"]["bad_rule"] = "not-a-dict"
+        mock_coordinator.data = with_rule(
+            mock_coordinator.data, "firewall_rules", "site1", "bad_rule", "not-a-dict"
+        )
 
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
@@ -1514,8 +1667,12 @@ class TestUnifiPolicyBasedRouteSwitch:
         )
 
         assert switch.is_on is True
-        mock_coordinator.data["policy_based_routes"]["site1"]["route1"]["enabled"] = (
-            False
+        mock_coordinator.data = _with_record_fields(
+            mock_coordinator.data,
+            "policy_based_routes",
+            "site1",
+            "route1",
+            enabled=False,
         )
         assert switch.is_on is False
 
@@ -1548,22 +1705,28 @@ class TestUnifiPolicyBasedRouteSwitch:
         ``killSwitch``/``kill_switch``, and also sends ``network_id``,
         ``next_hop``, ``regions``, ``ip_ranges``, and ``target_devices``.
         """
-        mock_coordinator.data["policy_based_routes"]["site1"]["route3"] = {
-            "id": "route3",
-            "description": "Nord Route",
-            "enabled": True,
-            "matching_target": "INTERNET",
-            "kill_switch_enabled": True,
-            "domains": [],
-            "ip_addresses": [],
-            "ip_ranges": [],
-            "next_hop": "",
-            "regions": [],
-            "network_id": "67678a746c1d8157c66f444e",
-            "target_devices": [
-                {"network_id": "67678b326c1d8157c66f4466", "type": "NETWORK"}
-            ],
-        }
+        mock_coordinator.data = with_rule(
+            mock_coordinator.data,
+            "policy_based_routes",
+            "site1",
+            "route3",
+            {
+                "id": "route3",
+                "description": "Nord Route",
+                "enabled": True,
+                "matching_target": "INTERNET",
+                "kill_switch_enabled": True,
+                "domains": [],
+                "ip_addresses": [],
+                "ip_ranges": [],
+                "next_hop": "",
+                "regions": [],
+                "network_id": "67678a746c1d8157c66f444e",
+                "target_devices": [
+                    {"network_id": "67678b326c1d8157c66f4466", "type": "NETWORK"}
+                ],
+            },
+        )
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route3"
         )
@@ -1583,12 +1746,18 @@ class TestUnifiPolicyBasedRouteSwitch:
         self, mock_coordinator: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Test disable warning fires for the live ``kill_switch_enabled`` field."""
-        mock_coordinator.data["policy_based_routes"]["site1"]["route3"] = {
-            "id": "route3",
-            "description": "Nord Route",
-            "enabled": True,
-            "kill_switch_enabled": True,
-        }
+        mock_coordinator.data = with_rule(
+            mock_coordinator.data,
+            "policy_based_routes",
+            "site1",
+            "route3",
+            {
+                "id": "route3",
+                "description": "Nord Route",
+                "enabled": True,
+                "kill_switch_enabled": True,
+            },
+        )
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route3"
         )
@@ -1650,7 +1819,9 @@ class TestUnifiPolicyBasedRouteSwitch:
         assert "killSwitchEnabled" in route_data
         assert "killSwitch" in route_data
 
-        mock_coordinator.data["policy_based_routes"]["site1"]["route4"] = route_data
+        mock_coordinator.data = with_rule(
+            mock_coordinator.data, "policy_based_routes", "site1", "route4", route_data
+        )
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route4"
         )
@@ -1671,8 +1842,12 @@ class TestUnifiPolicyBasedRouteSwitch:
                 "kill_switch": True,
             }
         )
-        mock_coordinator.data["policy_based_routes"]["site1"]["route4"] = (
-            UnifiInsightsBaseCoordinator._model_to_dict(mock_coordinator, route)
+        mock_coordinator.data = with_rule(
+            mock_coordinator.data,
+            "policy_based_routes",
+            "site1",
+            "route4",
+            UnifiInsightsBaseCoordinator._model_to_dict(mock_coordinator, route),
         )
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route4"
@@ -1690,8 +1865,12 @@ class TestUnifiPolicyBasedRouteSwitch:
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
         assert switch.icon == "mdi:vpn"
-        mock_coordinator.data["policy_based_routes"]["site1"]["route1"]["enabled"] = (
-            False
+        mock_coordinator.data = _with_record_fields(
+            mock_coordinator.data,
+            "policy_based_routes",
+            "site1",
+            "route1",
+            enabled=False,
         )
         assert switch.icon == "mdi:vpn-off"
 
@@ -1701,16 +1880,24 @@ class TestUnifiPolicyBasedRouteSwitch:
         )
         # A non-VPN route uses its icons.json state icons.
         assert switch2.icon is None
-        mock_coordinator.data["policy_based_routes"]["site1"]["route2"]["enabled"] = (
-            True
+        mock_coordinator.data = _with_record_fields(
+            mock_coordinator.data,
+            "policy_based_routes",
+            "site1",
+            "route2",
+            enabled=True,
         )
         assert switch2.icon is None
 
     @pytest.mark.asyncio
     async def test_turn_on_updates_route(self, mock_coordinator: MagicMock) -> None:
         """Test enabling a policy-based route."""
-        mock_coordinator.data["policy_based_routes"]["site1"]["route1"]["enabled"] = (
-            False
+        mock_coordinator.data = _with_record_fields(
+            mock_coordinator.data,
+            "policy_based_routes",
+            "site1",
+            "route1",
+            enabled=False,
         )
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
@@ -1783,7 +1970,9 @@ class TestUnifiPolicyBasedRouteSwitch:
         self, mock_coordinator: MagicMock
     ) -> None:
         """Test fallback device registry entry when no gateway device is found."""
-        mock_coordinator.data["devices"]["site1"] = {}
+        mock_coordinator.data = _with_site_records(
+            mock_coordinator.data, "devices", "site1", {}
+        )
 
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
@@ -1803,8 +1992,12 @@ class TestUnifiPolicyBasedRouteSwitch:
         config.async_set_policy_based_route_enabled.side_effect = HomeAssistantError(
             "Unable to update policy-based route route1"
         )
-        mock_coordinator.data["policy_based_routes"]["site1"]["route1"]["enabled"] = (
-            False
+        mock_coordinator.data = _with_record_fields(
+            mock_coordinator.data,
+            "policy_based_routes",
+            "site1",
+            "route1",
+            enabled=False,
         )
 
         switch = UnifiInsightsNetworkRuleSwitch(
@@ -1832,8 +2025,12 @@ class TestUnifiPolicyBasedRouteSwitch:
         config.async_set_policy_based_route_enabled.side_effect = HomeAssistantError(
             "Unable to update policy-based route route1"
         )
-        mock_coordinator.data["policy_based_routes"]["site1"]["route1"]["enabled"] = (
-            True
+        mock_coordinator.data = _with_record_fields(
+            mock_coordinator.data,
+            "policy_based_routes",
+            "site1",
+            "route1",
+            enabled=True,
         )
 
         switch = UnifiInsightsNetworkRuleSwitch(
@@ -1856,9 +2053,12 @@ class TestUnifiPolicyBasedRouteSwitch:
         self, mock_coordinator: MagicMock
     ) -> None:
         """Test unnamed policy route switch falls back to unnamed key."""
-        mock_coordinator.data.setdefault("policy_based_routes", {})["site1"] = {
-            "route_unnamed": {"id": "route_unnamed", "name": ""}
-        }
+        mock_coordinator.data = _with_site_records(
+            mock_coordinator.data,
+            "policy_based_routes",
+            "site1",
+            {"route_unnamed": {"id": "route_unnamed", "name": ""}},
+        )
         entity = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route_unnamed"
         )
@@ -1944,9 +2144,15 @@ class TestAsyncSetupEntryPolicyBasedRoutes:
     ) -> None:
         """Non-dict site collections/route records are skipped, and
         rediscovery on unchanged data does not duplicate switches."""
-        mock_coordinator.data["policy_based_routes"]["site2"] = "not-a-dict"
-        mock_coordinator.data["policy_based_routes"]["site1"]["bad_route"] = (
-            "not-a-dict"
+        mock_coordinator.data = _with_site_records(
+            mock_coordinator.data, "policy_based_routes", "site2", "not-a-dict"
+        )
+        mock_coordinator.data = with_rule(
+            mock_coordinator.data,
+            "policy_based_routes",
+            "site1",
+            "bad_route",
+            "not-a-dict",
         )
 
         mock_entry = MagicMock()
@@ -2064,7 +2270,9 @@ class TestUnifiVpnClientSwitch:
         assert switch.available is False
 
         mock_coordinator.last_update_success = True
-        mock_coordinator.data["vpn_clients"]["site1"] = {}
+        mock_coordinator.data = _with_site_records(
+            mock_coordinator.data, "vpn_clients", "site1", {}
+        )
         assert switch.available is False
 
     def test_is_on(self, mock_coordinator: MagicMock) -> None:
@@ -2074,7 +2282,13 @@ class TestUnifiVpnClientSwitch:
         )
 
         assert switch.is_on is True
-        mock_coordinator.data["vpn_clients"]["site1"]["vpn1"]["enabled"] = False
+        mock_coordinator.data = _with_record_fields(
+            mock_coordinator.data,
+            "vpn_clients",
+            "site1",
+            "vpn1",
+            enabled=False,
+        )
         assert switch.is_on is False
 
     def test_extra_state_attributes(self, mock_coordinator: MagicMock) -> None:
@@ -2099,7 +2313,13 @@ class TestUnifiVpnClientSwitch:
         )
         # The state icons come from icons.json.
         assert switch.icon is None
-        mock_coordinator.data["vpn_clients"]["site1"]["vpn1"]["enabled"] = False
+        mock_coordinator.data = _with_record_fields(
+            mock_coordinator.data,
+            "vpn_clients",
+            "site1",
+            "vpn1",
+            enabled=False,
+        )
         assert switch.icon is None
 
     @pytest.mark.asyncio
@@ -2107,7 +2327,13 @@ class TestUnifiVpnClientSwitch:
         self, mock_coordinator: MagicMock
     ) -> None:
         """Test enabling a VPN client."""
-        mock_coordinator.data["vpn_clients"]["site1"]["vpn1"]["enabled"] = False
+        mock_coordinator.data = _with_record_fields(
+            mock_coordinator.data,
+            "vpn_clients",
+            "site1",
+            "vpn1",
+            enabled=False,
+        )
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
         )
@@ -2147,7 +2373,9 @@ class TestUnifiVpnClientSwitch:
         self, mock_coordinator: MagicMock
     ) -> None:
         """Test fallback device registry entry when no gateway device is found."""
-        mock_coordinator.data["devices"]["site1"] = {}
+        mock_coordinator.data = _with_site_records(
+            mock_coordinator.data, "devices", "site1", {}
+        )
 
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
@@ -2167,7 +2395,13 @@ class TestUnifiVpnClientSwitch:
         config.async_set_vpn_client_enabled.side_effect = HomeAssistantError(
             "Unable to update VPN client vpn1"
         )
-        mock_coordinator.data["vpn_clients"]["site1"]["vpn1"]["enabled"] = False
+        mock_coordinator.data = _with_record_fields(
+            mock_coordinator.data,
+            "vpn_clients",
+            "site1",
+            "vpn1",
+            enabled=False,
+        )
 
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
@@ -2189,7 +2423,13 @@ class TestUnifiVpnClientSwitch:
         config.async_set_vpn_client_enabled.side_effect = HomeAssistantError(
             "Unable to update VPN client vpn1"
         )
-        mock_coordinator.data["vpn_clients"]["site1"]["vpn1"]["enabled"] = True
+        mock_coordinator.data = _with_record_fields(
+            mock_coordinator.data,
+            "vpn_clients",
+            "site1",
+            "vpn1",
+            enabled=True,
+        )
 
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
@@ -2204,9 +2444,12 @@ class TestUnifiVpnClientSwitch:
 
     def test_unnamed_vpn_client_switch(self, mock_coordinator: MagicMock) -> None:
         """Test unnamed VPN client switch falls back to unnamed key."""
-        mock_coordinator.data.setdefault("vpn_clients", {})["site1"] = {
-            "vpn_unnamed": {"id": "vpn_unnamed"}
-        }
+        mock_coordinator.data = _with_site_records(
+            mock_coordinator.data,
+            "vpn_clients",
+            "site1",
+            {"vpn_unnamed": {"id": "vpn_unnamed"}},
+        )
         entity = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn_unnamed"
         )
@@ -2295,8 +2538,12 @@ class TestAsyncSetupEntryVpnClients:
     ) -> None:
         """Non-dict site collections/VPN client records are skipped, and
         rediscovery on unchanged data does not duplicate switches."""
-        mock_coordinator.data["vpn_clients"]["site2"] = "not-a-dict"
-        mock_coordinator.data["vpn_clients"]["site1"]["bad_vpn"] = "not-a-dict"
+        mock_coordinator.data = _with_site_records(
+            mock_coordinator.data, "vpn_clients", "site2", "not-a-dict"
+        )
+        mock_coordinator.data = with_rule(
+            mock_coordinator.data, "vpn_clients", "site1", "bad_vpn", "not-a-dict"
+        )
 
         mock_entry = MagicMock()
         mock_entry.options = {}
@@ -2335,13 +2582,16 @@ class TestObsoletePrivacySwitchCleanup:
         self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Assert that camera discovery does not create a privacy mode switch."""
-        mock_coordinator.data["protect"]["cameras"] = {
-            "camera1": {
-                "id": "camera1",
-                "name": "Front Camera",
-                "state": "CONNECTED",
-            }
-        }
+        mock_coordinator.data = _with_cameras(
+            mock_coordinator.data,
+            {
+                "camera1": {
+                    "id": "camera1",
+                    "name": "Front Camera",
+                    "state": "CONNECTED",
+                }
+            },
+        )
         mock_entry = MagicMock()
         mock_entry.entry_id = "test_entry"
         mock_entry.options = {CONF_CLIENT_CONTROL: False}
@@ -2365,7 +2615,7 @@ class TestObsoletePrivacySwitchCleanup:
         """Assert that setup removes obsolete privacy mode switch entries
         and preserves other switches.
         """
-        mock_coordinator.data["protect"]["cameras"] = {}
+        mock_coordinator.data = _with_cameras(mock_coordinator.data, {})
         mock_entry = MockConfigEntry(
             domain=DOMAIN,
             title="UniFi Protect Test",
@@ -2460,11 +2710,11 @@ class TestUnifiProtectStatusLightSwitch:
 
         assert switch._attr_is_on is True
 
-    def test_update_from_data_led_disabled(self, mock_coordinator) -> None:
+    def test_update_from_data_led_disabled(self, mock_coordinator: MagicMock) -> None:
         """Test _update_from_data with LED disabled."""
-        mock_coordinator.data["protect"]["cameras"]["camera1"]["ledSettings"] = {
-            "isEnabled": False
-        }
+        mock_coordinator.data = _with_camera_fields(
+            mock_coordinator.data, "camera1", ledSettings={"isEnabled": False}
+        )
 
         switch = UnifiProtectStatusLightSwitch(
             coordinator=mock_coordinator,
@@ -2473,9 +2723,16 @@ class TestUnifiProtectStatusLightSwitch:
 
         assert switch._attr_is_on is False
 
-    def test_update_from_data_no_led_settings(self, mock_coordinator) -> None:
+    def test_update_from_data_no_led_settings(
+        self, mock_coordinator: MagicMock
+    ) -> None:
         """Test _update_from_data when ledSettings is missing (defaults to True)."""
-        del mock_coordinator.data["protect"]["cameras"]["camera1"]["ledSettings"]
+        camera = mock_coordinator.data["protect"]["cameras"]["camera1"]
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data,
+            "camera1",
+            {key: value for key, value in camera.items() if key != "ledSettings"},
+        )
 
         switch = UnifiProtectStatusLightSwitch(
             coordinator=mock_coordinator,
@@ -2498,11 +2755,11 @@ class TestUnifiProtectStatusLightSwitch:
         assert attrs[ATTR_STATUS_LIGHT] is True
 
     @pytest.mark.asyncio
-    async def test_async_turn_on_success(self, mock_coordinator) -> None:
+    async def test_async_turn_on_success(self, mock_coordinator: MagicMock) -> None:
         """Test turning status light on successfully."""
-        mock_coordinator.data["protect"]["cameras"]["camera1"]["ledSettings"] = {
-            "isEnabled": False
-        }
+        mock_coordinator.data = _with_camera_fields(
+            mock_coordinator.data, "camera1", ledSettings={"isEnabled": False}
+        )
 
         switch = UnifiProtectStatusLightSwitch(
             coordinator=mock_coordinator,
@@ -2517,22 +2774,23 @@ class TestUnifiProtectStatusLightSwitch:
             "camera1", ledSettings={"isEnabled": True}
         )
         # The owner publishes the written setting; the state follows from it.
-        camera = mock_coordinator.data["protect"]["cameras"]["camera1"]
-        camera["ledSettings"] = {"isEnabled": True}
+        mock_coordinator.data = _with_camera_fields(
+            mock_coordinator.data, "camera1", ledSettings={"isEnabled": True}
+        )
         switch._update_from_data()
         assert switch._attr_is_on is True
 
     @pytest.mark.asyncio
-    async def test_async_turn_on_error(self, mock_coordinator) -> None:
+    async def test_async_turn_on_error(self, mock_coordinator: MagicMock) -> None:
         """Test turning status light on with error."""
         protect_owner(
             mock_coordinator
         ).async_update_camera_settings.side_effect = HomeAssistantError(
             "Unable to update camera camera1"
         )
-        mock_coordinator.data["protect"]["cameras"]["camera1"]["ledSettings"] = {
-            "isEnabled": False
-        }
+        mock_coordinator.data = _with_camera_fields(
+            mock_coordinator.data, "camera1", ledSettings={"isEnabled": False}
+        )
 
         switch = UnifiProtectStatusLightSwitch(
             coordinator=mock_coordinator,
@@ -2546,7 +2804,7 @@ class TestUnifiProtectStatusLightSwitch:
         switch.async_write_ha_state.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_async_turn_off_success(self, mock_coordinator) -> None:
+    async def test_async_turn_off_success(self, mock_coordinator: MagicMock) -> None:
         """Test turning status light off successfully."""
         switch = UnifiProtectStatusLightSwitch(
             coordinator=mock_coordinator,
@@ -2561,8 +2819,9 @@ class TestUnifiProtectStatusLightSwitch:
             "camera1", ledSettings={"isEnabled": False}
         )
         # The owner publishes the written setting; the state follows from it.
-        camera = mock_coordinator.data["protect"]["cameras"]["camera1"]
-        camera["ledSettings"] = {"isEnabled": False}
+        mock_coordinator.data = _with_camera_fields(
+            mock_coordinator.data, "camera1", ledSettings={"isEnabled": False}
+        )
         switch._update_from_data()
         assert switch._attr_is_on is False
 
@@ -2647,10 +2906,10 @@ class TestUnifiProtectHighFPSSwitch:
 
         assert switch._attr_is_on is False
 
-    def test_update_from_data_high_fps_mode(self, mock_coordinator) -> None:
+    def test_update_from_data_high_fps_mode(self, mock_coordinator: MagicMock) -> None:
         """Test _update_from_data with high FPS video mode."""
-        mock_coordinator.data["protect"]["cameras"]["camera1"]["videoMode"] = (
-            VIDEO_MODE_HIGH_FPS
+        mock_coordinator.data = _with_camera_fields(
+            mock_coordinator.data, "camera1", videoMode=VIDEO_MODE_HIGH_FPS
         )
 
         switch = UnifiProtectHighFPSSwitch(
@@ -2660,9 +2919,11 @@ class TestUnifiProtectHighFPSSwitch:
 
         assert switch._attr_is_on is True
 
-    def test_update_from_data_sport_mode(self, mock_coordinator) -> None:
+    def test_update_from_data_sport_mode(self, mock_coordinator: MagicMock) -> None:
         """Test _update_from_data with sport video mode (not high FPS)."""
-        mock_coordinator.data["protect"]["cameras"]["camera1"]["videoMode"] = "sport"
+        mock_coordinator.data = _with_camera_fields(
+            mock_coordinator.data, "camera1", videoMode="sport"
+        )
 
         switch = UnifiProtectHighFPSSwitch(
             coordinator=mock_coordinator,
@@ -2684,7 +2945,7 @@ class TestUnifiProtectHighFPSSwitch:
         assert attrs[ATTR_HIGH_FPS_MODE] is False
 
     @pytest.mark.asyncio
-    async def test_async_turn_on_success(self, mock_coordinator) -> None:
+    async def test_async_turn_on_success(self, mock_coordinator: MagicMock) -> None:
         """Test enabling high FPS mode successfully."""
         switch = UnifiProtectHighFPSSwitch(
             coordinator=mock_coordinator,
@@ -2699,8 +2960,9 @@ class TestUnifiProtectHighFPSSwitch:
             "camera1", videoMode=VIDEO_MODE_HIGH_FPS
         )
         # The owner publishes the written setting; the state follows from it.
-        camera = mock_coordinator.data["protect"]["cameras"]["camera1"]
-        camera["videoMode"] = VIDEO_MODE_HIGH_FPS
+        mock_coordinator.data = _with_camera_fields(
+            mock_coordinator.data, "camera1", videoMode=VIDEO_MODE_HIGH_FPS
+        )
         switch._update_from_data()
         assert switch._attr_is_on is True
 
@@ -2726,10 +2988,10 @@ class TestUnifiProtectHighFPSSwitch:
         switch.async_write_ha_state.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_async_turn_off_success(self, mock_coordinator) -> None:
+    async def test_async_turn_off_success(self, mock_coordinator: MagicMock) -> None:
         """Test disabling high FPS mode successfully."""
-        mock_coordinator.data["protect"]["cameras"]["camera1"]["videoMode"] = (
-            VIDEO_MODE_HIGH_FPS
+        mock_coordinator.data = _with_camera_fields(
+            mock_coordinator.data, "camera1", videoMode=VIDEO_MODE_HIGH_FPS
         )
 
         switch = UnifiProtectHighFPSSwitch(
@@ -2745,21 +3007,22 @@ class TestUnifiProtectHighFPSSwitch:
             "camera1", videoMode=VIDEO_MODE_DEFAULT
         )
         # The owner publishes the written setting; the state follows from it.
-        camera = mock_coordinator.data["protect"]["cameras"]["camera1"]
-        camera["videoMode"] = VIDEO_MODE_DEFAULT
+        mock_coordinator.data = _with_camera_fields(
+            mock_coordinator.data, "camera1", videoMode=VIDEO_MODE_DEFAULT
+        )
         switch._update_from_data()
         assert switch._attr_is_on is False
 
     @pytest.mark.asyncio
-    async def test_async_turn_off_error(self, mock_coordinator) -> None:
+    async def test_async_turn_off_error(self, mock_coordinator: MagicMock) -> None:
         """Test disabling high FPS mode with error."""
         protect_owner(
             mock_coordinator
         ).async_update_camera_settings.side_effect = HomeAssistantError(
             "Unable to update camera camera1"
         )
-        mock_coordinator.data["protect"]["cameras"]["camera1"]["videoMode"] = (
-            VIDEO_MODE_HIGH_FPS
+        mock_coordinator.data = _with_camera_fields(
+            mock_coordinator.data, "camera1", videoMode=VIDEO_MODE_HIGH_FPS
         )
 
         switch = UnifiProtectHighFPSSwitch(
@@ -3320,7 +3583,9 @@ class TestUnifiWifiSwitchEdgeCases:
             "site1", "wifi1", enabled=False
         )
 
-    def test_get_wifi_data_fallback_to_initial_data(self, mock_coordinator) -> None:
+    def test_get_wifi_data_fallback_to_initial_data(
+        self, mock_coordinator: MagicMock
+    ) -> None:
         """Test _get_wifi_data falls back to initial wifi_data."""
         initial_wifi_data = {
             "id": "wifi1",
@@ -3337,7 +3602,9 @@ class TestUnifiWifiSwitchEdgeCases:
         )
 
         # Remove wifi from coordinator data
-        mock_coordinator.data["wifi"]["site1"] = {}
+        mock_coordinator.data = _with_site_records(
+            mock_coordinator.data, "wifi", "site1", {}
+        )
 
         wifi_data = switch._get_wifi_data()
         assert wifi_data == initial_wifi_data
@@ -3610,11 +3877,12 @@ class TestUnifiOutletSwitch:
         switch.async_write_ha_state.assert_not_called()
 
     def test_outlet_switch_unavailable_when_device_offline(
-        self, mock_coordinator
+        self, mock_coordinator: MagicMock
     ) -> None:
         """Test switch availability when device is offline."""
-        mock_coordinator.data["devices"]["site1"]["pdu1"]["state"] = "OFFLINE"
-        mock_coordinator.data["devices"]["site1"]["pdu1"]["status"] = "offline"
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data, "site1", "pdu1", state="OFFLINE", status="offline"
+        )
 
         switch = UnifiOutletSwitch(
             mock_coordinator, OUTLET_RELAY_SWITCH, "site1", "pdu1", outlet_index=1
@@ -3624,7 +3892,9 @@ class TestUnifiOutletSwitch:
 
     def test_outlet_switch_more_edge_cases(self, mock_coordinator: MagicMock) -> None:
         """Test outlet switch edge cases for non-list table and alternative keys."""
-        mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"] = "not_a_list"
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data, "site1", "pdu1", outlet_table="not_a_list"
+        )
         switch = UnifiOutletSwitch(
             mock_coordinator,
             OUTLET_RELAY_SWITCH,
@@ -3635,25 +3905,33 @@ class TestUnifiOutletSwitch:
         )
         assert switch._get_outlet_data() is None
 
-        mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"] = [
-            {"outlet_idx": 1, "relay_state": True, "name": "Outlet 1"}
-        ]
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "pdu1",
+            outlet_table=[{"outlet_idx": 1, "relay_state": True, "name": "Outlet 1"}],
+        )
         assert switch._get_outlet_data() == {
             "outlet_idx": 1,
             "relay_state": True,
             "name": "Outlet 1",
         }
 
-        mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"] = [
-            {
-                "index": 1,
-                "outlet_caps": 3,
-                "outlet_voltage": 120.0,
-                "outlet_current": 1.0,
-                "outlet_power": 120.0,
-                "outlet_power_factor": 0.99,
-            }
-        ]
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "pdu1",
+            outlet_table=[
+                {
+                    "index": 1,
+                    "outlet_caps": 3,
+                    "outlet_voltage": 120.0,
+                    "outlet_current": 1.0,
+                    "outlet_power": 120.0,
+                    "outlet_power_factor": 0.99,
+                }
+            ],
+        )
         attrs = switch.extra_state_attributes
         assert attrs["outlet_voltage"] == 120.0
         assert attrs["outlet_power_factor"] == 0.99
@@ -3863,7 +4141,7 @@ class TestUnifiOutletCycleSwitch:
 
     @pytest.mark.asyncio
     async def test_cycle_switch_does_not_default_relay_on(
-        self, mock_coordinator
+        self, mock_coordinator: MagicMock
     ) -> None:
         """Test toggling power cycling never energizes an unknown relay.
 
@@ -3871,9 +4149,12 @@ class TestUnifiOutletCycleSwitch:
         outlet whose reported data carries no relay_state must be treated as
         OFF. Defaulting to ON would switch on a load the user did not ask for.
         """
-        mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"] = [
-            {"index": 1, "name": "Main Server", "cycle_enabled": False}
-        ]
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "pdu1",
+            outlet_table=[{"index": 1, "name": "Main Server", "cycle_enabled": False}],
+        )
         switch = UnifiOutletSwitch(
             mock_coordinator,
             OUTLET_CYCLE_SWITCH,
@@ -3890,10 +4171,10 @@ class TestUnifiOutletCycleSwitch:
             "site1", "pdu1", 1, state=False, cycle_enabled=True
         )
 
-    def test_outlet_switch_edge_cases(self, mock_coordinator) -> None:
+    def test_outlet_switch_edge_cases(self, mock_coordinator: MagicMock) -> None:
         """Test outlet switch edge cases for complete branch coverage."""
         # 1. Device data missing or not dict
-        mock_coordinator.data["devices"] = {}
+        mock_coordinator.data = with_sections(mock_coordinator.data, devices={})
         switch = UnifiOutletSwitch(
             mock_coordinator,
             OUTLET_RELAY_SWITCH,
@@ -3907,19 +4188,20 @@ class TestUnifiOutletCycleSwitch:
         assert switch.available is False
 
         # 2. Outlet table with invalid entries
-        mock_coordinator.data["devices"] = {
-            "site1": {
-                "pdu1": {
-                    "outlet_table": [
-                        "not_a_dict",
-                        {"index": "invalid"},
-                        {"outlet_idx": 2},
-                    ],
-                    "state": "ONLINE",
-                    "status": "online",
-                }
-            }
-        }
+        mock_coordinator.data = with_network_device(
+            mock_coordinator.data,
+            "site1",
+            "pdu1",
+            {
+                "outlet_table": [
+                    "not_a_dict",
+                    {"index": "invalid"},
+                    {"outlet_idx": 2},
+                ],
+                "state": "ONLINE",
+                "status": "online",
+            },
+        )
         assert switch._get_outlet_data() is None
 
         # 3. Cycle switch with missing/offline data
@@ -3946,23 +4228,38 @@ class TestUnifiOutletCycleSwitch:
             outlet_data={"cycle_enabled": True},
         )
 
-        mock_coordinator.data["devices"]["site1"].pop("pdu1", None)
+        site_devices = mock_coordinator.data["devices"]["site1"]
+        mock_coordinator.data = _with_site_records(
+            mock_coordinator.data,
+            "devices",
+            "site1",
+            {key: value for key, value in site_devices.items() if key != "pdu1"},
+        )
         assert switch._get_outlet_data() is None
 
-        mock_coordinator.data["devices"]["site1"]["pdu1"] = {"outlet_table": None}
+        mock_coordinator.data = with_network_device(
+            mock_coordinator.data, "site1", "pdu1", {"outlet_table": None}
+        )
         assert switch._get_outlet_data() is None
 
-        mock_coordinator.data["devices"]["site1"]["pdu1"] = {
-            "state": "ONLINE",
-            "outlet_table": [
-                "not_a_dict",
-                {"index": "invalid_int", "cycle_enabled": False},
-                {"outlet_idx": 1, "cycle_enabled": True},
-            ],
-        }
+        mock_coordinator.data = with_network_device(
+            mock_coordinator.data,
+            "site1",
+            "pdu1",
+            {
+                "state": "ONLINE",
+                "outlet_table": [
+                    "not_a_dict",
+                    {"index": "invalid_int", "cycle_enabled": False},
+                    {"outlet_idx": 1, "cycle_enabled": True},
+                ],
+            },
+        )
         assert switch._get_outlet_data()["outlet_idx"] == 1
 
-        mock_coordinator.data["devices"]["site1"]["pdu1"]["state"] = "OFFLINE"
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data, "site1", "pdu1", state="OFFLINE"
+        )
         assert switch.available is False
 
     @pytest.mark.asyncio
@@ -4167,7 +4464,11 @@ def test_outlet_cycle_switch_reports_no_outlet_attributes() -> None:
     ],
 )
 def test_outlet_serviceable_availability(
-    description, state: str, *, healthy: bool, expected: bool
+    description: UnifiOutletSwitchEntityDescription,
+    state: str,
+    *,
+    healthy: bool,
+    expected: bool,
 ) -> None:
     """Both outlet controls need fresh Device data and a serviceable device."""
     coordinator = MagicMock()
@@ -4177,5 +4478,8 @@ def test_outlet_serviceable_availability(
     set_availability(coordinator, device=healthy)
     switch = UnifiOutletSwitch(coordinator, description, "site", "pdu", outlet_index=1)
     assert switch.available is expected
-    coordinator.data["devices"]["site"]["pdu"]["outlet_table"] = []
+    coordinator.data = with_device_fields(
+        coordinator.data, "site", "pdu", outlet_table=[]
+    )
+
     assert switch.available is False
