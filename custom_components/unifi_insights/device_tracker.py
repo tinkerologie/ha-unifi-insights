@@ -416,11 +416,13 @@ class UnifiClientTracker(
         """Return device info."""
         return self._device_info
 
-    def _find_in_site(
-        self, clients: dict[str, dict[str, Any]]
-    ) -> dict[str, Any] | None:
+    def _find_in_site(self, clients: Any) -> dict[str, Any] | None:
         """Return this MAC's entry within one site's client snapshot."""
+        if not isinstance(clients, dict):
+            return None
         for client_data in clients.values():
+            if not isinstance(client_data, dict):
+                continue
             mac = get_field(client_data, "macAddress", "mac_address", "mac", default="")
             if mac and mac.lower() == self._mac:
                 return client_data
@@ -435,8 +437,8 @@ class UnifiClientTracker(
         site so a roamed client -- or one restored from the registry with no hint
         at all -- is still found. Remember where it turned up for next time.
         """
-        all_clients = section_by_site(self.coordinator.data, "clients")
-        if all_clients is None:
+        all_clients = self.coordinator.data.get("clients", {})
+        if not isinstance(all_clients, dict):
             return None
         if self._site_id is not None:
             client_data = self._find_in_site(all_clients.get(self._site_id, {}))
