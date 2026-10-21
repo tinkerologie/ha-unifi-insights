@@ -25,12 +25,16 @@ from .const import (
     LIGHT_MODE_ALWAYS,
     LIGHT_MODE_OFF,
 )
-from .data_transforms import MAX_LED_LEVEL, MIN_LED_LEVEL, valid_led_level
+from .data_transforms import (
+    MAX_LED_LEVEL,
+    MIN_LED_LEVEL,
+    protect_collection,
+    protect_device,
+    valid_led_level,
+)
 from .entity import UnifiProtectEntity
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -62,25 +66,11 @@ async def async_setup_entry(
     @callback
     def async_discover_lights() -> None:
         """Discover and add new lights."""
-        snapshot: Mapping[str, Any] = coordinator.data
-        if (
-            not snapshot
-            or not isinstance(snapshot, dict)
-            or "protect" not in snapshot
-            or not isinstance(snapshot["protect"], dict)
-        ):
-            return
-
-        lights = coordinator.data["protect"].get("lights", {})
-        if not isinstance(lights, dict):
-            return
-
+        lights = protect_collection(coordinator.data, "lights") or {}
         new_entities: list[LightEntity] = []
         for light_id, light_data in lights.items():
             # Skip malformed entries to avoid crashing
-            if not isinstance(light_data, dict) or (
-                "name" not in light_data and "id" not in light_data
-            ):
+            if "name" not in light_data and "id" not in light_data:
                 _LOGGER.warning("Skipping malformed light entry: %s", light_id)
                 continue
             if light_id in known_light_ids:
@@ -137,7 +127,9 @@ class UnifiProtectLight(UnifiProtectEntity, LightEntity):
 
     def _update_from_data(self) -> None:
         """Update entity from data."""
-        light_data = self.coordinator.data["protect"]["lights"].get(self._device_id, {})
+        light_data = (
+            protect_device(self.coordinator.data, "lights", self._device_id) or {}
+        )
 
         # Set state
         light_mode = light_data.get("lightModeSettings", {}).get("mode", LIGHT_MODE_OFF)

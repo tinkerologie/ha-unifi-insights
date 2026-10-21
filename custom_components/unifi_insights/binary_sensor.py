@@ -64,6 +64,7 @@ from .data_transforms import (
     normalize_nvr_storage,
     persistent_storage_mounts,
     present_attributes,
+    protect_collection,
     thread_network,
 )
 from .entity import (
@@ -610,113 +611,100 @@ async def async_setup_entry(
 
         # Add binary sensors for Protect devices
         if coordinator.protect_client:
-            protect = coordinator.data.get("protect", {})
-            if isinstance(protect, dict):
-                # Add camera binary sensors
-                cameras = protect.get("cameras", {})
-                if isinstance(cameras, dict):
-                    for camera_id, camera_data in cameras.items():
-                        if not isinstance(camera_data, dict):
-                            continue
-                        camera_name = camera_data.get("name", camera_id)
+            # Add camera binary sensors
+            cameras = protect_collection(coordinator.data, "cameras") or {}
+            for camera_id, camera_data in cameras.items():
+                camera_name = camera_data.get("name", camera_id)
 
-                        _LOGGER.debug(
-                            "Creating binary sensors for camera %s (%s)",
-                            camera_id,
-                            camera_name,
+                _LOGGER.debug(
+                    "Creating binary sensors for camera %s (%s)",
+                    camera_id,
+                    camera_name,
+                )
+
+                for description in BINARY_SENSOR_TYPES:
+                    if (
+                        description.entity_type == "protect"
+                        and description.device_type == DEVICE_TYPE_CAMERA
+                        and (
+                            description.capability_fn is None
+                            or description.capability_fn(camera_data)
                         )
-
-                        for description in BINARY_SENSOR_TYPES:
-                            if (
-                                description.entity_type == "protect"
-                                and description.device_type == DEVICE_TYPE_CAMERA
-                                and (
-                                    description.capability_fn is None
-                                    or description.capability_fn(camera_data)
-                                )
-                            ):
-                                # Skip doorbell sensors for non-doorbell cameras
-                                if description.key in [
-                                    "camera_package_detection",
-                                    "camera_doorbell_ring",
-                                ] and not _is_doorbell_camera(camera_data):
-                                    _LOGGER.debug(
-                                        "Skipping %s sensor for non-doorbell "
-                                        "camera %s (%s)",
-                                        description.key,
-                                        camera_id,
-                                        camera_name,
-                                    )
-                                    continue
-
-                                cam_key = (camera_id, description.key)
-                                if cam_key in known_sensor_keys:
-                                    continue
-                                known_sensor_keys.add(cam_key)
-                                entities.append(
-                                    UnifiProtectBinarySensor(
-                                        coordinator=coordinator,
-                                        description=description,
-                                        device_id=camera_id,
-                                    )
-                                )
-
-                # Add sensor binary sensors
-                sensors = protect.get("sensors", {})
-                if isinstance(sensors, dict):
-                    for sensor_id, sensor_data in sensors.items():
-                        if not isinstance(sensor_data, dict):
+                    ):
+                        # Skip doorbell sensors for non-doorbell cameras
+                        if description.key in [
+                            "camera_package_detection",
+                            "camera_doorbell_ring",
+                        ] and not _is_doorbell_camera(camera_data):
+                            _LOGGER.debug(
+                                "Skipping %s sensor for non-doorbell camera %s (%s)",
+                                description.key,
+                                camera_id,
+                                camera_name,
+                            )
                             continue
-                        sensor_name = sensor_data.get("name", sensor_id)
 
-                        _LOGGER.debug(
-                            "Creating binary sensors for sensor %s (%s)",
-                            sensor_id,
-                            sensor_name,
-                        )
-
-                        for description in BINARY_SENSOR_TYPES:
-                            if (
-                                description.entity_type == "protect"
-                                and description.device_type == DEVICE_TYPE_SENSOR
-                                and (
-                                    description.capability_fn is None
-                                    or description.capability_fn(sensor_data)
-                                )
-                            ):
-                                s_key = (sensor_id, description.key)
-                                if s_key in known_sensor_keys:
-                                    continue
-                                known_sensor_keys.add(s_key)
-                                entities.append(
-                                    UnifiProtectBinarySensor(
-                                        coordinator=coordinator,
-                                        description=description,
-                                        device_id=sensor_id,
-                                    )
-                                )
-
-        if coordinator.protect_client and isinstance(snapshot, dict):
-            protect = coordinator.data.get("protect", {})
-            nvrs = protect.get("nvrs", {}) if isinstance(protect, dict) else {}
-            if isinstance(nvrs, dict):
-                for nvr_id, nvr_data in nvrs.items():
-                    if not isinstance(nvr_data, dict):
-                        continue
-                    for description in BINARY_SENSOR_TYPES:
-                        if (
-                            description.device_type != DEVICE_TYPE_NVR
-                            or description.capability_fn is None
-                            or not description.capability_fn(nvr_data)
-                        ):
+                        cam_key = (camera_id, description.key)
+                        if cam_key in known_sensor_keys:
                             continue
-                        nvr_key = (nvr_id, description.key)
-                        if nvr_key in known_sensor_keys:
-                            continue
-                        known_sensor_keys.add(nvr_key)
+                        known_sensor_keys.add(cam_key)
                         entities.append(
-                            UnifiProtectBinarySensor(coordinator, description, nvr_id)
+                            UnifiProtectBinarySensor(
+                                coordinator=coordinator,
+                                description=description,
+                                device_id=camera_id,
+                            )
                         )
+
+            # Add sensor binary sensors
+            sensors = protect_collection(coordinator.data, "sensors") or {}
+            for sensor_id, sensor_data in sensors.items():
+                sensor_name = sensor_data.get("name", sensor_id)
+
+                _LOGGER.debug(
+                    "Creating binary sensors for sensor %s (%s)",
+                    sensor_id,
+                    sensor_name,
+                )
+
+                for description in BINARY_SENSOR_TYPES:
+                    if (
+                        description.entity_type == "protect"
+                        and description.device_type == DEVICE_TYPE_SENSOR
+                        and (
+                            description.capability_fn is None
+                            or description.capability_fn(sensor_data)
+                        )
+                    ):
+                        s_key = (sensor_id, description.key)
+                        if s_key in known_sensor_keys:
+                            continue
+                        known_sensor_keys.add(s_key)
+                        entities.append(
+                            UnifiProtectBinarySensor(
+                                coordinator=coordinator,
+                                description=description,
+                                device_id=sensor_id,
+                            )
+                        )
+
+        if coordinator.protect_client:
+            nvrs = protect_collection(coordinator.data, "nvrs") or {}
+            for nvr_id, nvr_data in nvrs.items():
+                for description in BINARY_SENSOR_TYPES:
+                    if (
+                        description.device_type != DEVICE_TYPE_NVR
+                        or description.capability_fn is None
+                        or not description.capability_fn(nvr_data)
+                    ):
+                        continue
+                    nvr_key = (nvr_id, description.key)
+                    if nvr_key in known_sensor_keys:
+                        continue
+                    known_sensor_keys.add(nvr_key)
+                    entities.append(
+                        UnifiProtectBinarySensor(coordinator, description, nvr_id)
+                    )
 
         # Add Protect alarm hub, link station and fob binary sensors
         entities.extend(

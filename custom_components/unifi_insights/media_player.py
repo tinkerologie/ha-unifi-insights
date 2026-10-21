@@ -21,11 +21,10 @@ from homeassistant.core import callback
 from homeassistant.exceptions import ServiceValidationError
 
 from .const import DEVICE_TYPE_CAMERA, DOMAIN
+from .data_transforms import protect_collection
 from .entity import UnifiProtectEntity, camera_supports_speaker
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
     from unifi_official_api.protect.talkback import TalkbackStream
@@ -59,30 +58,16 @@ async def async_setup_entry(
     @callback
     def async_discover_speakers() -> None:
         """Discover and add speaker entities for speaker-capable cameras."""
-        snapshot: Mapping[str, Any] = coordinator.data
-        if (
-            not snapshot
-            or not isinstance(snapshot, dict)
-            or "protect" not in snapshot
-            or not isinstance(snapshot["protect"], dict)
-        ):
-            return
-
-        protect = coordinator.data["protect"]
         entities: list[UnifiProtectCameraSpeaker] = []
-
-        cameras = protect.get("cameras", {})
-        if isinstance(cameras, dict):
-            for camera_id, camera in cameras.items():
-                if not isinstance(camera, dict):
-                    continue
-                if not camera_supports_speaker(camera):
-                    continue
-                key = (camera_id, "speaker")
-                if key in known_speaker_keys:
-                    continue
-                known_speaker_keys.add(key)
-                entities.append(UnifiProtectCameraSpeaker(coordinator, camera_id))
+        cameras = protect_collection(coordinator.data, "cameras") or {}
+        for camera_id, camera in cameras.items():
+            if not camera_supports_speaker(camera):
+                continue
+            key = (camera_id, "speaker")
+            if key in known_speaker_keys:
+                continue
+            known_speaker_keys.add(key)
+            entities.append(UnifiProtectCameraSpeaker(coordinator, camera_id))
 
         if entities:
             async_add_entities(entities)

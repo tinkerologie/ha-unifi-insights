@@ -47,6 +47,8 @@ from .coordinators.device import (
 from .data_transforms import (
     current_chime_ringtone_id,
     get_port_label,
+    protect_collection,
+    protect_device,
     voucher_request_kwargs,
     voucher_site_ids,
 )
@@ -430,50 +432,43 @@ async def async_setup_entry(
 
         # Add UniFi Protect buttons
         if coordinator.protect_client:
-            protect = coordinator.data.get("protect", {})
-            if isinstance(protect, dict):
-                # Add play button for each chime
-                chimes = protect.get("chimes", {})
-                if isinstance(chimes, dict):
-                    for chime_id, chime_data in chimes.items():
-                        if not isinstance(chime_data, dict):
-                            continue
-                        chime_key = (chime_id, "play")
-                        if chime_key not in known_button_keys:
-                            known_button_keys.add(chime_key)
-                            entities.append(
-                                UnifiProtectChimePlayButton(
-                                    coordinator=coordinator,
-                                    chime_id=chime_id,
-                                )
-                            )
+            # Add play button for each chime
+            chimes = protect_collection(coordinator.data, "chimes") or {}
+            for chime_id in chimes:
+                chime_key = (chime_id, "play")
+                if chime_key not in known_button_keys:
+                    known_button_keys.add(chime_key)
+                    entities.append(
+                        UnifiProtectChimePlayButton(
+                            coordinator=coordinator,
+                            chime_id=chime_id,
+                        )
+                    )
 
-                # Add PTZ patrol start/stop buttons for cameras with PTZ support
-                cameras = protect.get("cameras", {})
-                if isinstance(cameras, dict):
-                    for camera_id, camera_data in cameras.items():
-                        if not isinstance(camera_data, dict):
-                            continue
-                        if camera_supports_ptz(camera_data):
-                            start_key = (camera_id, "ptz_start")
-                            if start_key not in known_button_keys:
-                                known_button_keys.add(start_key)
-                                entities.append(
-                                    UnifiProtectPTZPatrolStartButton(
-                                        coordinator=coordinator,
-                                        camera_id=camera_id,
-                                    )
-                                )
+            # Add PTZ patrol start/stop buttons for cameras with PTZ support
+            cameras = protect_collection(coordinator.data, "cameras") or {}
+            for camera_id, camera_data in cameras.items():
+                if not camera_supports_ptz(camera_data):
+                    continue
+                start_key = (camera_id, "ptz_start")
+                if start_key not in known_button_keys:
+                    known_button_keys.add(start_key)
+                    entities.append(
+                        UnifiProtectPTZPatrolStartButton(
+                            coordinator=coordinator,
+                            camera_id=camera_id,
+                        )
+                    )
 
-                            stop_key = (camera_id, "ptz_stop")
-                            if stop_key not in known_button_keys:
-                                known_button_keys.add(stop_key)
-                                entities.append(
-                                    UnifiProtectPTZPatrolStopButton(
-                                        coordinator=coordinator,
-                                        camera_id=camera_id,
-                                    )
-                                )
+                stop_key = (camera_id, "ptz_stop")
+                if stop_key not in known_button_keys:
+                    known_button_keys.add(stop_key)
+                    entities.append(
+                        UnifiProtectPTZPatrolStopButton(
+                            coordinator=coordinator,
+                            camera_id=camera_id,
+                        )
+                    )
 
         if entities:
             _LOGGER.info("Adding %d UniFi Insights buttons", len(entities))
@@ -604,12 +599,9 @@ class UnifiProtectChimePlayButton(UnifiProtectEntity, ButtonEntity):
 
     def _update_attributes(self) -> None:
         """Update button attributes."""
-        data: Mapping[str, Any] = self.coordinator.data
-        protect = data.get("protect") if isinstance(data, dict) else None
-        chimes = protect.get("chimes") if isinstance(protect, dict) else None
-        chime_data = chimes.get(self._device_id) if isinstance(chimes, dict) else None
-        if not isinstance(chime_data, dict):
-            chime_data = {}
+        chime_data = (
+            protect_device(self.coordinator.data, "chimes", self._device_id) or {}
+        )
 
         self._attr_extra_state_attributes = {
             ATTR_CHIME_ID: self._device_id,

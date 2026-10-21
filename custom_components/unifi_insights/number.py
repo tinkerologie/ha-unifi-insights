@@ -38,6 +38,8 @@ from .data_transforms import (
     cast_input,
     led_level_to_percent,
     percent_to_led_level,
+    protect_collection,
+    protect_device,
     restore_input,
     voucher_site_ids,
 )
@@ -131,93 +133,74 @@ async def async_setup_entry(
     @callback
     def async_discover_numbers() -> None:
         """Discover and add new number entities."""
-        snapshot: Mapping[str, Any] = coordinator.data
-        if (
-            not snapshot
-            or not isinstance(snapshot, dict)
-            or "protect" not in snapshot
-            or not isinstance(snapshot["protect"], dict)
-        ):
-            return
-
-        protect = coordinator.data["protect"]
         entities: list[NumberEntity] = []
 
         # Add camera microphone volume numbers
-        cameras = protect.get("cameras", {})
-        if isinstance(cameras, dict):
-            for camera_id, camera_data in cameras.items():
-                if not isinstance(camera_data, dict):
-                    continue
-                key = (camera_id, "mic_volume")
-                if key in known_number_keys:
-                    continue
-                known_number_keys.add(key)
-                _LOGGER.debug(
-                    "Adding microphone volume number for camera %s",
-                    camera_data.get("name", camera_id),
+        cameras = protect_collection(coordinator.data, "cameras") or {}
+        for camera_id, camera_data in cameras.items():
+            key = (camera_id, "mic_volume")
+            if key in known_number_keys:
+                continue
+            known_number_keys.add(key)
+            _LOGGER.debug(
+                "Adding microphone volume number for camera %s",
+                camera_data.get("name", camera_id),
+            )
+            entities.append(
+                UnifiProtectMicrophoneVolumeNumber(
+                    coordinator=coordinator,
+                    camera_id=camera_id,
                 )
-                entities.append(
-                    UnifiProtectMicrophoneVolumeNumber(
-                        coordinator=coordinator,
-                        camera_id=camera_id,
-                    )
-                )
+            )
 
         # Add light brightness level numbers
-        lights = protect.get("lights", {})
-        if isinstance(lights, dict):
-            for light_id, light_data in lights.items():
-                if not isinstance(light_data, dict):
-                    continue
-                key = (light_id, "light_level")
-                if key in known_number_keys:
-                    continue
-                known_number_keys.add(key)
-                _LOGGER.debug(
-                    "Adding brightness level number for light %s",
-                    light_data.get("name", light_id),
+        lights = protect_collection(coordinator.data, "lights") or {}
+        for light_id, light_data in lights.items():
+            key = (light_id, "light_level")
+            if key in known_number_keys:
+                continue
+            known_number_keys.add(key)
+            _LOGGER.debug(
+                "Adding brightness level number for light %s",
+                light_data.get("name", light_id),
+            )
+            entities.append(
+                UnifiProtectLightLevelNumber(
+                    coordinator=coordinator,
+                    light_id=light_id,
                 )
-                entities.append(
-                    UnifiProtectLightLevelNumber(
-                        coordinator=coordinator,
-                        light_id=light_id,
-                    )
-                )
+            )
 
         # Add chime volume and repeat times numbers
-        chimes = protect.get("chimes", {})
-        if isinstance(chimes, dict):
-            for chime_id, chime_data in chimes.items():
-                if not isinstance(chime_data, dict):
-                    continue
-                vol_key = (chime_id, "chime_volume")
-                if vol_key not in known_number_keys:
-                    known_number_keys.add(vol_key)
-                    _LOGGER.debug(
-                        "Adding volume number for chime %s",
-                        chime_data.get("name", chime_id),
+        chimes = protect_collection(coordinator.data, "chimes") or {}
+        for chime_id, chime_data in chimes.items():
+            vol_key = (chime_id, "chime_volume")
+            if vol_key not in known_number_keys:
+                known_number_keys.add(vol_key)
+                _LOGGER.debug(
+                    "Adding volume number for chime %s",
+                    chime_data.get("name", chime_id),
+                )
+                entities.append(
+                    UnifiProtectChimeVolumeNumber(
+                        coordinator=coordinator,
+                        chime_id=chime_id,
                     )
-                    entities.append(
-                        UnifiProtectChimeVolumeNumber(
-                            coordinator=coordinator,
-                            chime_id=chime_id,
-                        )
-                    )
+                )
 
-                rep_key = (chime_id, "repeat_times")
-                if rep_key not in known_number_keys:
-                    known_number_keys.add(rep_key)
-                    _LOGGER.debug(
-                        "Adding repeat times number for chime %s",
-                        chime_data.get("name", chime_id),
+            rep_key = (chime_id, "repeat_times")
+            if rep_key not in known_number_keys:
+                known_number_keys.add(rep_key)
+                _LOGGER.debug(
+                    "Adding repeat times number for chime %s",
+                    chime_data.get("name", chime_id),
+                )
+                entities.append(
+                    UnifiProtectChimeRepeatTimesNumber(
+                        coordinator=coordinator,
+                        chime_id=chime_id,
                     )
-                    entities.append(
-                        UnifiProtectChimeRepeatTimesNumber(
-                            coordinator=coordinator,
-                            chime_id=chime_id,
-                        )
-                    )
+                )
 
         if entities:
             _LOGGER.info("Adding %d UniFi Protect number entities", len(entities))
@@ -256,8 +239,8 @@ class UnifiProtectMicrophoneVolumeNumber(UnifiProtectEntity, NumberEntity):
 
     def _update_from_data(self) -> None:
         """Update entity from data."""
-        camera_data = self.coordinator.data["protect"]["cameras"].get(
-            self._device_id, {}
+        camera_data = (
+            protect_device(self.coordinator.data, "cameras", self._device_id) or {}
         )
 
         # Set value; unknown when the camera doesn't report one (0 is below
@@ -312,7 +295,9 @@ class UnifiProtectLightLevelNumber(UnifiProtectEntity, NumberEntity):
 
     def _update_from_data(self) -> None:
         """Update entity from data."""
-        light_data = self.coordinator.data["protect"]["lights"].get(self._device_id, {})
+        light_data = (
+            protect_device(self.coordinator.data, "lights", self._device_id) or {}
+        )
 
         # The slider is a 0-100 percentage; Protect stores a 1-6 ledLevel.
         # lightDeviceSettings can be present but None, as in light.py.
@@ -373,7 +358,9 @@ class UnifiProtectChimeVolumeNumber(UnifiProtectEntity, NumberEntity):
 
     def _update_from_data(self) -> None:
         """Update entity from data."""
-        chime_data = self.coordinator.data["protect"]["chimes"].get(self._device_id, {})
+        chime_data = (
+            protect_device(self.coordinator.data, "chimes", self._device_id) or {}
+        )
 
         # Get ring settings - use the first camera's settings or default to 80
         ring_settings = chime_data.get("ringSettings", [])
@@ -427,7 +414,9 @@ class UnifiProtectChimeRepeatTimesNumber(UnifiProtectEntity, NumberEntity):
 
     def _update_from_data(self) -> None:
         """Update entity from data."""
-        chime_data = self.coordinator.data["protect"]["chimes"].get(self._device_id, {})
+        chime_data = (
+            protect_device(self.coordinator.data, "chimes", self._device_id) or {}
+        )
 
         # Get ring settings - use the first camera's settings or default to 3
         ring_settings = chime_data.get("ringSettings", [])

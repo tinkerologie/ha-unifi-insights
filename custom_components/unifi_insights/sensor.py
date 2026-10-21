@@ -85,6 +85,7 @@ from .data_transforms import (
     normalize_nvr_storage,
     parse_timestamp,
     present_attributes,
+    protect_collection,
     storage_mount_labels,
     storage_used_percent,
     thread_network,
@@ -1215,49 +1216,39 @@ def _discover_protect_sensors(
     if not coordinator.protect_client:
         return
 
-    protect = coordinator.data.get("protect", {})
-    if not isinstance(protect, dict):
-        return
-
-    sensors = protect.get("sensors", {})
-    if isinstance(sensors, dict):
-        for sensor_id, sensor_data in sensors.items():
-            if not isinstance(sensor_data, dict):
-                continue
-            for protect_desc in PROTECT_SENSOR_TYPES:
-                if protect_desc.device_type == DEVICE_TYPE_SENSOR and (
-                    protect_desc.capability_fn is None
-                    or protect_desc.capability_fn(sensor_data)
-                ):
-                    prot_key = (sensor_id, protect_desc.key)
-                    if prot_key not in known_sensor_keys:
-                        known_sensor_keys.add(prot_key)
-                        entities.append(
-                            UnifiProtectSensor(
-                                coordinator=coordinator,
-                                description=protect_desc,
-                                device_id=sensor_id,
-                            )
-                        )
-
-    nvrs = protect.get("nvrs", {})
-    if isinstance(nvrs, dict):
-        for nvr_id, nvr_data in nvrs.items():
-            if not isinstance(nvr_data, dict):
-                continue
-            for nvr_desc in NVR_SENSOR_TYPES:
-                if nvr_desc.value_fn is None or nvr_desc.value_fn(nvr_data) is None:
-                    continue
-                nvr_key = (nvr_id, nvr_desc.key)
-                if nvr_key not in known_sensor_keys:
-                    known_sensor_keys.add(nvr_key)
+    sensors = protect_collection(coordinator.data, "sensors") or {}
+    for sensor_id, sensor_data in sensors.items():
+        for protect_desc in PROTECT_SENSOR_TYPES:
+            if protect_desc.device_type == DEVICE_TYPE_SENSOR and (
+                protect_desc.capability_fn is None
+                or protect_desc.capability_fn(sensor_data)
+            ):
+                prot_key = (sensor_id, protect_desc.key)
+                if prot_key not in known_sensor_keys:
+                    known_sensor_keys.add(prot_key)
                     entities.append(
                         UnifiProtectSensor(
                             coordinator=coordinator,
-                            description=nvr_desc,
-                            device_id=nvr_id,
+                            description=protect_desc,
+                            device_id=sensor_id,
                         )
                     )
+
+    nvrs = protect_collection(coordinator.data, "nvrs") or {}
+    for nvr_id, nvr_data in nvrs.items():
+        for nvr_desc in NVR_SENSOR_TYPES:
+            if nvr_desc.value_fn is None or nvr_desc.value_fn(nvr_data) is None:
+                continue
+            nvr_key = (nvr_id, nvr_desc.key)
+            if nvr_key not in known_sensor_keys:
+                known_sensor_keys.add(nvr_key)
+                entities.append(
+                    UnifiProtectSensor(
+                        coordinator=coordinator,
+                        description=nvr_desc,
+                        device_id=nvr_id,
+                    )
+                )
 
 
 def _is_owned_port_sensor(

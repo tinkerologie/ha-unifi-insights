@@ -22,6 +22,7 @@ from .const import (
     ATTR_WILL_BE_ARMED_AT,
     DEVICE_TYPE_NVR,
 )
+from .data_transforms import protect_collection
 from .entity import UnifiProtectEntity
 
 if TYPE_CHECKING:
@@ -94,7 +95,8 @@ async def async_setup_entry(
     def async_discover_panels() -> None:
         """Add a panel for each NVR that reports an armMode."""
         new_entities: list[UnifiProtectNvrAlarmControlPanel] = []
-        for nvr_id, nvr_data in coordinator.data["protect"]["nvrs"].items():
+        nvrs = protect_collection(coordinator.data, "nvrs") or {}
+        for nvr_id, nvr_data in nvrs.items():
             # Firmware that predates the Alarm Manager has no armMode, and an
             # NVR that gains one on an upgrade is picked up on a later update.
             # While the UniFi global alarm manager is enabled (or not yet

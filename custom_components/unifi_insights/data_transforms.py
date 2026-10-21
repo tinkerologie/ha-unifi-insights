@@ -727,6 +727,27 @@ def protect_device(
     return _record(data, "protect", collection, device_id)
 
 
+def protect_collection(
+    data: Mapping[str, Any], collection: str
+) -> dict[str, dict[str, Any]] | None:
+    """
+    Return a Protect collection's records by device ID, or None.
+
+    None means the section or collection is missing or malformed, so callers
+    can tell "not loaded" from "empty". Only the records published as dicts
+    are returned, as the platforms that iterate a collection expect; any other
+    value is skipped.
+    """
+    records = _record(data, "protect", collection)
+    if records is None:
+        return None
+    return {
+        device_id: record
+        for device_id, record in records.items()
+        if isinstance(record, dict)
+    }
+
+
 def latest_voucher(data: Mapping[str, Any], site_id: str) -> Mapping[str, Any] | None:
     """Return the latest voucher generated for a site, or None."""
     return _record(data, "latest_vouchers", site_id)
@@ -945,6 +966,7 @@ __all__ = [
     "normalize_mac",
     "parse_floor_plan_asset_path",
     "port_index",
+    "protect_collection",
     "protect_device",
     "rule_record",
     "site_device_facts",

@@ -37,7 +37,7 @@ from .coordinators.config_sections import (
 from .coordinators.config_sections import (
     is_predefined_nat_rule,
 )
-from .data_transforms import get_site_gateway_id
+from .data_transforms import get_site_gateway_id, protect_collection, protect_device
 from .entity import (
     UnifiAccessEntity,
     UnifiProtectEntity,
@@ -427,38 +427,33 @@ async def async_setup_entry(
 
         # Add Protect switches if available
         if coordinator.protect_client:
-            protect = coordinator.data.get("protect", {})
-            if isinstance(protect, dict):
-                cameras = protect.get("cameras", {})
-                if isinstance(cameras, dict):
-                    for camera_id, camera_data in cameras.items():
-                        if not isinstance(camera_data, dict):
-                            continue
-                        # Status light switch
-                        status_light_key = (camera_id, "status_light")
-                        if status_light_key not in known_switch_keys:
-                            known_switch_keys.add(status_light_key)
-                            entities.append(
-                                UnifiProtectStatusLightSwitch(
-                                    coordinator=coordinator,
-                                    camera_id=camera_id,
-                                )
+            cameras = protect_collection(coordinator.data, "cameras") or {}
+            for camera_id, camera_data in cameras.items():
+                # Status light switch
+                status_light_key = (camera_id, "status_light")
+                if status_light_key not in known_switch_keys:
+                    known_switch_keys.add(status_light_key)
+                    entities.append(
+                        UnifiProtectStatusLightSwitch(
+                            coordinator=coordinator,
+                            camera_id=camera_id,
+                        )
+                    )
+                # High FPS mode switch (only for cameras that support it).
+                high_fps_key = (camera_id, "high_fps")
+                if high_fps_key not in known_switch_keys:
+                    feature_flags = camera_data.get("featureFlags", {})
+                    if isinstance(feature_flags, dict) and (
+                        feature_flags.get("hasHighFpsCapability", False)
+                        or "highFps" in feature_flags.get("videoModes", [])
+                    ):
+                        known_switch_keys.add(high_fps_key)
+                        entities.append(
+                            UnifiProtectHighFPSSwitch(
+                                coordinator=coordinator,
+                                camera_id=camera_id,
                             )
-                        # High FPS mode switch (only for cameras that support it).
-                        high_fps_key = (camera_id, "high_fps")
-                        if high_fps_key not in known_switch_keys:
-                            feature_flags = camera_data.get("featureFlags", {})
-                            if isinstance(feature_flags, dict) and (
-                                feature_flags.get("hasHighFpsCapability", False)
-                                or "highFps" in feature_flags.get("videoModes", [])
-                            ):
-                                known_switch_keys.add(high_fps_key)
-                                entities.append(
-                                    UnifiProtectHighFPSSwitch(
-                                        coordinator=coordinator,
-                                        camera_id=camera_id,
-                                    )
-                                )
+                        )
 
         # Add client block/allow switches for each connected client (when enabled)
         if current_client_control:
@@ -595,8 +590,8 @@ class UnifiProtectStatusLightSwitch(UnifiProtectEntity, SwitchEntity):
 
     def _update_from_data(self) -> None:
         """Update entity from data."""
-        camera_data = self.coordinator.data["protect"]["cameras"].get(
-            self._device_id, {}
+        camera_data = (
+            protect_device(self.coordinator.data, "cameras", self._device_id) or {}
         )
 
         # LED settings are stored in ledSettings
@@ -656,8 +651,8 @@ class UnifiProtectHighFPSSwitch(UnifiProtectEntity, SwitchEntity):
 
     def _update_from_data(self) -> None:
         """Update entity from data."""
-        camera_data = self.coordinator.data["protect"]["cameras"].get(
-            self._device_id, {}
+        camera_data = (
+            protect_device(self.coordinator.data, "cameras", self._device_id) or {}
         )
 
         # Video mode indicates high FPS when set to "highFps"

@@ -26,6 +26,7 @@ from .const import (
 )
 from .coordinators.access import access_doorbell_signal, access_result_signal
 from .coordinators.rule_audit import RULE_CHANGE_TYPES
+from .data_transforms import protect_collection, protect_device
 from .entity import (
     UnifiAccessDoorEntity,
     UnifiAccessEntity,
@@ -289,69 +290,51 @@ async def async_setup_entry(
             async_add_entities(rule_events)
         if not coordinator.protect_client:
             return
-        snapshot: Mapping[str, Any] = coordinator.data
-        if (
-            not snapshot
-            or not isinstance(snapshot, dict)
-            or "protect" not in snapshot
-            or not isinstance(snapshot["protect"], dict)
-        ):
-            return
-
-        protect = coordinator.data["protect"]
         entities: list[
             UnifiProtectDoorbellEventEntity
             | UnifiProtectSmartDetectEventEntity
             | UnifiProtectSensorEventEntity
         ] = []
 
-        # Get cameras data
-        cameras = protect.get("cameras", {})
-        if isinstance(cameras, dict):
-            for camera_id, camera_data in cameras.items():
-                if not isinstance(camera_data, dict):
-                    continue
-
-                # Add doorbell event entities for cameras with doorbell feature
-                if _is_doorbell_camera(camera_data):
-                    doorbell_key = (camera_id, "doorbell")
-                    if doorbell_key not in known_event_keys:
-                        known_event_keys.add(doorbell_key)
-                        entities.append(
-                            UnifiProtectDoorbellEventEntity(
-                                coordinator=coordinator,
-                                device_id=camera_id,
-                            )
-                        )
-
-                # Add smart detection event entity for all cameras
-                smart_detect_types = camera_data.get("smartDetectTypes", [])
-                if smart_detect_types:
-                    smart_key = (camera_id, "smart_detect")
-                    if smart_key not in known_event_keys:
-                        known_event_keys.add(smart_key)
-                        entities.append(
-                            UnifiProtectSmartDetectEventEntity(
-                                coordinator=coordinator,
-                                device_id=camera_id,
-                            )
-                        )
-
-        # Add sensor open/close event entities
-        sensors = protect.get("sensors", {})
-        if isinstance(sensors, dict):
-            for sensor_id, sensor_data in sensors.items():
-                if not isinstance(sensor_data, dict):
-                    continue
-                sensor_key = (sensor_id, "sensor")
-                if sensor_key not in known_event_keys:
-                    known_event_keys.add(sensor_key)
+        cameras = protect_collection(coordinator.data, "cameras") or {}
+        for camera_id, camera_data in cameras.items():
+            # Add doorbell event entities for cameras with doorbell feature
+            if _is_doorbell_camera(camera_data):
+                doorbell_key = (camera_id, "doorbell")
+                if doorbell_key not in known_event_keys:
+                    known_event_keys.add(doorbell_key)
                     entities.append(
-                        UnifiProtectSensorEventEntity(
+                        UnifiProtectDoorbellEventEntity(
                             coordinator=coordinator,
-                            device_id=sensor_id,
+                            device_id=camera_id,
                         )
                     )
+
+            # Add smart detection event entity for all cameras
+            smart_detect_types = camera_data.get("smartDetectTypes", [])
+            if smart_detect_types:
+                smart_key = (camera_id, "smart_detect")
+                if smart_key not in known_event_keys:
+                    known_event_keys.add(smart_key)
+                    entities.append(
+                        UnifiProtectSmartDetectEventEntity(
+                            coordinator=coordinator,
+                            device_id=camera_id,
+                        )
+                    )
+
+        # Add sensor open/close event entities
+        sensors = protect_collection(coordinator.data, "sensors") or {}
+        for sensor_id in sensors:
+            sensor_key = (sensor_id, "sensor")
+            if sensor_key not in known_event_keys:
+                known_event_keys.add(sensor_key)
+                entities.append(
+                    UnifiProtectSensorEventEntity(
+                        coordinator=coordinator,
+                        device_id=sensor_id,
+                    )
+                )
 
         if entities or first_setup:
             _LOGGER.info("Adding %d UniFi Protect event entities", len(entities))
@@ -400,7 +383,7 @@ class UnifiProtectDoorbellEventEntity(
         self._device_id = device_id
         self._last_ring_start: int | None = None
 
-        camera_data = coordinator.data["protect"]["cameras"].get(device_id, {})
+        camera_data = protect_device(coordinator.data, "cameras", device_id) or {}
         camera_name = camera_data.get("name", f"Camera {device_id}")
 
         self._attr_unique_id = f"{DOMAIN}_camera_{device_id}_doorbell_event"
@@ -418,7 +401,7 @@ class UnifiProtectDoorbellEventEntity(
         """Return True if entity is available."""
         if not self.coordinator.protect_available:
             return False
-        camera_data = self.coordinator.data["protect"]["cameras"].get(self._device_id)
+        camera_data = protect_device(self.coordinator.data, "cameras", self._device_id)
         if not camera_data:
             return False
         return bool(camera_data.get("state") == "CONNECTED")
@@ -430,8 +413,8 @@ class UnifiProtectDoorbellEventEntity(
             if self.hass is not None:
                 self.async_write_ha_state()
             return
-        camera_data = self.coordinator.data["protect"]["cameras"].get(
-            self._device_id, {}
+        camera_data = (
+            protect_device(self.coordinator.data, "cameras", self._device_id) or {}
         )
 
         # Check for new ring event
@@ -481,7 +464,7 @@ class UnifiProtectSmartDetectEventEntity(
         self._last_motion_start: int | None = None
         self._last_smart_detect_types: list[str] = []
 
-        camera_data = coordinator.data["protect"]["cameras"].get(device_id, {})
+        camera_data = protect_device(coordinator.data, "cameras", device_id) or {}
         camera_name = camera_data.get("name", f"Camera {device_id}")
 
         self._attr_unique_id = f"{DOMAIN}_camera_{device_id}_smart_detect_event"
@@ -499,7 +482,7 @@ class UnifiProtectSmartDetectEventEntity(
         """Return True if entity is available."""
         if not self.coordinator.protect_available:
             return False
-        camera_data = self.coordinator.data["protect"]["cameras"].get(self._device_id)
+        camera_data = protect_device(self.coordinator.data, "cameras", self._device_id)
         if not camera_data:
             return False
         return bool(camera_data.get("state") == "CONNECTED")
@@ -511,8 +494,8 @@ class UnifiProtectSmartDetectEventEntity(
             if self.hass is not None:
                 self.async_write_ha_state()
             return
-        camera_data = self.coordinator.data["protect"]["cameras"].get(
-            self._device_id, {}
+        camera_data = (
+            protect_device(self.coordinator.data, "cameras", self._device_id) or {}
         )
 
         # Check for new motion/smart detect event
@@ -571,7 +554,7 @@ class UnifiProtectSensorEventEntity(
         self._last_open_status_changed_at: int | None = None
         self._last_is_opened: bool | None = None
 
-        sensor_data = coordinator.data["protect"]["sensors"].get(device_id, {})
+        sensor_data = protect_device(coordinator.data, "sensors", device_id) or {}
         sensor_name = sensor_data.get("name", f"Sensor {device_id}")
 
         self._attr_unique_id = f"{DOMAIN}_sensor_{device_id}_event"
@@ -589,7 +572,7 @@ class UnifiProtectSensorEventEntity(
         """Return True if entity is available."""
         if not self.coordinator.protect_available:
             return False
-        sensor_data = self.coordinator.data["protect"]["sensors"].get(self._device_id)
+        sensor_data = protect_device(self.coordinator.data, "sensors", self._device_id)
         if not sensor_data:
             return False
         return bool(sensor_data.get("state") == "CONNECTED")
@@ -601,8 +584,8 @@ class UnifiProtectSensorEventEntity(
             if self.hass is not None:
                 self.async_write_ha_state()
             return
-        sensor_data = self.coordinator.data["protect"]["sensors"].get(
-            self._device_id, {}
+        sensor_data = (
+            protect_device(self.coordinator.data, "sensors", self._device_id) or {}
         )
 
         # Check for open/close status change

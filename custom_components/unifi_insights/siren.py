@@ -23,6 +23,7 @@ from unifi_official_api.protect.endpoints.sirens import (
 )
 
 from .const import DEVICE_TYPE_SIREN, DOMAIN
+from .data_transforms import protect_collection
 from .entity import UnifiProtectEntity
 
 if TYPE_CHECKING:
@@ -59,11 +60,11 @@ async def async_setup_entry(
     @callback
     def async_discover_sirens() -> None:
         """Discover and add new sirens."""
-        sirens = coordinator.data["protect"]["sirens"]
+        sirens = protect_collection(coordinator.data, "sirens") or {}
 
         new_entities: list[UnifiProtectSiren] = []
-        for siren_id, siren_data in sirens.items():
-            if siren_id in known_siren_ids or not isinstance(siren_data, dict):
+        for siren_id in sirens:
+            if siren_id in known_siren_ids:
                 continue
             try:
                 siren = UnifiProtectSiren(coordinator, siren_id)

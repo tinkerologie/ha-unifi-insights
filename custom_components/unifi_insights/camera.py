@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.core import callback
@@ -18,11 +18,10 @@ from .const import (
     ATTR_PARENT_CAMERA_ID,
     DEVICE_TYPE_CAMERA,
 )
+from .data_transforms import protect_collection, protect_device
 from .entity import UnifiProtectEntity
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -54,23 +53,9 @@ async def async_setup_entry(
     @callback
     def async_discover_cameras() -> None:
         """Discover and add new cameras."""
-        snapshot: Mapping[str, Any] = coordinator.data
-        if (
-            not snapshot
-            or not isinstance(snapshot, dict)
-            or "protect" not in snapshot
-            or not isinstance(snapshot["protect"], dict)
-        ):
-            return
-
-        cameras = coordinator.data["protect"].get("cameras", {})
-        if not isinstance(cameras, dict):
-            return
-
+        cameras = protect_collection(coordinator.data, "cameras") or {}
         new_entities: list[Camera] = []
         for camera_id, camera_data in cameras.items():
-            if not isinstance(camera_data, dict):
-                continue
             if camera_id in known_camera_ids:
                 continue
             _LOGGER.debug(
@@ -119,8 +104,8 @@ class UnifiProtectCamera(UnifiProtectEntity, Camera):
 
     def _update_from_data(self) -> None:
         """Update entity from data."""
-        camera_data = self.coordinator.data["protect"]["cameras"].get(
-            self._device_id, {}
+        camera_data = (
+            protect_device(self.coordinator.data, "cameras", self._device_id) or {}
         )
 
         # Set attributes
@@ -164,8 +149,8 @@ class UnifiProtectCamera(UnifiProtectEntity, Camera):
         nvr_host = None
 
         # Try to get from NVR data
-        nvr_data = self.coordinator.data["protect"].get("nvrs", {})
-        for nvr in nvr_data.values():
+        nvrs = protect_collection(self.coordinator.data, "nvrs") or {}
+        for nvr in nvrs.values():
             if nvr.get("host"):
                 nvr_host = nvr["host"]
                 break

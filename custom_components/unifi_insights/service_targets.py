@@ -38,7 +38,7 @@ from .const import (
     DOMAIN,
     MOBILITY_DEVICE_PREFIX,
 )
-from .data_transforms import is_doorbell_camera_model
+from .data_transforms import is_doorbell_camera_model, protect_collection
 
 # CarrierFabricData is imported inside functions: __init__.py imports this
 # module while it loads, before the class exists.
@@ -364,11 +364,8 @@ def _protect_owns_resource(
     data = _coord_data(entry)
     if data is None:
         return None
-    protect_data = data.get("protect")
-    if not isinstance(protect_data, dict):
-        return None
-    collection = protect_data.get(collection_key)
-    if not isinstance(collection, dict):
+    collection = protect_collection(data, collection_key)
+    if collection is None:
         return None
     return resource_id in collection
 
@@ -726,13 +723,10 @@ def _resolve_protect_resource_id(
                 resource_type, f"{resource_type}s"
             )
             for entry in candidate_entries:
-                protect_data = _coord_section(entry, "protect")
-                if isinstance(protect_data, dict):
-                    collection = protect_data.get(collection_key)
-                    if isinstance(collection, dict):
-                        for k in collection:
-                            if remainder == k or remainder.startswith(f"{k}_"):
-                                return k, entry
+                data = _coord_data(entry) or {}
+                for k in protect_collection(data, collection_key) or {}:
+                    if remainder == k or remainder.startswith(f"{k}_"):
+                        return k, entry
             return remainder.split("_")[0], resolved_entry
 
     if found.device is not None:
@@ -1247,12 +1241,8 @@ def _resolve_chime_doorbell_camera_ids(
 
     # Routing keeps a console that has not loaded its Protect data yet as a
     # candidate, so the cached cameras may not be there.
-    data: Mapping[str, Any] = cache.data
-    protect_data = data.get("protect") if isinstance(data, dict) else None
-    known_cameras = (
-        protect_data.get("cameras") if isinstance(protect_data, dict) else None
-    )
-    if not isinstance(known_cameras, dict):
+    known_cameras = protect_collection(cache.data, "cameras")
+    if known_cameras is None:
         raise HomeAssistantError(
             translation_domain=DOMAIN,
             translation_key="chime_cameras_unavailable",
