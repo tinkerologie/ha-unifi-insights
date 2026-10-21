@@ -13,6 +13,7 @@ from custom_components.unifi_insights.data_transforms import (
     network_client,
     network_device,
     network_device_stats,
+    protect_collection,
     protect_device,
     rule_record,
     site_record,
@@ -123,3 +124,63 @@ def test_lookup_reads_any_mapping(lookup: Lookup) -> None:
         return value
 
     assert lookup(freeze(DATA)) == lookup(DATA)
+
+
+# --- Protect collections -----------------------------------------------------
+
+LIGHT = {"id": "light-1", "name": "Porch"}
+COLLECTIONS: dict[str, Any] = {
+    "protect": {
+        "cameras": {"cam-1": CAMERA, "cam-bad": "not-a-mapping", "cam-null": None},
+        "lights": {"light-1": LIGHT},
+        "sensors": {},
+        "chimes": None,
+        "viewers": "not-a-mapping",
+    }
+}
+
+
+@pytest.mark.parametrize(
+    ("collection", "expected"),
+    [
+        pytest.param("cameras", {"cam-1": CAMERA}, id="skips_malformed_records"),
+        pytest.param("lights", {"light-1": LIGHT}, id="all_records"),
+        pytest.param("sensors", {}, id="empty"),
+    ],
+)
+def test_protect_collection_returns_the_dict_records(
+    collection: str, expected: dict[str, Any]
+) -> None:
+    """Only the dict records come back, as the published objects."""
+    records = protect_collection(COLLECTIONS, collection)
+
+    assert records == expected
+    assert records is not None
+    for device_id, record in expected.items():
+        assert records[device_id] is record
+
+
+@pytest.mark.parametrize(
+    ("data", "collection"),
+    [
+        pytest.param(COLLECTIONS, "chimes", id="null_collection"),
+        pytest.param(COLLECTIONS, "viewers", id="malformed_collection"),
+        pytest.param(COLLECTIONS, "nvrs", id="unknown_collection"),
+        pytest.param({}, "cameras", id="no_section"),
+        pytest.param({"protect": None}, "cameras", id="null_section"),
+        pytest.param({"protect": []}, "cameras", id="malformed_section"),
+        pytest.param(None, "cameras", id="no_data"),
+    ],
+)
+def test_protect_collection_not_loaded_is_none(data: Any, collection: str) -> None:
+    """A missing or malformed section or collection is None, never empty."""
+    assert protect_collection(data, collection) is None
+
+
+def test_protect_collection_reads_any_mapping() -> None:
+    """Read-only sections and collections read the same; records stay dicts."""
+    data = MappingProxyType(
+        {"protect": MappingProxyType({"lights": MappingProxyType({"light-1": LIGHT})})}
+    )
+
+    assert protect_collection(data, "lights") == {"light-1": LIGHT}

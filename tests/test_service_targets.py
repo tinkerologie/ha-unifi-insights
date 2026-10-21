@@ -1180,7 +1180,11 @@ async def test_chime_pairing_without_doorbells_unpairs_all(hass: HomeAssistant) 
 
 async def test_chime_pairing_area_expands_to_its_doorbells(hass: HomeAssistant) -> None:
     """An area selects the doorbells in it; its other entities are skipped."""
-    cameras = {"bell": {"_camera_type": CAMERA_TYPE_DOORBELL}, "yard": {}}
+    cameras = {
+        "bell": {"_camera_type": CAMERA_TYPE_DOORBELL},
+        "yard": {},
+        "junk": "invalid",
+    }
     entry = _console(
         hass,
         "Office",
@@ -1238,6 +1242,7 @@ _RING = "unifi_insights_camera_{}_camera_doorbell_ring"
         ({"entity_id": "$motion"}, "chime_doorbell_not_doorbell", "$"),
         ({"entity_id": "$yard"}, "chime_doorbell_not_doorbell", "$"),
         ({"entity_id": "$gone"}, "chime_doorbell_not_found", "$"),
+        ({"entity_id": "$junk"}, "chime_doorbell_not_found", "$"),
         ({"entity_id": "$garage"}, "chime_doorbell_other_console", "$"),
         ({"device_id": "$device"}, "chime_doorbells_none_selected", None),
         ({"entity_id": "$bell"}, "chime_cameras_unavailable", None),
@@ -1249,6 +1254,7 @@ _RING = "unifi_insights_camera_{}_camera_doorbell_ring"
         "not-a-ring-sensor",
         "camera-not-a-doorbell",
         "camera-gone",
+        "camera-malformed",
         "other-console",
         "device-without-doorbells",
         "cameras-not-loaded",
@@ -1273,6 +1279,7 @@ async def test_chime_pairing_doorbell_selection(
         ("bell", office, _RING.format("bell")),
         ("yard", office, _RING.format("yard")),
         ("gone", office, _RING.format("gone")),
+        ("junk", office, _RING.format("junk")),
         ("garage", garage, _RING.format("far")),
         ("motion", office, "unifi_insights_camera_bell_motion"),
     ):
@@ -1592,16 +1599,61 @@ def test_ownership_without_a_site_scans_every_site() -> None:
     ("data", "expected"),
     [
         (None, None),
+        ({}, None),
         ({"protect": "invalid"}, None),
+        ({"protect": {}}, None),
         ({"protect": {"cameras": "invalid"}}, None),
         ({"protect": {"cameras": {}}}, False),
+        ({"protect": {"cameras": {"cam1": "invalid"}}}, False),
         ({"protect": {"cameras": {"cam1": {}}}}, True),
+    ],
+    ids=[
+        "no-data",
+        "no-section",
+        "malformed-section",
+        "no-collection",
+        "malformed-collection",
+        "no-record",
+        "malformed-record",
+        "record",
     ],
 )
 def test_protect_ownership_states(data: Any, *, expected: bool | None) -> None:
     """None means "cannot tell", never owned or disowned."""
     entry = _entry_with(data, runtime=data is not None)
     assert _protect_owns_resource(entry, "cameras", "cam1") is expected
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        ({"protect": {"cameras": {"cam_1": {}}}}, "cam_1"),
+        ({}, "cam"),
+        ({"protect": "invalid"}, "cam"),
+        ({"protect": {"cameras": "invalid"}}, "cam"),
+        ({"protect": {"cameras": {"cam_1": "invalid"}}}, "cam"),
+    ],
+    ids=[
+        "record",
+        "no-section",
+        "malformed-section",
+        "malformed-collection",
+        "malformed-record",
+    ],
+)
+async def test_protect_entity_target_matches_cached_device_ids(
+    hass: HomeAssistant, data: dict[str, Any], expected: str
+) -> None:
+    """An entity's unique ID resolves to a cached device ID, else its first part."""
+    entry = _console(hass, "Office", data, protect=True)
+    entity = er.async_get(hass).async_get_or_create(
+        "switch", DOMAIN, f"{DOMAIN}_camera_cam_1_status_light", config_entry=entry
+    )
+
+    assert _resolve_protect_resource_id(hass, "camera", entity.entity_id, [entry]) == (
+        expected,
+        entry,
+    )
 
 
 def test_cached_data_of_entries_without_a_usable_facade() -> None:
