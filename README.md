@@ -1,11 +1,13 @@
 # UniFi Insights integration for Home Assistant
 
 <!-- BADGES:START -->
+
 [![Marketplace and HACS](https://img.shields.io/badge/Marketplace%20%7C%20HACS-Default-orange.svg)](https://www.hacs.xyz/docs/marketplace/)
 [![GitHub Last Commit](https://img.shields.io/github/last-commit/tinkerologie/ha-unifi-insights)](https://github.com/tinkerologie/ha-unifi-insights/commits/main)
 [![GitHub Release](https://img.shields.io/github/v/release/tinkerologie/ha-unifi-insights)](https://github.com/tinkerologie/ha-unifi-insights/releases)
 [![codecov](https://codecov.io/gh/tinkerologie/ha-unifi-insights/graph/badge.svg)](https://codecov.io/gh/tinkerologie/ha-unifi-insights)
 [![License](https://img.shields.io/github/license/tinkerologie/ha-unifi-insights)](./LICENSE)
+
 <!-- BADGES:END -->
 
 Monitor and control your UniFi system from Home Assistant: UniFi Network, UniFi Protect, UniFi Access, UniFi InnerSpace, UniFi Mobility, UniFi Site Manager and UniFi Carrier Fabric, in one integration.
