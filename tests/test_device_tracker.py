@@ -20,6 +20,7 @@ from custom_components.unifi_insights.device_tracker import (
     _partition_connected_clients,
     async_setup_entry,
 )
+from tests.fixtures.facade_data import facade_data, with_client
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -892,16 +893,32 @@ class TestUnifiClientTrackerEdgeCases:
         assert client_data["id"] == "valid_client"
         assert tracker.is_connected is True
 
-    def test_find_in_site_non_dict_clients(self, mock_coordinator) -> None:
-        """Test _find_in_site returns None when clients argument is not a dict."""
+    @pytest.mark.parametrize(
+        "site_clients",
+        [None, "invalid", [1, 2, 3], {"bad": "not-a-record"}],
+        ids=["none", "string", "list", "malformed-record"],
+    )
+    def test_get_client_data_skips_a_malformed_site(
+        self, mock_coordinator, site_clients: Any
+    ) -> None:
+        """A malformed hinted site is skipped and the client found in another."""
         tracker = UnifiClientTracker(
             coordinator=mock_coordinator,
             site_id="site1",
             mac="aa:bb:cc:dd:ee:ff",
         )
-        assert tracker._find_in_site(None) is None
-        assert tracker._find_in_site("invalid") is None
-        assert tracker._find_in_site([1, 2, 3]) is None
+        mock_coordinator.data = with_client(
+            facade_data(clients={"site1": site_clients}),
+            "site2",
+            "c1",
+            {"id": "c1", "macAddress": "AA:BB:CC:DD:EE:FF"},
+        )
+
+        client_data = tracker._get_client_data()
+
+        assert client_data is not None
+        assert client_data["id"] == "c1"
+        assert tracker._site_id == "site2"
 
     def test_get_client_data_all_clients_not_dict(self, mock_coordinator) -> None:
         """Test _get_client_data returns None when clients in data is not a dict."""

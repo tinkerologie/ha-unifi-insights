@@ -42,9 +42,6 @@ from custom_components.unifi_insights.data_transforms import (
     get_site_gateway_id,
     innerspace_correlation_key,
     innerspace_view_inputs,
-    network_device,
-    network_device_stats,
-    site_record,
 )
 
 from .base import CommandFailure, async_execute_command
@@ -489,20 +486,6 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
             site_manager_host_id=self._site_manager_host_id,
             now=datetime.now(tz=UTC),
         )
-
-    def get_site(self, site_id: str) -> Mapping[str, Any] | None:
-        """Return a site's record from the snapshot, or None."""
-        return site_record(self.data, site_id)
-
-    def get_device(self, site_id: str, device_id: str) -> Mapping[str, Any] | None:
-        """Return a Network device's record from the snapshot, or None."""
-        return network_device(self.data, site_id, device_id)
-
-    def get_device_stats(
-        self, site_id: str, device_id: str
-    ) -> Mapping[str, Any] | None:
-        """Return a Network device's statistics from the snapshot, or None."""
-        return network_device_stats(self.data, site_id, device_id)
 
     def get_device_facts(
         self, site_id: str, device_id: str

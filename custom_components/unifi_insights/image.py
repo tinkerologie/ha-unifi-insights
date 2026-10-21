@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import io
 import logging
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import segno
@@ -22,8 +21,11 @@ from .const import DOMAIN, MANUFACTURER
 from .coordinators import UnifiInsightsFacadeCoordinator
 from .data_transforms import (
     _field,
+    latest_voucher,
     latest_voucher_qr_payload,
     parse_timestamp,
+    rule_record,
+    section_by_site,
     voucher_site_ids,
 )
 from .entity import UnifiSiteEntity
@@ -31,6 +33,7 @@ from .innerspace_transforms import parse_floor_plan_asset_path, strip_url_query
 
 if TYPE_CHECKING:
     import asyncio
+    from collections.abc import Mapping
     from datetime import datetime
 
     from homeassistant.core import HomeAssistant
@@ -65,35 +68,30 @@ async def async_setup_entry(
         new_entities: list[ImageEntity] = []
 
         # WiFi QR codes
-        wifi_by_site = coordinator.data.get("wifi", {})
-        if isinstance(wifi_by_site, dict):
-            for site_id, wifi_networks in wifi_by_site.items():
-                if not isinstance(wifi_networks, dict):
+        wifi_by_site = section_by_site(coordinator.data, "wifi") or {}
+        for site_id, wifi_networks in wifi_by_site.items():
+            for wifi_id, wifi_data in wifi_networks.items():
+                # Only networks for which we resolved a connect string (i.e.
+                # the passphrase was available from the classic API) get a
+                # QR code.
+                if not wifi_data.get("qr_code"):
                     continue
-                for wifi_id, wifi_data in wifi_networks.items():
-                    if not isinstance(wifi_data, dict):
-                        continue
-                    # Only networks for which we resolved a connect string (i.e.
-                    # the passphrase was available from the classic API) get a
-                    # QR code.
-                    if not wifi_data.get("qr_code"):
-                        continue
-                    key = (site_id, wifi_id)
-                    if key in known_wifi_keys:
-                        continue
-                    known_wifi_keys.add(key)
-                    wifi_name = wifi_data.get("name") or wifi_data.get("ssid", wifi_id)
-                    _LOGGER.debug(
-                        "Creating WiFi QR code image for %s (%s)", wifi_name, wifi_id
+                key = (site_id, wifi_id)
+                if key in known_wifi_keys:
+                    continue
+                known_wifi_keys.add(key)
+                wifi_name = wifi_data.get("name") or wifi_data.get("ssid", wifi_id)
+                _LOGGER.debug(
+                    "Creating WiFi QR code image for %s (%s)", wifi_name, wifi_id
+                )
+                new_entities.append(
+                    UnifiWifiQrCodeImage(
+                        hass=hass,
+                        coordinator=coordinator,
+                        site_id=site_id,
+                        wifi_id=wifi_id,
                     )
-                    new_entities.append(
-                        UnifiWifiQrCodeImage(
-                            hass=hass,
-                            coordinator=coordinator,
-                            site_id=site_id,
-                            wifi_id=wifi_id,
-                        )
-                    )
+                )
 
         # InnerSpace floor plans
         innerspace = coordinator.data.get("innerspace")
@@ -191,12 +189,10 @@ class UnifiWifiQrCodeImage(
 
     def _get_wifi_data(self) -> dict[str, Any]:
         """Get WiFi data for this network from the coordinator."""
-        result: dict[str, Any] = (
-            self.coordinator.data.get("wifi", {})
-            .get(self._site_id, {})
-            .get(self._wifi_id, {})
+        result = rule_record(
+            self.coordinator.data, "wifi", self._site_id, self._wifi_id
         )
-        return result
+        return result if isinstance(result, dict) else {}
 
     def _current_payload(self) -> str | None:
         """Return the current WiFi connect (QR) payload, if available."""
@@ -486,11 +482,8 @@ class UnifiVoucherQrCodeImage(UnifiSiteEntity, ImageEntity):
         self._cancel_expiration_timer()
         if not getattr(self, "hass", None):
             return
-        latest_vouchers: object = self.coordinator.data.get("latest_vouchers")
-        if not isinstance(latest_vouchers, Mapping):
-            return
-        record = latest_vouchers.get(self._site_id)
-        if not isinstance(record, Mapping):
+        record = latest_voucher(self.coordinator.data, self._site_id)
+        if record is None:
             return
         if record.get("expired") is True:
             return
@@ -531,10 +524,9 @@ class UnifiVoucherQrCodeImage(UnifiSiteEntity, ImageEntity):
 
     def _current_payload(self) -> str | None:
         """Return the QR payload for the latest voucher if active and unexpired."""
-        latest_vouchers: object = self.coordinator.data.get("latest_vouchers")
-        if not isinstance(latest_vouchers, Mapping):
-            return None
-        return latest_voucher_qr_payload(latest_vouchers.get(self._site_id))
+        return latest_voucher_qr_payload(
+            latest_voucher(self.coordinator.data, self._site_id)
+        )
 
     @property
     def available(self) -> bool:

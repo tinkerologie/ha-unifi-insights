@@ -58,6 +58,8 @@ from .data_transforms import (
     normalize_mac,
     site_device_facts,
     site_network_facts,
+    site_record,
+    site_section,
 )
 from .data_transforms import device_kind as network_device_kind
 
@@ -231,9 +233,8 @@ def device_state(device: Mapping[str, Any]) -> NodeState:
 
 def site_display_name(data: Mapping[str, Any], site_id: str) -> str:
     """Return a site's display name, falling back to its id."""
-    sites = data.get("sites")
-    site = sites.get(site_id) if isinstance(sites, dict) else None
-    if isinstance(site, dict):
+    site = site_record(data, site_id)
+    if site is not None:
         for key in ("name", "desc"):
             value = site.get(key)
             if isinstance(value, str) and value:
@@ -391,13 +392,6 @@ _KIND_ORDER: Final[dict[str, int]] = {
     "other": 4,
     "client": 5,
 }
-
-
-def _site_map(data: Mapping[str, Any], section: str, site_id: str) -> dict[str, Any]:
-    """Return ``data[section][site_id]`` when it is a dict, else {}."""
-    by_site = data.get(section)
-    site_items = by_site.get(site_id) if isinstance(by_site, dict) else None
-    return site_items if isinstance(site_items, dict) else {}
 
 
 def _kind_and_state(
@@ -662,10 +656,10 @@ def build_site_topology(
     ``node_key`` is the entry's secret for opaque MAC-derived node ids; it must
     stay the same across calls for node ids to be stable.
     """
-    devices = _site_map(data, "devices", site_id)
+    devices = site_section(data, "devices", site_id) or {}
     site_facts = site_network_facts(data, site_id)
-    clients = _site_map(data, "clients", site_id)
-    links = _site_map(data, "client_links", site_id)
+    clients = site_section(data, "clients", site_id) or {}
+    links = site_section(data, "client_links", site_id) or {}
     nodes: list[TopologyNode] = []
     edges: list[TopologyEdge] = []
     unresolved: list[TopologyUnresolved] = []
@@ -675,8 +669,6 @@ def build_site_topology(
     kinds_by_node: dict[str, NodeKind] = {}
     mac_index: dict[str, str] = {}
     for device_id, device in devices.items():
-        if not isinstance(device, dict):
-            continue
         node_id = opaque_node_id("dev", node_key, device_id)
         device_node_ids[device_id] = node_id
         devices_by_node[node_id] = device

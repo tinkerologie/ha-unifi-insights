@@ -61,10 +61,15 @@ from .data_transforms import (
     has_thread_network,
     is_doorbell_camera_model,
     nested_dict,
+    network_device,
     normalize_nvr_storage,
     persistent_storage_mounts,
     present_attributes,
     protect_collection,
+    rule_record,
+    section_by_site,
+    site_record,
+    site_section,
     thread_network,
 )
 from .entity import (
@@ -470,144 +475,134 @@ async def async_setup_entry(
         entities: list[BinarySensorEntity] = []
 
         # Add binary sensors for each device in each site
-        devices_by_site = coordinator.data.get("devices", {})
-        if isinstance(devices_by_site, dict):
-            for site_id, devices in devices_by_site.items():
-                if not isinstance(devices, dict):
-                    continue
-                site_data = coordinator.get_site(site_id)
-                site_name = (
-                    (site_data.get("meta") or {}).get("name", site_id)
-                    if site_data
-                    else site_id
-                )
+        devices_by_site = section_by_site(coordinator.data, "devices") or {}
+        for site_id, devices in devices_by_site.items():
+            site_data = site_record(coordinator.data, site_id)
+            site_name = (
+                (site_data.get("meta") or {}).get("name", site_id)
+                if site_data
+                else site_id
+            )
+
+            _LOGGER.debug(
+                "Processing site %s (%s) with %d devices",
+                site_id,
+                site_name,
+                len(devices),
+            )
+
+            for device_id, device_data in devices.items():
+                device_name = device_data.get("name", device_id)
+                facts = device_facts(coordinator.data, site_id, device_id)
+                is_gateway = facts is not None and facts.kind == "gateway"
 
                 _LOGGER.debug(
-                    "Processing site %s (%s) with %d devices",
+                    "Creating binary sensors for device %s (%s) in site %s (%s)",
+                    device_id,
+                    device_name,
                     site_id,
                     site_name,
-                    len(devices),
                 )
 
-                for device_id, device_data in devices.items():
-                    if not isinstance(device_data, dict):
-                        continue
-                    device_name = device_data.get("name", device_id)
-                    facts = device_facts(coordinator.data, site_id, device_id)
-                    is_gateway = facts is not None and facts.kind == "gateway"
+                for description in BINARY_SENSOR_TYPES:
+                    if description.entity_type == "device":
+                        # Skip WAN status sensor for non-gateway devices
+                        if description.key == "wan_status" and not is_gateway:
+                            _LOGGER.debug(
+                                "Skipping WAN status sensor for non-gateway device "
+                                "%s (%s)",
+                                device_id,
+                                device_name,
+                            )
+                            continue
 
-                    _LOGGER.debug(
-                        "Creating binary sensors for device %s (%s) in site %s (%s)",
-                        device_id,
-                        device_name,
-                        site_id,
-                        site_name,
+                        key = (site_id, device_id, description.key)
+                        if key in known_sensor_keys:
+                            continue
+                        known_sensor_keys.add(key)
+                        entities.append(
+                            UnifiInsightsBinarySensor(
+                                coordinator=coordinator,
+                                description=description,
+                                site_id=site_id,
+                                device_id=device_id,
+                            )
+                        )
+
+                # SFP module binary sensors for ports with SFP media type,
+                # from the same port source as the port sensors.
+                for port in facts.ports if facts is not None else ():
+                    media = port.record.get("media", "")
+                    if not isinstance(media, str) or not media.startswith("SFP"):
+                        continue
+                    port_idx = _sfp_port_index(port)
+                    if port_idx is None:
+                        continue
+                    sfp_key = (site_id, device_id, port_idx, "sfp_present")
+                    if sfp_key in known_sensor_keys:
+                        continue
+                    known_sensor_keys.add(sfp_key)
+                    entities.append(
+                        UnifiPortBinarySensor(
+                            coordinator=coordinator,
+                            site_id=site_id,
+                            device_id=device_id,
+                            port_idx=port_idx,
+                            port_label=get_port_label(port.record, port_idx),
+                        )
                     )
 
-                    for description in BINARY_SENSOR_TYPES:
-                        if description.entity_type == "device":
-                            # Skip WAN status sensor for non-gateway devices
-                            if description.key == "wan_status" and not is_gateway:
-                                _LOGGER.debug(
-                                    "Skipping WAN status sensor for non-gateway device "
-                                    "%s (%s)",
-                                    device_id,
-                                    device_name,
-                                )
-                                continue
-
-                            key = (site_id, device_id, description.key)
-                            if key in known_sensor_keys:
-                                continue
-                            known_sensor_keys.add(key)
-                            entities.append(
-                                UnifiInsightsBinarySensor(
-                                    coordinator=coordinator,
-                                    description=description,
-                                    site_id=site_id,
-                                    device_id=device_id,
-                                )
-                            )
-
-                    # SFP module binary sensors for ports with SFP media type,
-                    # from the same port source as the port sensors.
-                    for port in facts.ports if facts is not None else ():
-                        media = port.record.get("media", "")
-                        if not isinstance(media, str) or not media.startswith("SFP"):
+                # Per-WAN link connectivity (merged legacy WAN data)
+                wans = device_data.get("wans", [])
+                if isinstance(wans, list):
+                    for wan in wans:
+                        if not isinstance(wan, dict) or not wan.get("key"):
                             continue
-                        port_idx = _sfp_port_index(port)
-                        if port_idx is None:
+                        wan_key = (site_id, device_id, wan["key"], "wan_link")
+                        if wan_key in known_sensor_keys:
                             continue
-                        sfp_key = (site_id, device_id, port_idx, "sfp_present")
-                        if sfp_key in known_sensor_keys:
-                            continue
-                        known_sensor_keys.add(sfp_key)
+                        known_sensor_keys.add(wan_key)
                         entities.append(
-                            UnifiPortBinarySensor(
+                            UnifiInsightsWanLinkBinarySensor(
                                 coordinator=coordinator,
                                 site_id=site_id,
                                 device_id=device_id,
-                                port_idx=port_idx,
-                                port_label=get_port_label(port.record, port_idx),
+                                wan_key=wan["key"],
+                                wan_name=wan.get("name") or wan["key"].upper(),
                             )
                         )
 
-                    # Per-WAN link connectivity (merged legacy WAN data)
-                    wans = device_data.get("wans", [])
-                    if isinstance(wans, list):
-                        for wan in wans:
-                            if not isinstance(wan, dict) or not wan.get("key"):
-                                continue
-                            wan_key = (site_id, device_id, wan["key"], "wan_link")
-                            if wan_key in known_sensor_keys:
-                                continue
-                            known_sensor_keys.add(wan_key)
-                            entities.append(
-                                UnifiInsightsWanLinkBinarySensor(
-                                    coordinator=coordinator,
-                                    site_id=site_id,
-                                    device_id=device_id,
-                                    wan_key=wan["key"],
-                                    wan_name=wan.get("name") or wan["key"].upper(),
-                                )
-                            )
+                entities.extend(
+                    discover_storage_binary_sensors(
+                        coordinator,
+                        site_id,
+                        device_id,
+                        device_data,
+                        known_sensor_keys,
+                    )
+                )
 
-                    entities.extend(
-                        discover_storage_binary_sensors(
-                            coordinator,
-                            site_id,
-                            device_id,
-                            device_data,
-                            known_sensor_keys,
+                # Site-to-site VPN tunnels, one sensor each, on the gateway.
+                # Devices reporting WAN links route traffic even when their
+                # model/features are not recognised.
+                tunnels = site_section(coordinator.data, "site_vpns", site_id)
+                if tunnels is not None and (is_gateway or wans):
+                    for tunnel_id, tunnel in tunnels.items():
+                        if not tunnel.get("enabled", True):
+                            continue
+                        vpn_key = (site_id, "site_to_site_vpn", tunnel_id)
+                        if vpn_key in known_sensor_keys:
+                            continue
+                        known_sensor_keys.add(vpn_key)
+                        entities.append(
+                            UnifiInsightsSiteToSiteVpnBinarySensor(
+                                coordinator=coordinator,
+                                site_id=site_id,
+                                device_id=device_id,
+                                tunnel_id=tunnel_id,
+                                tunnel_name=tunnel.get("name") or tunnel_id,
+                            )
                         )
-                    )
-
-                    # Site-to-site VPN tunnels, one sensor each, on the gateway.
-                    # Devices reporting WAN links route traffic even when their
-                    # model/features are not recognised.
-                    site_vpns = coordinator.data.get("site_vpns", {})
-                    tunnels = (
-                        site_vpns.get(site_id) if isinstance(site_vpns, dict) else None
-                    )
-                    if isinstance(tunnels, dict) and (is_gateway or wans):
-                        for tunnel_id, tunnel in tunnels.items():
-                            if not isinstance(tunnel, dict) or not tunnel.get(
-                                "enabled", True
-                            ):
-                                continue
-                            vpn_key = (site_id, "site_to_site_vpn", tunnel_id)
-                            if vpn_key in known_sensor_keys:
-                                continue
-                            known_sensor_keys.add(vpn_key)
-                            entities.append(
-                                UnifiInsightsSiteToSiteVpnBinarySensor(
-                                    coordinator=coordinator,
-                                    site_id=site_id,
-                                    device_id=device_id,
-                                    tunnel_id=tunnel_id,
-                                    tunnel_name=tunnel.get("name") or tunnel_id,
-                                )
-                            )
 
         # Add binary sensors for Protect devices
         if coordinator.protect_client:
@@ -751,11 +746,8 @@ class UnifiInsightsBinarySensor(UnifiInsightsEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         """Return true if the binary sensor is on."""
-        if (
-            not self.coordinator.data["devices"]
-            .get(self._site_id, {})
-            .get(self._device_id)
-        ):
+        device = network_device(self.coordinator.data, self._site_id, self._device_id)
+        if not device or not isinstance(device, dict):
             _LOGGER.debug(
                 "No device data for binary sensor %s (device %s in site %s)",
                 self.entity_description.key,
@@ -767,7 +759,6 @@ class UnifiInsightsBinarySensor(UnifiInsightsEntity, BinarySensorEntity):
         if self.entity_description.facts_fn is not None:
             facts = self.device_facts
             return self.entity_description.facts_fn(facts) if facts else None
-        device = self.coordinator.data["devices"][self._site_id][self._device_id]
         if self.entity_description.value_fn is not None:
             return self.entity_description.value_fn(device)
         return None
@@ -978,9 +969,7 @@ class UnifiInsightsWanLinkBinarySensor(UnifiInsightsEntity, BinarySensorEntity):
     def _find_wan(self) -> dict[str, Any] | None:
         """Return this sensor's WAN link from coordinator data."""
         device_data = (
-            self.coordinator.data.get("devices", {})
-            .get(self._site_id, {})
-            .get(self._device_id, {})
+            network_device(self.coordinator.data, self._site_id, self._device_id) or {}
         )
         wans = device_data.get("wans")
         if not isinstance(wans, list):
@@ -1035,9 +1024,9 @@ class UnifiInsightsSiteToSiteVpnBinarySensor(UnifiInsightsEntity, BinarySensorEn
 
     def _tunnel(self) -> dict[str, Any] | None:
         """Return this tunnel's configuration, if it still exists."""
-        site_vpns = self.coordinator.data.get("site_vpns")
-        site = site_vpns.get(self._site_id) if isinstance(site_vpns, dict) else None
-        tunnel = site.get(self._tunnel_id) if isinstance(site, dict) else None
+        tunnel = rule_record(
+            self.coordinator.data, "site_vpns", self._site_id, self._tunnel_id
+        )
         return tunnel if isinstance(tunnel, dict) else None
 
     def _connections(self) -> dict[str, Any] | None:

@@ -37,7 +37,16 @@ from .coordinators.config_sections import (
 from .coordinators.config_sections import (
     is_predefined_nat_rule,
 )
-from .data_transforms import get_site_gateway_id, protect_collection, protect_device
+from .data_transforms import (
+    get_site_gateway_id,
+    network_client,
+    network_device,
+    protect_collection,
+    protect_device,
+    rule_record,
+    section_by_site,
+    site_record,
+)
 from .entity import (
     UnifiAccessEntity,
     UnifiProtectEntity,
@@ -51,7 +60,7 @@ from .entity import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable
 
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -80,7 +89,7 @@ def _resolve_site_name(
     coordinator: UnifiInsightsFacadeCoordinator, site_id: str
 ) -> str:
     """Resolve human-readable site name from coordinator data."""
-    site_data = coordinator.data.get("sites", {}).get(site_id, {})
+    site_data = site_record(coordinator.data, site_id) or {}
     meta = site_data.get("meta", {})
     return str(
         (meta.get("name") if isinstance(meta, dict) else None)
@@ -416,10 +425,6 @@ async def async_setup_entry(
     def async_discover_switches() -> None:
         nonlocal first_setup
         """Discover and add new switches."""
-        snapshot: Mapping[str, Any] = coordinator.data
-        if not snapshot or not isinstance(snapshot, dict):
-            return
-
         current_client_control = entry.options.get(
             CONF_CLIENT_CONTROL, DEFAULT_CLIENT_CONTROL
         )
@@ -457,99 +462,84 @@ async def async_setup_entry(
 
         # Add client block/allow switches for each connected client (when enabled)
         if current_client_control:
-            clients_by_site = coordinator.data.get("clients", {})
-            if isinstance(clients_by_site, dict):
-                for site_id, clients in clients_by_site.items():
-                    if not isinstance(clients, dict):
-                        continue
-                    for client_id, client_data in clients.items():
-                        if not isinstance(client_data, dict):
-                            continue
-                        key = (site_id, client_id, "block_switch")
-                        if key in known_switch_keys:
-                            continue
-                        known_switch_keys.add(key)
-                        entities.append(
-                            UnifiClientBlockSwitch(
-                                coordinator=coordinator,
-                                site_id=site_id,
-                                client_id=client_id,
-                            )
-                        )
-
-        # Add WiFi network enable/disable switches
-        wifi_by_site = coordinator.data.get("wifi", {})
-        if isinstance(wifi_by_site, dict):
-            for site_id, wifi_networks in wifi_by_site.items():
-                if not isinstance(wifi_networks, dict):
-                    continue
-                for wifi_id, wifi_data in wifi_networks.items():
-                    if not isinstance(wifi_data, dict):
-                        continue
-                    key = (site_id, wifi_id, "wifi_switch")
+            clients_by_site = section_by_site(coordinator.data, "clients") or {}
+            for site_id, clients in clients_by_site.items():
+                for client_id in clients:
+                    key = (site_id, client_id, "block_switch")
                     if key in known_switch_keys:
                         continue
                     known_switch_keys.add(key)
                     entities.append(
-                        UnifiWifiSwitch(
+                        UnifiClientBlockSwitch(
                             coordinator=coordinator,
                             site_id=site_id,
-                            wifi_id=wifi_id,
-                            wifi_data=wifi_data,
+                            client_id=client_id,
                         )
                     )
 
-        # Add PDU outlet relay and power cycle switches
-        devices_by_site = coordinator.data.get("devices", {})
-        if isinstance(devices_by_site, dict):
-            for site_id, devices in devices_by_site.items():
-                if not isinstance(devices, dict):
+        # Add WiFi network enable/disable switches
+        wifi_by_site = section_by_site(coordinator.data, "wifi") or {}
+        for site_id, wifi_networks in wifi_by_site.items():
+            for wifi_id, wifi_data in wifi_networks.items():
+                key = (site_id, wifi_id, "wifi_switch")
+                if key in known_switch_keys:
                     continue
-                for device_id, device_data in devices.items():
-                    if not isinstance(device_data, dict):
-                        continue
-                    outlet_table = device_data.get("outlet_table", [])
-                    if not isinstance(outlet_table, list):
-                        continue
-                    for outlet in outlet_table:
-                        if not isinstance(outlet, dict):
-                            continue
-                        idx = outlet.get("index")
-                        if idx is None:
-                            idx = outlet.get("outlet_idx") or outlet.get("outletIdx")
-                        if idx is None:
-                            continue
-                        try:
-                            outlet_idx = int(idx)
-                        except TypeError, ValueError:
-                            continue
+                known_switch_keys.add(key)
+                entities.append(
+                    UnifiWifiSwitch(
+                        coordinator=coordinator,
+                        site_id=site_id,
+                        wifi_id=wifi_id,
+                        wifi_data=wifi_data,
+                    )
+                )
 
-                        for description in (OUTLET_RELAY_SWITCH, OUTLET_CYCLE_SWITCH):
-                            # Only outlets that report cycling get a cycle switch.
-                            if (
-                                description is OUTLET_CYCLE_SWITCH
-                                and outlet.get("cycle_enabled") is None
-                            ):
-                                continue
-                            outlet_key = (
+        # Add PDU outlet relay and power cycle switches
+        devices_by_site = section_by_site(coordinator.data, "devices") or {}
+        for site_id, devices in devices_by_site.items():
+            for device_id, device_data in devices.items():
+                outlet_table = device_data.get("outlet_table", [])
+                if not isinstance(outlet_table, list):
+                    continue
+                for outlet in outlet_table:
+                    if not isinstance(outlet, dict):
+                        continue
+                    idx = outlet.get("index")
+                    if idx is None:
+                        idx = outlet.get("outlet_idx") or outlet.get("outletIdx")
+                    if idx is None:
+                        continue
+                    try:
+                        outlet_idx = int(idx)
+                    except TypeError, ValueError:
+                        continue
+
+                    for description in (OUTLET_RELAY_SWITCH, OUTLET_CYCLE_SWITCH):
+                        # Only outlets that report cycling get a cycle switch.
+                        if (
+                            description is OUTLET_CYCLE_SWITCH
+                            and outlet.get("cycle_enabled") is None
+                        ):
+                            continue
+                        outlet_key = (
+                            site_id,
+                            device_id,
+                            outlet_idx,
+                            description.key,
+                        )
+                        if outlet_key in known_switch_keys:
+                            continue
+                        known_switch_keys.add(outlet_key)
+                        entities.append(
+                            UnifiOutletSwitch(
+                                coordinator,
+                                description,
                                 site_id,
                                 device_id,
-                                outlet_idx,
-                                description.key,
+                                outlet_index=outlet_idx,
+                                outlet_data=outlet,
                             )
-                            if outlet_key in known_switch_keys:
-                                continue
-                            known_switch_keys.add(outlet_key)
-                            entities.append(
-                                UnifiOutletSwitch(
-                                    coordinator,
-                                    description,
-                                    site_id,
-                                    device_id,
-                                    outlet_index=outlet_idx,
-                                    outlet_data=outlet,
-                                )
-                            )
+                        )
 
         entities.extend(discover_network_rule_switches(coordinator, known_switch_keys))
 
@@ -746,12 +736,8 @@ class UnifiClientBlockSwitch(
 
     def _get_client_data(self) -> dict[str, Any]:
         """Get client data from coordinator."""
-        result: dict[str, Any] = (
-            self.coordinator.data.get("clients", {})
-            .get(self._site_id, {})
-            .get(self._client_id, {})
-        )
-        return result
+        result = network_client(self.coordinator.data, self._site_id, self._client_id)
+        return result if isinstance(result, dict) else {}
 
     @property
     def available(self) -> bool:
@@ -835,12 +821,10 @@ class UnifiWifiSwitch(
 
     def _get_wifi_data(self) -> dict[str, Any]:
         """Get WiFi data from coordinator."""
-        result: dict[str, Any] = (
-            self.coordinator.data.get("wifi", {})
-            .get(self._site_id, {})
-            .get(self._wifi_id, {})
+        result = rule_record(
+            self.coordinator.data, "wifi", self._site_id, self._wifi_id
         )
-        return result or self._wifi_data
+        return result if isinstance(result, dict) and result else self._wifi_data
 
     @property
     def available(self) -> bool:
@@ -978,10 +962,8 @@ class UnifiOutletSwitch(
 
     def _get_device_data(self) -> dict[str, Any]:
         """Return the coordinator's cached snapshot for this PDU device."""
-        device_data = (
-            self.coordinator.data.get("devices", {})
-            .get(self._site_id, {})
-            .get(self._device_id, {})
+        device_data = network_device(
+            self.coordinator.data, self._site_id, self._device_id
         )
         return device_data if isinstance(device_data, dict) else {}
 
@@ -1431,16 +1413,12 @@ class UnifiInsightsNetworkRuleSwitch(
 
     def _get_rule_data(self) -> dict[str, Any]:
         """Get rule data from coordinator."""
-        data: Any = self.coordinator.data
-        if not isinstance(data, dict):
-            return {}
-        section = data.get(self.entity_description.data_key)
-        if not isinstance(section, dict):
-            return {}
-        site_rules = section.get(self._site_id)
-        if not isinstance(site_rules, dict):
-            return {}
-        rule = site_rules.get(self._rule_id)
+        rule = rule_record(
+            self.coordinator.data,
+            self.entity_description.data_key,
+            self._site_id,
+            self._rule_id,
+        )
         return rule if isinstance(rule, dict) else {}
 
     @property
@@ -1505,20 +1483,10 @@ def discover_network_rule_switches(
 ) -> list[SwitchEntity]:
     """Discover the switch entities of every network rule family."""
     entities: list[SwitchEntity] = []
-    data: Any = coordinator.data
-    if not isinstance(data, dict):
-        return entities
-
     for desc in NETWORK_RULE_SWITCH_TYPES:
-        section = data.get(desc.data_key)
-        if not isinstance(section, dict):
-            continue
-        for site_id, site_rules in section.items():
-            if not isinstance(site_rules, dict):
-                continue
+        rules_by_site = section_by_site(coordinator.data, desc.data_key) or {}
+        for site_id, site_rules in rules_by_site.items():
             for rule_id, rule in site_rules.items():
-                if not isinstance(rule, dict):
-                    continue
                 if desc.strict_enabled and not isinstance(rule.get("enabled"), bool):
                     continue
                 if desc.is_hidden_fn is not None and desc.is_hidden_fn(rule):

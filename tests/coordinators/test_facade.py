@@ -47,6 +47,7 @@ from custom_components.unifi_insights.data_transforms import (
     network_device_stats,
     protect_device,
     rule_record,
+    site_record,
 )
 from tests.fixtures.command_owners import SITE_ID
 from tests.fixtures.coordinator_clients import (
@@ -688,39 +689,18 @@ class TestUnifiFacadeCoordinator:
         facade_coordinator._aggregate_data()
         assert facade_coordinator.data["rule_changes"] == {"site1": [{"sequence": 1}]}
 
-    def test_get_site(self, facade_coordinator: UnifiInsightsFacadeCoordinator):
-        """Test get_site delegation to config coordinator."""
-        facade_coordinator._aggregate_data()
-        result = facade_coordinator.get_site("default")
-        assert result == {"id": "default", "name": "Default"}
-
-    def test_get_device(self, facade_coordinator: UnifiInsightsFacadeCoordinator):
-        """Test get_device."""
-        facade_coordinator._aggregate_data()
-        result = facade_coordinator.get_device("default", "device1")
-        assert result == {"id": "device1"}
-
-    def test_get_device_missing(
+    def test_lookups_read_the_aggregated_snapshot(
         self, facade_coordinator: UnifiInsightsFacadeCoordinator
     ):
-        """Test get_device for missing device."""
+        """The snapshot lookups read the owners' records through the facade."""
         facade_coordinator._aggregate_data()
-        result = facade_coordinator.get_device("default", "nonexistent")
-        assert result is None
+        data = facade_coordinator.data
 
-    def test_get_device_stats(self, facade_coordinator: UnifiInsightsFacadeCoordinator):
-        """Test get_device_stats."""
-        facade_coordinator._aggregate_data()
-        result = facade_coordinator.get_device_stats("default", "device1")
-        assert result == {"cpu": 10}
-
-    def test_get_device_stats_missing(
-        self, facade_coordinator: UnifiInsightsFacadeCoordinator
-    ):
-        """Test get_device_stats for missing device."""
-        facade_coordinator._aggregate_data()
-        result = facade_coordinator.get_device_stats("default", "nonexistent")
-        assert result is None
+        assert site_record(data, "default") == {"id": "default", "name": "Default"}
+        assert network_device(data, "default", "device1") == {"id": "device1"}
+        assert network_device(data, "default", "nonexistent") is None
+        assert network_device_stats(data, "default", "device1") == {"cpu": 10}
+        assert network_device_stats(data, "default", "nonexistent") is None
 
     def test_available_all_success(
         self, facade_coordinator: UnifiInsightsFacadeCoordinator

@@ -29,6 +29,7 @@ from .const import (
     MOBILITY_DEVICE_PREFIX,
 )
 from .coordinators import UnifiInsightsFacadeCoordinator
+from .data_transforms import section_by_site
 from .entity import (
     UnifiMobilityRouterEntity,
     async_add_mobility_router_entities,
@@ -75,9 +76,8 @@ def _partition_connected_clients(
     """Split connected clients into tracked (MAC -> site_id) and untracked MACs."""
     wanted: dict[str, str] = {}
     untracked: set[str] = set()
-    for site_id, clients in coordinator.data.get("clients", {}).items():
-        if not isinstance(clients, dict):
-            continue
+    clients_by_site = section_by_site(coordinator.data, "clients") or {}
+    for site_id, clients in clients_by_site.items():
         for client_data in clients.values():
             mac = get_field(client_data, "macAddress", "mac_address", "mac", default="")
             if not mac:
@@ -416,13 +416,11 @@ class UnifiClientTracker(
         """Return device info."""
         return self._device_info
 
-    def _find_in_site(self, clients: Any) -> dict[str, Any] | None:
+    def _find_in_site(
+        self, clients: dict[str, dict[str, Any]]
+    ) -> dict[str, Any] | None:
         """Return this MAC's entry within one site's client snapshot."""
-        if not isinstance(clients, dict):
-            return None
         for client_data in clients.values():
-            if not isinstance(client_data, dict):
-                continue
             mac = get_field(client_data, "macAddress", "mac_address", "mac", default="")
             if mac and mac.lower() == self._mac:
                 return client_data
@@ -437,8 +435,8 @@ class UnifiClientTracker(
         site so a roamed client -- or one restored from the registry with no hint
         at all -- is still found. Remember where it turned up for next time.
         """
-        all_clients = self.coordinator.data.get("clients", {})
-        if not isinstance(all_clients, dict):
+        all_clients = section_by_site(self.coordinator.data, "clients")
+        if all_clients is None:
             return None
         if self._site_id is not None:
             client_data = self._find_in_site(all_clients.get(self._site_id, {}))

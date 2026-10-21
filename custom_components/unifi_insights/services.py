@@ -59,7 +59,11 @@ from .const import (
 )
 from .coordinators.carrier_fabric import InvalidSubscriberIdError
 from .coordinators.rule_audit import RULE_TYPES
-from .data_transforms import client_connection_type, percent_to_led_level
+from .data_transforms import (
+    client_connection_type,
+    network_client,
+    percent_to_led_level,
+)
 from .diagnostics import redact_network_rule_export
 from .service_targets import (
     resolve_access_call,
@@ -84,7 +88,7 @@ else:
     import voluptuous as vol
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Mapping
+    from collections.abc import Awaitable
 
     from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
 
@@ -591,12 +595,9 @@ async def _async_handle_reconnect_client(
     target = resolve_network_client_call(hass, call)
     client_id = target.client_id
 
-    data: Mapping[str, Any] = target.cache.data
-    clients = data.get("clients", {}) if isinstance(data, dict) else {}
-    site_clients = clients.get(target.site_id, {}) if isinstance(clients, dict) else {}
     client_record = (
-        site_clients.get(client_id)
-        if isinstance(site_clients, dict) and client_id
+        network_client(target.cache.data, target.site_id, client_id)
+        if client_id
         else None
     )
 

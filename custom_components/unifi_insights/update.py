@@ -17,11 +17,10 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER
 from .coordinators import UnifiInsightsFacadeCoordinator
+from .data_transforms import network_device, section_by_site
 from .entity import get_field
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -47,21 +46,13 @@ async def async_setup_entry(
     def async_discover_updates() -> None:
         """Discover and add new update entities."""
         nonlocal first_setup
-        snapshot: Mapping[str, Any] = coordinator.data
-        if not snapshot or not isinstance(snapshot, dict):
-            return
-
-        devices_by_site = coordinator.data.get("devices", {})
-        if not isinstance(devices_by_site, dict):
+        devices_by_site = section_by_site(coordinator.data, "devices")
+        if devices_by_site is None:
             return
 
         new_entities: list[UnifiNetworkDeviceUpdate] = []
         for site_id, devices in devices_by_site.items():
-            if not isinstance(devices, dict):
-                continue
-            for device_id, device_data in devices.items():
-                if not isinstance(device_data, dict):
-                    continue
+            for device_id in devices:
                 key = (site_id, device_id)
                 if key in known_device_keys:
                     continue
@@ -105,7 +96,7 @@ class UnifiNetworkDeviceUpdate(
         self._device_id = device_id
 
         # Get device data
-        device_data = coordinator.data["devices"][site_id][device_id]
+        device_data = network_device(coordinator.data, site_id, device_id) or {}
         device_name = get_field(
             device_data, "name", default=f"UniFi Device {device_id}"
         )
@@ -140,8 +131,7 @@ class UnifiNetworkDeviceUpdate(
     @property
     def _device_data(self) -> dict[str, Any] | None:
         """Return device data."""
-        devices = self.coordinator.data["devices"].get(self._site_id, {})
-        result = devices.get(self._device_id)
+        result = network_device(self.coordinator.data, self._site_id, self._device_id)
         return result if isinstance(result, dict) else None
 
     @property

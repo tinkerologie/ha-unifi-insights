@@ -47,8 +47,11 @@ from .coordinators.device import (
 from .data_transforms import (
     current_chime_ringtone_id,
     get_port_label,
+    network_client,
     protect_collection,
     protect_device,
+    section_by_site,
+    site_record,
     voucher_request_kwargs,
     voucher_site_ids,
 )
@@ -98,16 +101,9 @@ def _wired_client_mac(client: dict[str, Any]) -> str | None:
 def _connected_client_macs(coordinator: UnifiInsightsFacadeCoordinator) -> set[str]:
     """Return the normalized MACs of all clients currently connected."""
     macs: set[str] = set()
-    snapshot: Mapping[str, Any] = coordinator.data
-    clients_by_site = (snapshot or {}).get("clients")
-    if not isinstance(clients_by_site, dict):
-        return macs
+    clients_by_site = section_by_site(coordinator.data, "clients") or {}
     for clients in clients_by_site.values():
-        if not isinstance(clients, dict):
-            continue
         for client in clients.values():
-            if not isinstance(client, dict):
-                continue
             raw_mac = get_field(client, "macAddress", "mac_address", "mac")
             if (mac := normalize_mac(raw_mac)) is not None:
                 macs.add(mac)
@@ -228,6 +224,7 @@ async def async_setup_entry(
         enabled_macs: set[str] = set()
         snapshot: Mapping[str, Any] = coordinator.data
         coord_data = snapshot or {}
+        clients_by_site = section_by_site(coordinator.data, "clients")
         for row in er.async_entries_for_config_entry(registry, config_entry.entry_id):
             mac = mac_from_wake_unique_id(row.unique_id)
             if row.domain != "button" or row.platform != DOMAIN or mac is None:
@@ -236,7 +233,7 @@ async def async_setup_entry(
                 enabled_macs.add(mac)
             elif mac not in registered_macs & connected_macs:
                 continue
-            live = find_client_by_mac(coord_data.get("clients"), mac)
+            live = find_client_by_mac(clients_by_site, mac)
             site_id = live[0] if live else next(iter(coord_data.get("sites", {})), "")
             device = (
                 dr.async_get(hass).async_get(row.device_id) if row.device_id else None
@@ -299,10 +296,6 @@ async def async_setup_entry(
     @callback
     def async_discover_buttons() -> None:
         """Discover and add new button entities."""
-        snapshot: Mapping[str, Any] = coordinator.data
-        if not snapshot or not isinstance(snapshot, dict):
-            return
-
         current_client_control = config_entry.options.get(
             CONF_CLIENT_CONTROL, DEFAULT_CLIENT_CONTROL
         )
@@ -330,105 +323,91 @@ async def async_setup_entry(
             entities.append(button)
 
         # Add buttons for each device in each site
-        devices_by_site = coordinator.data.get("devices", {})
-        if isinstance(devices_by_site, dict):
-            for site_id, devices in devices_by_site.items():
-                if not isinstance(devices, dict):
-                    continue
-                site_data = coordinator.get_site(site_id)
-                site_name = (
-                    (site_data.get("meta") or {}).get("name", site_id)
-                    if site_data
-                    else site_id
-                )
+        devices_by_site = section_by_site(coordinator.data, "devices") or {}
+        for site_id, devices in devices_by_site.items():
+            site_data = site_record(coordinator.data, site_id)
+            site_name = (
+                (site_data.get("meta") or {}).get("name", site_id)
+                if site_data
+                else site_id
+            )
 
-                _LOGGER.debug(
-                    "Processing site %s (%s) with %d devices",
-                    site_id,
-                    site_name,
-                    len(devices),
-                )
+            _LOGGER.debug(
+                "Processing site %s (%s) with %d devices",
+                site_id,
+                site_name,
+                len(devices),
+            )
 
-                for device_id, device_data in devices.items():
-                    if not isinstance(device_data, dict):
+            for device_id in devices:
+                for description in BUTTON_TYPES:
+                    btn_key = (site_id, device_id, description.key)
+                    if btn_key in known_button_keys:
                         continue
-                    for description in BUTTON_TYPES:
-                        btn_key = (site_id, device_id, description.key)
-                        if btn_key in known_button_keys:
-                            continue
-                        known_button_keys.add(btn_key)
-                        entities.append(
-                            UnifiInsightsButton(
-                                coordinator=coordinator,
-                                description=description,
-                                site_id=site_id,
-                                device_id=device_id,
-                            )
+                    known_button_keys.add(btn_key)
+                    entities.append(
+                        UnifiInsightsButton(
+                            coordinator=coordinator,
+                            description=description,
+                            site_id=site_id,
+                            device_id=device_id,
                         )
+                    )
 
-                    # Discover PoE power-cycle buttons for PoE-enabled ports
-                    for port_facts in power_cyclable_ports(
-                        coordinator.data, site_id, device_id
-                    ):
-                        port = port_facts.record
-                        port_idx = port_facts.raw_index
+                # Discover PoE power-cycle buttons for PoE-enabled ports
+                for port_facts in power_cyclable_ports(
+                    coordinator.data, site_id, device_id
+                ):
+                    port = port_facts.record
+                    port_idx = port_facts.raw_index
 
-                        poe_btn_key = (
-                            site_id,
-                            device_id,
-                            f"port{port_idx}_poe_power_cycle",
+                    poe_btn_key = (
+                        site_id,
+                        device_id,
+                        f"port{port_idx}_poe_power_cycle",
+                    )
+                    if poe_btn_key in known_button_keys:
+                        continue
+                    known_button_keys.add(poe_btn_key)
+
+                    port_label = get_port_label(port, port_idx)
+                    entities.append(
+                        UnifiInsightsPoePowerCycleButton(
+                            coordinator=coordinator,
+                            site_id=site_id,
+                            device_id=device_id,
+                            port_idx=port_idx,
+                            port_label=port_label,
                         )
-                        if poe_btn_key in known_button_keys:
-                            continue
-                        known_button_keys.add(poe_btn_key)
-
-                        port_label = get_port_label(port, port_idx)
-                        entities.append(
-                            UnifiInsightsPoePowerCycleButton(
-                                coordinator=coordinator,
-                                site_id=site_id,
-                                device_id=device_id,
-                                port_idx=port_idx,
-                                port_label=port_label,
-                            )
-                        )
+                    )
 
         # Add reconnect buttons for connected clients (when client control is enabled)
         if current_client_control:
-            clients_by_site = coordinator.data.get("clients", {})
-            if isinstance(clients_by_site, dict):
-                for site_id, clients in clients_by_site.items():
-                    if not isinstance(clients, dict):
+            clients_by_site = section_by_site(coordinator.data, "clients") or {}
+            for site_id, clients in clients_by_site.items():
+                for client_id in clients:
+                    client_key = (site_id, client_id, "reconnect")
+                    if client_key in known_button_keys:
                         continue
-                    for client_id, client_data in clients.items():
-                        if not isinstance(client_data, dict):
-                            continue
-                        client_key = (site_id, client_id, "reconnect")
-                        if client_key in known_button_keys:
-                            continue
-                        known_button_keys.add(client_key)
-                        entities.append(
-                            UnifiClientReconnectButton(
-                                coordinator=coordinator,
-                                site_id=site_id,
-                                client_id=client_id,
-                            )
+                    known_button_keys.add(client_key)
+                    entities.append(
+                        UnifiClientReconnectButton(
+                            coordinator=coordinator,
+                            site_id=site_id,
+                            client_id=client_id,
                         )
-                for site_id, clients in clients_by_site.items():
-                    if not isinstance(clients, dict):
+                    )
+            for site_id, clients in clients_by_site.items():
+                for client_data in clients.values():
+                    wake_mac = _wired_client_mac(client_data)
+                    if wake_mac is None or wake_mac in known_wake_macs:
                         continue
-                    for client_data in clients.values():
-                        if not isinstance(client_data, dict):
-                            continue
-                        wake_mac = _wired_client_mac(client_data)
-                        if wake_mac is None or wake_mac in known_wake_macs:
-                            continue
-                        known_wake_macs.add(wake_mac)
-                        entities.append(
-                            UnifiClientWakeButton(
-                                coordinator, wake_mac, site_id=str(site_id)
-                            )
+                    known_wake_macs.add(wake_mac)
+                    entities.append(
+                        UnifiClientWakeButton(
+                            coordinator, wake_mac, site_id=str(site_id)
                         )
+                    )
 
         # Add UniFi Protect buttons
         if coordinator.protect_client:
@@ -666,12 +645,8 @@ class UnifiClientReconnectButton(
 
     def _get_client_data(self) -> dict[str, Any]:
         """Get client data from coordinator."""
-        result: dict[str, Any] = (
-            self.coordinator.data.get("clients", {})
-            .get(self._site_id, {})
-            .get(self._client_id, {})
-        )
-        return result
+        result = network_client(self.coordinator.data, self._site_id, self._client_id)
+        return result if isinstance(result, dict) else {}
 
     @property
     def available(self) -> bool:
@@ -726,20 +701,19 @@ class UnifiClientWakeButton(
         self._mac = mac
         self._attr_unique_id = wake_unique_id(mac)
 
-        snapshot: Mapping[str, Any] = coordinator.data
-        coord_data = snapshot if isinstance(snapshot, dict) else {}
         if device_info is not None:
             self._attr_device_info = device_info
         elif site_id:
-            site_info = build_site_device_info(coord_data, site_id)
+            site_info = build_site_device_info(coordinator.data, site_id)
             self._attr_device_info = DeviceInfo(**site_info)  # type: ignore[typeddict-item]
         self.async_update_history_name(fallback_name)
 
     @callback
     def async_update_history_name(self, fallback_name: str | None) -> None:
         """Apply a history name while preferring the current live client name."""
-        snapshot: Mapping[str, Any] = self.coordinator.data
-        live = find_client_by_mac((snapshot or {}).get("clients"), self._mac)
+        live = find_client_by_mac(
+            section_by_site(self.coordinator.data, "clients"), self._mac
+        )
         live_name = first_non_blank_text(live[1], "name", "hostname") if live else None
         client_name = live_name or (
             fallback_name.strip()

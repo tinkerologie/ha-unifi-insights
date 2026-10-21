@@ -748,6 +748,49 @@ def protect_collection(
     }
 
 
+def _dict_records(records: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return only the records published as dicts."""
+    return {
+        record_id: record
+        for record_id, record in records.items()
+        if isinstance(record, dict)
+    }
+
+
+def site_section(
+    data: Mapping[str, Any], section: str, site_id: str
+) -> dict[str, dict[str, Any]] | None:
+    """
+    Return one site's records of a site-keyed section by record ID, or None.
+
+    ``section`` is a section keyed by site, then record ID, such as
+    ``"devices"``, ``"clients"`` or ``"wifi"``. None means the section or the
+    site's records are missing or malformed. Only the records published as
+    dicts are returned; any other value is skipped.
+    """
+    records = _record(data, section, site_id)
+    return None if records is None else _dict_records(records)
+
+
+def section_by_site(
+    data: Mapping[str, Any], section: str
+) -> dict[str, dict[str, dict[str, Any]]] | None:
+    """
+    Return a site-keyed section's records by site ID, then record ID, or None.
+
+    None means the section is missing or malformed. A site whose records are
+    not a mapping is skipped, and so is any record not published as a dict.
+    """
+    by_site = _record(data, section)
+    if by_site is None:
+        return None
+    return {
+        site_id: _dict_records(records)
+        for site_id, records in by_site.items()
+        if isinstance(records, Mapping)
+    }
+
+
 def latest_voucher(data: Mapping[str, Any], site_id: str) -> Mapping[str, Any] | None:
     """Return the latest voucher generated for a site, or None."""
     return _record(data, "latest_vouchers", site_id)
@@ -969,9 +1012,11 @@ __all__ = [
     "protect_collection",
     "protect_device",
     "rule_record",
+    "section_by_site",
     "site_device_facts",
     "site_network_facts",
     "site_record",
+    "site_section",
     "storage_used_percent",
     "transform_innerspace_device",
     "transform_innerspace_floor_plan",

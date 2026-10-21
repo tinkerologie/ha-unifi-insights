@@ -81,11 +81,17 @@ from .data_transforms import (
     has_keypad,
     has_thread_network,
     is_volatile_storage_mount,
+    latest_voucher,
     nested_dict,
+    network_device,
+    network_device_stats,
     normalize_nvr_storage,
     parse_timestamp,
     present_attributes,
     protect_collection,
+    rule_record,
+    section_by_site,
+    site_section,
     storage_mount_labels,
     storage_used_percent,
     thread_network,
@@ -891,9 +897,7 @@ def _discover_device_sensors(
 
         # Only create uplink rate sensors if uplink data exists
         if description.key in ("tx_rate", "rx_rate"):
-            stats = ((coordinator.data.get("stats") or {}).get(site_id) or {}).get(
-                device_id, {}
-            )
+            stats = network_device_stats(coordinator.data, site_id, device_id)
             if not isinstance(stats, dict):
                 continue
             uplink = get_field(stats, "uplink", "uplink_stats", default=None)
@@ -914,9 +918,7 @@ def _discover_device_sensors(
 
         # Only create Total PoE Power sensor if coordinator
         if description.key == "poe_total_power":
-            stats = ((coordinator.data.get("stats") or {}).get(site_id) or {}).get(
-                device_id, {}
-            )
+            stats = network_device_stats(coordinator.data, site_id, device_id)
             if not isinstance(stats, dict):
                 continue
             poe_keys = (
@@ -1084,9 +1086,7 @@ def _discover_port_sensors(
 
     # Fallback: create per-port sensors from stats
     if device_has_feature(device_data, "switching"):
-        stats = ((coordinator.data.get("stats") or {}).get(site_id) or {}).get(
-            device_id, {}
-        )
+        stats = network_device_stats(coordinator.data, site_id, device_id)
         if isinstance(stats, dict):
             _create_port_stats_fallback(
                 coordinator,
@@ -1327,74 +1327,68 @@ async def async_setup_entry(
         entities: list[SensorEntity] = []
 
         # Add sensors for each device in each site
-        devices_by_site = coordinator.data.get("devices", {})
-        if isinstance(devices_by_site, dict):
-            for site_id, devices in devices_by_site.items():
-                if not isinstance(devices, dict):
-                    continue
-                for device_id, device_data in devices.items():
-                    if not isinstance(device_data, dict):
-                        continue
-                    _discover_device_sensors(
+        devices_by_site = section_by_site(coordinator.data, "devices") or {}
+        for site_id, devices in devices_by_site.items():
+            for device_id, device_data in devices.items():
+                _discover_device_sensors(
+                    coordinator,
+                    site_id,
+                    device_id,
+                    device_data,
+                    known_sensor_keys,
+                    entities=entities,
+                )
+                _discover_port_sensors(
+                    coordinator,
+                    site_id,
+                    device_id,
+                    device_data,
+                    known_sensor_keys,
+                    entities=entities,
+                )
+                _discover_outlet_sensors(
+                    coordinator,
+                    site_id,
+                    device_id,
+                    device_data,
+                    known_sensor_keys,
+                    entities=entities,
+                )
+                entities.extend(
+                    discover_storage_sensors(
                         coordinator,
                         site_id,
                         device_id,
                         device_data,
                         known_sensor_keys,
-                        entities=entities,
                     )
-                    _discover_port_sensors(
-                        coordinator,
-                        site_id,
-                        device_id,
-                        device_data,
-                        known_sensor_keys,
-                        entities=entities,
-                    )
-                    _discover_outlet_sensors(
-                        coordinator,
-                        site_id,
-                        device_id,
-                        device_data,
-                        known_sensor_keys,
-                        entities=entities,
-                    )
-                    entities.extend(
-                        discover_storage_sensors(
-                            coordinator,
-                            site_id,
-                            device_id,
-                            device_data,
-                            known_sensor_keys,
-                        )
-                    )
+                )
 
         # Add site-level client count sensors
         namespace = resolve_console_namespace(config_entry)
-        clients_by_site = coordinator.data.get("clients", {})
-        if isinstance(clients_by_site, dict):
-            for site_id in clients_by_site:
-                for site_desc in SITE_CLIENT_SENSOR_TYPES:
-                    site_key = (site_id, site_desc.key)
-                    if site_key not in known_sensor_keys:
-                        unique_id = async_migrate_site_entity(
-                            hass,
-                            config_entry,
-                            "sensor",
-                            namespace,
-                            site_id,
-                            suffix=site_desc.key,
-                        )
-                        if unique_id is None:
-                            continue
-                        entity = UnifiSiteClientSensor(
-                            coordinator=coordinator,
-                            description=site_desc,
-                            site_id=site_id,
-                            unique_id=unique_id,
-                        )
-                        known_sensor_keys.add(site_key)
-                        entities.append(entity)
+        clients_by_site = section_by_site(coordinator.data, "clients") or {}
+        for site_id in clients_by_site:
+            for site_desc in SITE_CLIENT_SENSOR_TYPES:
+                site_key = (site_id, site_desc.key)
+                if site_key not in known_sensor_keys:
+                    unique_id = async_migrate_site_entity(
+                        hass,
+                        config_entry,
+                        "sensor",
+                        namespace,
+                        site_id,
+                        suffix=site_desc.key,
+                    )
+                    if unique_id is None:
+                        continue
+                    entity = UnifiSiteClientSensor(
+                        coordinator=coordinator,
+                        description=site_desc,
+                        site_id=site_id,
+                        unique_id=unique_id,
+                    )
+                    known_sensor_keys.add(site_key)
+                    entities.append(entity)
 
         # Add site-level internet activity rolling-window sensors
         entities.extend(
@@ -1419,24 +1413,19 @@ async def async_setup_entry(
         )
 
         # Add per-WiFi-network connected client count sensors
-        wifi_by_site = coordinator.data.get("wifi", {})
-        if isinstance(wifi_by_site, dict):
-            for site_id, wifi_networks in wifi_by_site.items():
-                if not isinstance(wifi_networks, dict):
-                    continue
-                for wifi_id, wifi_data in wifi_networks.items():
-                    if not isinstance(wifi_data, dict):
-                        continue
-                    w_key = (site_id, wifi_id, "wifi_clients")
-                    if w_key not in known_sensor_keys:
-                        known_sensor_keys.add(w_key)
-                        entities.append(
-                            UnifiWifiClientCountSensor(
-                                coordinator=coordinator,
-                                site_id=site_id,
-                                wifi_id=wifi_id,
-                            )
+        wifi_by_site = section_by_site(coordinator.data, "wifi") or {}
+        for site_id, wifi_networks in wifi_by_site.items():
+            for wifi_id in wifi_networks:
+                w_key = (site_id, wifi_id, "wifi_clients")
+                if w_key not in known_sensor_keys:
+                    known_sensor_keys.add(w_key)
+                    entities.append(
+                        UnifiWifiClientCountSensor(
+                            coordinator=coordinator,
+                            site_id=site_id,
+                            wifi_id=wifi_id,
                         )
+                    )
 
         # Add UniFi Protect sensors
         _discover_protect_sensors(coordinator, known_sensor_keys, entities)
@@ -1466,21 +1455,12 @@ async def async_setup_entry(
 
     # Clean up stale port entities from previous runs
     created_uids = {getattr(e, "unique_id", None) for e in initial_entities}
-    snapshot: Mapping[str, Any] = coordinator.data
-    devices_by_site = snapshot.get("devices", {}) if isinstance(snapshot, dict) else {}
-    known_device_ids = (
-        {
-            device_id
-            for devices in devices_by_site.values()
-            if isinstance(devices, dict)
-            for device_id, device_data in devices.items()
-            if isinstance(device_id, str)
-            and device_id
-            and isinstance(device_data, dict)
-        }
-        if isinstance(devices_by_site, dict)
-        else set()
-    )
+    known_device_ids = {
+        device_id
+        for devices in (section_by_site(coordinator.data, "devices") or {}).values()
+        for device_id in devices
+        if isinstance(device_id, str) and device_id
+    }
     ent_reg = er.async_get(hass)
     stale = [
         entry
@@ -1531,12 +1511,10 @@ class UnifiInsightsSensor(UnifiInsightsEntity, SensorEntity):
             "ac_power_consumption",
             "ac_power_budget",
         ]:
-            device = (
-                self.coordinator.data["devices"]
-                .get(self._site_id, {})
-                .get(self._device_id)
+            device = network_device(
+                self.coordinator.data, self._site_id, self._device_id
             )
-            if not device:
+            if not device or not isinstance(device, dict):
                 _LOGGER.debug(
                     "No device data available for %s sensor (device %s in site %s)",
                     self.entity_description.key,
@@ -1547,11 +1525,10 @@ class UnifiInsightsSensor(UnifiInsightsEntity, SensorEntity):
             value = self.entity_description.value_fn(device)  # type: ignore[misc]
         else:
             # For all other sensors, use stats data
-            if (
-                not self.coordinator.data["stats"]
-                .get(self._site_id, {})
-                .get(self._device_id)
-            ):
+            stats = network_device_stats(
+                self.coordinator.data, self._site_id, self._device_id
+            )
+            if not stats or not isinstance(stats, dict):
                 _LOGGER.debug(
                     "No stats available for sensor %s (device %s in site %s)",
                     self.entity_description.key,
@@ -1560,7 +1537,6 @@ class UnifiInsightsSensor(UnifiInsightsEntity, SensorEntity):
                 )
                 return None
 
-            stats = self.coordinator.data["stats"][self._site_id][self._device_id]
             value = self.entity_description.value_fn(stats)  # type: ignore[misc]
 
         _LOGGER.debug(
@@ -1628,12 +1604,10 @@ class UnifiPortSensor(UnifiInsightsEntity, SensorEntity):
 
     def _stats_section(self, section: str) -> dict[Any, Any] | None:
         """Return one per-port section of this device's stats, if a dict."""
-        stats = (
-            self.coordinator.data.get("stats", {})
-            .get(self._site_id, {})
-            .get(self._device_id, {})
+        stats = network_device_stats(
+            self.coordinator.data, self._site_id, self._device_id
         )
-        value = stats.get(section) if isinstance(stats, dict) else None
+        value = stats.get(section) if stats is not None else None
         return value if isinstance(value, dict) else None
 
     def _stats_port_entry(self, section: str) -> Any:
@@ -1779,12 +1753,10 @@ class UnifiPortSensor(UnifiInsightsEntity, SensorEntity):
 
     def _get_port_rate_value(self) -> StateType:
         """Get the computed port byte rate as bits/sec."""
-        stats = (
-            self.coordinator.data.get("stats", {})
-            .get(self._site_id, {})
-            .get(self._device_id, {})
+        stats = network_device_stats(
+            self.coordinator.data, self._site_id, self._device_id
         )
-        if not isinstance(stats, dict):
+        if stats is None:
             return None
 
         port_rates = stats.get("port_rates")
@@ -1867,12 +1839,10 @@ class UnifiOutletSensor(UnifiInsightsEntity, SensorEntity):
 
     def _find_outlet_data(self) -> dict[str, Any] | None:
         """Find outlet data for this sensor's outlet index."""
-        device_data = (
-            self.coordinator.data.get("devices", {})
-            .get(self._site_id, {})
-            .get(self._device_id, {})
+        device_data = network_device(
+            self.coordinator.data, self._site_id, self._device_id
         )
-        if not isinstance(device_data, dict):
+        if device_data is None:
             return None
         outlets = device_data.get("outlet_table", [])
         if not isinstance(outlets, list):
@@ -2067,8 +2037,8 @@ class UnifiSiteClientSensor(UnifiSiteEntity, SensorEntity):
     @property
     def native_value(self) -> StateType:
         """Return the client count."""
-        clients = self.coordinator.data.get("clients", {}).get(self._site_id, {})
-        if not isinstance(clients, dict):
+        clients = site_section(self.coordinator.data, "clients", self._site_id)
+        if clients is None:
             return 0
         return self.entity_description.value_fn(clients)  # type: ignore[misc]
 
@@ -2106,12 +2076,10 @@ class UnifiWifiClientCountSensor(
 
     def _get_wifi_data(self) -> dict[str, Any]:
         """Get WiFi data for this network from the coordinator."""
-        result: dict[str, Any] = (
-            self.coordinator.data.get("wifi", {})
-            .get(self._site_id, {})
-            .get(self._wifi_id, {})
+        result = rule_record(
+            self.coordinator.data, "wifi", self._site_id, self._wifi_id
         )
-        return result
+        return result if isinstance(result, dict) else {}
 
     @property
     def available(self) -> bool:
@@ -2800,20 +2768,13 @@ class UnifiVoucherSensorEntityDescription(SensorEntityDescription):
     attrs_fn: Callable[[Any, str], dict[str, Any]] | None = None
 
 
-def _get_latest_record(data: object, site_id: str) -> dict[str, Any] | None:
+def _get_latest_record(data: Mapping[str, Any], site_id: str) -> dict[str, Any] | None:
     """Safely return latest voucher record for a site."""
-    if not isinstance(data, Mapping):
-        return None
-    latest_vouchers = data.get("latest_vouchers")
-    if not isinstance(latest_vouchers, Mapping):
-        return None
-    record = latest_vouchers.get(site_id)
-    if not isinstance(record, Mapping):
-        return None
-    return dict(record)
+    record = latest_voucher(data, site_id)
+    return dict(record) if record is not None else None
 
 
-def _latest_code_value(data: object, site_id: str) -> StateType:
+def _latest_code_value(data: Mapping[str, Any], site_id: str) -> StateType:
     """Return latest voucher code as string, or None."""
     record = _get_latest_record(data, site_id)
     if record is None:
@@ -2822,7 +2783,7 @@ def _latest_code_value(data: object, site_id: str) -> StateType:
     return str(code) if code is not None else None
 
 
-def _latest_expiration_value(data: object, site_id: str) -> datetime | None:
+def _latest_expiration_value(data: Mapping[str, Any], site_id: str) -> datetime | None:
     """Return latest voucher expiration datetime, or None."""
     record = _get_latest_record(data, site_id)
     if record is None:
@@ -2842,7 +2803,7 @@ def _active_vouchers_value(data: object, site_id: str) -> int:
     return count_active_vouchers(site_vouchers)
 
 
-def _latest_attributes(data: object, site_id: str) -> dict[str, Any]:
+def _latest_attributes(data: Mapping[str, Any], site_id: str) -> dict[str, Any]:
     """Return attributes of the latest generated voucher."""
     record = _get_latest_record(data, site_id)
     if record is None:

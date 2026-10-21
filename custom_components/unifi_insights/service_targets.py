@@ -38,7 +38,12 @@ from .const import (
     DOMAIN,
     MOBILITY_DEVICE_PREFIX,
 )
-from .data_transforms import is_doorbell_camera_model, protect_collection
+from .data_transforms import (
+    is_doorbell_camera_model,
+    protect_collection,
+    section_by_site,
+    site_section,
+)
 
 # CarrierFabricData is imported inside functions: __init__.py imports this
 # module while it loads, before the class exists.
@@ -282,52 +287,31 @@ def _entry_has_device(
     data = _coord_data(entry)
     if data is None:
         return True
-    devices = data.get("devices")
-    if not isinstance(devices, dict):
-        return True
     if site_id is not None:
-        site_devices = devices.get(site_id)
-        if not isinstance(site_devices, dict):
-            return True
-        return device_id in site_devices
-    return any(
-        isinstance(devs, dict) and device_id in devs for devs in devices.values()
-    )
+        site_devices = site_section(data, "devices", site_id)
+        return site_devices is None or device_id in site_devices
+    devices = section_by_site(data, "devices")
+    return devices is None or any(device_id in devs for devs in devices.values())
 
 
 def _entry_owns_device(
     entry: UnifiInsightsConfigEntry, site_id: str | None, device_id: str
 ) -> bool:
     """Return whether the entry's loaded data positively contains the device."""
-    devices = _coord_section(entry, "devices")
-    if devices is None:
-        return False
-    if site_id:
-        site_devices = devices.get(site_id)
-        if isinstance(site_devices, dict) and device_id in site_devices:
-            return True
-    return any(
-        isinstance(devs, dict) and device_id in devs for devs in devices.values()
-    )
+    devices = section_by_site(_coord_data(entry) or {}, "devices") or {}
+    if site_id and device_id in devices.get(site_id, {}):
+        return True
+    return any(device_id in devs for devs in devices.values())
 
 
 def _entry_owns_client(
     entry: UnifiInsightsConfigEntry, site_id: str | None, client_id: str
 ) -> bool:
     """Return whether the entry's loaded data positively contains the client."""
-    clients = _coord_section(entry, "clients")
-    if clients is None:
-        return False
-    if site_id:
-        site_clients = clients.get(site_id)
-        if isinstance(site_clients, dict) and _client_records_match(
-            site_clients, client_id
-        ):
-            return True
-    return any(
-        isinstance(cls, dict) and _client_records_match(cls, client_id)
-        for cls in clients.values()
-    )
+    clients = section_by_site(_coord_data(entry) or {}, "clients") or {}
+    if site_id and _client_records_match(clients.get(site_id, {}), client_id):
+        return True
+    return any(_client_records_match(cls, client_id) for cls in clients.values())
 
 
 def _entry_has_client(
@@ -337,17 +321,12 @@ def _entry_has_client(
     data = _coord_data(entry)
     if data is None:
         return True
-    clients = data.get("clients")
-    if not isinstance(clients, dict):
-        return True
     if site_id is not None:
-        site_clients = clients.get(site_id)
-        if not isinstance(site_clients, dict):
-            return True
-        return _client_records_match(site_clients, client_id)
-    return any(
-        isinstance(cls, dict) and _client_records_match(cls, client_id)
-        for cls in clients.values()
+        site_clients = site_section(data, "clients", site_id)
+        return site_clients is None or _client_records_match(site_clients, client_id)
+    clients = section_by_site(data, "clients")
+    return clients is None or any(
+        _client_records_match(cls, client_id) for cls in clients.values()
     )
 
 
@@ -424,14 +403,11 @@ def _resolve_native_client_id(
     cache: UnifiInsightsFacadeCoordinator, site_id: str, client_id: str
 ) -> str:
     """Resolve a target client ID or MAC to the native cached client ID."""
-    data: Mapping[str, Any] = cache.data
-    if isinstance(data, dict):
-        clients = data.get("clients", {})
-        site_clients = clients.get(site_id, {}) if isinstance(clients, dict) else {}
-        if isinstance(site_clients, dict) and client_id not in site_clients:
-            for native_id, record in site_clients.items():
-                if _client_records_match({native_id: record}, client_id):
-                    return str(native_id)
+    site_clients = site_section(cache.data, "clients", site_id)
+    if site_clients is not None and client_id not in site_clients:
+        for native_id, record in site_clients.items():
+            if _client_records_match({native_id: record}, client_id):
+                return str(native_id)
     return client_id
 
 
@@ -654,16 +630,14 @@ def _resolve_network_device_id(
     if ent_entry is not None and ent_entry.unique_id:
         candidate_entries = [resolved_entry] if resolved_entry else entries
         for entry in candidate_entries:
-            devices_by_site = _coord_section(entry, "devices")
-            if isinstance(devices_by_site, dict):
-                for s, s_devs in devices_by_site.items():
-                    if isinstance(s_devs, dict):
-                        for d in s_devs:
-                            prefix = f"{s}_{d}"
-                            if ent_entry.unique_id == prefix or (
-                                ent_entry.unique_id.startswith(f"{prefix}_")
-                            ):
-                                return d, s, entry
+            devices_by_site = section_by_site(_coord_data(entry) or {}, "devices")
+            for s, s_devs in (devices_by_site or {}).items():
+                for d in s_devs:
+                    prefix = f"{s}_{d}"
+                    if ent_entry.unique_id == prefix or (
+                        ent_entry.unique_id.startswith(f"{prefix}_")
+                    ):
+                        return d, s, entry
         parts = ent_entry.unique_id.split("_")
         if len(parts) > 1:
             return parts[1], parts[0], resolved_entry
@@ -676,13 +650,12 @@ def _resolve_network_device_id(
                 continue
 
             for entry in candidate_entries:
-                devices_by_site = _coord_section(entry, "devices")
-                if isinstance(devices_by_site, dict):
-                    for s, s_devs in devices_by_site.items():
-                        if ident.startswith(f"{s}_"):
-                            d = ident[len(s) + 1 :]
-                            if isinstance(s_devs, dict) and d in s_devs:
-                                return d, s, entry
+                devices_by_site = section_by_site(_coord_data(entry) or {}, "devices")
+                for s, s_devs in (devices_by_site or {}).items():
+                    if ident.startswith(f"{s}_"):
+                        d = ident[len(s) + 1 :]
+                        if d in s_devs:
+                            return d, s, entry
 
             if site_id and ident.startswith(f"{site_id}_"):
                 return ident[len(site_id) + 1 :], site_id, resolved_entry
@@ -1477,18 +1450,12 @@ def resolve_network_device_call(
     cache = entry.runtime_data.coordinator
     device_id = str(resolved_id)
 
-    data: Mapping[str, Any] = cache.data
-    if not site_id and isinstance(data, dict):
-        devices_by_site = data.get("devices")
-        if isinstance(devices_by_site, dict):
-            site_id = next(
-                (
-                    s
-                    for s, s_devs in devices_by_site.items()
-                    if isinstance(s_devs, dict) and device_id in s_devs
-                ),
-                None,
-            )
+    if not site_id:
+        devices_by_site = section_by_site(cache.data, "devices") or {}
+        site_id = next(
+            (s for s, s_devs in devices_by_site.items() if device_id in s_devs),
+            None,
+        )
 
     if not site_id:
         if action == "restart":
