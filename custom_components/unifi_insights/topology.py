@@ -656,7 +656,8 @@ def build_site_topology(
     ``node_key`` is the entry's secret for opaque MAC-derived node ids; it must
     stay the same across calls for node ids to be stable.
     """
-    devices = site_section(data, "devices", site_id) or {}
+    site_devices = site_section(data, "devices", site_id)
+    devices = site_devices or {}
     site_facts = site_network_facts(data, site_id)
     clients = site_section(data, "clients", site_id) or {}
     links = site_section(data, "client_links", site_id) or {}
@@ -718,8 +719,7 @@ def build_site_topology(
             unresolved.append({"node_id": node_id, "reason": client_link})
 
     issues: list[TopologyIssue] = []
-    by_site = data.get("devices")
-    if not devices_available or not isinstance(by_site, dict) or site_id not in by_site:
+    if not devices_available or site_devices is None:
         issues.append({"code": "devices_unavailable", "severity": "error"})
     if devices_by_node and not any(
         isinstance(device.get("topology"), dict) for device in devices_by_node.values()

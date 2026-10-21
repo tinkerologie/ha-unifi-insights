@@ -24,9 +24,11 @@ from .console_identity import (
 from .const import DOMAIN
 from .data_transforms import (
     client_connection_type,
+    network_device,
     normalize_nvr_storage,
     site_device_facts,
     site_network_facts,
+    site_record,
 )
 from .topology import first_present, site_display_name
 
@@ -164,9 +166,7 @@ def build_site_health_snapshot(
     devices_available: bool,
 ) -> dict[str, Any]:
     """Build a compact site-health payload for one site."""
-    sites = as_dict(data.get("sites"))
-    site = sites.get(site_id)
-    if not isinstance(site, dict):
+    if site_record(data, site_id) is None:
         return build_unavailable_site_health(entry_id, site_id, "site_unavailable")
 
     devices_by_site = as_dict(data.get("devices"))
@@ -830,15 +830,16 @@ def build_internet_activity_snapshot(
     # Gateway WAN health/rates from the site gateway of the published read
     # model: its online state and canonical uplink bits/s, the same values
     # the gateway's own sensors show.
-    devices = as_dict(as_dict(data.get("devices")).get(site_id))
     site_facts = site_network_facts(data, site_id)
     gateway_id = site_facts.gateway_id if site_facts is not None else None
-    gateway = devices.get(gateway_id) if gateway_id is not None else None
+    gateway = (
+        network_device(data, site_id, gateway_id) if gateway_id is not None else None
+    )
 
     throughput = None
     wan_links: list[dict[str, Any]] = []
     gateway_online = False
-    if gateway_id is not None and isinstance(gateway, dict):
+    if gateway_id is not None and gateway is not None:
         facts = site_device_facts(site_facts, gateway_id, gateway)
         throughput = {
             "tx_bps": bits_per_second_to_int(facts.tx_bps),

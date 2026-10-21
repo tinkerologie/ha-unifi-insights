@@ -42,7 +42,7 @@ from .dashboard_snapshots import (
     build_unavailable_site_health,
     build_unavailable_timeline,
 )
-from .data_transforms import NETWORK_FACTS_KEY
+from .data_transforms import NETWORK_FACTS_KEY, site_section
 from .device_tracker import _client_tracker_entries, _mac_from_unique_id
 from .entity import get_field
 from .topology import (
@@ -183,9 +183,8 @@ def _ha_device_ids(
     deprecated DeviceRegistry.async_get_device path (removed in 2027.8).
     """
     registry = dr.async_get(hass)
-    devices = data.get("devices", {}).get(site_id, {})
     result: dict[str, str] = {}
-    for device_id in devices if isinstance(devices, dict) else ():
+    for device_id in site_section(data, "devices", site_id) or ():
         device = async_get_device_entry(
             registry, (DOMAIN, f"{site_id}_{device_id}"), entry_id
         )
@@ -226,19 +225,18 @@ def _find_node(
     names no node. A WAN's raw id is its gateway's device id and its record is
     the WAN record.
     """
+    by_section = {
+        section: site_section(data, section, site_id) or {}
+        for _, section in _NODE_SECTIONS
+    }
     matches: list[tuple[NodeKind, str, dict[str, Any]]] = []
     for prefix, section in _NODE_SECTIONS:
-        records = as_dict(as_dict(data.get(section)).get(site_id))
-        for raw_id, record in records.items():
-            if (
-                isinstance(record, dict)
-                and opaque_node_id(prefix, node_key, raw_id) == node_id
-            ):
+        for raw_id, record in by_section[section].items():
+            if opaque_node_id(prefix, node_key, raw_id) == node_id:
                 kind = device_kind(record) if section == "devices" else "client"
                 matches.append((kind, raw_id, record))
-    devices = as_dict(as_dict(data.get("devices")).get(site_id))
-    for raw_id, record in devices.items():
-        if not isinstance(record, dict) or device_kind(record) != "gateway":
+    for raw_id, record in by_section["devices"].items():
+        if device_kind(record) != "gateway":
             continue
         wans = record.get("wans")
         for wan in wans if isinstance(wans, list) else ():
