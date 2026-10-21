@@ -67,6 +67,8 @@ Deviations found on the way:
 
 - **Copying lookups stay off hot paths.** `protect_collection`, `site_section` and `section_by_site` return new dicts of the records published as dicts. They are not used on per-entity, per-update paths (the device tracker's client read and the Wake button's name lookup stay allocation-free) or on the WebSocket identity-gating inputs, which must see the owners' objects.
 - **Facade accessors removed.** The facade's `get_site`, `get_device` and `get_device_stats` (#398) and its per-site `*_available` methods (#401) are gone. The owner-level `device_available`, `config_available`, `protect_available`, `innerspace_available` and `network_available` properties stay: the availability capture, the WebSocket API and diagnostics read them.
+- **Sections without a lookup.** `innerspace`, `internet_activity`, `vpn_connections` and the other sections that are read whole, not by record, have no lookup; readers take them with `.get()`.
+- **`site_manager` is rebuilt.** `build_facade_data` builds the `site_manager` section anew on every rebuild instead of passing an owner's object through, so its identity changes with every snapshot. Nothing gates on it today.
 - **Diagnostics unchanged.** `diagnostics.py` keeps dumping the sections as published, without the lookups, so its output and redaction (ADR-006) did not change.
 
 ## Alternatives considered
