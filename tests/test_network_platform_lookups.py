@@ -576,7 +576,6 @@ async def test_voucher_readers_need_the_latest_voucher(
 ) -> None:
     """The voucher QR image and sensors read no voucher without a record."""
     coordinator = _coordinator(with_latest_voucher(facade_data(), SITE, VOUCHER))
-    coordinator.vouchers_available.return_value = True
     entity = image.UnifiVoucherQrCodeImage(hass, coordinator, SITE, unique_id="uid")
     entity.hass = hass
     assert entity._current_payload() == VOUCHER["code"]

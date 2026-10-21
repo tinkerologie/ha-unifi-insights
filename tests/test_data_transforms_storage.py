@@ -33,6 +33,7 @@ from custom_components.unifi_insights.sensor import UnifiProtectSensor
 from custom_components.unifi_insights.sensor import (
     async_setup_entry as setup_sensors,
 )
+from tests.fixtures.facade_data import set_availability
 from tests.fixtures.protect_ws import FakeProtectWebSocket
 
 if TYPE_CHECKING:
@@ -424,9 +425,9 @@ async def test_conditional_discovery_and_availability(
     assert binaries[0].is_on is False
     assert binaries[1].is_on is True
     assert not used.available
-    mock_coordinator.protect_available = False
+    set_availability(mock_coordinator, protect=False)
     assert all(not entity.available for entity in binaries + capacities)
-    mock_coordinator.protect_available = True
+    set_availability(mock_coordinator, protect=True)
     nvr["state"] = "DISCONNECTED"
     assert all(not entity.available for entity in binaries + capacities)
     remove_listener = mock_coordinator.async_add_listener.return_value

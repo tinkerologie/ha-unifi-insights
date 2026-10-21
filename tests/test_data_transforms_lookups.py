@@ -8,21 +8,26 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from custom_components.unifi_insights.coordinators.facade import capture_availability
 from custom_components.unifi_insights.data_transforms import (
     latest_voucher,
     network_client,
     network_device,
     network_device_stats,
+    owner_available,
     protect_collection,
     protect_device,
     rule_record,
     section_by_site,
     site_record,
     site_section,
+    site_section_available,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
+
+    from custom_components.unifi_insights.data_transforms import AvailabilityOwner
 
 SITE = "site-1"
 DEVICE = {"id": "dev-1", "name": "Switch"}
@@ -269,3 +274,116 @@ def test_section_by_site_reads_any_mapping() -> None:
 def test_section_by_site_not_loaded_is_none(data: Any, section: str) -> None:
     """A missing or malformed section is None, never empty."""
     assert section_by_site(data, section) is None
+
+
+# --- Captured availability ---------------------------------------------------
+
+OWNERS = ("device", "config", "protect", "innerspace", "network")
+
+
+def _captured(
+    *, config: bool = True, failed: frozenset[tuple[str, str]] = frozenset()
+) -> dict[str, Any]:
+    """Return a snapshot whose availability the facade captured."""
+    return {
+        "availability": capture_availability(
+            device=True,
+            config=config,
+            protect=False,
+            innerspace=True,
+            network=False,
+            failed_sections=failed,
+            site_ids=(SITE,),
+        )
+    }
+
+
+@pytest.mark.parametrize("owner", OWNERS)
+def test_owner_available_reads_the_capture(owner: AvailabilityOwner) -> None:
+    """Each owner reads what the facade captured for it."""
+    data = _captured()
+
+    assert owner_available(data, owner) is data["availability"][owner]
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param({}, id="no_section"),
+        pytest.param(None, id="no_data"),
+        pytest.param({"availability": ["device"]}, id="malformed_section"),
+        pytest.param({"availability": {}}, id="no_owner"),
+        pytest.param({"availability": {"device": "no"}}, id="malformed_owner"),
+    ],
+)
+def test_owner_available_without_a_capture_is_available(data: Any) -> None:
+    """A missing or malformed capture reads as available and never raises."""
+    assert owner_available(data, "device") is True
+
+
+@pytest.mark.parametrize(
+    ("data", "site_id", "section", "expected"),
+    [
+        pytest.param(_captured(), SITE, "wifi", True, id="fetched"),
+        pytest.param(
+            _captured(failed=frozenset({("wifi", SITE)})),
+            SITE,
+            "wifi",
+            False,
+            id="failed_section",
+        ),
+        pytest.param(
+            _captured(failed=frozenset({("wifi", SITE)})),
+            SITE,
+            "vouchers",
+            True,
+            id="other_section_of_failed_site",
+        ),
+        pytest.param(
+            _captured(config=False), SITE, "vouchers", False, id="config_failed"
+        ),
+        pytest.param(_captured(), "unknown", "wifi", True, id="unknown_site"),
+        pytest.param(
+            _captured(config=False),
+            "unknown",
+            "wifi",
+            False,
+            id="unknown_site_config_failed",
+        ),
+        pytest.param(
+            _captured(config=False),
+            SITE,
+            "unknown",
+            False,
+            id="unknown_section_config_failed",
+        ),
+        pytest.param({}, SITE, "wifi", True, id="no_section"),
+        pytest.param(None, SITE, "wifi", True, id="no_data"),
+        pytest.param(
+            {"availability": {"config": False, "sites": [SITE]}},
+            SITE,
+            "wifi",
+            False,
+            id="malformed_sites",
+        ),
+        pytest.param(
+            {"availability": {"config": False, "sites": {SITE: "wifi"}}},
+            SITE,
+            "wifi",
+            False,
+            id="malformed_site",
+        ),
+        pytest.param(
+            {"availability": {"config": False, "sites": {SITE: {"wifi": 1}}}},
+            SITE,
+            "wifi",
+            False,
+            id="malformed_value",
+        ),
+    ],
+)
+def test_site_section_available(
+    data: Any, site_id: str, section: str, *, expected: bool
+) -> None:
+    """A listed section reads its capture; anything else, the config owner's."""
+    assert site_section_available(data, site_id, section) is expected

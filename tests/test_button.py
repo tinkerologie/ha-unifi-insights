@@ -54,6 +54,7 @@ from custom_components.unifi_insights.data_transforms import (
     get_port_label,
 )
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
+from tests.fixtures.facade_data import set_availability
 from tests.fixtures.http_fakes import FakeJsonResponse, FakeQueuedSession
 
 if TYPE_CHECKING:
@@ -326,7 +327,7 @@ class TestUnifiClientReconnectButton:
             site_id="site1",
             client_id="client1",
         )
-        mock_coordinator.device_available = False
+        set_availability(mock_coordinator, device=False)
 
         assert button.available is False
 
@@ -1387,7 +1388,7 @@ class TestUnifiInsightsPoePowerCycleButton:
         self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Test button availability tracks port presence and PoE enablement."""
-        mock_coordinator.device_available = True
+        set_availability(mock_coordinator, device=True)
         button = UnifiInsightsPoePowerCycleButton(
             coordinator=mock_coordinator,
             site_id="site1",
@@ -1672,7 +1673,6 @@ class TestGenerateVoucherButton:
             "sites": {"default": {"desc": "Default"}},
             "vouchers": {"default": []},
         }
-        coord.vouchers_available = MagicMock(return_value=True)
         autospec_command_owners(coord)
         coord.config_coordinator.get_voucher_settings.return_value = VoucherSettings(
             duration_minutes=1440,
@@ -1703,7 +1703,7 @@ class TestGenerateVoucherButton:
             "default",
             unique_id="console_default_generate_voucher",
         )
-        mock_coordinator.vouchers_available.return_value = False
+        set_availability(mock_coordinator, failed_sections={("vouchers", "default")})
         assert button.available is False
 
     async def test_async_press_success(self, mock_coordinator):
@@ -2116,7 +2116,7 @@ class TestUnifiClientWakeButton:
         coordinator = MagicMock()
         coordinator.hass = hass
         coordinator.data = {"clients": {}}
-        coordinator.device_available = device_available
+        set_availability(coordinator, device=device_available)
 
         button = UnifiClientWakeButton(
             coordinator, "00:11:22:33:44:55", site_id="site1"

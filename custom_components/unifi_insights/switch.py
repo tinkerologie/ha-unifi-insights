@@ -41,11 +41,13 @@ from .data_transforms import (
     get_site_gateway_id,
     network_client,
     network_device,
+    owner_available,
     protect_collection,
     protect_device,
     rule_record,
     section_by_site,
     site_record,
+    site_section_available,
 )
 from .entity import (
     UnifiAccessEntity,
@@ -60,7 +62,7 @@ from .entity import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -118,12 +120,12 @@ def _stale_switch_unique_ids(
     (``sensor.py``), generalised to a table-driven
     ``(unique_id_suffix, data_key, availability_fn)`` spec.
 
-    The three switch types do **not** share an availability predicate:
-    ``config_available`` is global while ``firewall_available(site_id)`` is
-    site-scoped, so each call site passes its own ``availability_fn``.
-    Hard-coding one predicate for all three would prune, e.g., every
-    firewall-rule entity during a firewall-only degradation while
-    ``config_available`` stays True.
+    The three switch types do **not** share an availability predicate: the
+    config owner's availability is global while a site's ``firewall_rules``
+    availability is site-scoped, so each call site passes its own
+    ``availability_fn``. Hard-coding one predicate for all three would prune,
+    e.g., every firewall-rule entity during a firewall-only degradation while
+    the config owner stays available.
 
     A site is only "genuinely fetched" -- and therefore eligible for pruning
     -- when all of these hold for it: ``availability_fn(site_id)`` is True,
@@ -134,10 +136,10 @@ def _stale_switch_unique_ids(
     The non-empty requirement matters because only firewall rules have a
     per-site failure signal. On a failed firewall fetch the coordinator
     records the site in ``_failed_sections`` and restores the *previous*
-    per-site data, so ``firewall_available(site_id)`` gates it out. Policy-
-    based routes and VPN clients have no equivalent: a transient per-site
-    failure stores ``{}`` for that site while the overall refresh succeeds
-    and ``config_available`` stays True. Without the non-empty check, one
+    per-site data, so the site's ``firewall_rules`` availability gates it out.
+    Policy-based routes and VPN clients have no equivalent: a transient
+    per-site failure stores ``{}`` for that site while the overall refresh
+    succeeds and the config owner stays available. Without the non-empty check, one
     timeout during startup would delete every route/VPN row for that site.
     """
     collections = coordinator.data.get(data_key)
@@ -161,7 +163,7 @@ def _stale_switch_unique_ids(
             # Policy-based routes and VPN clients have no per-site "fetched
             # successfully" signal: on a transient per-site fetch failure the
             # config coordinator stores `{}` for that site while the overall
-            # refresh still succeeds, so `config_available` stays True. An
+            # refresh still succeeds, so the config owner stays available. An
             # empty dict is therefore indistinguishable from "every object
             # was deleted", and treating it as the latter would delete every
             # row of this type for the site. The cost of this guard is that
@@ -215,8 +217,8 @@ def _prune_orphaned_switch_entities(
     port-sensor precedent. Dynamic discovery already re-adds an entity if the
     same id reappears; this only removes rows whose object is confirmed gone.
 
-    Deliberately excludes ``UnifiWifiSwitch`` (gated by
-    ``wifi_available(site_id)``), which has the identical orphan gap. Left as
+    Deliberately excludes ``UnifiWifiSwitch`` (gated by the site's ``wifi``
+    availability), which has the identical orphan gap. Left as
     a noted follow-up: deleting a WiFi network is rarer than deleting a route,
     rule, or VPN client, and keeping this first cleanup PR's blast radius
     small matters more than completeness.
@@ -228,49 +230,50 @@ def _prune_orphaned_switch_entities(
         if reg_entry.domain == "switch" and reg_entry.platform == DOMAIN
     ]
 
+    data = coordinator.data
     specs: tuple[
         tuple[str, str, Callable[[str], bool], Callable[[Any], bool] | None], ...
     ] = (
         (
             "_policy_based_route",
             "policy_based_routes",
-            lambda _site_id: coordinator.config_available,
+            lambda _site_id: owner_available(data, "config"),
             None,
         ),
         (
             "_firewall_rule",
             "firewall_rules",
-            coordinator.firewall_available,
+            lambda site_id: site_section_available(data, site_id, "firewall_rules"),
             None,
         ),
         (
             "_vpn_client",
             "vpn_clients",
-            lambda _site_id: coordinator.config_available,
+            lambda _site_id: owner_available(data, "config"),
             None,
         ),
         (
             "_port_forward",
             "port_forwards",
-            coordinator.port_forwards_available,
+            lambda site_id: site_section_available(data, site_id, "port_forwards"),
             None,
         ),
         (
             "_traffic_rule",
             "traffic_rules",
-            coordinator.traffic_rules_available,
+            lambda site_id: site_section_available(data, site_id, "traffic_rules"),
             None,
         ),
         (
             "_nat_rule",
             "nat_rules",
-            coordinator.nat_rules_available,
+            lambda site_id: site_section_available(data, site_id, "nat_rules"),
             is_predefined_nat_rule,
         ),
         (
             "_static_route",
             "static_routes",
-            coordinator.static_routes_available,
+            lambda site_id: site_section_available(data, site_id, "static_routes"),
             None,
         ),
     )
@@ -742,7 +745,9 @@ class UnifiClientBlockSwitch(
     @property
     def available(self) -> bool:
         """Return if switch is available."""
-        return bool(self.coordinator.device_available and self._get_client_data())
+        return bool(
+            owner_available(self.coordinator.data, "device") and self._get_client_data()
+        )
 
     @property
     def is_on(self) -> bool:
@@ -830,7 +835,8 @@ class UnifiWifiSwitch(
     def available(self) -> bool:
         """Return if switch is available."""
         return bool(
-            self.coordinator.wifi_available(self._site_id) and self._get_wifi_data()
+            site_section_available(self.coordinator.data, self._site_id, "wifi")
+            and self._get_wifi_data()
         )
 
     @property
@@ -992,7 +998,7 @@ class UnifiOutletSwitch(
     @property
     def available(self) -> bool:
         """Return True if switch is available."""
-        if not self.coordinator.device_available:
+        if not owner_available(self.coordinator.data, "device"):
             return False
         device_data = self._get_device_data()
         if not device_data or not is_device_serviceable(device_data):
@@ -1067,7 +1073,7 @@ class UnifiInsightsNetworkRuleSwitchEntityDescription(
     unique_id_suffix: str
     name_fields: tuple[str, ...]
     unnamed_translation_key: str
-    available_fn: Callable[[UnifiInsightsFacadeCoordinator, str], bool]
+    available_fn: Callable[[Mapping[str, Any], str], bool]
     command: Callable[[UnifiInsightsConfigCoordinator], RuleToggleCommand]
     attributes_fn: Callable[[dict[str, Any]], dict[str, Any]]
     is_hidden_fn: Callable[[dict[str, Any]], bool] | None = None
@@ -1135,8 +1141,8 @@ PORT_FORWARD_SWITCH = UnifiInsightsNetworkRuleSwitchEntityDescription(
     data_key="port_forwards",
     unique_id_suffix="port_forward",
     name_fields=("name",),
-    available_fn=lambda coordinator, site_id: coordinator.port_forwards_available(
-        site_id
+    available_fn=lambda data, site_id: site_section_available(
+        data, site_id, "port_forwards"
     ),
     command=lambda owner: owner.async_set_port_forward_enabled,
     attributes_fn=_port_forward_attributes,
@@ -1150,8 +1156,8 @@ TRAFFIC_RULE_SWITCH = UnifiInsightsNetworkRuleSwitchEntityDescription(
     data_key="traffic_rules",
     unique_id_suffix="traffic_rule",
     name_fields=("description",),
-    available_fn=lambda coordinator, site_id: coordinator.traffic_rules_available(
-        site_id
+    available_fn=lambda data, site_id: site_section_available(
+        data, site_id, "traffic_rules"
     ),
     command=lambda owner: owner.async_set_traffic_rule_enabled,
     attributes_fn=_traffic_rule_attributes,
@@ -1165,7 +1171,9 @@ NAT_RULE_SWITCH = UnifiInsightsNetworkRuleSwitchEntityDescription(
     data_key="nat_rules",
     unique_id_suffix="nat_rule",
     name_fields=("description",),
-    available_fn=lambda coordinator, site_id: coordinator.nat_rules_available(site_id),
+    available_fn=lambda data, site_id: site_section_available(
+        data, site_id, "nat_rules"
+    ),
     command=lambda owner: owner.async_set_nat_rule_enabled,
     attributes_fn=_nat_rule_attributes,
     is_hidden_fn=is_predefined_nat_rule,
@@ -1182,8 +1190,8 @@ STATIC_ROUTE_SWITCH = UnifiInsightsNetworkRuleSwitchEntityDescription(
     data_key="static_routes",
     unique_id_suffix="static_route",
     name_fields=("name",),
-    available_fn=lambda coordinator, site_id: coordinator.static_routes_available(
-        site_id
+    available_fn=lambda data, site_id: site_section_available(
+        data, site_id, "static_routes"
     ),
     command=lambda owner: owner.async_set_static_route_enabled,
     attributes_fn=_static_route_attributes,
@@ -1289,7 +1297,9 @@ FIREWALL_RULE_SWITCH = UnifiInsightsNetworkRuleSwitchEntityDescription(
     data_key="firewall_rules",
     unique_id_suffix="firewall_rule",
     name_fields=("name",),
-    available_fn=lambda coordinator, site_id: coordinator.firewall_available(site_id),
+    available_fn=lambda data, site_id: site_section_available(
+        data, site_id, "firewall_rules"
+    ),
     command=lambda owner: owner.async_set_firewall_rule_enabled,
     attributes_fn=_firewall_rule_attributes,
     is_hidden_fn=_is_predefined_firewall_rule,
@@ -1312,7 +1322,7 @@ POLICY_BASED_ROUTE_SWITCH = UnifiInsightsNetworkRuleSwitchEntityDescription(
     data_key="policy_based_routes",
     unique_id_suffix="policy_based_route",
     name_fields=("description", "name"),
-    available_fn=lambda coordinator, _site_id: coordinator.config_available,
+    available_fn=lambda data, _site_id: owner_available(data, "config"),
     command=lambda owner: owner.async_set_policy_based_route_enabled,
     attributes_fn=_policy_based_route_attributes,
     strict_enabled=False,
@@ -1336,7 +1346,7 @@ VPN_CLIENT_SWITCH = UnifiInsightsNetworkRuleSwitchEntityDescription(
     data_key="vpn_clients",
     unique_id_suffix="vpn_client",
     name_fields=("name",),
-    available_fn=lambda coordinator, _site_id: coordinator.config_available,
+    available_fn=lambda data, _site_id: owner_available(data, "config"),
     command=lambda owner: owner.async_set_vpn_client_enabled,
     attributes_fn=_vpn_client_attributes,
     strict_enabled=False,
@@ -1428,7 +1438,7 @@ class UnifiInsightsNetworkRuleSwitch(
         rule = self._get_rule_data()
         if desc.is_hidden_fn is not None and desc.is_hidden_fn(rule):
             return False
-        if not desc.available_fn(self.coordinator, self._site_id):
+        if not desc.available_fn(self.coordinator.data, self._site_id):
             return False
         if desc.strict_enabled:
             return isinstance(rule.get("enabled"), bool)

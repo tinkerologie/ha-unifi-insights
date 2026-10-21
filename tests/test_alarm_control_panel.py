@@ -45,6 +45,7 @@ from custom_components.unifi_insights.alarm_control_panel import (
     async_setup_entry,
 )
 from custom_components.unifi_insights.const import DOMAIN
+from tests.fixtures.facade_data import set_availability
 from tests.fixtures.library_responses import SAMPLE_NVR, SAMPLE_NVR_WITH_ARM_MODE
 from tests.fixtures.protect_ws import FakeProtectWebSocket
 
@@ -173,7 +174,6 @@ async def _push(
 def _unit_coordinator(nvr: dict[str, Any], **extra: Any) -> MagicMock:
     """Build a facade-coordinator mock for entities constructed without HA."""
     coordinator = MagicMock()
-    coordinator.protect_available = True
     coordinator.network_client.base_url = "https://192.168.1.1"
     coordinator.protect_client.base_url = "https://192.168.1.1"
     coordinator.data = {
@@ -703,7 +703,7 @@ def test_unavailable_when_protect_update_failed() -> None:
     panel = UnifiProtectNvrAlarmControlPanel(coordinator, "nvr_1")
     assert panel.available is True
 
-    coordinator.protect_available = False
+    set_availability(coordinator, protect=False)
 
     assert panel.available is False
 

@@ -49,6 +49,7 @@ from custom_components.unifi_insights.sensor import (
 )
 from tests.fixtures.facade_data import (
     facade_data,
+    set_availability,
     with_camera,
     with_network_device,
     with_sections,
@@ -251,11 +252,11 @@ async def test_innerspace_placement_sensor_discovery_and_device_correlation(
     assert "suggested_area" not in inv_sensor.device_info
 
     # Gated on innerspace_available
-    mock_coordinator.innerspace_available = False
+    set_availability(mock_coordinator, innerspace=False)
     assert ap_sensor.available is False
 
     # Test Protect correlation and entity registry device_id reconciliation
-    mock_coordinator.innerspace_available = True
+    set_availability(mock_coordinator, innerspace=True)
     real_entry = MockConfigEntry(
         domain=DOMAIN,
         entry_id=mock_config_entry.entry_id,
@@ -313,7 +314,7 @@ async def test_innerspace_placement_sensor_discovery_and_device_correlation(
     assert reverted_entry.device_id == initial_dev.id
 
 
-async def test_innerspace_coordinator_update_uses_live_availability(
+async def test_innerspace_coordinator_update_uses_captured_availability(
     hass: HomeAssistant, mock_coordinator: MagicMock
 ) -> None:
     """Updates write state once and never shadow coordinator availability."""
@@ -328,7 +329,7 @@ async def test_innerspace_coordinator_update_uses_live_availability(
     entity.hass = hass
 
     for available in (True, False, True):
-        mock_coordinator.innerspace_available = available
+        set_availability(mock_coordinator, innerspace=available)
         assert entity.available is available
         with patch.object(entity, "async_write_ha_state") as write_state:
             entity._handle_coordinator_update()

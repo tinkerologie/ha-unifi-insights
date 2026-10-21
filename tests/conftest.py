@@ -25,6 +25,7 @@ from .fixtures.command_owners import (
     async_shutdown_owners,
     build_seeded_owners,
 )
+from .fixtures.facade_data import with_availability
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
@@ -358,10 +359,6 @@ def mock_coordinator() -> MagicMock:
     coordinator = MagicMock()
     coordinator.last_update_success = True
     coordinator.available = True
-    coordinator.device_available = True
-    coordinator.config_available = True
-    coordinator.protect_available = True
-    coordinator.innerspace_available = True
     coordinator.network_client = _create_mock_network_client()
     coordinator.protect_client = _create_mock_protect_client()
     coordinator.innerspace_client = None
@@ -396,6 +393,7 @@ def mock_coordinator() -> MagicMock:
         },
         "last_update": None,
     }
+    coordinator.data = with_availability(coordinator.data)
     coordinator.async_refresh = AsyncMock()
     coordinator.async_request_refresh = AsyncMock()
     return coordinator

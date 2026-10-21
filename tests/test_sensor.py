@@ -76,6 +76,7 @@ from custom_components.unifi_insights.sensor import (
     format_uptime,
     get_network_device_temperature,
 )
+from tests.fixtures.facade_data import set_availability
 from tests.fixtures.library_responses import (
     SAMPLE_KEYPAD_FOB,
     SAMPLE_THREAD_LINK_STATION,
@@ -1401,7 +1402,7 @@ class TestUnifiPortSensorEdgeCases:
         )
 
         # Mark the device coordinator unavailable
-        mock_coordinator.device_available = False
+        set_availability(mock_coordinator, device=False)
 
         assert sensor.available is False
 
@@ -1413,7 +1414,7 @@ class TestUnifiPortSensorEdgeCases:
         self, hass: HomeAssistant, mock_coordinator, key: str, stat_key: str
     ):
         """Byte and rate sensors are available when stats carry the port."""
-        mock_coordinator.device_available = True
+        set_availability(mock_coordinator, device=True)
         mock_coordinator.data["stats"] = {
             "site1": {"device1": {stat_key: {1: {"tx_bytes": 1, "tx_bytes_rate": 1.0}}}}
         }
@@ -1533,7 +1534,7 @@ class TestUnifiPortSensorEdgeCases:
             device_id="device1",
             port_idx=1,
         )
-        mock_coordinator.device_available = False
+        set_availability(mock_coordinator, device=False)
 
         assert sensor.available is False
 
@@ -3039,7 +3040,7 @@ class TestUnifiProtectNVRSensorEdgeCases:
             description=storage_desc,
             device_id="nvr1",
         )
-        mock_coordinator.protect_available = False
+        set_availability(mock_coordinator, protect=False)
         assert sensor.available is False
 
     async def test_available_storage_sensor_with_nested_storage_info(
@@ -3399,7 +3400,7 @@ class TestUnifiSiteClientSensor:
         )
         assert sensor.available is True
 
-        mock_coordinator_with_clients.device_available = False
+        set_availability(mock_coordinator_with_clients, device=False)
         assert sensor.available is False
 
     async def test_device_info_attaches_to_gateway(
@@ -3767,7 +3768,6 @@ class TestUnifiOutletSensor:
         """Create mock coordinator with PDU device data."""
         coordinator = MagicMock()
         coordinator.available = True
-        coordinator.device_available = True
         coordinator.last_update_success = True
         coordinator.protect_client = None
         coordinator.data = {
@@ -3955,7 +3955,7 @@ class TestUnifiOutletSensor:
         expected: bool,
     ) -> None:
         """Electrical readings survive provisioning only while Device data is fresh."""
-        mock_coordinator.device_available = healthy
+        set_availability(mock_coordinator, device=healthy)
         mock_coordinator.data["devices"]["site1"]["pdu1"]["state"] = state
         sensor = UnifiOutletSensor(
             mock_coordinator, description, "site1", "pdu1", outlet_index=1
@@ -4162,7 +4162,6 @@ class TestUnifiWifiClientCountSensor:
         coordinator.data = {
             "wifi": {"site1": {"wifi1": {"name": "Home", "num_connected_clients": 3}}}
         }
-        coordinator.wifi_available = MagicMock(return_value=True)
         sensor = UnifiWifiClientCountSensor(
             coordinator=coordinator, site_id="site1", wifi_id="wifi1"
         )
@@ -4171,9 +4170,8 @@ class TestUnifiWifiClientCountSensor:
         assert sensor.has_entity_name is True
         assert getattr(sensor, "_attr_name", None) is None
 
-        coordinator.wifi_available.return_value = False
+        set_availability(coordinator, failed_sections={("wifi", "site1")})
         assert sensor.available is False
-        coordinator.wifi_available.assert_called_with("site1")
 
 
 class TestUnifiSiteInternetActivitySensor:
@@ -4195,8 +4193,6 @@ class TestUnifiSiteInternetActivitySensor:
 
         coordinator = MagicMock()
         coordinator.last_update_success = True
-        coordinator.config_available = True
-        coordinator.internet_activity_available = MagicMock(return_value=True)
         coordinator.data = {
             "sites": {"site1": {"name": "Default"}},
             "devices": {},
@@ -4245,8 +4241,6 @@ class TestUnifiSiteInternetActivitySensor:
         desc = SITE_INTERNET_ACTIVITY_SENSOR_TYPES[0]
         coordinator = MagicMock()
         coordinator.last_update_success = True
-        coordinator.config_available = True
-        coordinator.internet_activity_available = MagicMock(return_value=True)
         coordinator.data = {
             "sites": {"site1": {"name": "Default"}},
             "devices": {"site1": {"gw1": {"features": ["gateway"]}}},
@@ -4261,12 +4255,12 @@ class TestUnifiSiteInternetActivitySensor:
         )
         assert sensor.available is True
 
-        # Section marked unavailable via coordinator method
-        coordinator.internet_activity_available.return_value = False
+        # Section marked unavailable in the captured availability
+        set_availability(coordinator, failed_sections={("internet_activity", "site1")})
         assert sensor.available is False
 
         # Section marked unavailable via data set
-        coordinator.internet_activity_available.return_value = True
+        set_availability(coordinator)
         coordinator.data["internet_activity_unavailable"] = {"site1"}
         assert sensor.available is False
 
@@ -4278,11 +4272,11 @@ class TestUnifiSiteInternetActivitySensor:
 
         # Config refresh failed
         coordinator.data["internet_activity"]["site1"] = {"1h": {"rx_bytes": 1024}}
-        coordinator.config_available = False
+        set_availability(coordinator, config=False)
         assert sensor.available is False
 
         # Coordinator last_update_success is False
-        coordinator.config_available = True
+        set_availability(coordinator, config=True)
         coordinator.last_update_success = False
         assert sensor.available is False
         coordinator.last_update_success = True
@@ -4457,7 +4451,6 @@ class TestSensorAdditionalCoverageGaps:
     def test_outlet_sensor_branches(self) -> None:
         """Test UnifiOutletSensor available and native_value branches."""
         coordinator = MagicMock()
-        coordinator.device_available = True
         coordinator.data = {
             "devices": {
                 "site1": {
@@ -4490,9 +4483,9 @@ class TestSensorAdditionalCoverageGaps:
             "relay_state": True,
         }
 
-        coordinator.device_available = False
+        set_availability(coordinator, device=False)
         assert sensor.available is False
-        coordinator.device_available = True
+        set_availability(coordinator, device=True)
 
         coordinator.data["devices"]["site1"]["dev1"]["outlet_table"] = "not_a_list"
         assert sensor._find_outlet_data() is None
@@ -4502,7 +4495,6 @@ class TestSensorAdditionalCoverageGaps:
     def test_site_client_sensor_clients_not_dict(self) -> None:
         """Test UnifiSiteClientSensor native_value with invalid clients."""
         coordinator = MagicMock()
-        coordinator.device_available = True
         coordinator.data = {"clients": {"site1": None}}
         desc = SITE_CLIENT_SENSOR_TYPES[0]
         sensor = UnifiSiteClientSensor(
@@ -4618,7 +4610,6 @@ class TestSensorAdditionalCoverageGaps:
             "latest_vouchers": {},
         }
         coordinator.protect_client = None
-        coordinator.vouchers_available = MagicMock(return_value=True)
         listeners = []
         coordinator.async_add_listener = listeners.append
 

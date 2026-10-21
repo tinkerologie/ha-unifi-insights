@@ -24,6 +24,7 @@ from custom_components.unifi_insights.switch import (
     discover_network_rule_switches,
 )
 from tests.fixtures.command_owners import autospec_command_owners
+from tests.fixtures.facade_data import set_availability
 from tests.fixtures.network_rule_responses import (
     nat_rule_record,
     port_forward_record,
@@ -42,8 +43,6 @@ def mock_coordinator() -> MagicMock:
     coordinator.protect_client = None
     coordinator.network_client = MagicMock()
     coordinator.network_client.base_url = "https://192.168.1.1"
-    coordinator.port_forwards_available = MagicMock(return_value=True)
-    coordinator.traffic_rules_available = MagicMock(return_value=True)
     coordinator.data = {
         "sites": {"site1": {"id": "site1", "name": "Default"}},
         "devices": {},
@@ -247,7 +246,10 @@ def test_available_requires_section_rule_and_bool_enabled(
     expected: bool,  # noqa: FBT001
 ) -> None:
     """Switch availability requires section, rule, and bool enabled."""
-    mock_coordinator.port_forwards_available = MagicMock(return_value=section_avail)
+    set_availability(
+        mock_coordinator,
+        failed_sections=() if section_avail else {("port_forwards", "site1")},
+    )
     if rule_data is None:
         mock_coordinator.data["port_forwards"] = {"site1": {}}
     else:
@@ -428,8 +430,6 @@ async def test_setup_entry_adds_nat_rule_and_static_route_switches(
     hass: HomeAssistant, mock_coordinator: MagicMock
 ) -> None:
     """Platform setup adds NAT rule and static route switches."""
-    mock_coordinator.nat_rules_available = MagicMock(return_value=True)
-    mock_coordinator.static_routes_available = MagicMock(return_value=True)
     mock_coordinator.data["nat_rules"] = {
         "site1": {
             "nat-dns": nat_rule_record(_id="nat-dns"),
@@ -480,7 +480,6 @@ def test_discovery_hides_predefined_nat_rules(
             "r5": r5,
         }
     }
-    mock_coordinator.nat_rules_available = MagicMock(return_value=True)
     known_keys: set[tuple[Any, ...]] = set()
     entities = discover_network_rule_switches(mock_coordinator, known_keys)
     nat_entities = [e for e in entities if e.entity_description.key == "nat_rule"]
@@ -558,7 +557,6 @@ def test_nat_rule_switch_unavailable_after_rule_turns_predefined(
     mock_coordinator: MagicMock,
 ) -> None:
     """NAT rule switch becomes unavailable when rule turns predefined."""
-    mock_coordinator.nat_rules_available = MagicMock(return_value=True)
     mock_coordinator.data["nat_rules"] = {
         "site1": {
             "nat1": {"description": "DNS", "enabled": True, "is_predefined": False}
@@ -578,8 +576,6 @@ def test_discovery_skips_nat_rule_and_static_route_with_non_bool_enabled(
     mock_coordinator: MagicMock,
 ) -> None:
     """Records with non-bool enabled produce zero switches in discovery."""
-    mock_coordinator.nat_rules_available = MagicMock(return_value=True)
-    mock_coordinator.static_routes_available = MagicMock(return_value=True)
 
     nat_raw = [
         nat_rule_record(_id=f"nat_{val}", enabled=val)
@@ -630,22 +626,34 @@ def test_rule_switch_availability_follows_its_own_section(
         NAT_RULE_SWITCH.key: "nat1",
         STATIC_ROUTE_SWITCH.key: "sr1",
     }
-    avail_attrs = {
-        PORT_FORWARD_SWITCH.key: "port_forwards_available",
-        TRAFFIC_RULE_SWITCH.key: "traffic_rules_available",
-        NAT_RULE_SWITCH.key: "nat_rules_available",
-        STATIC_ROUTE_SWITCH.key: "static_routes_available",
+    sections = {
+        PORT_FORWARD_SWITCH.key: "port_forwards",
+        TRAFFIC_RULE_SWITCH.key: "traffic_rules",
+        NAT_RULE_SWITCH.key: "nat_rules",
+        STATIC_ROUTE_SWITCH.key: "static_routes",
     }
 
-    # Only descriptor's availability returns False, other three True -> unavailable
-    for d in _STRICT_RULE_SWITCH_TYPES:
-        getattr(mock_coordinator, avail_attrs[d.key]).return_value = d.key != desc.key
+    # Only descriptor's section failed, other three fetched -> unavailable
+    set_availability(
+        mock_coordinator,
+        failed_sections={
+            (sections[d.key], "site1")
+            for d in _STRICT_RULE_SWITCH_TYPES
+            if d.key == desc.key
+        },
+    )
     switch = UnifiInsightsNetworkRuleSwitch(
         mock_coordinator, desc, "site1", rule_ids[desc.key]
     )
     assert switch.available is False
 
-    # Reverse: only its own returns True, other three False -> available
-    for d in _STRICT_RULE_SWITCH_TYPES:
-        getattr(mock_coordinator, avail_attrs[d.key]).return_value = d.key == desc.key
+    # Reverse: only its own fetched, other three failed -> available
+    set_availability(
+        mock_coordinator,
+        failed_sections={
+            (sections[d.key], "site1")
+            for d in _STRICT_RULE_SWITCH_TYPES
+            if d.key != desc.key
+        },
+    )
     assert switch.available is True

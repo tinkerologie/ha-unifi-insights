@@ -31,6 +31,7 @@ from custom_components.unifi_insights.image import (
     async_setup_entry,
 )
 from custom_components.unifi_insights.innerspace_transforms import strip_url_query
+from tests.fixtures.facade_data import set_availability
 
 if TYPE_CHECKING:
     from homeassistant.core import Event, HomeAssistant
@@ -163,7 +164,7 @@ class TestUnifiWifiQrCodeImage:
     ) -> None:
         """Entity is unavailable when the coordinator update failed."""
         entity = self._make_entity(hass, mock_coordinator)
-        mock_coordinator.wifi_available.return_value = False
+        set_availability(mock_coordinator, failed_sections={("wifi", "site1")})
         assert entity.available is False
 
     @pytest.mark.asyncio
@@ -252,7 +253,6 @@ class TestUnifiFloorPlanImage:
     def innerspace_coordinator(self) -> MagicMock:
         """Create mock facade coordinator with InnerSpace floor plan data."""
         coordinator = MagicMock()
-        coordinator.innerspace_available = True
         coordinator.data = {
             "wifi": {},
             "innerspace": {
@@ -356,10 +356,10 @@ class TestUnifiFloorPlanImage:
         assert entity.available is True
 
         # When innerspace is unavailable
-        innerspace_coordinator.innerspace_available = False
+        set_availability(innerspace_coordinator, innerspace=False)
         assert entity.available is False
 
-        innerspace_coordinator.innerspace_available = True
+        set_availability(innerspace_coordinator, innerspace=True)
         assert entity.available is True
 
         # When image_url is None
@@ -955,7 +955,6 @@ class TestUnifiVoucherQrCodeImage:
                 }
             },
         }
-        coord.vouchers_available = MagicMock(return_value=True)
         return coord
 
     def test_init_and_properties(
@@ -1021,7 +1020,7 @@ class TestUnifiVoucherQrCodeImage:
             "default",
             unique_id="console_default_voucher_qr_code",
         )
-        mock_coordinator.vouchers_available.return_value = False
+        set_availability(mock_coordinator, failed_sections={("vouchers", "default")})
         assert entity.available is False
 
     @pytest.mark.asyncio
@@ -1061,7 +1060,6 @@ class TestUnifiVoucherQrCodeImage:
     ) -> None:
         """QR image becomes unavailable before, at, and after expiration deadline."""
         freezer.move_to("2026-10-09T11:59:00Z")
-        mock_coordinator.vouchers_available.return_value = True
         record = {
             "id": "v1",
             "code": "1234567890",
@@ -1106,7 +1104,6 @@ class TestUnifiVoucherQrCodeImage:
         self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Test timer reschedule branches for expired or missing deadline."""
-        mock_coordinator.vouchers_available.return_value = True
         entity = UnifiVoucherQrCodeImage(
             hass,
             mock_coordinator,
@@ -1172,7 +1169,6 @@ class TestUnifiVoucherQrCodeImage:
         self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """No expiration timer is scheduled for an entity without hass."""
-        mock_coordinator.vouchers_available.return_value = True
         mock_coordinator.data["latest_vouchers"] = {
             "default": {
                 "id": "v1",
@@ -1196,7 +1192,6 @@ class TestUnifiVoucherQrCodeImage:
         self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Expiring before any payload was observed keeps the image timestamp."""
-        mock_coordinator.vouchers_available.return_value = True
         mock_coordinator.data["latest_vouchers"] = {}
         entity = UnifiVoucherQrCodeImage(
             hass,
@@ -1219,7 +1214,6 @@ class TestUnifiVoucherQrCodeImage:
         self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Image timestamp remains stable when observed payload does not change."""
-        mock_coordinator.vouchers_available.return_value = True
         mock_coordinator.data["latest_vouchers"] = {
             "default": {"id": "v1", "code": "1234567890", "expired": False}
         }

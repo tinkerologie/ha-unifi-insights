@@ -44,6 +44,7 @@ from custom_components.unifi_insights.number import (
     async_setup_entry,
 )
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
+from tests.fixtures.facade_data import set_availability
 
 
 class TestParallelUpdates:
@@ -828,7 +829,6 @@ class TestVoucherNumbers:
             "sites": {"site1": {"id": "site1", "name": "Main Site"}},
             "vouchers": {"site1": {}},
         }
-        coord.vouchers_available.return_value = True
         autospec_command_owners(coord)
         settings_map: dict[str, VoucherSettings] = {}
 
@@ -1135,10 +1135,10 @@ class TestVoucherNumbers:
         settings = voucher_coordinator.config_coordinator.get_voucher_settings("site1")
         assert settings.duration_minutes == 480
 
-    def test_voucher_number_availability_follows_vouchers_available(
+    def test_voucher_number_availability_follows_captured_vouchers(
         self, voucher_coordinator
     ) -> None:
-        """Availability follows coordinator.vouchers_available."""
+        """Availability follows the site's captured voucher availability."""
         desc = VOUCHER_NUMBER_DESCRIPTIONS[0]
         entity = UnifiVoucherInputNumber(
             voucher_coordinator,
@@ -1146,9 +1146,9 @@ class TestVoucherNumbers:
             "site1",
             unique_id="console_site1_" + desc.key,
         )
-        voucher_coordinator.vouchers_available.return_value = True
+        set_availability(voucher_coordinator)
         assert entity.available is True
-        voucher_coordinator.vouchers_available.return_value = False
+        set_availability(voucher_coordinator, failed_sections={("vouchers", "site1")})
         assert entity.available is False
 
     def test_voucher_number_device_info_uses_site_device(

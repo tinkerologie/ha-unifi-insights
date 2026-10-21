@@ -250,3 +250,57 @@ def with_latest_voucher(
         data,
         latest_vouchers=ReadOnlyDict({**latest, site_id: frozen(record)}),
     )
+
+
+def with_availability(
+    data: Mapping[str, Any],
+    *,
+    device: bool = True,
+    config: bool = True,
+    protect: bool = True,
+    innerspace: bool = True,
+    network: bool = True,
+    failed_sections: Iterable[tuple[str, str]] = (),
+    site_ids: Iterable[str] | None = None,
+) -> Any:
+    """
+    Return ``data`` with its availability captured anew, as the facade would.
+
+    ``site_ids`` defaults to the sites ``data`` lists. A read-only snapshot
+    stays read-only; a plain dict (the ``mock_coordinator`` data) is copied
+    as a plain dict, so in-place writes into it still work.
+    """
+    if site_ids is None:
+        sites = data.get("sites")
+        site_ids = tuple(sites) if isinstance(sites, Mapping) else ()
+    availability = capture_availability(
+        device=device,
+        config=config,
+        protect=protect,
+        innerspace=innerspace,
+        network=network,
+        failed_sections=frozenset(failed_sections),
+        site_ids=site_ids,
+    )
+    if isinstance(data, ReadOnlyDict):
+        return with_sections(data, availability=availability)
+    return {**data, "availability": availability}
+
+
+_OWNERS = ("device", "config", "protect", "innerspace", "network")
+
+
+def set_availability(coordinator: Any, **availability: Any) -> None:
+    """
+    Flip a mocked facade's captured availability in one call.
+
+    Takes the keyword arguments of ``with_availability`` and replaces
+    ``coordinator.data`` with the result, as a facade rebuild would. An owner
+    not given keeps the availability ``coordinator.data`` captured; failed
+    sections are only the ones given.
+    """
+    data = coordinator.data
+    current = data.get("availability")
+    current = current if isinstance(current, Mapping) else {}
+    owners = {owner: current.get(owner, True) for owner in _OWNERS}
+    coordinator.data = with_availability(data, **{**owners, **availability})

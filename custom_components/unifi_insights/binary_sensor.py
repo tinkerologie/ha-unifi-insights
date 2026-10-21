@@ -63,6 +63,7 @@ from .data_transforms import (
     nested_dict,
     network_device,
     normalize_nvr_storage,
+    owner_available,
     persistent_storage_mounts,
     present_attributes,
     protect_collection,
@@ -801,7 +802,7 @@ class UnifiProtectBinarySensor(UnifiProtectEntity, BinarySensorEntity):
             return super().available
         data = self.device_data
         return (
-            self.coordinator.protect_available
+            owner_available(self.coordinator.data, "protect")
             and data is not None
             and bool(data)
             and data.get("state") not in ("DISCONNECTED", "DISCONNECTING")

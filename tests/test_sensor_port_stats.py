@@ -15,6 +15,7 @@ from custom_components.unifi_insights.sensor import (
     SFP_SENSOR_TYPES,
     UnifiPortSensor,
 )
+from tests.fixtures.facade_data import set_availability
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -24,7 +25,6 @@ if TYPE_CHECKING:
 def mock_facade_coordinator() -> MagicMock:
     """Create a mock facade coordinator for port sensor tests."""
     coordinator = MagicMock()
-    coordinator.device_available = True
     coordinator.data = {
         "devices": {
             "site1": {
@@ -171,7 +171,6 @@ class TestEndToEndLegacyPortStatsPath:
 
         # Step 4: Bind data to a facade coordinator and query port sensors
         facade = MagicMock()
-        facade.device_available = True
         facade.data = {
             "devices": {"site1": {"device1": device_dict}},
             "stats": device_coord.data["stats"],
@@ -557,11 +556,11 @@ class TestPortSensorAvailabilityAndAttributes:
         )
 
         # Device offline -> False
-        mock_facade_coordinator.device_available = False
+        set_availability(mock_facade_coordinator, device=False)
         assert sensor.available is False
 
         # Device online, poe_ports dict -> True
-        mock_facade_coordinator.device_available = True
+        set_availability(mock_facade_coordinator, device=True)
         mock_facade_coordinator.data["stats"]["site1"]["device1"]["poe_ports"] = {
             1: 5.0
         }
@@ -581,11 +580,11 @@ class TestPortSensorAvailabilityAndAttributes:
         )
 
         # Device offline -> False
-        mock_facade_coordinator.device_available = False
+        set_availability(mock_facade_coordinator, device=False)
         assert s_bytes.available is False
         assert s_rate.available is False
 
-        mock_facade_coordinator.device_available = True
+        set_availability(mock_facade_coordinator, device=True)
         mock_facade_coordinator.data["stats"]["site1"]["device1"]["port_bytes"] = {
             1: {"tx_bytes": 100}
         }
@@ -660,7 +659,7 @@ class TestPortSensorAvailabilityAndAttributes:
     def test_available_poe_power_stats_not_dict(self, mock_facade_coordinator):
         """PoE power availability falls through to port state when stats is non-dict."""
         poe_desc = PORT_SENSOR_TYPES[0]
-        mock_facade_coordinator.device_available = True
+        set_availability(mock_facade_coordinator, device=True)
         mock_facade_coordinator.data["devices"]["site1"]["device1"]["ports"] = [
             {"idx": 1, "state": "UP"}
         ]
@@ -673,7 +672,7 @@ class TestPortSensorAvailabilityAndAttributes:
     def test_available_tx_rx_bytes_stats_edges(self, mock_facade_coordinator):
         """TX/RX bytes availability falls through when stats or pb is invalid."""
         bytes_desc = PORT_SENSOR_TYPES[2]
-        mock_facade_coordinator.device_available = True
+        set_availability(mock_facade_coordinator, device=True)
         mock_facade_coordinator.data["devices"]["site1"]["device1"]["ports"] = [
             {"idx": 1, "state": "UP"}
         ]
@@ -698,7 +697,7 @@ class TestPortSensorAvailabilityAndAttributes:
     def test_available_tx_rx_rate_stats_edges(self, mock_facade_coordinator):
         """TX/RX rate availability falls through when stats/port_rates/pr is invalid."""
         rate_desc = PORT_RATE_SENSOR_TYPES[0]
-        mock_facade_coordinator.device_available = True
+        set_availability(mock_facade_coordinator, device=True)
         mock_facade_coordinator.data["devices"]["site1"]["device1"]["ports"] = [
             {"idx": 1, "state": "UP"}
         ]

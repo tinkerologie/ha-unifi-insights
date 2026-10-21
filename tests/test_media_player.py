@@ -30,6 +30,7 @@ from custom_components.unifi_insights.media_player import (
     async_setup_entry,
 )
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
+from tests.fixtures.facade_data import set_availability
 
 
 class TestParallelUpdates:
@@ -48,7 +49,6 @@ class TestAsyncSetupEntry:
         """Create mock coordinator."""
         coordinator = MagicMock()
         coordinator.protect_client = MagicMock()
-        coordinator.protect_available = True
         coordinator.data = {
             "sites": {},
             "devices": {},
@@ -244,7 +244,6 @@ class TestUnifiProtectCameraSpeaker:
         """Create mock coordinator with camera speaker data."""
         coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = MagicMock()
-        coordinator.protect_available = True
         coordinator.data = {
             "sites": {},
             "devices": {},
@@ -371,9 +370,9 @@ class TestUnifiProtectCameraSpeaker:
         mock_coordinator.data["protect"]["cameras"]["cam1"]["state"] = (
             CAMERA_STATE_CONNECTED
         )
-        mock_coordinator.protect_available = False
+        set_availability(mock_coordinator, protect=False)
         assert entity.available is False
-        mock_coordinator.protect_available = True
+        set_availability(mock_coordinator, protect=True)
 
         # Speaker capability removed
         mock_coordinator.data["protect"]["cameras"]["cam1"]["hasSpeaker"] = False

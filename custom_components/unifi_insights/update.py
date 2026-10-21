@@ -17,7 +17,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER
 from .coordinators import UnifiInsightsFacadeCoordinator
-from .data_transforms import network_device, section_by_site
+from .data_transforms import network_device, owner_available, section_by_site
 from .entity import get_field
 
 if TYPE_CHECKING:
@@ -126,7 +126,7 @@ class UnifiNetworkDeviceUpdate(
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        return bool(self.coordinator.device_available)
+        return owner_available(self.coordinator.data, "device")
 
     @property
     def _device_data(self) -> dict[str, Any] | None:

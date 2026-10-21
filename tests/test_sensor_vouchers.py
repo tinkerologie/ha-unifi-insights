@@ -16,6 +16,7 @@ from custom_components.unifi_insights.sensor import (
     _latest_expiration_value,
     discover_voucher_sensors,
 )
+from tests.fixtures.facade_data import set_availability
 
 
 @pytest.fixture
@@ -60,7 +61,6 @@ def mock_coordinator():
             }
         },
     }
-    coord.vouchers_available = MagicMock(return_value=True)
     return coord
 
 
@@ -99,7 +99,7 @@ def test_sensor_availability(mock_coordinator):
         unique_id="console_default_" + desc.key,
     )
     assert sensor.available is True
-    mock_coordinator.vouchers_available.return_value = False
+    set_availability(mock_coordinator, failed_sections={("vouchers", "default")})
     assert sensor.available is False
 
 

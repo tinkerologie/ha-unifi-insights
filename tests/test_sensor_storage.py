@@ -32,6 +32,7 @@ from custom_components.unifi_insights.sensor import (
     UnifiStorageSensor,
     discover_storage_sensors,
 )
+from tests.fixtures.facade_data import set_availability
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -498,7 +499,7 @@ def test_storage_entities_unavailable_when_device_coordinator_fails(
     assert all(entity.available for entity in storage_sensors)
     assert nearly_full.available is True
 
-    mock_coordinator.device_available = False
+    set_availability(mock_coordinator, device=False)
 
     # The cached mounts are untouched, so only the coordinator gate applies.
     assert device_data["storage_mounts"] == UDM_STORAGE

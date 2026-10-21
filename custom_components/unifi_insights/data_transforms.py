@@ -796,6 +796,45 @@ def latest_voucher(data: Mapping[str, Any], site_id: str) -> Mapping[str, Any] |
     return _record(data, "latest_vouchers", site_id)
 
 
+# Reads of the availability captured in the snapshot (ADR-013). Entities read
+# them on every state write, so they only read dicts and allocate nothing. A
+# missing or malformed value reads as available, as the facade reports an
+# owner it does not have.
+
+type AvailabilityOwner = Literal["device", "config", "protect", "innerspace", "network"]
+
+
+def _availability(data: object) -> Mapping[str, Any] | None:
+    """Return the snapshot's availability section, or None."""
+    value = data.get("availability") if isinstance(data, Mapping) else None
+    return value if isinstance(value, Mapping) else None
+
+
+def owner_available(data: Mapping[str, Any], owner: AvailabilityOwner) -> bool:
+    """Return whether an owner coordinator was available for this snapshot."""
+    availability = _availability(data)
+    value = None if availability is None else availability.get(owner)
+    return value if isinstance(value, bool) else True
+
+
+def site_section_available(data: Mapping[str, Any], site_id: str, section: str) -> bool:
+    """
+    Return whether a site's config section was fetched for this snapshot.
+
+    ``section`` is a per-site config section, such as ``"wifi"`` or
+    ``"vouchers"``. A site or section the snapshot does not list has the
+    config coordinator's availability.
+    """
+    availability = _availability(data)
+    if availability is not None:
+        sites = availability.get("sites")
+        sections = sites.get(site_id) if isinstance(sites, Mapping) else None
+        value = sections.get(section) if isinstance(sections, Mapping) else None
+        if isinstance(value, bool):
+            return value
+    return owner_available(data, "config")
+
+
 def current_chime_ringtone_id(chime_data: Any) -> str | None:
     """Read one reported ringtone ID only when every ring setting agrees."""
     if not isinstance(chime_data, dict):
@@ -974,6 +1013,7 @@ __all__ = [
     "NETWORK_FACTS_KEY",
     "TRANSIENT_SERVICEABLE_STATES",
     "UPTIME_STAT_KEYS",
+    "AvailabilityOwner",
     "ClientConnectionType",
     "NetworkDeviceFacts",
     "NetworkDeviceKind",
@@ -1007,6 +1047,7 @@ __all__ = [
     "normalize_legacy_storage",
     "normalize_legacy_wans",
     "normalize_mac",
+    "owner_available",
     "parse_floor_plan_asset_path",
     "port_index",
     "protect_collection",
@@ -1017,6 +1058,7 @@ __all__ = [
     "site_network_facts",
     "site_record",
     "site_section",
+    "site_section_available",
     "storage_used_percent",
     "transform_innerspace_device",
     "transform_innerspace_floor_plan",

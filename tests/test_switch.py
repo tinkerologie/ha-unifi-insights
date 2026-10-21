@@ -58,6 +58,7 @@ from custom_components.unifi_insights.switch import (
     async_setup_entry,
 )
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
+from tests.fixtures.facade_data import set_availability
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -304,27 +305,19 @@ class TestAsyncSetupEntry:
 
 
 # (data_key, unique_id_suffix, availability_attr) -- availability_attr is
-# either a plain bool attribute ("config_available") or a callable taking
-# site_id ("firewall_available"). Table-driven to match the production
+# either the config owner ("config") or the per-site config section the
+# snapshot captures ("firewall_rules"). Table-driven to match the production
 # helper's own (unique_id_suffix, data_key, availability_fn) spec.
 _ORPHAN_TYPE_PARAMS = [
+    pytest.param("policy_based_routes", "_policy_based_route", "config", id="pbr"),
     pytest.param(
-        "policy_based_routes", "_policy_based_route", "config_available", id="pbr"
+        "firewall_rules", "_firewall_rule", "firewall_rules", id="firewall_rule"
     ),
-    pytest.param(
-        "firewall_rules", "_firewall_rule", "firewall_available", id="firewall_rule"
-    ),
-    pytest.param("vpn_clients", "_vpn_client", "config_available", id="vpn_client"),
-    pytest.param(
-        "port_forwards", "_port_forward", "port_forwards_available", id="port_forward"
-    ),
-    pytest.param(
-        "traffic_rules", "_traffic_rule", "traffic_rules_available", id="traffic_rule"
-    ),
-    pytest.param("nat_rules", "_nat_rule", "nat_rules_available", id="nat_rule"),
-    pytest.param(
-        "static_routes", "_static_route", "static_routes_available", id="static_route"
-    ),
+    pytest.param("vpn_clients", "_vpn_client", "config", id="vpn_client"),
+    pytest.param("port_forwards", "_port_forward", "port_forwards", id="port_forward"),
+    pytest.param("traffic_rules", "_traffic_rule", "traffic_rules", id="traffic_rule"),
+    pytest.param("nat_rules", "_nat_rule", "nat_rules", id="nat_rule"),
+    pytest.param("static_routes", "_static_route", "static_routes", id="static_route"),
 ]
 
 
@@ -344,12 +337,6 @@ class TestPruneOrphanedSwitchEntities:
     def mock_coordinator(self) -> MagicMock:
         """Coordinator with all three collections populated and available."""
         coordinator = autospec_command_owners(MagicMock())
-        coordinator.config_available = True
-        coordinator.firewall_available = MagicMock(return_value=True)
-        coordinator.port_forwards_available = MagicMock(return_value=True)
-        coordinator.traffic_rules_available = MagicMock(return_value=True)
-        coordinator.nat_rules_available = MagicMock(return_value=True)
-        coordinator.static_routes_available = MagicMock(return_value=True)
         coordinator.data = {
             "policy_based_routes": {"site1": {"route1": {}}},
             "firewall_rules": {"site1": {"rule1": {}}},
@@ -405,10 +392,12 @@ class TestPruneOrphanedSwitchEntities:
         """This type's own predicate False -> zero pruned, regardless of the
         other two types' predicates being True (the regression the per-type
         guard exists to prevent)."""
-        if availability_attr != "config_available":
-            setattr(mock_coordinator, availability_attr, MagicMock(return_value=False))
+        if availability_attr == "config":
+            set_availability(mock_coordinator, config=False)
         else:
-            setattr(mock_coordinator, availability_attr, False)
+            set_availability(
+                mock_coordinator, failed_sections={(availability_attr, "site1")}
+            )
 
         stale_entry = self._reg_entry(f"site1_stale{suffix}")
         registry = self._prune(hass, mock_coordinator, [stale_entry])
@@ -503,8 +492,8 @@ class TestPruneOrphanedSwitchEntities:
         Regression test. Policy-based routes and VPN clients have no
         per-site "fetched successfully" signal: on a transient per-site
         fetch failure the config coordinator stores `{}` for that site
-        while the overall refresh still succeeds, leaving
-        `config_available` True. Treating that `{}` as "every object was
+        while the overall refresh still succeeds, leaving the config
+        owner available. Treating that `{}` as "every object was
         deleted" would irreversibly remove every row of this type for the
         site on a single startup timeout.
         """
@@ -565,7 +554,6 @@ class TestPruneOrphanedSwitchEntities:
         self, hass, mock_coordinator
     ) -> None:
         """Registry row for NAT rule switch is pruned when rule turns predefined."""
-        mock_coordinator.nat_rules_available = MagicMock(return_value=True)
         mock_coordinator.data["nat_rules"] = {
             "site1": {"nat1": {"is_predefined": True}}
         }
@@ -578,7 +566,7 @@ class TestPruneOrphanedSwitchEntities:
         self, hass, mock_coordinator
     ) -> None:
         """Predefined NAT rule row is kept when section availability is False."""
-        mock_coordinator.nat_rules_available = MagicMock(return_value=False)
+        set_availability(mock_coordinator, failed_sections={("nat_rules", "site1")})
         mock_coordinator.data["nat_rules"] = {
             "site1": {"nat1": {"is_predefined": True}}
         }
@@ -591,7 +579,6 @@ class TestPruneOrphanedSwitchEntities:
         self, hass, mock_coordinator
     ) -> None:
         """NAT rule switch is kept when collection is empty."""
-        mock_coordinator.nat_rules_available = MagicMock(return_value=True)
         mock_coordinator.data["nat_rules"] = {"site1": {}}
         reg_entry = self._reg_entry("site1_nat1_nat_rule")
         registry = self._prune(hass, mock_coordinator, [reg_entry])
@@ -606,8 +593,6 @@ class TestPruneOrphanedSwitchEntities:
         tick; re-running the prune there would be wasted work at best)."""
         coordinator = autospec_command_owners(MagicMock())
         coordinator.protect_client = None
-        coordinator.config_available = True
-        coordinator.firewall_available = MagicMock(return_value=True)
         coordinator.data = {
             "sites": {},
             "devices": {},
@@ -828,6 +813,20 @@ class TestUnifiClientBlockSwitch:
         # Should be unavailable when client doesn't exist
         mock_coordinator.data["clients"]["site1"]["client1"] = {}
         assert switch.available is False
+
+    def test_switch_available_follows_captured_device_availability(
+        self, mock_coordinator
+    ) -> None:
+        """A cached client is unavailable while the device owner is failing."""
+        switch = UnifiClientBlockSwitch(
+            coordinator=mock_coordinator, site_id="site1", client_id="client1"
+        )
+
+        set_availability(mock_coordinator, device=False)
+        assert switch.available is False
+
+        set_availability(mock_coordinator, device=True)
+        assert switch.available is True
 
     def test_switch_is_on_when_not_blocked(self, mock_coordinator) -> None:
         """Test switch is ON when client is not blocked (allowed)."""
@@ -1063,6 +1062,22 @@ class TestUnifiWifiSwitch:
 
         assert switch.available is True
 
+    def test_available_follows_captured_site_wifi_fetch(self, mock_coordinator) -> None:
+        """The switch is unavailable while its site's WiFi fetch is failing."""
+        wifi_data = mock_coordinator.data["wifi"]["site1"]["wifi1"]
+        switch = UnifiWifiSwitch(
+            coordinator=mock_coordinator,
+            site_id="site1",
+            wifi_id="wifi1",
+            wifi_data=wifi_data,
+        )
+
+        set_availability(mock_coordinator, failed_sections={("wifi", "site1")})
+        assert switch.available is False
+
+        set_availability(mock_coordinator, failed_sections={("wifi", "other")})
+        assert switch.available is True
+
     def test_available_falls_back_to_initial_data(self, mock_coordinator) -> None:
         """Test switch uses initial data when coordinator data is empty."""
         wifi_data = mock_coordinator.data["wifi"]["site1"]["wifi1"].copy()
@@ -1154,12 +1169,12 @@ class TestUnifiFirewallRuleSwitch:
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
         )
-        mock_coordinator.firewall_available = MagicMock(return_value=True)
         assert switch.available is True
 
-        mock_coordinator.firewall_available.return_value = False
+        set_availability(
+            mock_coordinator, failed_sections={("firewall_rules", "site1")}
+        )
         assert switch.available is False
-        mock_coordinator.firewall_available.assert_called_with("site1")
         assert switch._attr_translation_key == "firewall_rule"
         assert switch._attr_translation_placeholders == {"rule_name": "Block Instagram"}
         assert switch.entity_category == EntityCategory.CONFIG
@@ -1484,10 +1499,10 @@ class TestUnifiPolicyBasedRouteSwitch:
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
-        mock_coordinator.config_available = True
+        set_availability(mock_coordinator, config=True)
         assert switch.available is True
 
-        mock_coordinator.config_available = False
+        set_availability(mock_coordinator, config=False)
         assert switch.available is False
 
     def test_is_on(self, mock_coordinator: MagicMock) -> None:
@@ -2043,7 +2058,7 @@ class TestUnifiVpnClientSwitch:
             mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
         )
         assert switch.available is True
-        mock_coordinator.config_available = False
+        set_availability(mock_coordinator, config=False)
         assert switch.available is False
 
         mock_coordinator.last_update_success = True
@@ -3334,7 +3349,6 @@ class TestUnifiOutletSwitch:
         """Create mock coordinator with PDU device data."""
         coordinator = autospec_command_owners(MagicMock())
         coordinator.available = True
-        coordinator.device_available = True
         coordinator.data = {
             "devices": {
                 "site1": {
@@ -3531,7 +3545,7 @@ class TestUnifiOutletSwitch:
         self, mock_coordinator: MagicMock
     ) -> None:
         """Test outlet switch unavailable when device coordinator is unavailable."""
-        mock_coordinator.device_available = False
+        set_availability(mock_coordinator, device=False)
         outlet_data = mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][
             0
         ]
@@ -3719,7 +3733,6 @@ class TestUnifiOutletCycleSwitch:
         """Create mock coordinator with PDU device data."""
         coordinator = autospec_command_owners(MagicMock())
         coordinator.available = True
-        coordinator.device_available = True
         coordinator.data = {
             "devices": {
                 "site1": {
@@ -3784,7 +3797,7 @@ class TestUnifiOutletCycleSwitch:
         self, mock_coordinator: MagicMock
     ) -> None:
         """Test cycle switch unavailable when device coordinator is unavailable."""
-        mock_coordinator.device_available = False
+        set_availability(mock_coordinator, device=False)
         outlet_data = mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][
             0
         ]
@@ -4156,10 +4169,10 @@ def test_outlet_serviceable_availability(
 ) -> None:
     """Both outlet controls need fresh Device data and a serviceable device."""
     coordinator = MagicMock()
-    coordinator.device_available = healthy
     coordinator.data = {
         "devices": {"site": {"pdu": {"state": state, "outlet_table": [{"index": 1}]}}}
     }
+    set_availability(coordinator, device=healthy)
     switch = UnifiOutletSwitch(coordinator, description, "site", "pdu", outlet_index=1)
     assert switch.available is expected
     coordinator.data["devices"]["site"]["pdu"]["outlet_table"] = []

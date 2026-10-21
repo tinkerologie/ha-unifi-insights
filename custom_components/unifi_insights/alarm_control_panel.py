@@ -22,7 +22,7 @@ from .const import (
     ATTR_WILL_BE_ARMED_AT,
     DEVICE_TYPE_NVR,
 )
-from .data_transforms import protect_collection
+from .data_transforms import owner_available, protect_collection
 from .entity import UnifiProtectEntity
 
 if TYPE_CHECKING:
@@ -153,7 +153,7 @@ class UnifiProtectNvrAlarmControlPanel(UnifiProtectEntity, AlarmControlPanelEnti
         base class check, which wants "CONNECTED", would never pass.
         """
         return (
-            self.coordinator.protect_available
+            owner_available(self.coordinator.data, "protect")
             and _arm_mode(self.device_data) is not None
             and _global_alarm_manager_is_off(self.coordinator)
         )

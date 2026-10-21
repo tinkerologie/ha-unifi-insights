@@ -69,9 +69,6 @@ from custom_components.unifi_insights.coordinators.config_sections import (
     verified_legacy_site_name,
     wifi_qr_payload,
 )
-from custom_components.unifi_insights.coordinators.facade import (
-    UnifiInsightsFacadeCoordinator,
-)
 from tests.fixtures.command_owners import (
     SITE_ID,
     async_refresh_owners,
@@ -2498,23 +2495,6 @@ class TestUnifiConfigCoordinator:
         )
         await coord._async_update_data()
         assert "site1" not in coord.data["internet_activity"]
-
-        facade_with_cfg = MagicMock()
-        facade_with_cfg.config_available = True
-        facade_with_cfg._config_coordinator = coord
-        assert (
-            UnifiInsightsFacadeCoordinator.internet_activity_available(
-                facade_with_cfg, "site1"
-            )
-            is True
-        )
-        facade_with_cfg._config_coordinator = None
-        assert (
-            UnifiInsightsFacadeCoordinator.internet_activity_available(
-                facade_with_cfg, "site1"
-            )
-            is True
-        )
 
     @pytest.mark.asyncio
     async def test_config_coordinator_innerspace_only_suppresses_network_404(

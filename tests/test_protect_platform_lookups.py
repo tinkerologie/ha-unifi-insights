@@ -78,7 +78,6 @@ def _coordinator(data: Any) -> MagicMock:
     """Return a coordinator double that publishes ``data`` as its snapshot."""
     coordinator = MagicMock()
     coordinator.data = data
-    coordinator.protect_available = True
     coordinator.protect_client = None
     return coordinator
 

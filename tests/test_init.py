@@ -47,6 +47,10 @@ from custom_components.unifi_insights.const import (
     CONNECTION_TYPE_CARRIER_FABRIC,
     DOMAIN,
 )
+from custom_components.unifi_insights.data_transforms import (
+    owner_available,
+    site_section_available,
+)
 from custom_components.unifi_insights.probe import ProbeResult, ProbeStatus
 from tests.fixtures.mobility_responses import (
     OFFICE_ROUTER_ID,
@@ -908,31 +912,31 @@ async def test_failed_wifi_refresh_marks_wifi_unavailable(
     )
     await config_coordinator.async_refresh()
     await hass.async_block_till_done()
-    assert facade.wifi_available("default") is False
-    assert facade.firewall_available("default") is True
-    assert facade.config_available is True
-    assert facade.device_available is True
+    assert site_section_available(facade.data, "default", "wifi") is False
+    assert site_section_available(facade.data, "default", "firewall_rules") is True
+    assert owner_available(facade.data, "config") is True
+    assert owner_available(facade.data, "device") is True
 
     mock_network_client.wifi.get_all = AsyncMock(return_value=[])
     await config_coordinator.async_refresh()
     await hass.async_block_till_done()
-    assert facade.wifi_available("default") is True
+    assert site_section_available(facade.data, "default", "wifi") is True
 
 
 @pytest.mark.parametrize(
-    ("namespace", "method", "error", "flag"),
+    ("namespace", "method", "error", "section"),
     [
         (
             "firewall",
             "list_rules",
             UniFiResponseError("Bad gateway", status_code=502),
-            "firewall_available",
+            "firewall_rules",
         ),
         (
             "wifi",
             "get_all",
             UniFiConnectionError("Connection reset"),
-            "wifi_available",
+            "wifi",
         ),
     ],
     ids=["firewall-502", "wifi-connection"],
@@ -948,7 +952,7 @@ async def test_optional_section_failure_does_not_block_setup(
     namespace: str,
     method: str,
     error: Exception,
-    flag: str,
+    section: str,
 ) -> None:
     """A WiFi/firewall outage at startup loads the entry, flagging only it."""
     mock_network_client.sites.get_all.return_value = [{"id": "default"}]
@@ -962,8 +966,8 @@ async def test_optional_section_failure_does_not_block_setup(
 
     assert mock_config_entry.state == ConfigEntryState.LOADED
     facade = mock_config_entry.runtime_data.coordinator
-    assert getattr(facade, flag)("default") is False
-    assert facade.config_available is True
+    assert site_section_available(facade.data, "default", section) is False
+    assert owner_available(facade.data, "config") is True
 
 
 async def test_site_forbidden_at_setup_does_not_start_reauth(

@@ -45,13 +45,14 @@ from custom_components.unifi_insights.data_transforms import (
     network_client,
     network_device,
     network_device_stats,
+    owner_available,
     protect_device,
     rule_record,
     site_record,
+    site_section_available,
 )
 from tests.fixtures.command_owners import SITE_ID
 from tests.fixtures.coordinator_clients import (
-    RULE_SECTION_PARAMS,
     _create_mock_network_client,
     _create_mock_protect_client,
 )
@@ -149,7 +150,6 @@ def mock_sub_coordinators() -> tuple[MagicMock, MagicMock, MagicMock, MagicMock]
     config_coord.last_exception = None
     config_coord.async_refresh = AsyncMock()
     config_coord.async_refresh_vouchers = AsyncMock()
-    config_coord.vouchers_available = MagicMock(return_value=True)
 
     device_coord = MagicMock()
     device_coord.data = {
@@ -397,17 +397,6 @@ class TestFacadeVoucherReads:
         device_coord.data["vouchers"] = {"site1": {"stale": {"id": "stale"}}}
         facade._aggregate_data()
         assert facade.data["vouchers"] == {"site1": {"v1": {"id": "v1"}}}
-
-    def test_vouchers_available_delegates_to_config_coordinator(
-        self,
-        facade: UnifiInsightsFacadeCoordinator,
-        mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
-    ) -> None:
-        """vouchers_available delegates to config_coordinator.vouchers_available."""
-        config_coord = mock_sub_coordinators[0]
-        config_coord.vouchers_available.return_value = True
-        assert facade.vouchers_available("site1") is True
-        config_coord.vouchers_available.assert_called_with("site1")
 
     def test_latest_vouchers_pass_through_by_reference(
         self,
@@ -1231,30 +1220,6 @@ class TestUnifiFacadeCoordinator:
         assert facade_coordinator.data["nat_rules"] == {"site1": {"nat1": {}}}
         assert facade_coordinator.data["static_routes"] == {"site1": {"sr1": {}}}
 
-    @pytest.mark.parametrize(
-        ("data_key", "endpoint_attr", "list_method", "avail_method"),
-        RULE_SECTION_PARAMS,
-    )
-    def test_rule_section_availability_passthrough(
-        self,
-        facade_coordinator: UnifiInsightsFacadeCoordinator,
-        data_key: str,
-        endpoint_attr: str,
-        list_method: str,
-        avail_method: str,
-    ) -> None:
-        """Test facade availability methods pass through to config coordinator."""
-        setattr(
-            facade_coordinator._config_coordinator,
-            avail_method,
-            MagicMock(return_value=True),
-        )
-        avail_fn = getattr(facade_coordinator, avail_method)
-        assert avail_fn("site1") is True
-        getattr(
-            facade_coordinator._config_coordinator, avail_method
-        ).assert_called_once_with("site1")
-
     @pytest.mark.asyncio
     async def test_async_export_network_rules_passes_console_and_sites(
         self, facade_coordinator: UnifiInsightsFacadeCoordinator
@@ -1474,7 +1439,7 @@ def test_build_facade_data_selects_the_entry_site_manager_host(
 
 # --- Captured availability (ADR-013) ------------------------------------------
 
-# The facade method that answers each site section live.
+# The config coordinator method that answers each site section live.
 SECTION_METHODS = {
     "wifi": "wifi_available",
     "firewall_rules": "firewall_available",
@@ -1488,7 +1453,7 @@ SECTION_METHODS = {
 
 
 def test_section_methods_cover_every_site_section() -> None:
-    """Every captured site section has a live facade method."""
+    """Every captured site section has a live config coordinator method."""
     assert set(SECTION_METHODS) == set(SITE_SECTIONS)
 
 
@@ -1518,19 +1483,20 @@ def test_capture_availability_per_site(*, config: bool) -> None:
 
 
 def _assert_captured_matches_live(facade: UnifiInsightsFacadeCoordinator) -> None:
-    """Assert the snapshot's availability is what the live properties answer."""
-    availability = facade.data["availability"]
-    assert availability["device"] is facade.device_available
-    assert availability["config"] is facade.config_available
-    assert availability["protect"] is facade.protect_available
-    assert availability["innerspace"] is facade.innerspace_available
-    assert availability["network"] is facade.network_available
-    for site_id in (*facade.data["sites"], "unknown-site"):
-        captured = availability["sites"].get(site_id, {})
+    """Assert the snapshot's availability lookups answer what the owners do."""
+    data = facade.data
+    assert owner_available(data, "device") is facade.device_available
+    assert owner_available(data, "config") is facade.config_available
+    assert owner_available(data, "protect") is facade.protect_available
+    assert owner_available(data, "innerspace") is facade.innerspace_available
+    assert owner_available(data, "network") is facade.network_available
+    for site_id in (*data["sites"], "unknown-site"):
         for section, method in SECTION_METHODS.items():
-            assert captured.get(section, availability["config"]) is getattr(
-                facade, method
-            )(site_id), (site_id, section)
+            live = getattr(facade.config_coordinator, method)(site_id)
+            assert site_section_available(data, site_id, section) is live, (
+                site_id,
+                section,
+            )
 
 
 async def _fail_wifi(owners: SeededOwners) -> None:

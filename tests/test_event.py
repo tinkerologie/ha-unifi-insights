@@ -49,6 +49,7 @@ from custom_components.unifi_insights.event import (
     discover_network_rule_change_events,
 )
 from tests.fixtures.access import DEVICES, DOORS, ENTRY_DATA, _client, _ready
+from tests.fixtures.facade_data import set_availability
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -360,7 +361,7 @@ class TestUnifiProtectDoorbellEventEntity:
 
     def test_unavailable_when_protect_coordinator_fails(self, mock_coordinator) -> None:
         """Test entity unavailable when Protect coordinator fails."""
-        mock_coordinator.protect_available = False
+        set_availability(mock_coordinator, protect=False)
         entity = UnifiProtectDoorbellEventEntity(
             coordinator=mock_coordinator,
             device_id="camera1",
@@ -371,7 +372,7 @@ class TestUnifiProtectDoorbellEventEntity:
         self, hass: HomeAssistant, mock_coordinator
     ) -> None:
         """Test update handler skips triggering event when Protect fails."""
-        mock_coordinator.protect_available = False
+        set_availability(mock_coordinator, protect=False)
         mock_coordinator.data["protect"]["cameras"]["camera1"]["lastRingStart"] = 12345
         entity = UnifiProtectDoorbellEventEntity(
             coordinator=mock_coordinator,
@@ -492,7 +493,7 @@ class TestUnifiProtectSmartDetectEventEntity:
 
     def test_unavailable_when_protect_coordinator_fails(self, mock_coordinator) -> None:
         """Test entity unavailable when Protect coordinator fails."""
-        mock_coordinator.protect_available = False
+        set_availability(mock_coordinator, protect=False)
         entity = UnifiProtectSmartDetectEventEntity(
             coordinator=mock_coordinator,
             device_id="camera1",
@@ -503,7 +504,7 @@ class TestUnifiProtectSmartDetectEventEntity:
         self, hass: HomeAssistant, mock_coordinator
     ) -> None:
         """Test update handler skips triggering event when Protect fails."""
-        mock_coordinator.protect_available = False
+        set_availability(mock_coordinator, protect=False)
         mock_coordinator.data["protect"]["cameras"]["camera1"]["lastMotionStart"] = (
             12345
         )
@@ -622,7 +623,7 @@ class TestUnifiProtectSensorEventEntity:
 
     def test_unavailable_when_protect_coordinator_fails(self, mock_coordinator) -> None:
         """Test entity unavailable when Protect coordinator fails."""
-        mock_coordinator.protect_available = False
+        set_availability(mock_coordinator, protect=False)
         entity = UnifiProtectSensorEventEntity(
             coordinator=mock_coordinator,
             device_id="sensor1",
@@ -633,7 +634,7 @@ class TestUnifiProtectSensorEventEntity:
         self, hass: HomeAssistant, mock_coordinator
     ) -> None:
         """Test update handler skips triggering event when Protect fails."""
-        mock_coordinator.protect_available = False
+        set_availability(mock_coordinator, protect=False)
         mock_coordinator.data["protect"]["sensors"]["sensor1"][
             "openStatusChangedAt"
         ] = 12345
@@ -1600,7 +1601,6 @@ def rule_audit_coordinator() -> MagicMock:
     """Create a mock facade coordinator for rule audit testing."""
     coord = MagicMock()
     coord.protect_client = None
-    coord.config_available = True
     coord.data = {
         "sites": {"site1": {"id": "site1", "name": "Default"}},
         "devices": {},
@@ -1730,9 +1730,9 @@ def test_available_follows_config_coordinator(
     entity = UnifiInsightsNetworkRuleChangeEvent(
         rule_audit_coordinator, "site1", unique_id=_UNIQUE_ID
     )
-    rule_audit_coordinator.config_available = True
+    set_availability(rule_audit_coordinator, config=True)
     assert entity.available is True
-    rule_audit_coordinator.config_available = False
+    set_availability(rule_audit_coordinator, config=False)
     assert entity.available is False
 
 
@@ -1899,12 +1899,12 @@ async def test_unavailable_round_trip_writes_no_new_event(
     await hass.async_block_till_done()
 
     # Make unavailable
-    rule_audit_coordinator.config_available = False
+    set_availability(rule_audit_coordinator, config=False)
     entity._handle_coordinator_update()
     await hass.async_block_till_done()
 
     # Make available again
-    rule_audit_coordinator.config_available = True
+    set_availability(rule_audit_coordinator, config=True)
     entity._handle_coordinator_update()
     await hass.async_block_till_done()
 

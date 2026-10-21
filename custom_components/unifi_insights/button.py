@@ -48,10 +48,12 @@ from .data_transforms import (
     current_chime_ringtone_id,
     get_port_label,
     network_client,
+    owner_available,
     protect_collection,
     protect_device,
     section_by_site,
     site_record,
+    site_section_available,
     voucher_request_kwargs,
     voucher_site_ids,
 )
@@ -651,7 +653,7 @@ class UnifiClientReconnectButton(
     @property
     def available(self) -> bool:
         """Return if button is available."""
-        if not self.coordinator.device_available:
+        if not owner_available(self.coordinator.data, "device"):
             return False
         client_data = self._get_client_data()
         return bool(client_data)
@@ -728,7 +730,7 @@ class UnifiClientWakeButton(
     @property
     def available(self) -> bool:
         """Return True while the console can send a Wake-on-LAN packet."""
-        return self.coordinator.device_available
+        return owner_available(self.coordinator.data, "device")
 
     async def async_press(self) -> None:
         """Send the Wake-on-LAN magic packet."""
@@ -802,7 +804,7 @@ class UnifiGenerateVoucherButton(UnifiSiteEntity, ButtonEntity):
     @property
     def available(self) -> bool:
         """Return True if vouchers are available for this site."""
-        return bool(self.coordinator.vouchers_available(self._site_id))
+        return site_section_available(self.coordinator.data, self._site_id, "vouchers")
 
     async def async_press(self) -> None:
         """Generate a guest voucher with current HA settings."""

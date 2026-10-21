@@ -41,6 +41,7 @@ from .data_transforms import (
     protect_collection,
     protect_device,
     restore_input,
+    site_section_available,
     voucher_site_ids,
 )
 from .entity import (
@@ -508,7 +509,7 @@ class UnifiVoucherInputNumber(UnifiSiteEntity, RestoreNumber):
     @property
     def available(self) -> bool:
         """Return True if vouchers are available for this site."""
-        return bool(self.coordinator.vouchers_available(self._site_id))
+        return site_section_available(self.coordinator.data, self._site_id, "vouchers")
 
     @property
     def native_value(self) -> float | None:

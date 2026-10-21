@@ -86,12 +86,14 @@ from .data_transforms import (
     network_device,
     network_device_stats,
     normalize_nvr_storage,
+    owner_available,
     parse_timestamp,
     present_attributes,
     protect_collection,
     rule_record,
     section_by_site,
     site_section,
+    site_section_available,
     storage_mount_labels,
     storage_used_percent,
     thread_network,
@@ -1722,7 +1724,7 @@ class UnifiPortSensor(UnifiInsightsEntity, SensorEntity):
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        if not self.coordinator.device_available:
+        if not owner_available(self.coordinator.data, "device"):
             return False
         key = self.entity_description.key
         # Stats-backed metrics stay available while stats carry this port,
@@ -1930,7 +1932,7 @@ class UnifiProtectSensor(UnifiProtectEntity, SensorEntity):
         """
         if self._device_type != DEVICE_TYPE_NVR:
             return super().available
-        if not self.coordinator.protect_available:
+        if not owner_available(self.coordinator.data, "protect"):
             return False
 
         nvr_data = self.device_data
@@ -2032,7 +2034,7 @@ class UnifiSiteClientSensor(UnifiSiteEntity, SensorEntity):
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        return bool(self.coordinator.device_available)
+        return owner_available(self.coordinator.data, "device")
 
     @property
     def native_value(self) -> StateType:
@@ -2085,7 +2087,8 @@ class UnifiWifiClientCountSensor(
     def available(self) -> bool:
         """Return True if entity is available."""
         return bool(
-            self.coordinator.wifi_available(self._site_id) and self._get_wifi_data()
+            site_section_available(self.coordinator.data, self._site_id, "wifi")
+            and self._get_wifi_data()
         )
 
     @property
@@ -2898,7 +2901,7 @@ class UnifiVoucherSensor(UnifiSiteEntity, SensorEntity):
     @property
     def available(self) -> bool:
         """Return True if vouchers are available for this site."""
-        return bool(self.coordinator.vouchers_available(self._site_id))
+        return site_section_available(self.coordinator.data, self._site_id, "vouchers")
 
     @property
     def native_value(self) -> StateType | datetime:
@@ -3138,13 +3141,8 @@ class UnifiSiteInternetActivitySensor(UnifiSiteEntity, SensorEntity):
         """Return True if the config refresh and site report section succeeded."""
         if not self.coordinator.last_update_success:
             return False
-        if not bool(getattr(self.coordinator, "config_available", True)):
-            return False
-        section_available_fn = getattr(
-            self.coordinator, "internet_activity_available", None
-        )
-        if callable(section_available_fn) and not bool(
-            section_available_fn(self._site_id)
+        if not site_section_available(
+            self.coordinator.data, self._site_id, "internet_activity"
         ):
             return False
         unavailable_sites = self.coordinator.data.get("internet_activity_unavailable")

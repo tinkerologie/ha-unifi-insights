@@ -20,7 +20,7 @@ from custom_components.unifi_insights.device_tracker import (
     _partition_connected_clients,
     async_setup_entry,
 )
-from tests.fixtures.facade_data import facade_data, with_client
+from tests.fixtures.facade_data import facade_data, set_availability, with_client
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -555,7 +555,7 @@ class TestUnifiClientTracker:
             mac="AA:BB:CC:DD:EE:FF",
         )
         mock_coordinator.last_update_success = True
-        mock_coordinator.device_available = False
+        set_availability(mock_coordinator, device=False)
 
         assert tracker.available is True
 

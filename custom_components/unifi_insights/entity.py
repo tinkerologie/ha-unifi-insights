@@ -48,6 +48,7 @@ from .data_transforms import (
     get_site_gateway_id,
     network_device,
     network_device_stats,
+    owner_available,
     protect_device,
     site_record,
 )
@@ -281,7 +282,7 @@ class UnifiInsightsEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         # coordinator has stopped getting fresh data from the API (see
         # UnifiProtectEntity.available for the incident this mirrors) - gate
         # on the device coordinator's last_update_success.
-        if not self.coordinator.device_available:
+        if not owner_available(self.coordinator.data, "device"):
             return False
         facts = self.device_facts
         return facts is not None and facts.serviceable
@@ -482,7 +483,7 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         # "CONNECTED" state indefinitely once the protect coordinator stops
         # getting fresh data (e.g. the NVR's local session periodically
         # expiring) - gate on the protect coordinator's last_update_success.
-        if not self.coordinator.protect_available:
+        if not owner_available(self.coordinator.data, "protect"):
             return False
         device_data = protect_device(
             self.coordinator.data, f"{self._device_type}s", self._device_id
@@ -492,7 +493,7 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        if not self.coordinator.protect_available:
+        if not owner_available(self.coordinator.data, "protect"):
             self.async_write_ha_state()
             return
 
@@ -933,7 +934,8 @@ class UnifiInnerSpaceEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
     def available(self) -> bool:
         """Return True if the InnerSpace coordinator and record are available."""
         return bool(
-            self.coordinator.innerspace_available and self.innerspace_record is not None
+            owner_available(self.coordinator.data, "innerspace")
+            and self.innerspace_record is not None
         )
 
     @callback

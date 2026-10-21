@@ -12,6 +12,7 @@ from custom_components.unifi_insights.update import (
     UnifiNetworkDeviceUpdate,
     async_setup_entry,
 )
+from tests.fixtures.facade_data import set_availability
 
 
 class TestParallelUpdates:
@@ -268,7 +269,7 @@ class TestUnifiNetworkDeviceUpdate:
 
     def test_unavailable_when_coordinator_fails(self, mock_coordinator) -> None:
         """Test availability when coordinator update fails."""
-        mock_coordinator.device_available = False
+        set_availability(mock_coordinator, device=False)
 
         entity = UnifiNetworkDeviceUpdate(
             coordinator=mock_coordinator,

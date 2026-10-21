@@ -66,6 +66,7 @@ from custom_components.unifi_insights.topology import build_site_topology
 from custom_components.unifi_insights.topology import (
     device_kind as topology_device_kind,
 )
+from tests.fixtures.facade_data import set_availability
 from tests.fixtures.library_responses import (
     SAMPLE_UDM_PRO_OVERVIEW,
     SAMPLE_UDM_PRO_STATS,
@@ -103,7 +104,6 @@ def _coordinator(
     """Return a mock facade coordinator holding one site's data."""
     coordinator = MagicMock()
     coordinator.hass = hass
-    coordinator.device_available = True
     coordinator.protect_client = None
     coordinator.get_site = MagicMock(return_value={"id": SITE})
     coordinator.async_get_wake_history = AsyncMock(return_value={})
@@ -262,7 +262,7 @@ async def test_availability_and_status_read_published_facts(
     coordinator.data["devices"][SITE]["sw1"] = {}
     assert entity.is_on is None
     coordinator.data["devices"][SITE]["sw1"] = {"state": "ONLINE"}
-    coordinator.device_available = False
+    set_availability(coordinator, device=False)
     assert entity.available is False
 
 
@@ -412,7 +412,7 @@ async def test_poe_buttons_use_the_shared_port_tuple(hass: HomeAssistant) -> Non
     restart = [e for e in entities if isinstance(e, UnifiInsightsButton)]
     assert restart
     assert restart[0].available is True
-    coordinator.device_available = False
+    set_availability(coordinator, device=False)
     assert restart[0].available is False
 
 
@@ -757,7 +757,7 @@ async def test_transient_connectivity_is_unknown(
     state = hass.states.get(sensor.entity_id)
     assert state is not None
     assert state.state == "unknown"
-    coordinator.device_available = False
+    set_availability(coordinator, device=False)
     assert sensor.available is False
 
 

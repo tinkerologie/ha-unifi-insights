@@ -29,6 +29,7 @@ from custom_components.unifi_insights.entity import (
 )
 from tests.fixtures.facade_data import (
     facade_data,
+    set_availability,
     with_camera,
     with_network_device,
     with_sections,
@@ -333,9 +334,6 @@ class TestUnifiInsightsEntity:
         coordinator = MagicMock()
         coordinator.hass = hass
         coordinator.available = True
-        coordinator.device_available = True
-        coordinator.config_available = True
-        coordinator.protect_available = True
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
         coordinator.data = {
@@ -484,7 +482,7 @@ class TestUnifiInsightsEntity:
         self, hass: HomeAssistant, mock_coordinator
     ):
         """Entity unavailable when coordinator stale, even w/ cached ONLINE data."""
-        mock_coordinator.device_available = False
+        set_availability(mock_coordinator, device=False)
         description = EntityDescription(key="test", name="Test")
 
         entity = UnifiInsightsEntity(
@@ -500,8 +498,7 @@ class TestUnifiInsightsEntity:
         self, hass: HomeAssistant, mock_coordinator
     ):
         """Network entity remains available when Protect coordinator fails."""
-        mock_coordinator.device_available = True
-        mock_coordinator.protect_available = False
+        set_availability(mock_coordinator, device=True, protect=False)
         mock_coordinator.available = False
         description = EntityDescription(key="test", name="Test")
 
@@ -527,11 +524,11 @@ class TestUnifiInsightsEntity:
         )
         entity.async_write_ha_state = MagicMock()
 
-        mock_coordinator.device_available = False
+        set_availability(mock_coordinator, device=False)
         entity._handle_coordinator_update()
         assert entity.available is False
 
-        mock_coordinator.device_available = True
+        set_availability(mock_coordinator, device=True)
         entity._handle_coordinator_update()
         assert entity.available is True
 
@@ -593,9 +590,6 @@ class TestUnifiProtectEntity:
         coordinator = MagicMock()
         coordinator.hass = hass
         coordinator.available = True
-        coordinator.device_available = True
-        coordinator.config_available = True
-        coordinator.protect_available = True
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
         coordinator.protect_client = MagicMock()
@@ -724,7 +718,7 @@ class TestUnifiProtectEntity:
         self, hass: HomeAssistant, mock_coordinator
     ):
         """Protect entity unavailable when coordinator stale (mirrors 47h incident)."""
-        mock_coordinator.protect_available = False
+        set_availability(mock_coordinator, protect=False)
 
         entity = UnifiProtectEntity(
             coordinator=mock_coordinator,
@@ -738,8 +732,7 @@ class TestUnifiProtectEntity:
         self, hass: HomeAssistant, mock_coordinator
     ):
         """Protect entity remains available when Network device coordinator fails."""
-        mock_coordinator.device_available = False
-        mock_coordinator.protect_available = True
+        set_availability(mock_coordinator, device=False, protect=True)
         mock_coordinator.available = False
 
         entity = UnifiProtectEntity(
@@ -762,11 +755,11 @@ class TestUnifiProtectEntity:
         entity.async_write_ha_state = MagicMock()
         entity._update_from_data = MagicMock()
 
-        mock_coordinator.protect_available = False
+        set_availability(mock_coordinator, protect=False)
         entity._handle_coordinator_update()
         assert entity.available is False
 
-        mock_coordinator.protect_available = True
+        set_availability(mock_coordinator, protect=True)
         entity._handle_coordinator_update()
         assert entity.available is True
 
@@ -1479,12 +1472,12 @@ def test_network_serviceable_availability(
 ) -> None:
     """Base entities need fresh Device data and a serviceable device."""
     coordinator = MagicMock()
-    coordinator.device_available = healthy
     coordinator.network_client.base_url = "https://example.test"
     coordinator.data = {
         "devices": {"site": {"pdu": {"state": state, "model": "USP-PDU-Pro"}}},
         "stats": {},
     }
+    set_availability(coordinator, device=healthy)
     entity = UnifiInsightsEntity(
         coordinator, EntityDescription(key="test"), "site", "pdu"
     )
@@ -1501,8 +1494,6 @@ def _snapshot_coordinator(data: Any) -> MagicMock:
     """Return a coordinator double that publishes ``data`` as its snapshot."""
     coordinator = MagicMock()
     coordinator.data = data
-    coordinator.device_available = True
-    coordinator.protect_available = True
     coordinator.network_client.base_url = "https://192.168.1.1"
     coordinator.protect_client = None
     return coordinator

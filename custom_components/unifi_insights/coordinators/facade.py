@@ -193,7 +193,7 @@ def capture_availability(
 
     A section of a site is available when the config coordinator is and the
     section was not among ``failed_sections`` on its last refresh, as the
-    facade's ``*_available(site_id)`` methods answer.
+    config coordinator's ``*_available(site_id)`` methods answer.
     """
     sites = {*site_ids, *(site_id for _, site_id in failed_sections)}
     availability = {
@@ -535,40 +535,6 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
     def config_available(self) -> bool:
         """Return True if the config coordinator is available."""
         return self._config_coordinator.last_update_success
-
-    def wifi_available(self, site_id: str) -> bool:
-        """Return True if a site's WiFi networks were fetched on the last refresh."""
-        return self._config_coordinator.wifi_available(site_id)
-
-    def vouchers_available(self, site_id: str) -> bool:
-        """Return True if a site's hotspot vouchers were fetched on the last refresh."""
-        return self._config_coordinator.vouchers_available(site_id)
-
-    def firewall_available(self, site_id: str) -> bool:
-        """Return True if a site's firewall rules were fetched on the last refresh."""
-        return self._config_coordinator.firewall_available(site_id)
-
-    def port_forwards_available(self, site_id: str) -> bool:
-        """Return True if a site's port forwards were fetched on the last refresh."""
-        return bool(self._config_coordinator.port_forwards_available(site_id))
-
-    def traffic_rules_available(self, site_id: str) -> bool:
-        """Return True if a site's traffic rules were fetched on the last refresh."""
-        return bool(self._config_coordinator.traffic_rules_available(site_id))
-
-    def nat_rules_available(self, site_id: str) -> bool:
-        """Return True if a site's NAT rules were fetched on the last refresh."""
-        return bool(self._config_coordinator.nat_rules_available(site_id))
-
-    def static_routes_available(self, site_id: str) -> bool:
-        """Return True if a site's static routes were fetched on the last refresh."""
-        return bool(self._config_coordinator.static_routes_available(site_id))
-
-    def internet_activity_available(self, site_id: str) -> bool:
-        """Return True if a site's internet activity was fetched on the last refresh."""
-        if hasattr(self._config_coordinator, "internet_activity_available"):
-            return self._config_coordinator.internet_activity_available(site_id)
-        return self.config_available
 
     @property
     def protect_available(self) -> bool:

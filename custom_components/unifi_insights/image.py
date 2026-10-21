@@ -23,9 +23,11 @@ from .data_transforms import (
     _field,
     latest_voucher,
     latest_voucher_qr_payload,
+    owner_available,
     parse_timestamp,
     rule_record,
     section_by_site,
+    site_section_available,
     voucher_site_ids,
 )
 from .entity import UnifiSiteEntity
@@ -203,7 +205,8 @@ class UnifiWifiQrCodeImage(
     def available(self) -> bool:
         """Return True if entity is available."""
         return bool(
-            self.coordinator.wifi_available(self._site_id) and self._current_payload()
+            site_section_available(self.coordinator.data, self._site_id, "wifi")
+            and self._current_payload()
         )
 
     @callback
@@ -292,7 +295,7 @@ class UnifiFloorPlanImage(
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        if not self.coordinator.innerspace_available:
+        if not owner_available(self.coordinator.data, "innerspace"):
             return False
         if not self._current_image_url():
             return False
@@ -532,7 +535,7 @@ class UnifiVoucherQrCodeImage(UnifiSiteEntity, ImageEntity):
     def available(self) -> bool:
         """Return True if vouchers are available and a valid QR payload exists."""
         return bool(
-            self.coordinator.vouchers_available(self._site_id)
+            site_section_available(self.coordinator.data, self._site_id, "vouchers")
             and self._current_payload()
         )
 

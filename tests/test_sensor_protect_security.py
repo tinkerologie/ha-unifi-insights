@@ -38,7 +38,6 @@ def _coordinator(hass: HomeAssistant, **protect: dict[str, Any]) -> MagicMock:
     """Build a facade-coordinator mock whose protect data holds ``protect``."""
     coordinator = MagicMock()
     coordinator.hass = hass
-    coordinator.protect_available = True
     coordinator.network_client.base_url = "https://192.168.1.1"
     coordinator.protect_client.base_url = "https://192.168.1.1"
     data: dict[str, Any] = {"cameras": {}, "sensors": {}}
