@@ -474,6 +474,33 @@ def test_internet_activity_unavailable_paths() -> None:
     assert manual_unavailable["status"] == "unavailable"
 
 
+@pytest.mark.parametrize(
+    ("unavailable_sites", "expected_status"),
+    [
+        ({"site-1"}, "unavailable"),
+        (frozenset({"site-1"}), "unavailable"),
+        (["site-1"], "unavailable"),
+        (("site-1",), "unavailable"),
+        ({"site-2"}, "ok"),
+        ("site-1", "ok"),
+        ({"site-1": True}, "ok"),
+        (None, "ok"),
+    ],
+)
+def test_internet_activity_unavailable_sites_shapes(
+    unavailable_sites: object, expected_status: str
+) -> None:
+    """Any set, list or tuple of site IDs marks the site; malformed is ignored."""
+    data = {**_base_data(), "internet_activity_unavailable": unavailable_sites}
+    snapshot = build_internet_activity_snapshot(
+        data,
+        entry_id="entry-1",
+        site_id="site-1",
+        entity_registry=_FakeEntityRegistry(),
+    )
+    assert snapshot["status"] == expected_status
+
+
 def test_internet_activity_gateway_rate_parse_failures() -> None:
     data = _base_data()
     data["stats"]["site-1"]["gw-1"]["uplink"] = {

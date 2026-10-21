@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, cast
 
@@ -3147,7 +3148,7 @@ class UnifiSiteInternetActivitySensor(UnifiSiteEntity, SensorEntity):
             return False
         unavailable_sites = self.coordinator.data.get("internet_activity_unavailable")
         if (
-            isinstance(unavailable_sites, (set, list, tuple))
+            isinstance(unavailable_sites, (AbstractSet, list, tuple))
             and self._site_id in unavailable_sites
         ):
             return False

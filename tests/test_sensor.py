@@ -4687,6 +4687,43 @@ class TestUnifiSiteInternetActivitySensor:
         coordinator.data = None
         assert sensor.native_value is None
 
+    @pytest.mark.parametrize(
+        ("unavailable_sites", "expected_available"),
+        [
+            ({"site1"}, False),
+            (frozenset({"site1"}), False),
+            (["site1"], False),
+            (("site1",), False),
+            ({"site2"}, True),
+            ("site1", True),
+            ({"site1": True}, True),
+            (None, True),
+        ],
+    )
+    def test_unavailable_sites_shapes(
+        self,
+        unavailable_sites: object,
+        expected_available: bool,  # noqa: FBT001
+    ) -> None:
+        """Any set, list or tuple of site IDs marks the site; malformed is ignored."""
+        desc = SITE_INTERNET_ACTIVITY_SENSOR_TYPES[0]
+        coordinator = MagicMock()
+        coordinator.last_update_success = True
+        coordinator.data = facade_data(
+            sites={"site1": {"name": "Default"}},
+            site_ids=("site1",),
+            internet_activity={"site1": {"1h": {"rx_bytes": 1024}}},
+            internet_activity_unavailable=unavailable_sites,
+        )
+
+        sensor = UnifiSiteInternetActivitySensor(
+            coordinator=coordinator,
+            description=desc,
+            site_id="site1",
+            unique_id="console_site1_" + desc.key,
+        )
+        assert sensor.available is expected_available
+
 
 class TestSensorAdditionalCoverageGaps:
     """Targeted tests for remaining sensor.py coverage gaps."""

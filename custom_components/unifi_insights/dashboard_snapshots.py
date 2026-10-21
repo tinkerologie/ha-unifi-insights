@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Set as AbstractSet
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -814,9 +815,9 @@ def build_internet_activity_snapshot(
     """Build one site's internet-activity snapshot."""
     activity_by_site = as_dict(data.get("internet_activity"))
     unavailable_raw = data.get("internet_activity_unavailable")
-    unavailable_sites = unavailable_raw if isinstance(unavailable_raw, set) else set()
-
-    if site_id in unavailable_sites:
+    if isinstance(unavailable_raw, (AbstractSet, list, tuple)) and (
+        site_id in unavailable_raw
+    ):
         return build_unavailable_internet_activity(
             entry_id, site_id, "site_unavailable"
         )
