@@ -11,9 +11,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
-from unittest.mock import DEFAULT, MagicMock, patch
+from unittest.mock import DEFAULT, AsyncMock, MagicMock, patch
 
 import pytest
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.core import ServiceCall
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.unifi_insights import (
     binary_sensor,
@@ -21,10 +27,13 @@ from custom_components.unifi_insights import (
     device_tracker,
     image,
     sensor,
+    service_targets,
     switch,
     topology,
     update,
 )
+from custom_components.unifi_insights.client_wake import wake_unique_id
+from custom_components.unifi_insights.const import CONF_CLIENT_CONTROL, DOMAIN
 from tests.fixtures.facade_data import (
     facade_data,
     with_client,
@@ -49,24 +58,33 @@ MAC = "02:00:00:00:00:0a"
 
 type Variant = Callable[[FacadeData, str], FacadeData]
 
+
+def _no_record(site_id: str = SITE, record_id: str = RECORD_ID) -> list[Any]:
+    """Return snapshots that hold no usable ``record_id`` of a site's section."""
+    return [
+        pytest.param(without_sections, id="no-section"),
+        pytest.param(
+            lambda base, s: with_sections(base, **{s: []}), id="malformed-section"
+        ),
+        pytest.param(lambda base, s: with_sections(base, **{s: {}}), id="no-site"),
+        pytest.param(
+            lambda base, s: with_sections(base, **{s: {site_id: []}}),
+            id="malformed-site",
+        ),
+        pytest.param(
+            lambda base, s: with_sections(base, **{s: {site_id: {}}}), id="no-record"
+        ),
+        pytest.param(
+            lambda base, s: with_sections(
+                base, **{s: {site_id: {record_id: "invalid"}}}
+            ),
+            id="malformed-record",
+        ),
+    ]
+
+
 # Snapshots that hold no usable record of a site-keyed section.
-NO_RECORD: list[Any] = [
-    pytest.param(without_sections, id="no-section"),
-    pytest.param(
-        lambda base, s: with_sections(base, **{s: []}), id="malformed-section"
-    ),
-    pytest.param(lambda base, s: with_sections(base, **{s: {}}), id="no-site"),
-    pytest.param(
-        lambda base, s: with_sections(base, **{s: {SITE: []}}), id="malformed-site"
-    ),
-    pytest.param(
-        lambda base, s: with_sections(base, **{s: {SITE: {}}}), id="no-record"
-    ),
-    pytest.param(
-        lambda base, s: with_sections(base, **{s: {SITE: {RECORD_ID: "invalid"}}}),
-        id="malformed-record",
-    ),
-]
+NO_RECORD = _no_record()
 
 
 def _snapshot(
@@ -605,3 +623,402 @@ def test_site_display_name_falls_back_to_the_site_id(data: FacadeData) -> None:
     assert topology.site_display_name(data, SITE) == SITE
     named = with_sections(data, sites={SITE: {"name": "Home"}})
     assert topology.site_display_name(named, SITE) == "Home"
+
+
+# --- Sensor discovery of device statistics ------------------------------------
+
+STATS_GATED = {"tx_rate", "rx_rate", "poe_total_power"}
+SWITCH = {"name": "Switch", "features": ["switching"]}
+
+
+def _device_sensor_keys(data: FacadeData) -> set[str]:
+    """Return the stats-gated sensor keys discovered for the switch."""
+    entities: list[Any] = []
+    sensor._discover_device_sensors(
+        _coordinator(data), SITE, RECORD_ID, SWITCH, set(), entities=entities
+    )
+    return {entity.entity_description.key for entity in entities} & STATS_GATED
+
+
+@pytest.mark.parametrize(
+    ("stats", "expected"),
+    [
+        pytest.param(
+            {"uplink": {"txRateBps": 1}, "poe_total_w": 10.0},
+            STATS_GATED,
+            id="uplink-and-poe",
+        ),
+        pytest.param({"tx_bytes_per_sec": 1}, {"tx_rate", "rx_rate"}, id="rates"),
+        pytest.param({"poe_ports": {}}, {"poe_total_power"}, id="poe-ports"),
+        pytest.param({"cpu": 5}, set(), id="neither"),
+    ],
+)
+def test_device_sensors_need_their_stats(
+    stats: dict[str, Any], expected: set[str]
+) -> None:
+    """Uplink rate and total PoE sensors come only from the device's stats."""
+    data = with_network_device(facade_data(), SITE, RECORD_ID, SWITCH, stats=stats)
+
+    assert _device_sensor_keys(data) == expected
+
+
+@pytest.mark.parametrize("variant", NO_RECORD)
+def test_device_sensors_skip_missing_or_malformed_stats(variant: Variant) -> None:
+    """Without a usable stats record, no stats-gated sensor is discovered."""
+    base = with_network_device(facade_data(), SITE, RECORD_ID, SWITCH)
+
+    assert _device_sensor_keys(variant(base, "stats")) == set()
+
+
+PORTED_SWITCH = {**SWITCH, "ports": [{"idx": 1, "state": "UP"}]}
+PORT_STATS = {"poe_ports": {"1": 5.0}, "port_bytes": {"1": {}}}
+PORT_KEYS = {
+    (1, key)
+    for key in (
+        "port_speed",
+        "port_tx_bytes",
+        "port_rx_bytes",
+        "port_tx_rate",
+        "port_rx_rate",
+    )
+}
+
+
+def _port_sensor_keys(data: FacadeData) -> set[tuple[int, str]]:
+    """Return (port, key) of every port sensor discovered for the switch."""
+    entities: list[Any] = []
+    sensor._discover_port_sensors(
+        _coordinator(data),
+        SITE,
+        RECORD_ID,
+        PORTED_SWITCH,
+        set(),
+        entities=entities,
+    )
+    return {(entity._port_idx, entity.entity_description.key) for entity in entities}
+
+
+def test_port_sensors_add_the_poe_sensor_from_the_stats() -> None:
+    """The stats fallback adds a port's PoE sensor beside its port sensors."""
+    data = with_network_device(
+        facade_data(), SITE, RECORD_ID, PORTED_SWITCH, stats=PORT_STATS
+    )
+
+    assert _port_sensor_keys(data) == {*PORT_KEYS, (1, "port_poe_power")}
+
+
+@pytest.mark.parametrize("variant", NO_RECORD)
+def test_port_sensors_skip_missing_or_malformed_stats(variant: Variant) -> None:
+    """Without a usable stats record, only the port records' sensors are found."""
+    base = with_network_device(facade_data(), SITE, RECORD_ID, PORTED_SWITCH)
+
+    assert _port_sensor_keys(variant(base, "stats")) == PORT_KEYS
+
+
+# --- Wake buttons ------------------------------------------------------------
+
+WAKE_MAC = "02:00:00:00:00:0b"
+LIVE_CLIENT = {"name": "Live PC", "macAddress": WAKE_MAC}
+# The first site, which a restored button falls back to without a live client.
+SITES = {"home": {"name": "Home"}, SITE: {"name": "Office"}}
+
+
+async def _restored_wake_button(
+    hass: HomeAssistant, data: FacadeData
+) -> button.UnifiClientWakeButton:
+    """Set up the button platform over a registered Wake row; return its button."""
+    coordinator = _coordinator(data)
+    coordinator.hass = hass
+    coordinator.async_get_wake_history = AsyncMock(return_value={})
+    entry = MockConfigEntry(domain=DOMAIN, options={CONF_CLIENT_CONTROL: True})
+    entry.add_to_hass(hass)
+    entry.runtime_data = MagicMock(coordinator=coordinator)
+    er.async_get(hass).async_get_or_create(
+        "button",
+        DOMAIN,
+        wake_unique_id(WAKE_MAC),
+        config_entry=entry,
+        original_name="Wake Saved PC",
+    )
+    added: list[Any] = []
+
+    await button.async_setup_entry(hass, entry, added.extend)
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    (wake,) = [e for e in added if isinstance(e, button.UnifiClientWakeButton)]
+    return wake
+
+
+async def test_restored_wake_button_follows_its_live_client(
+    hass: HomeAssistant,
+) -> None:
+    """A registered Wake button sits on its live client's site, with its name."""
+    data = with_client(facade_data(sites=SITES), SITE, RECORD_ID, LIVE_CLIENT)
+
+    wake = await _restored_wake_button(hass, data)
+
+    assert wake.device_info is not None
+    assert wake.device_info["identifiers"] == {(DOMAIN, f"site_{SITE}")}
+    assert wake.translation_placeholders == {"client_name": "Live PC"}
+
+
+@pytest.mark.parametrize("variant", NO_RECORD)
+async def test_restored_wake_button_without_a_live_client(
+    hass: HomeAssistant, variant: Variant
+) -> None:
+    """Without a usable client record, the first site and saved name are used."""
+    data = variant(facade_data(sites=SITES), "clients")
+
+    wake = await _restored_wake_button(hass, data)
+
+    assert wake.device_info is not None
+    assert wake.device_info["identifiers"] == {(DOMAIN, "site_home")}
+    assert wake.translation_placeholders == {"client_name": "Saved PC"}
+
+
+@pytest.mark.parametrize(
+    ("fallback", "expected"),
+    [("Old PC", "Old PC"), ("  ", WAKE_MAC), (None, WAKE_MAC)],
+)
+@pytest.mark.parametrize("variant", NO_RECORD)
+def test_wake_history_name_without_a_live_client(
+    variant: Variant, fallback: str | None, expected: str
+) -> None:
+    """The live name wins; without a usable client the history name, then MAC."""
+    coordinator = _coordinator(with_client(facade_data(), SITE, RECORD_ID, LIVE_CLIENT))
+    wake = button.UnifiClientWakeButton(coordinator, WAKE_MAC, site_id=SITE)
+    wake.async_update_history_name(fallback)
+    assert wake.translation_placeholders == {"client_name": "Live PC"}
+
+    coordinator.data = variant(facade_data(), "clients")
+    wake.async_update_history_name(fallback)
+
+    assert wake.translation_placeholders == {"client_name": expected}
+
+
+# --- Service targets ---------------------------------------------------------
+
+# IDs with underscores, so a cached match and the unique ID fallback differ.
+TARGET_SITE = "my_site"
+TARGET_DEVICE = "dev_1"
+TARGET_NO_RECORD = _no_record(TARGET_SITE, TARGET_DEVICE)
+
+
+def _network_console(hass: HomeAssistant, data: FacadeData) -> MockConfigEntry:
+    """Add a loaded console entry whose facade publishes ``data``."""
+    entry = MockConfigEntry(domain=DOMAIN, title="Office")
+    entry.add_to_hass(hass)
+    entry.mock_state(hass, ConfigEntryState.LOADED)
+    entry.runtime_data = MagicMock(coordinator=_coordinator(data))
+    return entry
+
+
+def _target_snapshot() -> FacadeData:
+    """Return a snapshot that caches the target device."""
+    return with_network_device(facade_data(), TARGET_SITE, TARGET_DEVICE, {})
+
+
+def _register_target(hass: HomeAssistant, entry: MockConfigEntry, kind: str) -> str:
+    """Register the target device or one of its entities; return its ID."""
+    if kind == "device":
+        return (
+            dr.async_get(hass)
+            .async_get_or_create(
+                config_entry_id=entry.entry_id,
+                identifiers={(DOMAIN, f"{TARGET_SITE}_{TARGET_DEVICE}")},
+            )
+            .id
+        )
+    return (
+        er.async_get(hass)
+        .async_get_or_create(
+            "sensor",
+            DOMAIN,
+            f"{TARGET_SITE}_{TARGET_DEVICE}_cpu",
+            config_entry=entry,
+        )
+        .entity_id
+    )
+
+
+# What a registry target resolves to when its device is not cached: the
+# device identifier splits at its last "_", an entity unique ID at each "_".
+UNCACHED_TARGET = {"device": ("1", "my_site_dev"), "entity": ("site", "my")}
+
+
+@pytest.mark.parametrize("kind", ["device", "entity"])
+async def test_registry_target_resolves_to_a_cached_device(
+    hass: HomeAssistant, kind: str
+) -> None:
+    """A cached device splits a registry target into its own site and device."""
+    entry = _network_console(hass, _target_snapshot())
+    target = _register_target(hass, entry, kind)
+
+    assert service_targets._resolve_network_device_id(hass, target, None, [entry]) == (
+        TARGET_DEVICE,
+        TARGET_SITE,
+        entry,
+    )
+
+
+@pytest.mark.parametrize("variant", TARGET_NO_RECORD)
+@pytest.mark.parametrize("kind", ["device", "entity"])
+async def test_registry_target_without_a_usable_device_record(
+    hass: HomeAssistant, kind: str, variant: Variant
+) -> None:
+    """Without a usable cached device, the registry ID is split as written."""
+    entry = _network_console(hass, variant(_target_snapshot(), "devices"))
+    target = _register_target(hass, entry, kind)
+
+    assert service_targets._resolve_network_device_id(hass, target, None, [entry]) == (
+        *UNCACHED_TARGET[kind],
+        entry,
+    )
+
+
+def _resolve_device_call(hass: HomeAssistant, action: Any) -> Any:
+    """Resolve a call for the target device without a site."""
+    call = ServiceCall(hass, DOMAIN, "restart_device", {"device_id": TARGET_DEVICE})
+    return service_targets.resolve_network_device_call(hass, call, action=action)
+
+
+@pytest.mark.parametrize("action", ["restart", "power_cycle"])
+async def test_device_call_takes_the_site_that_caches_the_device(
+    hass: HomeAssistant, action: Any
+) -> None:
+    """Without a site, the call takes the site whose devices hold the device."""
+    data = with_sections(
+        _target_snapshot(), devices={"other": [], **_target_snapshot()["devices"]}
+    )
+    entry = _network_console(hass, data)
+
+    target = _resolve_device_call(hass, action)
+
+    assert (target.entry, target.device_id, target.site_id) == (
+        entry,
+        TARGET_DEVICE,
+        TARGET_SITE,
+    )
+
+
+@pytest.mark.parametrize(
+    ("variant", "key"),
+    [
+        *[
+            pytest.param(param.values[0], "{action}_site_required", id=param.id)
+            for param in TARGET_NO_RECORD[:2]
+        ],
+        *[
+            pytest.param(param.values[0], "device_not_on_any_console", id=param.id)
+            for param in TARGET_NO_RECORD[2:]
+        ],
+    ],
+)
+@pytest.mark.parametrize("action", ["restart", "power_cycle"])
+async def test_device_call_without_a_usable_device_record(
+    hass: HomeAssistant, action: Any, variant: Variant, key: str
+) -> None:
+    """
+    Without a usable cached device, the call is refused.
+
+    A missing or malformed section may still hold the device, so only the site
+    is missing; a loaded section without the device proves it is elsewhere.
+    """
+    _network_console(hass, variant(_target_snapshot(), "devices"))
+
+    with pytest.raises(ServiceValidationError) as err:
+        _resolve_device_call(hass, action)
+
+    assert err.value.translation_domain == DOMAIN
+    assert err.value.translation_key == key.format(action=action)
+    assert err.value.translation_placeholders == {"device_id": TARGET_DEVICE}
+
+
+# --- Topology sections -------------------------------------------------------
+
+SWITCH_MAC = "02:00:00:00:00:01"
+CLIENT_MAC = "02:00:00:00:00:02"
+TOPOLOGY_RECORDS = {
+    "devices": (RECORD_ID, {"name": "Switch", "macAddress": SWITCH_MAC}),
+    "clients": (
+        RECORD_ID,
+        {"name": "TV", "type": "WIRED", "macAddress": CLIENT_MAC},
+    ),
+    "client_links": (CLIENT_MAC, {"sw_mac": SWITCH_MAC, "sw_port": 4, "vlan": 10}),
+}
+
+
+def _topology_snapshot() -> FacadeData:
+    """Return a snapshot with a switch, a wired client and the client's link."""
+    return facade_data(
+        **{
+            section: {SITE: {record_id: record}}
+            for section, (record_id, record) in TOPOLOGY_RECORDS.items()
+        }
+    )
+
+
+def _topology_shape(data: FacadeData) -> dict[str, Any]:
+    """Build the site's topology and return its shape."""
+    snapshot = topology.build_site_topology(
+        data, "entry", SITE, node_key=b"k" * 32, ha_device_ids={}
+    )
+    nodes = snapshot["nodes"]
+    return {
+        "devices": sum(node["kind"] != "client" for node in nodes),
+        "clients": [node.get("vlan_id") for node in nodes if node["kind"] == "client"],
+        "edges": [
+            (edge["medium"], edge.get("parent_port")) for edge in snapshot["edges"]
+        ],
+        "unresolved": sorted(entry["reason"] for entry in snapshot["unresolved"]),
+    }
+
+
+def test_topology_joins_devices_clients_and_client_links() -> None:
+    """A wired client hangs off its switch port, on its link's VLAN."""
+    assert _topology_shape(_topology_snapshot()) == {
+        "devices": 1,
+        "clients": [10],
+        "edges": [("wired", 4)],
+        "unresolved": ["no_uplink_data"],
+    }
+
+
+# What a site's topology is without a usable record of one section.
+TOPOLOGY_WITHOUT = {
+    "devices": {
+        "devices": 0,
+        "clients": [10],
+        "edges": [],
+        "unresolved": ["parent_not_found"],
+    },
+    "clients": {
+        "devices": 1,
+        "clients": [],
+        "edges": [],
+        "unresolved": ["no_uplink_data"],
+    },
+    "client_links": {
+        "devices": 1,
+        "clients": [None],
+        "edges": [],
+        "unresolved": ["no_uplink_data", "no_uplink_data"],
+    },
+}
+
+
+@pytest.mark.parametrize(
+    ("section", "variant"),
+    [
+        pytest.param(section, param.values[0], id=f"{section}-{param.id}")
+        for section, (record_id, _record) in TOPOLOGY_RECORDS.items()
+        for param in _no_record(SITE, record_id)
+    ],
+)
+def test_topology_without_a_usable_section_record(
+    section: str, variant: Variant
+) -> None:
+    """A missing or malformed section, site or record reads as no record."""
+    data = variant(_topology_snapshot(), section)
+
+    assert _topology_shape(data) == TOPOLOGY_WITHOUT[section]
