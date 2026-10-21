@@ -1136,7 +1136,7 @@ class TestVoucherNumbers:
         assert settings.duration_minutes == 480
 
     def test_voucher_number_availability_follows_captured_vouchers(
-        self, voucher_coordinator
+        self, voucher_coordinator: MagicMock
     ) -> None:
         """Availability follows the site's captured voucher availability."""
         desc = VOUCHER_NUMBER_DESCRIPTIONS[0]

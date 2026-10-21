@@ -815,7 +815,7 @@ class TestUnifiClientBlockSwitch:
         assert switch.available is False
 
     def test_switch_available_follows_captured_device_availability(
-        self, mock_coordinator
+        self, mock_coordinator: MagicMock
     ) -> None:
         """A cached client is unavailable while the device owner is failing."""
         switch = UnifiClientBlockSwitch(
@@ -1062,7 +1062,9 @@ class TestUnifiWifiSwitch:
 
         assert switch.available is True
 
-    def test_available_follows_captured_site_wifi_fetch(self, mock_coordinator) -> None:
+    def test_available_follows_captured_site_wifi_fetch(
+        self, mock_coordinator: MagicMock
+    ) -> None:
         """The switch is unavailable while its site's WiFi fetch is failing."""
         wifi_data = mock_coordinator.data["wifi"]["site1"]["wifi1"]
         switch = UnifiWifiSwitch(
