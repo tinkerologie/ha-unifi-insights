@@ -177,23 +177,73 @@ def with_network_device(
     """
     Return ``data`` with a Network device (and its stats) added or replaced.
 
-    When the snapshot carries published network facts, the site's facts are
-    republished from the new records, as the device coordinator would.
+    Published network facts are republished from the new records.
     """
     sections: dict[str, Any] = {
         "devices": _with_record(data, "devices", site_id, device_id, record)
     }
     if stats is not None:
         sections["stats"] = _with_record(data, "stats", site_id, device_id, stats)
+    return _with_network_sections(data, site_id, sections)
+
+
+def with_device_stats(
+    data: Mapping[str, Any], site_id: str, device_id: str, stats: Any
+) -> FacadeData:
+    """
+    Return ``data`` with a Network device's stats record replaced.
+
+    ``stats`` may be any value, so a test can publish malformed stats (None,
+    a string) as well as a record. Published network facts are republished.
+    """
+    return _with_network_sections(
+        data,
+        site_id,
+        {"stats": _with_record(data, "stats", site_id, device_id, stats)},
+    )
+
+
+def _record_at(data: Mapping[str, Any], section: str, group: str, key: str) -> Any:
+    """Return ``data[section][group][key]``, or an empty mapping when absent."""
+    by_group = data.get(section)
+    records = by_group.get(group) if isinstance(by_group, Mapping) else None
+    record = records.get(key) if isinstance(records, Mapping) else None
+    return record if isinstance(record, Mapping) else {}
+
+
+def with_device_fields(
+    data: Mapping[str, Any], site_id: str, device_id: str, **fields: Any
+) -> FacadeData:
+    """Return ``data`` with fields of a Network device's record replaced."""
+    record = _record_at(data, "devices", site_id, device_id)
+    return with_network_device(data, site_id, device_id, {**record, **fields})
+
+
+def with_device_stats_fields(
+    data: Mapping[str, Any], site_id: str, device_id: str, **fields: Any
+) -> FacadeData:
+    """Return ``data`` with fields of a Network device's stats record replaced."""
+    stats = _record_at(data, "stats", site_id, device_id)
+    return with_device_stats(data, site_id, device_id, {**stats, **fields})
+
+
+def _with_network_sections(
+    data: Mapping[str, Any], site_id: str, sections: dict[str, Any]
+) -> FacadeData:
+    """
+    Return ``data`` with the given Network sections replaced.
+
+    When the snapshot carries published network facts, the site's facts are
+    republished from the new records, as the device coordinator would.
+    """
     facts = data.get(NETWORK_FACTS_KEY)
     if isinstance(facts, Mapping):
+        devices = sections.get("devices") or data.get("devices") or {}
         site_stats = (sections.get("stats") or data.get("stats") or {}).get(site_id)
         sections[NETWORK_FACTS_KEY] = ReadOnlyDict(
             {
                 **facts,
-                site_id: build_site_network_facts(
-                    sections["devices"][site_id], site_stats
-                ),
+                site_id: build_site_network_facts(devices.get(site_id, {}), site_stats),
             }
         )
     return with_sections(data, **sections)

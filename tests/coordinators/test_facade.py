@@ -63,6 +63,9 @@ from tests.fixtures.facade_data import (
     frozen,
     with_camera,
     with_client,
+    with_device_fields,
+    with_device_stats,
+    with_device_stats_fields,
     with_latest_voucher,
     with_network_device,
     with_protect_device,
@@ -1755,3 +1758,59 @@ def test_with_network_device_republishes_published_facts() -> None:
     facts = device_facts(data, "site1", "gw")
     assert facts is not None
     assert facts.online_state == "online"
+
+
+def test_with_device_stats_publishes_any_stats_value() -> None:
+    """Stats may be replaced by a record or a malformed value, copy-on-write."""
+    device = {"id": "gw", "macAddress": "02:00:00:00:00:01", "state": "ONLINE"}
+    base = with_network_device(
+        facade_data(), "site1", "gw", device, stats={"cpu": 1, "uptime": 5}
+    )
+
+    for stats in ({"cpu": 2}, None, "not-a-dict"):
+        data = with_device_stats(base, "site1", "gw", stats)
+        assert data["stats"]["site1"]["gw"] == stats
+        assert data["devices"] is base["devices"]
+    assert base["stats"]["site1"]["gw"] == {"cpu": 1, "uptime": 5}
+    with pytest.raises(RuntimeError):
+        with_device_stats(base, "site1", "gw", {"cpu": 2})["stats"]["site1"]["gw"][
+            "cpu"
+        ] = 3
+
+
+def test_with_device_fields_replace_only_the_given_fields() -> None:
+    """The field builders merge into the current record, or start from empty."""
+    device = {"id": "gw", "macAddress": "02:00:00:00:00:01", "state": "ONLINE"}
+    base = with_network_device(facade_data(), "site1", "gw", device, stats={"cpu": 1})
+
+    data = with_device_stats_fields(
+        with_device_fields(base, "site1", "gw", state="OFFLINE", ports=[]),
+        "site1",
+        "gw",
+        uptime=5,
+    )
+
+    assert data["devices"]["site1"]["gw"] == {**device, "state": "OFFLINE", "ports": []}
+    assert data["stats"]["site1"]["gw"] == {"cpu": 1, "uptime": 5}
+    assert base["devices"]["site1"]["gw"] == device
+    added = with_device_stats_fields(
+        with_device_fields(base, "site2", "sw", name="Switch"), "site2", "sw", cpu=3
+    )
+    assert added["devices"]["site2"]["sw"] == {"name": "Switch"}
+    assert added["stats"]["site2"]["sw"] == {"cpu": 3}
+
+
+def test_with_device_stats_republishes_published_facts() -> None:
+    """Published network facts follow a stats change; unpublished stay None."""
+    device = {"id": "gw", "macAddress": "02:00:00:00:00:01", "state": "ONLINE"}
+    unpublished = with_device_stats(facade_data(), "site1", "gw", {"cpu": 5})
+    assert unpublished[NETWORK_FACTS_KEY] is None
+
+    published = with_network_device(
+        facade_data(**{NETWORK_FACTS_KEY: {}}), "site1", "gw", device
+    )
+    data = with_device_stats_fields(published, "site1", "gw", cpu=42.0)
+
+    facts = device_facts(data, "site1", "gw")
+    assert facts is not None
+    assert facts.cpu_pct == 42.0

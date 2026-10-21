@@ -177,17 +177,7 @@ async def test_innerspace_placement_sensor_discovery_and_device_correlation(
 ) -> None:
     """InnerSpace placement sensors discover records and attach via MAC."""
     mock_config_entry.runtime_data = MagicMock(coordinator=mock_coordinator)
-    mock_coordinator.data["devices"] = {
-        "site-1": {
-            "net-ap-1": {
-                "id": "net-ap-1",
-                "name": "Lobby AP",
-                "model": "U6-Pro",
-                "macAddress": "aa:bb:cc:11:22:33",
-            }
-        }
-    }
-    mock_coordinator.data["innerspace"] = {
+    innerspace: dict[str, Any] = {
         "project": {"id": "proj-1"},
         "floor_plans": {"fp-1": {"id": "fp-1", "name": "Lobby"}},
         "access_points": {},
@@ -224,6 +214,20 @@ async def test_innerspace_placement_sensor_discovery_and_device_correlation(
             },
         },
     }
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data,
+        devices={
+            "site-1": {
+                "net-ap-1": {
+                    "id": "net-ap-1",
+                    "name": "Lobby AP",
+                    "model": "U6-Pro",
+                    "macAddress": "aa:bb:cc:11:22:33",
+                }
+            }
+        },
+        innerspace=innerspace,
+    )
 
     add_entities = MagicMock()
     await async_setup_sensor(hass, mock_config_entry, add_entities)
@@ -281,14 +285,19 @@ async def test_innerspace_placement_sensor_discovery_and_device_correlation(
 
     # When target Protect device is not yet in dev_reg, _reconcile_device_association
     # creates it via async_get_or_create and updates entity_registry
-    mock_coordinator.data["protect"]["cameras"] = {"cam-1": {"id": "cam-1"}}
-    mock_coordinator.data["innerspace"]["devices"]["is-inv-1"].update(
-        {
-            "placement_state": "other",
-            "matched_domain": "protect",
-            "matched_protect_type": "camera",
-            "matched_device_id": "cam-1",
-        }
+    inv_record = {
+        **innerspace["devices"]["is-inv-1"],
+        "placement_state": "other",
+        "matched_domain": "protect",
+        "matched_protect_type": "camera",
+        "matched_device_id": "cam-1",
+    }
+    mock_coordinator.data = with_sections(
+        with_camera(mock_coordinator.data, "cam-1", {"id": "cam-1"}),
+        innerspace={
+            **innerspace,
+            "devices": {**innerspace["devices"], "is-inv-1": inv_record},
+        },
     )
     inv_sensor.async_write_ha_state = MagicMock()
     inv_sensor._handle_coordinator_update()
@@ -304,8 +313,10 @@ async def test_innerspace_placement_sensor_discovery_and_device_correlation(
     assert updated_entry.device_id == protect_dev.id
 
     # When record disappears from snapshot, fallback to innerspace_<id>
-    mock_coordinator.data["innerspace"]["inventory"].clear()
-    mock_coordinator.data["innerspace"]["devices"].clear()
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data,
+        innerspace={**innerspace, "inventory": {}, "devices": {}},
+    )
     inv_sensor._handle_coordinator_update()
     assert inv_sensor.native_value == "unknown"
     assert inv_sensor.device_info["identifiers"] == {(DOMAIN, "innerspace_is-inv-1")}
@@ -319,10 +330,13 @@ async def test_innerspace_coordinator_update_uses_captured_availability(
 ) -> None:
     """Updates write state once and never shadow coordinator availability."""
     mock_coordinator.hass = hass
-    mock_coordinator.data["innerspace"]["devices"]["rec-1"] = {
-        "id": "rec-1",
-        "placement_state": "placed",
-    }
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data,
+        innerspace={
+            **mock_coordinator.data["innerspace"],
+            "devices": {"rec-1": {"id": "rec-1", "placement_state": "placed"}},
+        },
+    )
     entity = UnifiInnerSpaceEntity(
         mock_coordinator, INNERSPACE_PLACEMENT_DESCRIPTION, "rec-1"
     )
@@ -348,22 +362,27 @@ def test_innerspace_entity_and_discovery_edge_cases(
     entities: list[Any] = []
 
     # Non-dict innerspace section
-    mock_coordinator.data["innerspace"] = "invalid"
+    mock_coordinator.data = with_sections(mock_coordinator.data, innerspace="invalid")
     _discover_innerspace_sensors(mock_coordinator, known_keys, entities)
     assert entities == []
 
     # Non-dict devices section
-    mock_coordinator.data["innerspace"] = {"devices": "invalid"}
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data, innerspace={"devices": "invalid"}
+    )
     _discover_innerspace_sensors(mock_coordinator, known_keys, entities)
     assert entities == []
 
     # Invalid record entry + duplicate key guard
-    mock_coordinator.data["innerspace"] = {
-        "devices": {
-            "bad": "not-a-dict",
-            "rec-1": {"id": "rec-1", "placement_state": "placed"},
-        }
-    }
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data,
+        innerspace={
+            "devices": {
+                "bad": "not-a-dict",
+                "rec-1": {"id": "rec-1", "placement_state": "placed"},
+            }
+        },
+    )
     _discover_innerspace_sensors(mock_coordinator, known_keys, entities)
     assert len(entities) == 1
     _discover_innerspace_sensors(mock_coordinator, known_keys, entities)
@@ -386,9 +405,11 @@ def test_innerspace_entity_and_discovery_edge_cases(
         )
 
     # Non-dict innerspace and non-dict devices in innerspace_record property
-    mock_coordinator.data["innerspace"] = "invalid"
+    mock_coordinator.data = with_sections(mock_coordinator.data, innerspace="invalid")
     assert sensor.innerspace_record is None
-    mock_coordinator.data["innerspace"] = {"devices": "invalid"}
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data, innerspace={"devices": "invalid"}
+    )
     assert sensor.innerspace_record is None
 
 
@@ -792,18 +813,21 @@ def test_innerspace_entity_matched_protect_device_missing_from_protect_section(
     mock_coordinator: MagicMock,
 ) -> None:
     """Fall back to innerspace ID when matched Protect device is missing."""
-    mock_coordinator.data["protect"] = {"cameras": {}}
-    mock_coordinator.data["innerspace"] = {
-        "devices": {
-            "is-inv-1": {
-                "id": "is-inv-1",
-                "name": "Camera Stand",
-                "matched_domain": "protect",
-                "matched_protect_type": "camera",
-                "matched_device_id": "missing-cam",
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data,
+        protect={"cameras": {}},
+        innerspace={
+            "devices": {
+                "is-inv-1": {
+                    "id": "is-inv-1",
+                    "name": "Camera Stand",
+                    "matched_domain": "protect",
+                    "matched_protect_type": "camera",
+                    "matched_device_id": "missing-cam",
+                }
             }
-        }
-    }
+        },
+    )
     sensor = UnifiInsightsInnerSpacePlacementSensor(
         mock_coordinator, INNERSPACE_PLACEMENT_DESCRIPTION, "is-inv-1"
     )

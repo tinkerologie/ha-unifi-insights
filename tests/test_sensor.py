@@ -76,13 +76,25 @@ from custom_components.unifi_insights.sensor import (
     format_uptime,
     get_network_device_temperature,
 )
-from tests.fixtures.facade_data import set_availability
+from tests.fixtures.facade_data import (
+    facade_data,
+    set_availability,
+    with_device_fields,
+    with_device_stats,
+    with_device_stats_fields,
+    with_network_device,
+    with_protect_device,
+    with_sections,
+    without_sections,
+)
 from tests.fixtures.library_responses import (
     SAMPLE_KEYPAD_FOB,
     SAMPLE_THREAD_LINK_STATION,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from homeassistant.components.sensor import SensorEntity
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers import entity_registry as er
@@ -91,6 +103,18 @@ if TYPE_CHECKING:
         UnifiInsightsSensorEntityDescription,
         UnifiStorageSensorEntityDescription,
     )
+
+
+def _with_value(data: Mapping[str, Any], path: tuple[str, ...], value: Any) -> Any:
+    """Return ``data`` with ``value`` at ``path`` (a section, then keys)."""
+
+    def replaced(node: Mapping[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+        head, *rest = keys
+        return {**node, head: replaced(node[head], tuple(rest)) if rest else value}
+
+    section, *keys = path
+    new = replaced(data[section], tuple(keys)) if keys else value
+    return with_sections(data, **{section: new})
 
 
 def _create_mock_model(**kwargs):
@@ -103,7 +127,7 @@ def _create_mock_model(**kwargs):
 
 
 @pytest.fixture
-def mock_coordinator():
+def mock_coordinator() -> MagicMock:
     """Create a mock coordinator for sensor tests."""
     coordinator = MagicMock()
     coordinator.network_client = MagicMock()
@@ -112,9 +136,9 @@ def mock_coordinator():
     coordinator.protect_client.base_url = "https://192.168.1.1"
 
     # Setup coordinator data structure
-    coordinator.data = {
-        "sites": {"site1": {"id": "site1", "meta": {"name": "Default"}}},
-        "devices": {
+    coordinator.data = facade_data(
+        sites={"site1": {"id": "site1", "meta": {"name": "Default"}}},
+        devices={
             "site1": {
                 "device1": {
                     "id": "device1",
@@ -177,8 +201,8 @@ def mock_coordinator():
                 },
             }
         },
-        "clients": {"site1": {"client1": {"id": "client1", "name": "Test Client"}}},
-        "stats": {
+        clients={"site1": {"client1": {"id": "client1", "name": "Test Client"}}},
+        stats={
             "site1": {
                 "device1": {
                     "id": "device1",
@@ -204,7 +228,7 @@ def mock_coordinator():
                 },
             }
         },
-        "protect": {
+        protect={
             "sensors": {
                 "sensor1": {
                     "id": "sensor1",
@@ -235,8 +259,7 @@ def mock_coordinator():
             "liveviews": {},
             "events": {},
         },
-        "last_update": None,
-    }
+    )
     coordinator.get_site = MagicMock(return_value=coordinator.data["sites"]["site1"])
     coordinator.last_update_success = True
     return coordinator
@@ -493,12 +516,16 @@ class TestUnifiInsightsSensor:
         # One wireless client in the test data
         assert sensor.native_value == 1
 
-    async def test_sensor_no_stats(self, hass: HomeAssistant, mock_coordinator):
+    async def test_sensor_no_stats(
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test sensor when no stats are available."""
         description = next(s for s in SENSOR_TYPES if s.key == "cpu_usage")
 
         # Remove stats for device
-        mock_coordinator.data["stats"]["site1"]["device1"] = None
+        mock_coordinator.data = with_device_stats(
+            mock_coordinator.data, "site1", "device1", None
+        )
 
         sensor = UnifiInsightsSensor(
             coordinator=mock_coordinator,
@@ -541,13 +568,22 @@ class TestUplinkRateZeroIsZeroNotNone:
         ],
     )
     async def test_uplink_rate_zero_is_zero_not_none(
-        self, hass: HomeAssistant, mock_coordinator, sensor_key, api_key
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        sensor_key: str,
+        api_key: str,
+    ) -> None:
         """A device reporting a literal 0 B/s rate must yield 0, not None."""
         description = next(s for s in SENSOR_TYPES if s.key == sensor_key)
-        mock_coordinator.data["stats"]["site1"]["device1"]["uplink"] = {
-            api_key: 0,
-        }
+        mock_coordinator.data = with_device_stats_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            uplink={
+                api_key: 0,
+            },
+        )
 
         sensor = UnifiInsightsSensor(
             coordinator=mock_coordinator,
@@ -567,8 +603,12 @@ class TestUplinkRateZeroIsZeroNotNone:
         ],
     )
     async def test_uplink_rate_absent_key_stays_unknown(
-        self, hass: HomeAssistant, mock_coordinator, sensor_key, api_key
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        sensor_key: str,
+        api_key: str,
+    ) -> None:
         """
         Negative test: an absent key still yields None (state `unknown`).
 
@@ -576,7 +616,7 @@ class TestUplinkRateZeroIsZeroNotNone:
         would fabricate a reading for a device that never reported one.
         """
         description = next(s for s in SENSOR_TYPES if s.key == sensor_key)
-        stats = mock_coordinator.data["stats"]["site1"]["device1"]
+        stats = dict(mock_coordinator.data["stats"]["site1"]["device1"])
         stats.pop("uplink", None)
         for absent_key in (
             "txRateBps",
@@ -587,6 +627,9 @@ class TestUplinkRateZeroIsZeroNotNone:
             "rx_bytes_per_sec",
         ):
             stats.pop(absent_key, None)
+        mock_coordinator.data = with_device_stats(
+            mock_coordinator.data, "site1", "device1", stats
+        )
 
         sensor = UnifiInsightsSensor(
             coordinator=mock_coordinator,
@@ -598,8 +641,8 @@ class TestUplinkRateZeroIsZeroNotNone:
         assert sensor.native_value is None
 
     async def test_non_numeric_lookup_without_fallback_still_returns_none(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """
         Sanity check that the falsy-zero fix was not applied too broadly.
 
@@ -610,8 +653,10 @@ class TestUplinkRateZeroIsZeroNotNone:
         not turn every lookup into "return something".
         """
         description = next(s for s in SENSOR_TYPES if s.key == "firmware_version")
-        mock_coordinator.data["devices"]["site1"]["device1"].pop(
-            "firmwareVersion", None
+        device = dict(mock_coordinator.data["devices"]["site1"]["device1"])
+        device.pop("firmwareVersion", None)
+        mock_coordinator.data = with_network_device(
+            mock_coordinator.data, "site1", "device1", device
         )
 
         sensor = UnifiInsightsSensor(
@@ -809,8 +854,8 @@ class TestUnifiPortSensor:
         assert sensor.available is False
 
     async def test_port_sensor_no_device_data(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test port sensor when device data is removed after initialization."""
         description = next(s for s in PORT_SENSOR_TYPES if s.key == "port_speed")
 
@@ -824,7 +869,9 @@ class TestUnifiPortSensor:
         )
 
         # Now remove device data to simulate device going offline
-        mock_coordinator.data["devices"]["site1"]["device1"] = None
+        mock_coordinator.data = _with_value(
+            mock_coordinator.data, ("devices", "site1", "device1"), None
+        )
 
         # Value should be None when device data is missing
         assert sensor.native_value is None
@@ -1153,7 +1200,9 @@ class TestUnifiProtectSensor:
         assert sensor.native_value == 85
         assert sensor.native_unit_of_measurement == PERCENTAGE
 
-    async def test_protect_sensor_no_data(self, hass: HomeAssistant, mock_coordinator):
+    async def test_protect_sensor_no_data(
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test protect sensor when data is removed after initialization."""
         description = next(s for s in PROTECT_SENSOR_TYPES if s.key == "temperature")
 
@@ -1165,7 +1214,9 @@ class TestUnifiProtectSensor:
         )
 
         # Now remove sensor data to simulate device going offline
-        mock_coordinator.data["protect"]["sensors"]["sensor1"] = None
+        mock_coordinator.data = _with_value(
+            mock_coordinator.data, ("protect", "sensors", "sensor1"), None
+        )
 
         # Value should be None when sensor data is missing
         assert sensor.native_value is None
@@ -1249,13 +1300,20 @@ class TestAsyncSetupEntry:
         assert len(protect_sensors) > 0
 
     async def test_setup_entry_creates_protect_security_sensors(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Thread gateway and keypad fob sensors are discovered at setup."""
-        mock_coordinator.data["protect"]["link_stations"] = {
-            "link_station_thread": SAMPLE_THREAD_LINK_STATION
-        }
-        mock_coordinator.data["protect"]["fobs"] = {"fob_1": SAMPLE_KEYPAD_FOB}
+        mock_coordinator.data = _with_value(
+            mock_coordinator.data,
+            ("protect", "link_stations"),
+            {"link_station_thread": SAMPLE_THREAD_LINK_STATION},
+        )
+        mock_coordinator.data = _with_value(
+            mock_coordinator.data, ("protect", "fobs"), {"fob_1": SAMPLE_KEYPAD_FOB}
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
         added_entities: list = []
 
@@ -1309,8 +1367,8 @@ class TestUnifiPortSensorEdgeCases:
     """Tests for UnifiPortSensor edge cases."""
 
     async def test_port_sensor_no_device_data(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test port sensor when device data is missing."""
         description = PORT_SENSOR_TYPES[0]  # PoE power
 
@@ -1323,7 +1381,9 @@ class TestUnifiPortSensorEdgeCases:
         )
 
         # Remove device data
-        mock_coordinator.data["devices"]["site1"] = {}
+        mock_coordinator.data = _with_value(
+            mock_coordinator.data, ("devices", "site1"), {}
+        )
 
         assert sensor.native_value is None
 
@@ -1344,15 +1404,18 @@ class TestUnifiPortSensorEdgeCases:
         assert sensor.native_value is None
 
     async def test_port_sensor_tx_bytes_with_stats(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test port TX bytes sensor with stats data."""
         description = PORT_SENSOR_TYPES[2]  # TX bytes
 
         # Add port stats using port_bytes key (matches code fallback path)
-        mock_coordinator.data["stats"]["site1"]["device1"]["port_bytes"] = {
-            "1": {"tx_bytes": 5000000, "rx_bytes": 3000000}
-        }
+        mock_coordinator.data = with_device_stats_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            port_bytes={"1": {"tx_bytes": 5000000, "rx_bytes": 3000000}},
+        )
 
         sensor = UnifiPortSensor(
             coordinator=mock_coordinator,
@@ -1366,15 +1429,18 @@ class TestUnifiPortSensorEdgeCases:
         assert value is not None
 
     async def test_port_sensor_rx_bytes_with_stats(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test port RX bytes sensor with stats data."""
         description = PORT_SENSOR_TYPES[3]  # RX bytes
 
         # Add port stats using port_bytes key (matches code fallback path)
-        mock_coordinator.data["stats"]["site1"]["device1"]["port_bytes"] = {
-            "1": {"tx_bytes": 5000000, "rx_bytes": 3000000}
-        }
+        mock_coordinator.data = with_device_stats_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            port_bytes={"1": {"tx_bytes": 5000000, "rx_bytes": 3000000}},
+        )
 
         sensor = UnifiPortSensor(
             coordinator=mock_coordinator,
@@ -1411,13 +1477,18 @@ class TestUnifiPortSensorEdgeCases:
         [("port_tx_bytes", "port_bytes"), ("port_tx_rate", "port_rates")],
     )
     async def test_port_sensor_available_from_stats(
-        self, hass: HomeAssistant, mock_coordinator, key: str, stat_key: str
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock, key: str, stat_key: str
+    ) -> None:
         """Byte and rate sensors are available when stats carry the port."""
         set_availability(mock_coordinator, device=True)
-        mock_coordinator.data["stats"] = {
-            "site1": {"device1": {stat_key: {1: {"tx_bytes": 1, "tx_bytes_rate": 1.0}}}}
-        }
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            stats={
+                "site1": {
+                    "device1": {stat_key: {1: {"tx_bytes": 1, "tx_bytes_rate": 1.0}}}
+                }
+            },
+        )
         sensor = UnifiPortSensor(
             coordinator=mock_coordinator,
             description=next(
@@ -1443,20 +1514,23 @@ class TestUnifiPortSensorEdgeCases:
     async def test_port_byte_counter_falls_back_to_port_record(
         self,
         hass: HomeAssistant,
-        mock_coordinator,
+        mock_coordinator: MagicMock,
         key: str,
         record_stats: Any,
         expected: int | None,
-    ):
+    ) -> None:
         """Without stats counters, bytes come from the port record, never 0."""
-        mock_coordinator.data.pop("network_facts", None)
+        mock_coordinator.data = without_sections(mock_coordinator.data, "network_facts")
         port: dict[str, Any] = {"idx": 1}
         if record_stats is not None:
             port["stats"] = record_stats
-        mock_coordinator.data["devices"] = {
-            "site1": {"device1": {"id": "device1", "ports": [port]}}
-        }
-        mock_coordinator.data["stats"] = {"site1": {"device1": {}}}
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            devices={"site1": {"device1": {"id": "device1", "ports": [port]}}},
+        )
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data, stats={"site1": {"device1": {}}}
+        )
         sensor = UnifiPortSensor(
             coordinator=mock_coordinator,
             description=next(s for s in PORT_SENSOR_TYPES if s.key == key),
@@ -1473,16 +1547,19 @@ class TestUnifiPortSensorEdgeCases:
     async def test_port_poe_power_reads_string_watts_from_stats(
         self,
         hass: HomeAssistant,
-        mock_coordinator,
+        mock_coordinator: MagicMock,
         watts: str,
         expected: float | None,
-    ):
+    ) -> None:
         """String PoE watts parse as numbers; an unparsable string is unknown."""
-        mock_coordinator.data.pop("network_facts", None)
-        mock_coordinator.data["devices"] = {"site1": {"device1": {"id": "device1"}}}
-        mock_coordinator.data["stats"] = {
-            "site1": {"device1": {"poe_ports": {"1": watts}}}
-        }
+        mock_coordinator.data = without_sections(mock_coordinator.data, "network_facts")
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data, devices={"site1": {"device1": {"id": "device1"}}}
+        )
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            stats={"site1": {"device1": {"poe_ports": {"1": watts}}}},
+        )
         sensor = UnifiPortSensor(
             coordinator=mock_coordinator,
             description=next(s for s in PORT_SENSOR_TYPES if s.key == "port_poe_power"),
@@ -1494,19 +1571,24 @@ class TestUnifiPortSensorEdgeCases:
         assert sensor.native_value == expected
 
     async def test_port_stats_reject_boolean_counters_and_watts(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """A boolean stats value is not a byte count or a PoE reading."""
-        mock_coordinator.data.pop("network_facts", None)
-        mock_coordinator.data["devices"] = {"site1": {"device1": {"id": "device1"}}}
-        mock_coordinator.data["stats"] = {
-            "site1": {
-                "device1": {
-                    "port_bytes": {1: {"tx_bytes": True}},
-                    "poe_ports": {1: True},
+        mock_coordinator.data = without_sections(mock_coordinator.data, "network_facts")
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data, devices={"site1": {"device1": {"id": "device1"}}}
+        )
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            stats={
+                "site1": {
+                    "device1": {
+                        "port_bytes": {1: {"tx_bytes": True}},
+                        "poe_ports": {1: True},
+                    }
                 }
-            }
-        }
+            },
+        )
 
         def _sensor(key: str) -> UnifiPortSensor:
             return UnifiPortSensor(
@@ -1539,8 +1621,8 @@ class TestUnifiPortSensorEdgeCases:
         assert sensor.available is False
 
     async def test_port_sensor_available_devices_not_dict(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test port sensor availability when devices is not a dict."""
         description = PORT_SENSOR_TYPES[0]  # PoE power
 
@@ -1553,13 +1635,15 @@ class TestUnifiPortSensorEdgeCases:
         )
 
         # Set devices to non-dict
-        mock_coordinator.data["devices"] = "not a dict"
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data, devices="not a dict"
+        )
 
         assert sensor.available is False
 
     async def test_port_sensor_available_site_devices_not_dict(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test port sensor availability when site devices is not a dict."""
         description = PORT_SENSOR_TYPES[0]  # PoE power
 
@@ -1572,13 +1656,15 @@ class TestUnifiPortSensorEdgeCases:
         )
 
         # Set site devices to non-dict
-        mock_coordinator.data["devices"]["site1"] = "not a dict"
+        mock_coordinator.data = _with_value(
+            mock_coordinator.data, ("devices", "site1"), "not a dict"
+        )
 
         assert sensor.available is False
 
     async def test_port_sensor_available_device_data_not_dict(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test port sensor availability when device data is not a dict."""
         description = PORT_SENSOR_TYPES[0]  # PoE power
 
@@ -1591,13 +1677,15 @@ class TestUnifiPortSensorEdgeCases:
         )
 
         # Set device data to non-dict
-        mock_coordinator.data["devices"]["site1"]["device1"] = "not a dict"
+        mock_coordinator.data = _with_value(
+            mock_coordinator.data, ("devices", "site1", "device1"), "not a dict"
+        )
 
         assert sensor.available is False
 
     async def test_port_sensor_available_interfaces_not_dict(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test port sensor availability when interfaces is not a dict."""
         description = PORT_SENSOR_TYPES[0]  # PoE power
 
@@ -1610,15 +1698,15 @@ class TestUnifiPortSensorEdgeCases:
         )
 
         # Set interfaces to non-dict
-        mock_coordinator.data["devices"]["site1"]["device1"]["interfaces"] = (
-            "not a dict"
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data, "site1", "device1", interfaces="not a dict"
         )
 
         assert sensor.available is False
 
     async def test_port_sensor_available_ports_not_list(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test port sensor availability when ports is not a list."""
         description = PORT_SENSOR_TYPES[0]  # PoE power
 
@@ -1631,8 +1719,10 @@ class TestUnifiPortSensorEdgeCases:
         )
 
         # Set ports to non-list
-        mock_coordinator.data["devices"]["site1"]["device1"]["interfaces"]["ports"] = (
-            "not a list"
+        mock_coordinator.data = _with_value(
+            mock_coordinator.data,
+            ("devices", "site1", "device1", "interfaces", "ports"),
+            "not a list",
         )
 
         assert sensor.available is False
@@ -1670,8 +1760,8 @@ class TestUnifiPortSensorEdgeCases:
         assert sensor.available is False
 
     async def test_port_sensor_available_port_state_not_string(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test port sensor availability when port state is not a string."""
         description = PORT_SENSOR_TYPES[0]  # PoE power
 
@@ -1684,9 +1774,15 @@ class TestUnifiPortSensorEdgeCases:
         )
 
         # Set port state to non-string
-        mock_coordinator.data["devices"]["site1"]["device1"]["interfaces"]["ports"][0][
-            "state"
-        ] = 123
+        interfaces = mock_coordinator.data["devices"]["site1"]["device1"]["interfaces"]
+        ports = [dict(port) for port in interfaces["ports"]]
+        ports[0]["state"] = 123
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            interfaces={**interfaces, "ports": ports},
+        )
 
         assert sensor.available is False
 
@@ -1780,13 +1876,18 @@ class TestUnifiProtectSensorAttributes:
         assert sensor.extra_state_attributes is None
 
     async def test_battery_sensor_missing_battery_status_key(
-        self, hass: HomeAssistant, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Test battery sensor attributes when batteryStatus key is absent."""
         description = next(s for s in PROTECT_SENSOR_TYPES if s.key == "battery")
-        mock_coordinator.data["protect"]["sensors"]["sensor_no_battery"] = {
-            "name": "No Battery Sensor",
-        }
+        mock_coordinator.data = with_protect_device(
+            mock_coordinator.data,
+            "sensors",
+            "sensor_no_battery",
+            {
+                "name": "No Battery Sensor",
+            },
+        )
         sensor = UnifiProtectSensor(
             coordinator=mock_coordinator,
             description=description,
@@ -1799,7 +1900,7 @@ class TestUnifiProtectSensorAttributes:
         assert attrs["battery_low"] is False
 
     async def test_battery_sensor_real_model_dump(
-        self, hass: HomeAssistant, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Test battery sensor attributes with real Protect Sensor model dump."""
         model = ProtectSensorModel.model_validate(
@@ -1812,8 +1913,11 @@ class TestUnifiProtectSensorAttributes:
                 "batteryStatus": {"percentage": 92, "isLow": False},
             }
         )
-        mock_coordinator.data["protect"]["sensors"]["sensor_real"] = model.model_dump(
-            by_alias=True
+        mock_coordinator.data = with_protect_device(
+            mock_coordinator.data,
+            "sensors",
+            "sensor_real",
+            model.model_dump(by_alias=True),
         )
 
         description = next(s for s in PROTECT_SENSOR_TYPES if s.key == "battery")
@@ -2197,11 +2301,16 @@ class TestAsyncSetupEntryWithNVRSensors:
         assert "storage_used_percent" in nvr_sensor_keys
 
     async def test_setup_entry_without_nvrs(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Test setup when there are no NVRs."""
         # Remove NVR data
-        mock_coordinator.data["protect"]["nvrs"] = {}
+        mock_coordinator.data = _with_value(
+            mock_coordinator.data, ("protect", "nvrs"), {}
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2220,19 +2329,26 @@ class TestAsyncSetupEntryWithNVRSensors:
         assert len(nvr_sensors) == 0
 
     async def test_setup_entry_nvr_without_storage_info(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Test setup when NVR has no storage info (covers lines 743, 753)."""
         # Create NVR data without any storage fields
-        mock_coordinator.data["protect"]["nvrs"] = {
-            "nvr_no_storage": {
-                "id": "nvr_no_storage",
-                "name": "NVR Without Storage",
-                "state": "CONNECTED",
-                "version": "4.0.0",
-                # No storage fields at all
-            }
-        }
+        mock_coordinator.data = _with_value(
+            mock_coordinator.data,
+            ("protect", "nvrs"),
+            {
+                "nvr_no_storage": {
+                    "id": "nvr_no_storage",
+                    "name": "NVR Without Storage",
+                    "state": "CONNECTED",
+                    "version": "4.0.0",
+                    # No storage fields at all
+                }
+            },
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2252,10 +2368,15 @@ class TestAsyncSetupEntryWithNVRSensors:
         assert len(nvr_sensors) == 0
 
     async def test_setup_entry_nvrs_not_a_dict_is_skipped(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """A malformed (non-dict) top-level nvrs collection is skipped."""
-        mock_coordinator.data["protect"]["nvrs"] = "not-a-dict"
+        mock_coordinator.data = _with_value(
+            mock_coordinator.data, ("protect", "nvrs"), "not-a-dict"
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2273,11 +2394,16 @@ class TestAsyncSetupEntryWithNVRSensors:
         assert len(nvr_sensors) == 0
 
     async def test_setup_entry_malformed_nvr_record_is_skipped(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """A non-dict record inside the nvrs collection is skipped without
         raising, while a well-formed sibling NVR still gets sensors."""
-        mock_coordinator.data["protect"]["nvrs"]["nvr_bad"] = "not-a-dict"
+        mock_coordinator.data = _with_value(
+            mock_coordinator.data, ("protect", "nvrs", "nvr_bad"), "not-a-dict"
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2301,11 +2427,16 @@ class TestAsyncSetupEntryEdgeCases:
     """Test setup entry edge cases for sensors."""
 
     async def test_setup_entry_interfaces_not_dict(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Test setup when interfaces is not a dict (e.g., list)."""
         # Set interfaces to a list instead of dict
-        mock_coordinator.data["devices"]["site1"]["device1"]["interfaces"] = ["ports"]
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data, "site1", "device1", interfaces=["ports"]
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2320,13 +2451,21 @@ class TestAsyncSetupEntryEdgeCases:
         assert len(port_sensors) == 0
 
     async def test_setup_entry_port_without_idx(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Test setup when port has no idx field."""
         # Add port without idx
-        mock_coordinator.data["devices"]["site1"]["device1"]["interfaces"] = {
-            "ports": [{"state": "UP", "poe": {"enabled": True}}]  # No idx
-        }
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            interfaces={
+                "ports": [{"state": "UP", "poe": {"enabled": True}}]  # No idx
+            },
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2341,12 +2480,20 @@ class TestAsyncSetupEntryEdgeCases:
         assert len(port_sensors) == 0
 
     async def test_setup_entry_port_state_down(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Test setup when port state is DOWN."""
-        mock_coordinator.data["devices"]["site1"]["device1"]["interfaces"] = {
-            "ports": [{"idx": 1, "state": "DOWN", "poe": {"enabled": True}}]
-        }
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            interfaces={
+                "ports": [{"idx": 1, "state": "DOWN", "poe": {"enabled": True}}]
+            },
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2361,26 +2508,46 @@ class TestAsyncSetupEntryEdgeCases:
         assert len(port_sensors) == 0
 
     async def test_setup_entry_stats_fallback_respects_port_state(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Test stats fallback does not create sensors for inactive ports."""
         # Device with switching feature and one UP port, one DOWN port
-        mock_coordinator.data["devices"]["site1"]["device1"]["features"] = ["switching"]
-        mock_coordinator.data["devices"]["site1"]["device1"]["interfaces"] = {
-            "ports": [
-                {"idx": 1, "state": "UP", "poe": {"enabled": True}},
-                {"idx": 2, "state": "DOWN"},
-            ]
-        }
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data, "site1", "device1", features=["switching"]
+        )
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            interfaces={
+                "ports": [
+                    {"idx": 1, "state": "UP", "poe": {"enabled": True}},
+                    {"idx": 2, "state": "DOWN"},
+                ]
+            },
+        )
         # Stats have poe_ports and port_bytes for BOTH ports (including DOWN)
-        mock_coordinator.data["stats"]["site1"]["device1"]["poe_ports"] = {
-            1: {"power": 10.0},
-            2: {"power": 0.0},
-        }
-        mock_coordinator.data["stats"]["site1"]["device1"]["port_bytes"] = {
-            "1": {"tx_bytes": 5000, "rx_bytes": 3000},
-            "2": {"tx_bytes": 0, "rx_bytes": 0},
-        }
+        mock_coordinator.data = with_device_stats_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            poe_ports={
+                1: {"power": 10.0},
+                2: {"power": 0.0},
+            },
+        )
+        mock_coordinator.data = with_device_stats_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            port_bytes={
+                "1": {"tx_bytes": 5000, "rx_bytes": 3000},
+                "2": {"tx_bytes": 0, "rx_bytes": 0},
+            },
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2397,27 +2564,35 @@ class TestAsyncSetupEntryEdgeCases:
         assert 2 not in port_indices
 
     async def test_setup_entry_no_poe_sensor_for_non_poe_device(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Test PoE sensor is NOT created when a non-PoE device is on a PoE port."""
-        mock_coordinator.data["devices"]["site1"]["device1"]["interfaces"] = {
-            "ports": [
-                {
-                    "idx": 1,
-                    "state": "UP",
-                    "speedMbps": 1000,
-                    # PoE port enabled but power is 0 (non-PoE device connected)
-                    "poe": {"enabled": True, "power": 0.0, "good": False},
-                },
-                {
-                    "idx": 2,
-                    "state": "UP",
-                    "speedMbps": 1000,
-                    # PoE port with a PoE device actually drawing power
-                    "poe": {"enabled": True, "power": 8.5, "good": True},
-                },
-            ]
-        }
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            interfaces={
+                "ports": [
+                    {
+                        "idx": 1,
+                        "state": "UP",
+                        "speedMbps": 1000,
+                        # PoE port enabled but power is 0 (non-PoE device connected)
+                        "poe": {"enabled": True, "power": 0.0, "good": False},
+                    },
+                    {
+                        "idx": 2,
+                        "state": "UP",
+                        "speedMbps": 1000,
+                        # PoE port with a PoE device actually drawing power
+                        "poe": {"enabled": True, "power": 8.5, "good": True},
+                    },
+                ]
+            },
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2441,20 +2616,28 @@ class TestAsyncSetupEntryEdgeCases:
         assert 2 in poe_port_indices
 
     async def test_setup_entry_poe_sensor_created_when_poe_good(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Test PoE sensor IS created when poe_good is True even with 0 power."""
-        mock_coordinator.data["devices"]["site1"]["device1"]["interfaces"] = {
-            "ports": [
-                {
-                    "idx": 1,
-                    "state": "UP",
-                    "speedMbps": 1000,
-                    # PoE negotiation succeeded but no current draw (e.g. standby)
-                    "poe": {"enabled": True, "power": 0.0, "good": True},
-                },
-            ]
-        }
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            interfaces={
+                "ports": [
+                    {
+                        "idx": 1,
+                        "state": "UP",
+                        "speedMbps": 1000,
+                        # PoE negotiation succeeded but no current draw (e.g. standby)
+                        "poe": {"enabled": True, "power": 0.0, "good": True},
+                    },
+                ]
+            },
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2475,20 +2658,28 @@ class TestAsyncSetupEntryEdgeCases:
         assert poe_sensors[0]._port_idx == 1
 
     async def test_setup_entry_poe_sensor_only_enabled_no_power(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Test PoE sensor is NOT created when port has only enabled=True."""
-        mock_coordinator.data["devices"]["site1"]["device1"]["interfaces"] = {
-            "ports": [
-                {
-                    "idx": 1,
-                    "state": "UP",
-                    "speedMbps": 1000,
-                    # PoE enabled but no power or good flag
-                    "poe": {"enabled": True},
-                },
-            ]
-        }
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            interfaces={
+                "ports": [
+                    {
+                        "idx": 1,
+                        "state": "UP",
+                        "speedMbps": 1000,
+                        # PoE enabled but no power or good flag
+                        "poe": {"enabled": True},
+                    },
+                ]
+            },
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2508,21 +2699,36 @@ class TestAsyncSetupEntryEdgeCases:
         assert len(poe_sensors) == 0
 
     async def test_setup_entry_stats_fallback_skips_zero_poe(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Test stats fallback skips PoE sensors for ports with zero power."""
-        mock_coordinator.data["devices"]["site1"]["device1"]["features"] = ["switching"]
-        mock_coordinator.data["devices"]["site1"]["device1"]["interfaces"] = {
-            "ports": [
-                {"idx": 1, "state": "UP"},
-                {"idx": 2, "state": "UP"},
-            ]
-        }
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data, "site1", "device1", features=["switching"]
+        )
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            interfaces={
+                "ports": [
+                    {"idx": 1, "state": "UP"},
+                    {"idx": 2, "state": "UP"},
+                ]
+            },
+        )
         # Stats: port 1 draws power, port 2 draws zero
-        mock_coordinator.data["stats"]["site1"]["device1"]["poe_ports"] = {
-            1: 12.5,
-            2: 0.0,
-        }
+        mock_coordinator.data = with_device_stats_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            poe_ports={
+                1: 12.5,
+                2: 0.0,
+            },
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2546,12 +2752,19 @@ class TestAsyncSetupEntryEdgeCases:
         assert 2 not in poe_port_indices
 
     async def test_setup_entry_wan_sensors_for_gateway(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Test WAN sensors are created for gateway devices."""
         # Make device a gateway
-        mock_coordinator.data["devices"]["site1"]["device1"]["model"] = "UDM-Pro"
-        mock_coordinator.data["devices"]["site1"]["device1"]["features"] = ["gateway"]
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data, "site1", "device1", model="UDM-Pro"
+        )
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data, "site1", "device1", features=["gateway"]
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2571,11 +2784,18 @@ class TestAsyncSetupEntryEdgeCases:
         assert len(wan_sensors) > 0
 
     async def test_setup_entry_wan_sensors_dedupe_on_rediscovery(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Re-running discovery for a gateway device adds no duplicate WAN sensors."""
-        mock_coordinator.data["devices"]["site1"]["device1"]["model"] = "UDM-Pro"
-        mock_coordinator.data["devices"]["site1"]["device1"]["features"] = ["gateway"]
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data, "site1", "device1", model="UDM-Pro"
+        )
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data, "site1", "device1", features=["gateway"]
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2629,11 +2849,18 @@ class TestAsyncSetupEntryEdgeCases:
         assert "rx_rate" in rate_keys
 
     async def test_setup_entry_uplink_rate_sensors_skipped_without_data(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Test uplink rate sensors are NOT created when no uplink data exists."""
         # Remove uplink data from device1 stats
-        mock_coordinator.data["stats"]["site1"]["device1"].pop("uplink", None)
+        stats = dict(mock_coordinator.data["stats"]["site1"]["device1"])
+        stats.pop("uplink", None)
+        mock_coordinator.data = with_device_stats(
+            mock_coordinator.data, "site1", "device1", stats
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2678,13 +2905,21 @@ class TestAsyncSetupEntryEdgeCases:
         assert tx_sensor.entity_description.translation_key == "tx_rate"
 
     async def test_setup_entry_uses_top_level_ports_field(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """A top-level `ports` field on device data is used directly, taking
         priority over `interfaces.ports`."""
-        mock_coordinator.data["devices"]["site1"]["device1"]["ports"] = [
-            {"idx": 40, "state": "UP", "speedMbps": 1000},
-        ]
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            ports=[
+                {"idx": 40, "state": "UP", "speedMbps": 1000},
+            ],
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2698,15 +2933,28 @@ class TestAsyncSetupEntryEdgeCases:
         assert 40 in port_indices
 
     async def test_setup_entry_ignores_unparseable_poe_values(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Malformed PoE data (non-dict, non-numeric power) is ignored rather
         than raising, and no PoE sensor is created for those ports."""
-        mock_coordinator.data["devices"]["site1"]["device1"]["interfaces"]["ports"] += [
-            {"idx": 30, "state": "UP", "poe": "not-a-dict"},
-            {"idx": 31, "state": "UP", "poe": {"power": "invalid"}},
-            {"idx": 32, "state": "UP", "poe_power_w": "not-a-number"},
-        ]
+        interfaces = mock_coordinator.data["devices"]["site1"]["device1"]["interfaces"]
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            interfaces={
+                **interfaces,
+                "ports": [
+                    *interfaces["ports"],
+                    {"idx": 30, "state": "UP", "poe": "not-a-dict"},
+                    {"idx": 31, "state": "UP", "poe": {"power": "invalid"}},
+                    {"idx": 32, "state": "UP", "poe_power_w": "not-a-number"},
+                ],
+            },
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2727,12 +2975,19 @@ class TestAsyncSetupEntryEdgeCases:
         assert 32 not in poe_port_indices
 
     async def test_setup_entry_stats_not_a_dict_for_device_is_skipped(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """A malformed (non-dict) stats entry for a switching device is
         skipped without raising, and regular port sensors are unaffected."""
-        mock_coordinator.data["devices"]["site1"]["device1"]["features"] = ["switching"]
-        mock_coordinator.data["stats"]["site1"]["device1"] = "not-a-dict"
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data, "site1", "device1", features=["switching"]
+        )
+        mock_coordinator.data = with_device_stats(
+            mock_coordinator.data, "site1", "device1", "not-a-dict"
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2748,28 +3003,41 @@ class TestAsyncSetupEntryEdgeCases:
         assert 1 in port_indices
 
     async def test_setup_entry_stats_fallback_skips_invalid_keys_and_dedupes(
-        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
-    ):
+        self,
+        hass: HomeAssistant,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
         """Non-numeric keys in poe_ports/port_bytes stats are skipped; valid
         new ports are added once and not duplicated on rediscovery."""
-        mock_coordinator.data["devices"]["site1"]["device3"] = {
-            "id": "device3",
-            "name": "Fallback Switch",
-            "model": "USW-8",
-            "state": "ONLINE",
-            "features": ["switching"],
-            "interfaces": {"ports": [{"idx": 1, "state": "DOWN"}]},
-        }
-        mock_coordinator.data["stats"]["site1"]["device3"] = {
-            "poe_ports": {
-                "abc": 5.0,
-                "5": 12.0,
+        mock_coordinator.data = with_network_device(
+            mock_coordinator.data,
+            "site1",
+            "device3",
+            {
+                "id": "device3",
+                "name": "Fallback Switch",
+                "model": "USW-8",
+                "state": "ONLINE",
+                "features": ["switching"],
+                "interfaces": {"ports": [{"idx": 1, "state": "DOWN"}]},
             },
-            "port_bytes": {
-                "xyz": {"tx_bytes": 100},
-                "5": {"tx_bytes": 200, "rx_bytes": 100},
+        )
+        mock_coordinator.data = with_device_stats(
+            mock_coordinator.data,
+            "site1",
+            "device3",
+            {
+                "poe_ports": {
+                    "abc": 5.0,
+                    "5": 12.0,
+                },
+                "port_bytes": {
+                    "xyz": {"tx_bytes": 100},
+                    "5": {"tx_bytes": 200, "rx_bytes": 100},
+                },
             },
-        }
+        )
         mock_config_entry.runtime_data.coordinator = mock_coordinator
 
         entities = []
@@ -2809,8 +3077,8 @@ class TestUnifiInsightsSensorEdgeCases:
     """Test edge cases for UnifiInsightsSensor."""
 
     async def test_native_value_firmware_version_no_device(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test native_value returns None when device data missing."""
         # Find firmware version description
         fw_desc = next(d for d in SENSOR_TYPES if d.key == "firmware_version")
@@ -2823,7 +3091,9 @@ class TestUnifiInsightsSensorEdgeCases:
         )
 
         # Remove device data
-        mock_coordinator.data["devices"]["site1"] = {}
+        mock_coordinator.data = _with_value(
+            mock_coordinator.data, ("devices", "site1"), {}
+        )
 
         assert sensor.native_value is None
 
@@ -2861,8 +3131,8 @@ class TestUnifiPortSensorNativeValueEdgeCases:
     """Test edge cases for UnifiPortSensor native_value."""
 
     async def test_native_value_no_device_data(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test native_value returns None when device data is missing."""
         speed_desc = PORT_SENSOR_TYPES[1]
         sensor = UnifiPortSensor(
@@ -2874,7 +3144,9 @@ class TestUnifiPortSensorNativeValueEdgeCases:
         )
 
         # Remove device data
-        mock_coordinator.data["devices"]["site1"] = {}
+        mock_coordinator.data = _with_value(
+            mock_coordinator.data, ("devices", "site1"), {}
+        )
 
         assert sensor.native_value is None
 
@@ -2894,8 +3166,8 @@ class TestUnifiPortSensorNativeValueEdgeCases:
         assert sensor.native_value is None
 
     async def test_native_value_tx_bytes_with_stats(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test native_value for TX bytes uses stats."""
         tx_desc = PORT_SENSOR_TYPES[2]  # TX bytes
         sensor = UnifiPortSensor(
@@ -2907,17 +3179,20 @@ class TestUnifiPortSensorNativeValueEdgeCases:
         )
 
         # Add stats data for port using port_bytes key (matches code fallback path)
-        mock_coordinator.data["stats"]["site1"]["device1"]["port_bytes"] = {
-            "1": {"tx_bytes": 12345}
-        }
+        mock_coordinator.data = with_device_stats_fields(
+            mock_coordinator.data,
+            "site1",
+            "device1",
+            port_bytes={"1": {"tx_bytes": 12345}},
+        )
 
         value = sensor.native_value
         # Value should be extracted from value_fn
         assert value is not None or value == 0
 
     async def test_native_value_poe_power_int_keyed_zero_with_port_data(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """
         An int-keyed poe_ports dict mapping to a real 0 W must yield 0.0.
 
@@ -2927,7 +3202,9 @@ class TestUnifiPortSensorNativeValueEdgeCases:
         0 as falsy and wrongly fall through to the (absent) string key.
         """
         poe_desc = PORT_SENSOR_TYPES[0]  # port_poe_power
-        mock_coordinator.data["stats"]["site1"]["device1"]["poe_ports"] = {1: 0}
+        mock_coordinator.data = with_device_stats_fields(
+            mock_coordinator.data, "site1", "device1", poe_ports={1: 0}
+        )
 
         sensor = UnifiPortSensor(
             coordinator=mock_coordinator,
@@ -2941,8 +3218,8 @@ class TestUnifiPortSensorNativeValueEdgeCases:
         assert sensor.native_value is not None
 
     async def test_native_value_poe_power_int_keyed_zero_without_port_data(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """
         Same int-keyed-zero case, but for a port absent from interfaces.ports.
 
@@ -2951,7 +3228,9 @@ class TestUnifiPortSensorNativeValueEdgeCases:
         call site.
         """
         poe_desc = PORT_SENSOR_TYPES[0]  # port_poe_power
-        mock_coordinator.data["stats"]["site1"]["device1"]["poe_ports"] = {5: 0}
+        mock_coordinator.data = with_device_stats_fields(
+            mock_coordinator.data, "site1", "device1", poe_ports={5: 0}
+        )
 
         sensor = UnifiPortSensor(
             coordinator=mock_coordinator,
@@ -2965,8 +3244,8 @@ class TestUnifiPortSensorNativeValueEdgeCases:
         assert sensor.native_value is not None
 
     async def test_native_value_poe_power_string_keyed_zero_with_port_data(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """
         A string-keyed poe_ports dict mapping to a real 0 W must still yield 0.0.
 
@@ -2976,7 +3255,9 @@ class TestUnifiPortSensorNativeValueEdgeCases:
         replaced `poe_ports.get(idx) or poe_ports.get(str(idx))`.
         """
         poe_desc = PORT_SENSOR_TYPES[0]  # port_poe_power
-        mock_coordinator.data["stats"]["site1"]["device1"]["poe_ports"] = {"1": 0}
+        mock_coordinator.data = with_device_stats_fields(
+            mock_coordinator.data, "site1", "device1", poe_ports={"1": 0}
+        )
 
         sensor = UnifiPortSensor(
             coordinator=mock_coordinator,
@@ -2990,8 +3271,8 @@ class TestUnifiPortSensorNativeValueEdgeCases:
         assert sensor.native_value is not None
 
     async def test_native_value_poe_power_string_keyed_zero_without_port_data(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """
         Same string-keyed-zero case for a port absent from interfaces.ports.
 
@@ -2999,7 +3280,9 @@ class TestUnifiPortSensorNativeValueEdgeCases:
         of the string-key fallback.
         """
         poe_desc = PORT_SENSOR_TYPES[0]  # port_poe_power
-        mock_coordinator.data["stats"]["site1"]["device1"]["poe_ports"] = {"5": 0}
+        mock_coordinator.data = with_device_stats_fields(
+            mock_coordinator.data, "site1", "device1", poe_ports={"5": 0}
+        )
 
         sensor = UnifiPortSensor(
             coordinator=mock_coordinator,
@@ -3016,7 +3299,9 @@ class TestUnifiPortSensorNativeValueEdgeCases:
 class TestUnifiProtectNVRSensorEdgeCases:
     """Test edge cases for UnifiProtectNVRSensor."""
 
-    async def test_available_no_nvr_data(self, hass: HomeAssistant, mock_coordinator):
+    async def test_available_no_nvr_data(
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test available returns False when NVR data missing."""
         storage_desc = next(d for d in NVR_SENSOR_TYPES if d.key == "storage_used")
         sensor = UnifiProtectSensor(
@@ -3026,7 +3311,9 @@ class TestUnifiProtectNVRSensorEdgeCases:
         )
 
         # Remove NVR data
-        mock_coordinator.data["protect"]["nvrs"] = {}
+        mock_coordinator.data = _with_value(
+            mock_coordinator.data, ("protect", "nvrs"), {}
+        )
 
         assert sensor.available is False
 
@@ -3044,8 +3331,8 @@ class TestUnifiProtectNVRSensorEdgeCases:
         assert sensor.available is False
 
     async def test_available_storage_sensor_with_nested_storage_info(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test available for storage sensor with nested storageInfo."""
         storage_desc = next(d for d in NVR_SENSOR_TYPES if d.key == "storage_used")
         sensor = UnifiProtectSensor(
@@ -3055,17 +3342,22 @@ class TestUnifiProtectNVRSensorEdgeCases:
         )
 
         # Set nested storageInfo
-        mock_coordinator.data["protect"]["nvrs"]["nvr1"] = {
-            "id": "nvr1",
-            "name": "Test NVR",
-            "storageInfo": {"usedSize": 100, "totalSize": 1000},
-        }
+        mock_coordinator.data = with_protect_device(
+            mock_coordinator.data,
+            "nvrs",
+            "nvr1",
+            {
+                "id": "nvr1",
+                "name": "Test NVR",
+                "storageInfo": {"usedSize": 100, "totalSize": 1000},
+            },
+        )
 
         assert sensor.available is True
 
     async def test_available_non_storage_sensor(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test available for non-storage NVR sensor."""
         # Create a custom description that's not storage-related
         custom_desc = UnifiProtectSensorEntityDescription(
@@ -3082,16 +3374,21 @@ class TestUnifiProtectNVRSensorEdgeCases:
         )
 
         # Has NVR data
-        mock_coordinator.data["protect"]["nvrs"]["nvr1"] = {
-            "id": "nvr1",
-            "name": "Test NVR",
-        }
+        mock_coordinator.data = with_protect_device(
+            mock_coordinator.data,
+            "nvrs",
+            "nvr1",
+            {
+                "id": "nvr1",
+                "name": "Test NVR",
+            },
+        )
 
         assert sensor.available is True
 
     async def test_update_from_data_attributes(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test _update_from_data sets attributes correctly."""
         storage_desc = next(d for d in NVR_SENSOR_TYPES if d.key == "storage_used")
         sensor = UnifiProtectSensor(
@@ -3101,13 +3398,18 @@ class TestUnifiProtectNVRSensorEdgeCases:
         )
 
         # Set storage data
-        mock_coordinator.data["protect"]["nvrs"]["nvr1"] = {
-            "id": "nvr1",
-            "name": "Test NVR",
-            "version": "3.0.0",
-            "storageUsedBytes": 500000000000,
-            "storageTotalBytes": 1000000000000,
-        }
+        mock_coordinator.data = with_protect_device(
+            mock_coordinator.data,
+            "nvrs",
+            "nvr1",
+            {
+                "id": "nvr1",
+                "name": "Test NVR",
+                "version": "3.0.0",
+                "storageUsedBytes": 500000000000,
+                "storageTotalBytes": 1000000000000,
+            },
+        )
 
         sensor._update_from_data()
 
@@ -3317,15 +3619,18 @@ class TestUnifiSiteClientSensor:
     """Tests for the UnifiSiteClientSensor entity class."""
 
     @pytest.fixture
-    def mock_coordinator_with_clients(self, mock_coordinator):
+    def mock_coordinator_with_clients(self, mock_coordinator: MagicMock) -> MagicMock:
         """Create a coordinator with client data for site-level tests."""
-        mock_coordinator.data["clients"] = {
-            "site1": {
-                "c1": {"id": "c1", "type": "WIRED", "name": "PC"},
-                "c2": {"id": "c2", "type": "WIRELESS", "name": "Phone"},
-                "c3": {"id": "c3", "type": "WIRED", "name": "Printer"},
-            }
-        }
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            clients={
+                "site1": {
+                    "c1": {"id": "c1", "type": "WIRED", "name": "PC"},
+                    "c2": {"id": "c2", "type": "WIRELESS", "name": "Phone"},
+                    "c3": {"id": "c3", "type": "WIRED", "name": "Printer"},
+                }
+            },
+        )
         mock_coordinator.last_update_success = True
         return mock_coordinator
 
@@ -3424,23 +3729,27 @@ class TestUnifiSiteClientSensor:
         assert ("unifi_insights", "site1_device2") in idents
 
     async def test_device_info_creates_virtual_site_device(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test virtual site device created when no gateway exists."""
         # Remove the gateway device
-        mock_coordinator.data["devices"] = {
-            "site1": {
-                "device1": {
-                    "id": "device1",
-                    "name": "Test Switch",
-                    "model": "USW-24",
-                    "features": ["switching"],
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            devices={
+                "site1": {
+                    "device1": {
+                        "id": "device1",
+                        "name": "Test Switch",
+                        "model": "USW-24",
+                        "features": ["switching"],
+                    }
                 }
-            }
-        }
-        mock_coordinator.data["clients"] = {
-            "site1": {"c1": {"id": "c1", "type": "WIRED"}}
-        }
+            },
+        )
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            clients={"site1": {"c1": {"id": "c1", "type": "WIRED"}}},
+        )
         mock_coordinator.last_update_success = True
         desc = next(
             d for d in SITE_CLIENT_SENSOR_TYPES if d.key == "site_total_clients"
@@ -3457,10 +3766,10 @@ class TestUnifiSiteClientSensor:
         assert ("unifi_insights", "site_site1") in idents
 
     async def test_native_value_no_clients_data(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test returns 0 when no client data for the site."""
-        mock_coordinator.data["clients"] = {}
+        mock_coordinator.data = with_sections(mock_coordinator.data, clients={})
         mock_coordinator.last_update_success = True
         desc = next(
             d for d in SITE_CLIENT_SENSOR_TYPES if d.key == "site_total_clients"
@@ -3478,15 +3787,18 @@ class TestAsyncSetupEntrySiteClientSensors:
     """Tests for site-level client sensor creation in async_setup_entry."""
 
     async def test_setup_entry_creates_site_client_sensors(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test async_setup_entry creates site-level client sensors."""
-        mock_coordinator.data["clients"] = {
-            "site1": {
-                "c1": {"id": "c1", "type": "WIRED"},
-                "c2": {"id": "c2", "type": "WIRELESS"},
-            }
-        }
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            clients={
+                "site1": {
+                    "c1": {"id": "c1", "type": "WIRED"},
+                    "c2": {"id": "c2", "type": "WIRELESS"},
+                }
+            },
+        )
 
         config_entry = MagicMock()
         config_entry.data = {"console_id": "console"}
@@ -3525,10 +3837,10 @@ class TestAsyncSetupEntrySiteClientSensors:
         }
 
     async def test_setup_entry_no_clients_no_site_sensors(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test no site sensors when clients data is empty."""
-        mock_coordinator.data["clients"] = {}
+        mock_coordinator.data = with_sections(mock_coordinator.data, clients={})
 
         config_entry = MagicMock()
         config_entry.data = {"console_id": "console"}
@@ -3561,12 +3873,14 @@ class TestAsyncSetupEntrySiteClientSensors:
         assert len(site_sensors) == 0
 
     async def test_setup_entry_clients_and_wifi_not_dicts_are_skipped(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Malformed (non-dict) top-level clients/wifi collections are skipped
         without raising, and produce no site or WiFi sensors."""
-        mock_coordinator.data["clients"] = "not-a-dict"
-        mock_coordinator.data["wifi"] = "not-a-dict"
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data, clients="not-a-dict"
+        )
+        mock_coordinator.data = with_sections(mock_coordinator.data, wifi="not-a-dict")
 
         config_entry = MagicMock()
         config_entry.data = {"console_id": "console"}
@@ -3947,8 +4261,8 @@ class TestUnifiOutletSensor:
     )
     def test_outlet_serviceable_availability(
         self,
-        mock_coordinator,
-        description,
+        mock_coordinator: MagicMock,
+        description: UnifiInsightsSensorEntityDescription,
         state: str,
         *,
         healthy: bool,
@@ -3956,7 +4270,9 @@ class TestUnifiOutletSensor:
     ) -> None:
         """Electrical readings survive provisioning only while Device data is fresh."""
         set_availability(mock_coordinator, device=healthy)
-        mock_coordinator.data["devices"]["site1"]["pdu1"]["state"] = state
+        mock_coordinator.data = with_device_fields(
+            mock_coordinator.data, "site1", "pdu1", state=state
+        )
         sensor = UnifiOutletSensor(
             mock_coordinator, description, "site1", "pdu1", outlet_index=1
         )
@@ -4070,7 +4386,7 @@ class TestUnifiAcPowerSensors:
         assert sensor_budget.unique_id == "site1_pdu1_ac_power_budget"
         assert sensor_budget.native_value == 1800.0
 
-    def test_outlet_sensor_edge_cases(self, mock_coordinator) -> None:
+    def test_outlet_sensor_edge_cases(self, mock_coordinator: MagicMock) -> None:
         """Test UnifiOutletSensor _find_outlet_data edge cases."""
         desc_map = {d.key: d for d in OUTLET_SENSOR_TYPES}
         sensor = UnifiOutletSensor(
@@ -4082,28 +4398,31 @@ class TestUnifiAcPowerSensors:
         )
 
         # 1. Device missing
-        mock_coordinator.data["devices"] = {}
+        mock_coordinator.data = with_sections(mock_coordinator.data, devices={})
         assert sensor._find_outlet_data() is None
         assert sensor.extra_state_attributes is None
 
         # 2. Outlet table with invalid entries and matching outlet_idx
-        mock_coordinator.data["devices"] = {
-            "site1": {
-                "pdu1": {
-                    "outlet_table": [
-                        "not_a_dict",
-                        {"index": "invalid"},
-                        {"outlet_idx": 1, "name": None, "relay_state": None},
-                    ]
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            devices={
+                "site1": {
+                    "pdu1": {
+                        "outlet_table": [
+                            "not_a_dict",
+                            {"index": "invalid"},
+                            {"outlet_idx": 1, "name": None, "relay_state": None},
+                        ]
+                    }
                 }
-            }
-        }
+            },
+        )
         outlet = sensor._find_outlet_data()
         assert outlet is not None
         assert sensor.extra_state_attributes == {"index": 1}
 
     def test_outlet_sensor_device_not_dict_and_missing_index_and_no_value_fn(
-        self, mock_coordinator
+        self, mock_coordinator: MagicMock
     ) -> None:
         """Test outlet sensor when device is non-dict, missing index, or no value_fn."""
         desc_map = {d.key: d for d in OUTLET_SENSOR_TYPES}
@@ -4117,31 +4436,39 @@ class TestUnifiAcPowerSensors:
         )
 
         # 1) device_data is not a dict (e.g. None or 'invalid') -> line 2086-2087
-        mock_coordinator.data["devices"] = {"site1": {"pdu1": None}}
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data, devices={"site1": {"pdu1": None}}
+        )
         assert sensor._find_outlet_data() is None
 
         # 2) outlet in outlet_table has no index/outlet_idx/outletIdx -> line 2097->2091
-        mock_coordinator.data["devices"] = {
-            "site1": {
-                "pdu1": {
-                    "outlet_table": [
-                        {"name": "No Index Outlet"},
-                    ]
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            devices={
+                "site1": {
+                    "pdu1": {
+                        "outlet_table": [
+                            {"name": "No Index Outlet"},
+                        ]
+                    }
                 }
-            }
-        }
+            },
+        )
         assert sensor._find_outlet_data() is None
 
         # 3) value_fn is None -> line 2118-2120
-        mock_coordinator.data["devices"] = {
-            "site1": {
-                "pdu1": {
-                    "outlet_table": [
-                        {"index": 1, "power": 12.0},
-                    ]
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            devices={
+                "site1": {
+                    "pdu1": {
+                        "outlet_table": [
+                            {"index": 1, "power": 12.0},
+                        ]
+                    }
                 }
-            }
-        }
+            },
+        )
         desc_no_fn = dataclasses.replace(desc, value_fn=None)
         sensor_no_fn = UnifiOutletSensor(
             coordinator=mock_coordinator,
@@ -4235,7 +4562,7 @@ class TestUnifiSiteInternetActivitySensor:
             }
 
     def test_unavailable_when_section_unavailable_or_window_missing(
-        self, hass, mock_config_entry
+        self, hass: HomeAssistant, mock_config_entry: MagicMock
     ) -> None:
         """Sensor is unavailable on failed refresh or missing window."""
         desc = SITE_INTERNET_ACTIVITY_SENSOR_TYPES[0]
@@ -4261,17 +4588,25 @@ class TestUnifiSiteInternetActivitySensor:
 
         # Section marked unavailable via data set
         set_availability(coordinator)
-        coordinator.data["internet_activity_unavailable"] = {"site1"}
+        coordinator.data = with_sections(
+            coordinator.data, internet_activity_unavailable={"site1"}
+        )
         assert sensor.available is False
 
         # Missing window value
-        coordinator.data["internet_activity_unavailable"] = set()
-        coordinator.data["internet_activity"]["site1"] = {}
+        coordinator.data = with_sections(
+            coordinator.data, internet_activity_unavailable=set()
+        )
+        coordinator.data = _with_value(
+            coordinator.data, ("internet_activity", "site1"), {}
+        )
         assert sensor.available is False
         assert sensor.native_value is None
 
         # Config refresh failed
-        coordinator.data["internet_activity"]["site1"] = {"1h": {"rx_bytes": 1024}}
+        coordinator.data = _with_value(
+            coordinator.data, ("internet_activity", "site1"), {"1h": {"rx_bytes": 1024}}
+        )
         set_availability(coordinator, config=False)
         assert sensor.available is False
 
@@ -4283,13 +4618,21 @@ class TestUnifiSiteInternetActivitySensor:
 
         # Non-dict site_devices, non-gateway device, non-dict data/site_windows,
         # and bool value
-        coordinator.data["devices"]["site1"] = "not_a_dict"
+        coordinator.data = _with_value(
+            coordinator.data, ("devices", "site1"), "not_a_dict"
+        )
         assert get_site_gateway_id(coordinator.data, "site1") is None
-        coordinator.data["devices"]["site1"] = {"sw1": {"features": ["switching"]}}
+        coordinator.data = _with_value(
+            coordinator.data, ("devices", "site1"), {"sw1": {"features": ["switching"]}}
+        )
         assert get_site_gateway_id(coordinator.data, "site1") is None
-        coordinator.data["internet_activity"]["site1"] = {"1h": {"rx_bytes": True}}
+        coordinator.data = _with_value(
+            coordinator.data, ("internet_activity", "site1"), {"1h": {"rx_bytes": True}}
+        )
         assert sensor.native_value is None
-        coordinator.data["internet_activity"]["site1"] = "not_a_dict"
+        coordinator.data = _with_value(
+            coordinator.data, ("internet_activity", "site1"), "not_a_dict"
+        )
         assert sensor.native_value is None
         assert (
             _discover_site_internet_activity_sensors(
@@ -4301,7 +4644,9 @@ class TestUnifiSiteInternetActivitySensor:
             )
             == []
         )
-        coordinator.data["internet_activity"] = {"site1": {"1h": {"rx_bytes": 100}}}
+        coordinator.data = with_sections(
+            coordinator.data, internet_activity={"site1": {"1h": {"rx_bytes": 100}}}
+        )
         known_keys: set[tuple[str, ...]] = set()
         assert (
             len(
@@ -4325,7 +4670,9 @@ class TestUnifiSiteInternetActivitySensor:
             )
             == []
         )
-        coordinator.data["internet_activity"] = "not_a_dict"
+        coordinator.data = with_sections(
+            coordinator.data, internet_activity="not_a_dict"
+        )
         assert (
             _discover_site_internet_activity_sensors(
                 coordinator,
@@ -4487,7 +4834,9 @@ class TestSensorAdditionalCoverageGaps:
         assert sensor.available is False
         set_availability(coordinator, device=True)
 
-        coordinator.data["devices"]["site1"]["dev1"]["outlet_table"] = "not_a_list"
+        coordinator.data = with_device_fields(
+            coordinator.data, "site1", "dev1", outlet_table="not_a_list"
+        )
         assert sensor._find_outlet_data() is None
         assert sensor.native_value is None
         assert sensor.extra_state_attributes is None
@@ -4763,8 +5112,12 @@ class TestStalePortCleanupNativeRegistry:
             mock_config_entry,
             data={**mock_config_entry.data, CONF_CONSOLE_ID: namespace},
         )
-        cleanup_coordinator.data["sites"] = {site_id: {"id": site_id}}
-        cleanup_coordinator.data["clients"] = {site_id: {}}
+        cleanup_coordinator.data = with_sections(
+            cleanup_coordinator.data, sites={site_id: {"id": site_id}}
+        )
+        cleanup_coordinator.data = with_sections(
+            cleanup_coordinator.data, clients={site_id: {}}
+        )
         row = entity_registry.async_get_or_create(
             "sensor",
             DOMAIN,
@@ -4807,7 +5160,7 @@ class TestStalePortCleanupNativeRegistry:
             config_entry=mock_config_entry,
             translation_key=port.translation_key,
         )
-        cleanup_coordinator.data["devices"] = {}
+        cleanup_coordinator.data = with_sections(cleanup_coordinator.data, devices={})
         await async_setup_entry(hass, mock_config_entry, MagicMock())
         assert entity_registry.async_get(row.entity_id) is None
 
@@ -4834,10 +5187,15 @@ class TestStalePortCleanupNativeRegistry:
         own_port = UnifiPortSensor(
             cleanup_coordinator, PORT_SENSOR_TYPES[1], "site1", "device1", 99
         )
-        cleanup_coordinator.data["devices"]["site1"]["foreign_device"] = {
-            **cleanup_coordinator.data["devices"]["site1"]["device1"],
-            "name": "Synthetic foreign switch",
-        }
+        cleanup_coordinator.data = with_network_device(
+            cleanup_coordinator.data,
+            "site1",
+            "foreign_device",
+            {
+                **cleanup_coordinator.data["devices"]["site1"]["device1"],
+                "name": "Synthetic foreign switch",
+            },
+        )
         foreign_port = UnifiPortSensor(
             cleanup_coordinator, PORT_SENSOR_TYPES[1], "site1", "foreign_device", 99
         )
@@ -4872,8 +5230,10 @@ class TestStalePortCleanupNativeRegistry:
             )
             for index, row in enumerate(rows)
         ]
-        cleanup_coordinator.data["sites"] = {}
-        cleanup_coordinator.data["devices"] = devices
+        cleanup_coordinator.data = with_sections(cleanup_coordinator.data, sites={})
+        cleanup_coordinator.data = with_sections(
+            cleanup_coordinator.data, devices=devices
+        )
         added: list[SensorEntity] = []
         with patch.object(
             entity_registry, "async_remove", wraps=entity_registry.async_remove
@@ -4918,7 +5278,9 @@ class TestStalePortCleanupNativeRegistry:
             translation_key=translation_key,
         )
         if not device_present:
-            cleanup_coordinator.data["devices"] = {}
+            cleanup_coordinator.data = with_sections(
+                cleanup_coordinator.data, devices={}
+            )
         await async_setup_entry(hass, mock_config_entry, MagicMock())
         assert (entity_registry.async_get(row.entity_id) is None) is removed
 
@@ -4996,9 +5358,12 @@ class TestStalePortCleanupNativeRegistry:
         cleanup_coordinator: MagicMock,
     ) -> None:
         """Keep an active port's native row and user metadata across discovery."""
-        cleanup_coordinator.data["devices"]["site1"]["device1"]["ports"] = [
-            {"idx": 1, "state": "UP"}
-        ]
+        cleanup_coordinator.data = with_device_fields(
+            cleanup_coordinator.data,
+            "site1",
+            "device1",
+            ports=[{"idx": 1, "state": "UP"}],
+        )
         port = UnifiPortSensor(
             cleanup_coordinator, PORT_SENSOR_TYPES[1], "site1", "device1", 1
         )
@@ -5051,10 +5416,14 @@ class TestStalePortCleanupNativeRegistry:
         assert entity_registry.async_get(row.entity_id) == row
 
 
-def test_port_speed_statistics_metadata(hass: HomeAssistant, mock_coordinator):
+def test_port_speed_statistics_metadata(
+    hass: HomeAssistant, mock_coordinator: MagicMock
+) -> None:
     """Port speed exposes data-rate measurements in Mbit/s for statistics."""
     mock_coordinator.hass = hass
-    mock_coordinator.data["devices"] = {"site1": {"device1": {"name": "Switch"}}}
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data, devices={"site1": {"device1": {"name": "Switch"}}}
+    )
     description = next(desc for desc in PORT_SENSOR_TYPES if desc.key == "port_speed")
     sensor = UnifiPortSensor(mock_coordinator, description, "site1", "device1", 25)
     assert sensor.state_class == SensorStateClass.MEASUREMENT

@@ -23,6 +23,7 @@ from custom_components.unifi_insights.sensor import (
     UnifiProtectSensor,
     discover_protect_security_sensors,
 )
+from tests.fixtures.facade_data import facade_data, with_protect_device, with_sections
 from tests.fixtures.library_responses import (
     SAMPLE_ALARM_HUB,
     SAMPLE_KEYPAD_FOB,
@@ -43,7 +44,7 @@ def _coordinator(hass: HomeAssistant, **protect: dict[str, Any]) -> MagicMock:
     data: dict[str, Any] = {"cameras": {}, "sensors": {}}
     for collection in ("fobs", "link_stations", "alarm_hubs"):
         data[collection] = copy.deepcopy(protect.get(collection, {}))
-    coordinator.data = {"devices": {}, "protect": data}
+    coordinator.data = facade_data(protect=data)
     return coordinator
 
 
@@ -149,8 +150,10 @@ class TestDiscovery:
 
         first = discover_protect_security_binary_sensors(coordinator, known)
         again = discover_protect_security_binary_sensors(coordinator, known)
-        coordinator.data["protect"]["alarm_hubs"]["alarm_hub_1"]["threadState"] = (
-            copy.deepcopy(SAMPLE_THREAD_LINK_STATION["threadState"])
+        hub = copy.deepcopy(SAMPLE_ALARM_HUB)
+        hub["threadState"] = copy.deepcopy(SAMPLE_THREAD_LINK_STATION["threadState"])
+        coordinator.data = with_protect_device(
+            coordinator.data, "alarm_hubs", "alarm_hub_1", hub
         )
         later = discover_protect_security_binary_sensors(coordinator, known)
 
@@ -186,8 +189,14 @@ class TestDiscovery:
     def test_non_dict_records_are_skipped(self, hass: HomeAssistant) -> None:
         """A malformed record never raises during discovery."""
         coordinator = _coordinator(hass)
-        coordinator.data["protect"]["fobs"] = {"bad": None}
-        coordinator.data["protect"]["alarm_hubs"] = ["not", "a", "dict"]
+        coordinator.data = with_sections(
+            coordinator.data,
+            protect={
+                **coordinator.data["protect"],
+                "fobs": {"bad": None},
+                "alarm_hubs": ["not", "a", "dict"],
+            },
+        )
 
         assert discover_protect_security_binary_sensors(coordinator, set()) == []
         assert discover_protect_security_sensors(coordinator, set()) == []
@@ -288,12 +297,17 @@ class TestAlarmHubTamper:
             coordinator, "alarm_hub", "alarm_hub_1", "alarm_hub_device_tamper"
         )
 
-        coordinator.data["protect"]["alarm_hubs"]["alarm_hub_1"]["state"] = (
-            "DISCONNECTED"
+        hub = copy.deepcopy(SAMPLE_ALARM_HUB)
+        hub["state"] = "DISCONNECTED"
+        coordinator.data = with_protect_device(
+            coordinator.data, "alarm_hubs", "alarm_hub_1", hub
         )
         assert entity.available is False
 
-        coordinator.data["protect"]["alarm_hubs"] = {}
+        coordinator.data = with_sections(
+            coordinator.data,
+            protect={**coordinator.data["protect"], "alarm_hubs": {}},
+        )
         assert entity.available is False
         assert entity.is_on is None
         assert entity.extra_state_attributes == {}
@@ -329,11 +343,12 @@ class TestThreadNetworkProblem:
         )
         assert entity.extra_state_attributes == {}
 
-        network = coordinator.data["protect"]["link_stations"]["link_station_thread"][
-            "threadState"
-        ]["network"]
+        network = station["threadState"]["network"]
         network["status"] = "error"
         network["errorReason"] = "radio fault"
+        coordinator.data = with_protect_device(
+            coordinator.data, "link_stations", "link_station_thread", station
+        )
         # Attributes refresh on the coordinator update, as for every Protect entity.
         entity._update_from_data()
         assert entity.extra_state_attributes == {"error_reason": "radio fault"}
@@ -347,9 +362,11 @@ class TestThreadNetworkProblem:
             coordinator, "link_station", "link_station_thread", "thread_network_problem"
         )
 
-        coordinator.data["protect"]["link_stations"]["link_station_thread"][
-            "threadState"
-        ] = {"network": None}
+        station = copy.deepcopy(SAMPLE_THREAD_LINK_STATION)
+        station["threadState"] = {"network": None}
+        coordinator.data = with_protect_device(
+            coordinator.data, "link_stations", "link_station_thread", station
+        )
 
         assert entity.is_on is None
         assert entity.extra_state_attributes == {}

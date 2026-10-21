@@ -16,15 +16,15 @@ from custom_components.unifi_insights.sensor import (
     _latest_expiration_value,
     discover_voucher_sensors,
 )
-from tests.fixtures.facade_data import set_availability
+from tests.fixtures.facade_data import facade_data, set_availability, with_sections
 
 
 @pytest.fixture
-def mock_coordinator():
+def mock_coordinator() -> MagicMock:
     coord = MagicMock()
-    coord.data = {
-        "sites": {"default": {"desc": "Default"}},
-        "vouchers": {
+    coord.data = facade_data(
+        sites={"default": {"desc": "Default"}},
+        vouchers={
             "default": {
                 "v1": {
                     "id": "v1",
@@ -44,7 +44,7 @@ def mock_coordinator():
                 },
             }
         },
-        "latest_vouchers": {
+        latest_vouchers={
             "default": {
                 "id": "v1",
                 "code": "1111111111",
@@ -60,7 +60,7 @@ def mock_coordinator():
                 "txRateLimitKbps": 5000,
             }
         },
-    }
+    )
     return coord
 
 
@@ -139,8 +139,8 @@ def test_latest_voucher_code_sensor(mock_coordinator):
     assert "2026-10-10" in attrs["expires_at"]
 
 
-def test_latest_voucher_code_empty(mock_coordinator):
-    mock_coordinator.data["latest_vouchers"] = {}
+def test_latest_voucher_code_empty(mock_coordinator: MagicMock) -> None:
+    mock_coordinator.data = with_sections(mock_coordinator.data, latest_vouchers={})
     desc = next(d for d in VOUCHER_SENSOR_TYPES if d.key == "latest_voucher_code")
     sensor = UnifiVoucherSensor(
         mock_coordinator,
@@ -165,8 +165,8 @@ def test_latest_voucher_expiration_sensor(mock_coordinator):
     assert val == datetime(2026, 10, 10, 0, 0, tzinfo=UTC)
 
 
-def test_latest_voucher_expiration_empty(mock_coordinator):
-    mock_coordinator.data["latest_vouchers"] = {}
+def test_latest_voucher_expiration_empty(mock_coordinator: MagicMock) -> None:
+    mock_coordinator.data = with_sections(mock_coordinator.data, latest_vouchers={})
     desc = next(d for d in VOUCHER_SENSOR_TYPES if d.key == "latest_voucher_expiration")
     sensor = UnifiVoucherSensor(
         mock_coordinator,

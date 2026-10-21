@@ -32,9 +32,15 @@ from custom_components.unifi_insights.sensor import (
     UnifiStorageSensor,
     discover_storage_sensors,
 )
-from tests.fixtures.facade_data import set_availability
+from tests.fixtures.facade_data import (
+    facade_data,
+    set_availability,
+    with_network_device,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from homeassistant.core import HomeAssistant
 
 
@@ -63,6 +69,30 @@ UDM_STORAGE: list[dict[str, Any]] = [
 ]
 
 
+UDM_DEVICE: dict[str, Any] = {
+    "id": "udm",
+    "_id": "60a1b2c3d4e5f67890123456",
+    "name": "Dream Machine Pro SE",
+    "status": "online",
+    "state": "ONLINE",
+    "model": "UDMPROSE",
+    "macAddress": "AA:BB:CC:DD:EE:FF",
+    "storage_mounts": UDM_STORAGE,
+}
+
+
+def _udm_record() -> dict[str, Any]:
+    """Return a mutable copy of the UDM record, to build the next snapshot from."""
+    return copy.deepcopy(UDM_DEVICE)
+
+
+def _publish_udm(coordinator: MagicMock, record: dict[str, Any]) -> Mapping[str, Any]:
+    """Publish ``record`` as the UDM in a new snapshot and return it as published."""
+    coordinator.data = with_network_device(coordinator.data, "site1", "udm", record)
+    published: Mapping[str, Any] = coordinator.data["devices"]["site1"]["udm"]
+    return published
+
+
 @pytest.fixture
 def mock_coordinator() -> MagicMock:
     """Create mock coordinator with UDM device holding storage mounts."""
@@ -70,26 +100,11 @@ def mock_coordinator() -> MagicMock:
     coordinator.available = True
     coordinator.last_update_success = True
     coordinator.protect_client = None
-    coordinator.data = {
-        "sites": {"site1": {"id": "site1", "name": "Default"}},
-        "devices": {
-            "site1": {
-                "udm": {
-                    "id": "udm",
-                    "_id": "60a1b2c3d4e5f67890123456",
-                    "name": "Dream Machine Pro SE",
-                    "status": "online",
-                    "state": "ONLINE",
-                    "model": "UDMPROSE",
-                    "macAddress": "AA:BB:CC:DD:EE:FF",
-                    "storage_mounts": copy.deepcopy(UDM_STORAGE),
-                }
-            }
-        },
-        "stats": {"site1": {"udm": {}}},
-        "clients": {},
-        "wifi": {},
-    }
+    coordinator.data = facade_data(
+        sites={"site1": {"id": "site1", "name": "Default"}},
+        devices={"site1": {"udm": UDM_DEVICE}},
+        stats={"site1": {"udm": {}}},
+    )
     coordinator.get_site = MagicMock(return_value=coordinator.data["sites"]["site1"])
     return coordinator
 
@@ -171,7 +186,8 @@ def test_discover_storage_sensors_creates_three_per_mount(
     )
 
     # Adding a 4th mount adds exactly 3 entities
-    device_data["storage_mounts"].append(
+    udm = _udm_record()
+    udm["storage_mounts"].append(
         {
             "mount_point": "/srv",
             "name": "Extra",
@@ -180,6 +196,7 @@ def test_discover_storage_sensors_creates_three_per_mount(
             "used": 100,
         }
     )
+    device_data = _publish_udm(mock_coordinator, udm)
     new_entities = discover_storage_sensors(
         mock_coordinator, "site1", "udm", device_data, known_keys
     )
@@ -347,31 +364,38 @@ def test_sensor_unknown_vs_unavailable(mock_coordinator: MagicMock) -> None:
         if e._mount_point == "/data" and e.entity_description.key == "total"
     )
 
+    udm = _udm_record()
+
     # 1. used is None -> native_value is None, available is True
-    device_data["storage_mounts"][0]["used"] = None
+    udm["storage_mounts"][0]["used"] = None
+    _publish_udm(mock_coordinator, udm)
     assert used_sensor.available is True
     assert used_sensor.native_value is None
 
     # 2. size 0 -> percentage None, total 0
-    device_data["storage_mounts"][0]["size"] = 0
-    device_data["storage_mounts"][0]["used"] = 0
+    udm["storage_mounts"][0]["size"] = 0
+    udm["storage_mounts"][0]["used"] = 0
+    _publish_udm(mock_coordinator, udm)
     assert pct_sensor.native_value is None
     assert total_sensor.native_value == 0
 
     # 3. mount removed from storage_mounts -> available is False, values None
-    device_data["storage_mounts"] = [
-        m for m in device_data["storage_mounts"] if m["mount_point"] != "/data"
+    udm["storage_mounts"] = [
+        m for m in udm["storage_mounts"] if m["mount_point"] != "/data"
     ]
+    _publish_udm(mock_coordinator, udm)
     assert used_sensor.available is False
     assert used_sensor.native_value is None
     assert used_sensor.extra_state_attributes is None
 
     # 4. storage_mounts key deleted -> available is False
-    del device_data["storage_mounts"]
+    del udm["storage_mounts"]
+    _publish_udm(mock_coordinator, udm)
     assert used_sensor.available is False
 
     # 5. device offline -> available is False
-    device_data["state"] = "OFFLINE"
+    udm["state"] = "OFFLINE"
+    _publish_udm(mock_coordinator, udm)
     assert used_sensor.available is False
 
 
@@ -388,14 +412,16 @@ def test_sensor_attributes(mock_coordinator: MagicMock) -> None:
     }
 
     # type is None -> drops storage_type
-    device_data["storage_mounts"][0]["type"] = None
+    udm = _udm_record()
+    udm["storage_mounts"][0]["type"] = None
+    _publish_udm(mock_coordinator, udm)
     assert data_sensor.extra_state_attributes == {"mount_point": "/data"}
 
 
 def test_binary_sensor_states(mock_coordinator: MagicMock) -> None:
     """Test binary sensor thresholding, attributes, volatile filtering, and ties."""
     binary = UnifiStorageNearlyFullBinarySensor(mock_coordinator, "site1", "udm")
-    device_data = mock_coordinator.data["devices"]["site1"]["udm"]
+    udm = _udm_record()
 
     # Off at 41.0%
     assert binary.is_on is False
@@ -406,40 +432,45 @@ def test_binary_sensor_states(mock_coordinator: MagicMock) -> None:
     }
 
     # On at exactly 90.0% (size 1000, used 900)
-    device_data["storage_mounts"][0]["size"] = 1000
-    device_data["storage_mounts"][0]["used"] = 900
+    udm["storage_mounts"][0]["size"] = 1000
+    udm["storage_mounts"][0]["used"] = 900
+    _publish_udm(mock_coordinator, udm)
     assert binary.is_on is True
     assert binary.extra_state_attributes["fullest_used_percent"] == 90.0
 
     # On above 90%
-    device_data["storage_mounts"][0]["used"] = 950
+    udm["storage_mounts"][0]["used"] = 950
+    _publish_udm(mock_coordinator, udm)
     assert binary.is_on is True
     assert binary.extra_state_attributes["fullest_used_percent"] == 95.0
 
     # Volatile /tmp at 100% does NOT turn it on when persistent mounts are below 90%
-    device_data["storage_mounts"][0]["used"] = 400  # /data = 40.0%
-    device_data["storage_mounts"][1]["used"] = 300000000  # /persistent ~14.7%
+    udm["storage_mounts"][0]["used"] = 400  # /data = 40.0%
+    udm["storage_mounts"][1]["used"] = 300000000  # /persistent ~14.7%
     tmp_mount = next(
-        m for m in device_data["storage_mounts"] if m["mount_point"] == "/" + "tmp"
+        m for m in udm["storage_mounts"] if m["mount_point"] == "/" + "tmp"
     )
     tmp_mount["size"] = 1000
     tmp_mount["used"] = 1000  # 100%
+    _publish_udm(mock_coordinator, udm)
     assert binary.is_on is False
     assert binary.extra_state_attributes["fullest_mount"] == "/data"
 
     # Unknown when every persistent percentage is invalid
-    device_data["storage_mounts"][0]["size"] = 0
-    device_data["storage_mounts"][1]["size"] = None
+    udm["storage_mounts"][0]["size"] = 0
+    udm["storage_mounts"][1]["size"] = None
+    _publish_udm(mock_coordinator, udm)
     assert binary.is_on is None
     assert binary.extra_state_attributes == {
         "threshold_percent": STORAGE_NEARLY_FULL_PERCENT
     }
 
     # Tie keeps the first persistent mount
-    device_data["storage_mounts"][0]["size"] = 1000
-    device_data["storage_mounts"][0]["used"] = 500  # 50.0%
-    device_data["storage_mounts"][1]["size"] = 1000
-    device_data["storage_mounts"][1]["used"] = 500  # 50.0%
+    udm["storage_mounts"][0]["size"] = 1000
+    udm["storage_mounts"][0]["used"] = 500  # 50.0%
+    udm["storage_mounts"][1]["size"] = 1000
+    udm["storage_mounts"][1]["used"] = 500  # 50.0%
+    _publish_udm(mock_coordinator, udm)
     assert binary.extra_state_attributes["fullest_mount"] == "/data"
 
 
@@ -479,9 +510,9 @@ def test_binary_sensor_availability_and_discovery(
     )
 
     # Becomes unavailable when device reports no persistent storage
-    device_data["storage_mounts"] = [
-        {"mount_point": "/" + "tmp", "size": 1000, "used": 100}
-    ]
+    udm = _udm_record()
+    udm["storage_mounts"] = [{"mount_point": "/" + "tmp", "size": 1000, "used": 100}]
+    _publish_udm(mock_coordinator, udm)
     assert binary.available is False
 
 
@@ -578,8 +609,8 @@ async def test_sensor_setup_entry_adds_late_mounts(
     await sensor.async_setup_entry(hass, mock_config_entry, add_entities)
 
     listener = mock_coordinator.async_add_listener.call_args[0][0]
-    device_data = mock_coordinator.data["devices"]["site1"]["udm"]
-    device_data["storage_mounts"].append(
+    udm = _udm_record()
+    udm["storage_mounts"].append(
         {
             "mount_point": "/mnt/external",
             "name": "External",
@@ -588,6 +619,7 @@ async def test_sensor_setup_entry_adds_late_mounts(
             "used": 1000000000,
         }
     )
+    _publish_udm(mock_coordinator, udm)
 
     count_before = len(added_entities)
     listener()
@@ -607,13 +639,18 @@ async def test_binary_sensor_setup_entry_creates_nearly_full(
 ) -> None:
     """Test binary_sensor async_setup_entry creates nearly full sensor for UDM."""
     # Add a second device without storage mounts to coordinator data
-    mock_coordinator.data["devices"]["site1"]["gw2"] = {
-        "id": "gw2",
-        "name": "Gateway Without Storage",
-        "model": "UCG-Ultra",
-        "state": "ONLINE",
-        "macAddress": "22:33:44:55:66:77",
-    }
+    mock_coordinator.data = with_network_device(
+        mock_coordinator.data,
+        "site1",
+        "gw2",
+        {
+            "id": "gw2",
+            "name": "Gateway Without Storage",
+            "model": "UCG-Ultra",
+            "state": "ONLINE",
+            "macAddress": "22:33:44:55:66:77",
+        },
+    )
     added_entities: list[Any] = []
 
     def add_entities(new_entities: list[Any], **kwargs: Any) -> None:
@@ -633,7 +670,9 @@ async def test_existing_fixtures_unchanged(
     hass: HomeAssistant, mock_coordinator: MagicMock, mock_config_entry: MagicMock
 ) -> None:
     """Test a device with no storage_mounts yields zero storage entities."""
-    mock_coordinator.data["devices"]["site1"]["udm"]["storage_mounts"] = []
+    udm = _udm_record()
+    udm["storage_mounts"] = []
+    _publish_udm(mock_coordinator, udm)
     added_sensors: list[Any] = []
     added_binary_sensors: list[Any] = []
 
