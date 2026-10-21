@@ -33,11 +33,18 @@ from custom_components.unifi_insights.sensor import UnifiProtectSensor
 from custom_components.unifi_insights.sensor import (
     async_setup_entry as setup_sensors,
 )
-from tests.fixtures.facade_data import set_availability
+from tests.fixtures.facade_data import (
+    set_availability,
+    with_protect_collection,
+    with_protect_device,
+    with_protect_fields,
+    with_sections,
+)
 from tests.fixtures.protect_ws import FakeProtectWebSocket
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 
 async def test_nvr_diagnostic_english_name_loads_at_runtime(
@@ -278,10 +285,10 @@ def test_targeted_serializer_preserves_caller_filters() -> None:
 
 async def test_poll_model_wss_delta_null_and_generation(
     hass: HomeAssistant,
-    mock_config_entry,
-    mock_network_client,
-    mock_protect_client,
-    mock_coordinator,
+    mock_config_entry: MockConfigEntry,
+    mock_network_client: MagicMock,
+    mock_protect_client: MagicMock,
+    mock_coordinator: MagicMock,
 ) -> None:
     """Poll feeds entities/snapshot; WSS deltas preserve siblings and win races."""
     feed = FakeProtectWebSocket()
@@ -292,8 +299,10 @@ async def test_poll_model_wss_delta_null_and_generation(
 
     def parity(*, degraded: bool | None, full: bool | None) -> None:
         # Every frame and poll publishes a new NVR record (copy-on-write), so
-        # the facade view is pointed at the current one before each check.
-        mock_coordinator.data["protect"]["nvrs"] = coordinator.data["nvrs"]
+        # the facade publishes the current one before each check.
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data, "nvrs", coordinator.data["nvrs"]
+        )
         _assert_entity_snapshot_parity(mock_coordinator, degraded=degraded, full=full)
 
     try:
@@ -367,13 +376,14 @@ def _assert_entity_snapshot_parity(
 
 
 async def test_conditional_discovery_and_availability(
-    hass: HomeAssistant, mock_coordinator, mock_config_entry
+    hass: HomeAssistant, mock_coordinator: MagicMock, mock_config_entry: MockConfigEntry
 ) -> None:
     """Late signals discover once; disappearing signals retain entities."""
-    mock_coordinator.data["protect"]["nvrs"] = {
-        "nvr1": {"id": "nvr1", "name": "Recorder"},
-        "bad": None,
-    }
+    mock_coordinator.data = with_protect_collection(
+        mock_coordinator.data,
+        "nvrs",
+        {"nvr1": {"id": "nvr1", "name": "Recorder"}, "bad": None},
+    )
     mock_config_entry.runtime_data = MagicMock(coordinator=mock_coordinator)
     binaries: list = []
     capacities: list = []
@@ -391,13 +401,19 @@ async def test_conditional_discovery_and_availability(
     sensor_listener = mock_coordinator.async_add_listener.call_args[0][0]
     assert not binaries
     assert not capacities
-    nvr = mock_coordinator.data["protect"]["nvrs"]["nvr1"]
-    nvr["storageInfo"] = {"healthy": False}
+    mock_coordinator.data = with_protect_fields(
+        mock_coordinator.data, "nvrs", "nvr1", storageInfo={"healthy": False}
+    )
     binary_listener()
     sensor_listener()
     assert len(binaries) == 1
     assert not capacities
-    nvr["storageInfo"].update(usedSize=0, totalSize=100)
+    mock_coordinator.data = with_protect_fields(
+        mock_coordinator.data,
+        "nvrs",
+        "nvr1",
+        storageInfo={"healthy": False, "usedSize": 0, "totalSize": 100},
+    )
     binary_listener()
     sensor_listener()
     assert len(binaries) == 2
@@ -417,10 +433,14 @@ async def test_conditional_discovery_and_availability(
     assert used.native_value == 0
     assert used.native_unit_of_measurement == UnitOfInformation.GIGABYTES
     assert used.extra_state_attributes["storage_used"] == 0
-    del nvr["storageInfo"]
+    mock_coordinator.data = with_protect_device(
+        mock_coordinator.data, "nvrs", "nvr1", {"id": "nvr1", "name": "Recorder"}
+    )
     assert all(not entity.available for entity in binaries + capacities)
     assert all(entity.is_on is None for entity in binaries)
-    nvr["storage"] = {"used": 90, "healthy": True}
+    mock_coordinator.data = with_protect_fields(
+        mock_coordinator.data, "nvrs", "nvr1", storage={"used": 90, "healthy": True}
+    )
     assert all(entity.available for entity in binaries)
     assert binaries[0].is_on is False
     assert binaries[1].is_on is True
@@ -428,7 +448,9 @@ async def test_conditional_discovery_and_availability(
     set_availability(mock_coordinator, protect=False)
     assert all(not entity.available for entity in binaries + capacities)
     set_availability(mock_coordinator, protect=True)
-    nvr["state"] = "DISCONNECTED"
+    mock_coordinator.data = with_protect_fields(
+        mock_coordinator.data, "nvrs", "nvr1", state="DISCONNECTED"
+    )
     assert all(not entity.available for entity in binaries + capacities)
     remove_listener = mock_coordinator.async_add_listener.return_value
     await mock_config_entry._async_process_on_unload(hass)
@@ -447,11 +469,15 @@ async def test_conditional_discovery_and_availability(
     ],
 )
 async def test_malformed_nvr_inventory_waits_for_valid_discovery(
-    hass: HomeAssistant, mock_coordinator, mock_config_entry, inventory: object
+    hass: HomeAssistant,
+    mock_coordinator: MagicMock,
+    mock_config_entry: MockConfigEntry,
+    inventory: object,
 ) -> None:
     """Malformed inventories cannot invent diagnostics or prevent later discovery."""
-    protect = mock_coordinator.data["protect"]
-    protect["nvrs"] = inventory
+    mock_coordinator.data = with_protect_collection(
+        mock_coordinator.data, "nvrs", inventory
+    )
     mock_config_entry.runtime_data = MagicMock(coordinator=mock_coordinator)
     binaries: list = []
 
@@ -467,7 +493,9 @@ async def test_malformed_nvr_inventory_waits_for_valid_discovery(
             "storageInfo": {"healthy": False, "usedSize": 90, "totalSize": 100},
         }
     }
-    protect["nvrs"] = valid_inventory
+    mock_coordinator.data = with_protect_collection(
+        mock_coordinator.data, "nvrs", valid_inventory
+    )
     discover()
     assert {entity.unique_id for entity in binaries} == {
         "unifi_insights_nvr_nvr1_storage_degraded",
@@ -475,9 +503,13 @@ async def test_malformed_nvr_inventory_waits_for_valid_discovery(
     }
     assert all(entity.available and entity.is_on for entity in binaries)
 
-    protect["nvrs"] = inventory
+    mock_coordinator.data = with_protect_collection(
+        mock_coordinator.data, "nvrs", inventory
+    )
     discover()
-    protect["nvrs"] = valid_inventory
+    mock_coordinator.data = with_protect_collection(
+        mock_coordinator.data, "nvrs", valid_inventory
+    )
     discover()
     assert len(binaries) == 2
     assert not mock_coordinator.protect_client.nvr.get.called
@@ -489,18 +521,24 @@ async def test_malformed_nvr_inventory_waits_for_valid_discovery(
 
 @pytest.mark.parametrize("protect", [None, [], "invalid"])
 async def test_malformed_protect_data_waits_for_valid_discovery(
-    hass: HomeAssistant, mock_coordinator, mock_config_entry, protect: object
+    hass: HomeAssistant,
+    mock_coordinator: MagicMock,
+    mock_config_entry: MockConfigEntry,
+    protect: object,
 ) -> None:
     """A non-dict Protect payload is skipped; later valid data is discovered."""
-    valid_protect = mock_coordinator.data["protect"]
-    valid_protect["nvrs"] = {
-        "nvr1": {
-            "id": "nvr1",
-            "name": "Recorder",
-            "storageInfo": {"healthy": False, "usedSize": 90, "totalSize": 100},
-        }
-    }
-    mock_coordinator.data["protect"] = protect
+    valid_protect = with_protect_collection(
+        mock_coordinator.data,
+        "nvrs",
+        {
+            "nvr1": {
+                "id": "nvr1",
+                "name": "Recorder",
+                "storageInfo": {"healthy": False, "usedSize": 90, "totalSize": 100},
+            }
+        },
+    )["protect"]
+    mock_coordinator.data = with_sections(mock_coordinator.data, protect=protect)
     mock_config_entry.runtime_data = MagicMock(coordinator=mock_coordinator)
     binaries: list = []
 
@@ -513,7 +551,7 @@ async def test_malformed_protect_data_waits_for_valid_discovery(
         if (isinstance(e, UnifiProtectBinarySensor) and e._device_type == "nvr")
     ]
 
-    mock_coordinator.data["protect"] = valid_protect
+    mock_coordinator.data = with_sections(mock_coordinator.data, protect=valid_protect)
     discover()
     nvr_binaries = [
         e
@@ -525,5 +563,7 @@ async def test_malformed_protect_data_waits_for_valid_discovery(
 
     # The NVR vanishing, or arriving empty, makes the diagnostics unavailable.
     for missing in ({}, {"nvr1": {}}):
-        valid_protect["nvrs"] = missing
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data, "nvrs", missing
+        )
         assert [entity.available for entity in nvr_binaries] == [False, False]

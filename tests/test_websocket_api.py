@@ -397,10 +397,18 @@ async def _subscribe(client, entry: MockConfigEntry, msg_id: int = 1) -> dict:
     return event["event"]
 
 
-def _rename_ap(data: dict[str, Any], name: str) -> None:
+def _publish_site(entry: MockConfigEntry, section: str, records: Any) -> FacadeData:
+    """Publish a new facade snapshot with the seeded site's ``section`` replaced."""
+    data = entry.runtime_data.coordinator.data
+    return _publish(entry, **{section: {**(data.get(section) or {}), SITE: records}})
+
+
+def _rename_ap(entry: MockConfigEntry, name: str) -> None:
     """Publish a renamed AP the way the coordinator does: a new site dict."""
-    devices = data["devices"][SITE]
-    data["devices"][SITE] = {**devices, "uuid-ap": {**devices["uuid-ap"], "name": name}}
+    devices = entry.runtime_data.coordinator.data["devices"][SITE]
+    _publish_site(
+        entry, "devices", {**devices, "uuid-ap": {**devices["uuid-ap"], "name": name}}
+    )
 
 
 async def _assert_no_event(client, ping_id: int) -> None:
@@ -414,7 +422,7 @@ async def test_subscribe_pushes_only_on_change(
     hass: HomeAssistant, init_integration: MockConfigEntry, hass_ws_client
 ) -> None:
     """Initial snapshot, then one push per real change, none for no-ops."""
-    data = _seed(init_integration)
+    _seed(init_integration)
     facade = init_integration.runtime_data.coordinator
     # Settle dynamic entity/device discovery for the newly seeded site before
     # measuring: the platforms' own coordinator listeners (e.g. sensor.py's
@@ -434,7 +442,7 @@ async def test_subscribe_pushes_only_on_change(
     # Replace the site dict rather than mutating it in place: that is how the
     # device coordinator publishes each poll, and the subscription only
     # rebuilds when the per-site dict's identity changes.
-    _rename_ap(data, "Hallway AP")
+    _rename_ap(init_integration, "Hallway AP")
     facade.async_update_listeners()
     pushed = await client.receive_json()
     assert pushed["type"] == "event"
@@ -504,12 +512,12 @@ async def test_subscribe_skips_rebuild_when_inputs_unchanged(
 
         # A poll that republishes identical content rebuilds once but pushes
         # nothing: the revision still gates what reaches the card.
-        data["devices"][SITE] = dict(data["devices"][SITE])
+        data = _publish_site(init_integration, "devices", dict(data["devices"][SITE]))
         facade.async_update_listeners()
         await _assert_no_event(client, 71)
         assert builder.call_count == 1
 
-        _rename_ap(data, "Hallway AP")
+        _rename_ap(init_integration, "Hallway AP")
         facade.async_update_listeners()
         pushed = await client.receive_json()
         assert builder.call_count == 2
@@ -543,7 +551,7 @@ async def test_unsubscribe_stops_pushes(
     hass: HomeAssistant, init_integration: MockConfigEntry, hass_ws_client
 ) -> None:
     """After unsubscribe_events, changes are no longer pushed."""
-    data = _seed(init_integration)
+    _seed(init_integration)
     facade = init_integration.runtime_data.coordinator
     client = await hass_ws_client(hass)
     await _subscribe(client, init_integration, msg_id=7)
@@ -551,7 +559,7 @@ async def test_unsubscribe_stops_pushes(
     await client.send_json({"id": 8, "type": "unsubscribe_events", "subscription": 7})
     assert (await client.receive_json())["success"]
 
-    _rename_ap(data, "Changed")
+    _rename_ap(init_integration, "Changed")
     facade.async_update_listeners()
     await _assert_no_event(client, 9)
 
@@ -720,7 +728,7 @@ async def test_subscribe_builder_error_does_not_break_listeners(
 
     calls: list[str] = []
     facade.async_add_listener(lambda: calls.append("entity"))
-    _rename_ap(init_integration.runtime_data.coordinator.data, "Changed")
+    _rename_ap(init_integration, "Changed")
     with (
         caplog.at_level(logging.ERROR),
         patch(
@@ -998,14 +1006,17 @@ async def test_performance_get_returns_snapshot(
 ) -> None:
     """Performance get returns device performance rows."""
     _seed(init_integration)
-    stats = init_integration.runtime_data.coordinator.data["stats"]
-    stats[SITE] = {
-        "uuid-gw": {
-            "cpuUtilizationPct": 10,
-            "memoryUtilizationPct": 20,
-            "uplink": {"txRateBps": 100, "rxRateBps": 50},
-        }
-    }
+    _publish_site(
+        init_integration,
+        "stats",
+        {
+            "uuid-gw": {
+                "cpuUtilizationPct": 10,
+                "memoryUtilizationPct": 20,
+                "uplink": {"txRateBps": 100, "rxRateBps": 50},
+            }
+        },
+    )
     client = await hass_ws_client(hass)
 
     await client.send_json(
@@ -1082,14 +1093,18 @@ async def test_performance_and_site_health_contract_locks(
 ) -> None:
     """Version 1 payloads keep their exact key sets and report bit/s as sent."""
     data = _seed(init_integration)
-    data["stats"][SITE] = {
-        "uuid-gw": {
-            "cpuUtilizationPct": 12.5,
-            "memoryUtilizationPct": 63.2,
-            "uptimeSec": 3600,
-            "uplink": {"txRateBps": 100, "rxRateBps": 50},
-        }
-    }
+    data = _publish_site(
+        init_integration,
+        "stats",
+        {
+            "uuid-gw": {
+                "cpuUtilizationPct": 12.5,
+                "memoryUtilizationPct": 63.2,
+                "uptimeSec": 3600,
+                "uplink": {"txRateBps": 100, "rxRateBps": 50},
+            }
+        },
+    )
     # Publish the seeded site like the device coordinator does.
     data = _publish(
         init_integration,
@@ -1154,13 +1169,26 @@ async def test_timeline_get_returns_snapshot(
 ) -> None:
     """Timeline get returns recent events in security category."""
     _seed(init_integration)
-    data = init_integration.runtime_data.coordinator.data
-    data["protect"].setdefault("events", {}).setdefault("motion", {})["evt-1"] = {
-        "id": "evt-1",
-        "device_id": "uuid-ap",
-        "name": "AP",
-        "timestamp": int(datetime.now(tz=UTC).timestamp() * 1000),
-    }
+    protect = init_integration.runtime_data.coordinator.data["protect"]
+    events = protect.get("events") or {}
+    _publish(
+        init_integration,
+        protect={
+            **protect,
+            "events": {
+                **events,
+                "motion": {
+                    **(events.get("motion") or {}),
+                    "evt-1": {
+                        "id": "evt-1",
+                        "device_id": "uuid-ap",
+                        "name": "AP",
+                        "timestamp": int(datetime.now(tz=UTC).timestamp() * 1000),
+                    },
+                },
+            },
+        },
+    )
     client = await hass_ws_client(hass)
 
     await client.send_json(
@@ -1252,9 +1280,9 @@ async def test_dashboard_site_subscriptions_and_errors(
     hass: HomeAssistant, init_integration: MockConfigEntry, hass_ws_client, caplog
 ) -> None:
     """Cover get/subscribe error codes, updates, and unload for site streams."""
-    data = _seed(init_integration)
+    _seed(init_integration)
     facade = init_integration.runtime_data.coordinator
-    data = _publish(
+    _publish(
         init_integration,
         internet_activity={
             SITE: {"1h": {"rx_bytes": 1000, "tx_bytes": 500}},
@@ -1326,7 +1354,7 @@ async def test_dashboard_site_subscriptions_and_errors(
         assert initial["type"] == "event"
 
     # Trigger rebuild error logging isolation
-    _rename_ap(data, "AP-Renamed")
+    _rename_ap(init_integration, "AP-Renamed")
     with (
         caplog.at_level(logging.ERROR),
         patch(
@@ -1600,7 +1628,6 @@ async def test_protect_subscription_forwarder_branches(
 
     # 3. Revision unchanged in _async_forward: an unrelated device-registry
     # entry changes the rebuild inputs but not the snapshot content.
-    data["protect"]["nvrs"]["nvr-1"]["storage"]["used"] = 45.0
     dr.async_get(hass).async_get_or_create(
         config_entry_id=init_integration.entry_id,
         identifiers={(DOMAIN, "unrelated-device")},
@@ -1726,7 +1753,7 @@ SENSITIVE_VALUES = (
 )
 
 
-def _seed_details(entry: MockConfigEntry) -> dict[str, Any]:
+def _seed_details(entry: MockConfigEntry) -> FacadeData:
     """
     Extend the seeded site with addresses, MAC-keyed records and a standalone client.
 
@@ -1735,46 +1762,57 @@ def _seed_details(entry: MockConfigEntry) -> dict[str, Any]:
     """
     data = _seed(entry)
     devices = data["devices"][SITE]
-    data["devices"][SITE] = {
-        **devices,
-        "uuid-gw": {**devices["uuid-gw"], "ipAddress": GW_IP},
-        "uuid-ap": {**devices["uuid-ap"], "ip_address": AP_IP},
-        SWITCH_MAC: {
-            "id": SWITCH_MAC,
-            "name": "Switch",
-            "model": "USW-24",
-            "mac": SWITCH_MAC,
-            "ip": SWITCH_IP,
-            "state": "ONLINE",
-            "topology": {
-                "legacy_type": "usw",
-                "uplink_mac": GW_MAC,
-                "uplink_type": "wire",
+    data = _publish_site(
+        entry,
+        "devices",
+        {
+            **devices,
+            "uuid-gw": {**devices["uuid-gw"], "ipAddress": GW_IP},
+            "uuid-ap": {**devices["uuid-ap"], "ip_address": AP_IP},
+            SWITCH_MAC: {
+                "id": SWITCH_MAC,
+                "name": "Switch",
+                "model": "USW-24",
+                "mac": SWITCH_MAC,
+                "ip": SWITCH_IP,
+                "state": "ONLINE",
+                "topology": {
+                    "legacy_type": "usw",
+                    "uplink_mac": GW_MAC,
+                    "uplink_type": "wire",
+                },
             },
         },
-    }
+    )
     clients = data["clients"][SITE]
-    data["clients"][SITE] = {
-        **clients,
-        "cli-1": {**clients["cli-1"], "macAddress": PHONE_MAC, "ipAddress": PHONE_IP},
-        # No uplink: its tracker sits on a standalone ``client_<mac>`` device.
-        "cli-2": {
-            "id": "cli-2",
-            "name": "Laptop",
-            "type": "WIRED",
-            "mac_address": LAPTOP_MAC_RAW,
-            "ip_address": LAPTOP_IP,
+    return _publish_site(
+        entry,
+        "clients",
+        {
+            **clients,
+            "cli-1": {
+                **clients["cli-1"],
+                "macAddress": PHONE_MAC,
+                "ipAddress": PHONE_IP,
+            },
+            # No uplink: its tracker sits on a standalone ``client_<mac>`` device.
+            "cli-2": {
+                "id": "cli-2",
+                "name": "Laptop",
+                "type": "WIRED",
+                "mac_address": LAPTOP_MAC_RAW,
+                "ip_address": LAPTOP_IP,
+            },
+            PRINTER_MAC: {
+                "id": PRINTER_MAC,
+                "name": "Printer",
+                "type": "WIRED",
+                "mac": PRINTER_MAC,
+                "ip": PRINTER_IP,
+                "uplinkDeviceId": SWITCH_MAC,
+            },
         },
-        PRINTER_MAC: {
-            "id": PRINTER_MAC,
-            "name": "Printer",
-            "type": "WIRED",
-            "mac": PRINTER_MAC,
-            "ip": PRINTER_IP,
-            "uplinkDeviceId": SWITCH_MAC,
-        },
-    }
-    return data
+    )
 
 
 async def _node_details(
@@ -1995,7 +2033,9 @@ async def test_node_details_values_follow_get_field_and_omit_absent(
     devices = data["devices"][SITE]
     spellings = {"ipAddress", "ip_address", "ip", "macAddress", "mac_address", "mac"}
     record = {k: v for k, v in devices["uuid-gw"].items() if k not in spellings}
-    data["devices"][SITE] = {**devices, "uuid-gw": {**record, **fields}}
+    data = _publish_site(
+        init_integration, "devices", {**devices, "uuid-gw": {**record, **fields}}
+    )
     client = await hass_ws_client(hass)
 
     msg = await _node_details(client, init_integration, "dev:uuid-gw")
@@ -2014,8 +2054,15 @@ async def test_node_details_client_on_standalone_device(
 ) -> None:
     """An HMAC client resolves its standalone device and tracker."""
     data = _seed_details(init_integration)
-    laptop_record = data["clients"][SITE].pop("cli-2")
-    data["clients"][SITE][LAPTOP_MAC] = laptop_record
+    clients = data["clients"][SITE]
+    _publish_site(
+        init_integration,
+        "clients",
+        {
+            **{key: value for key, value in clients.items() if key != "cli-2"},
+            LAPTOP_MAC: clients["cli-2"],
+        },
+    )
     tracker = _real_tracker(init_integration, LAPTOP_MAC)
     assert tracker.device_info["identifiers"] == {(DOMAIN, f"client_{LAPTOP_MAC}")}
     device = dr.async_get(hass).async_get_or_create(
@@ -2163,14 +2210,18 @@ async def test_node_details_client_without_mac_has_no_targets(
     """A client record with no MAC returns its other fields and no targets."""
     data = _seed_details(init_integration)
     clients = data["clients"][SITE]
-    data["clients"][SITE] = {
-        **clients,
-        "cli-1": {
-            key: value
-            for key, value in clients["cli-1"].items()
-            if key not in {"macAddress", "mac", "mac_address"}
+    data = _publish_site(
+        init_integration,
+        "clients",
+        {
+            **clients,
+            "cli-1": {
+                key: value
+                for key, value in clients["cli-1"].items()
+                if key not in {"macAddress", "mac", "mac_address"}
+            },
         },
-    }
+    )
     _register_tracker(hass, init_integration, f"{DOMAIN}_{PHONE_MAC}")
     client = await hass_ws_client(hass)
 
@@ -2325,12 +2376,16 @@ async def test_node_details_errors(
     )
     # Two ids that normalise to one MAC share a node id, so it names two nodes.
     dup_a, dup_b = "aa:bb:cc:dd:ee:01", "AA-BB-CC-DD-EE-01"
-    data["devices"][SITE] = {
-        **data["devices"][SITE],
-        dup_a: {"id": dup_a, "name": "Twin A"},
-        dup_b: {"id": dup_b, "name": "Twin B"},
-        "junk": "not a device record",
-    }
+    data = _publish_site(
+        init_integration,
+        "devices",
+        {
+            **data["devices"][SITE],
+            dup_a: {"id": dup_a, "name": "Twin A"},
+            dup_b: {"id": dup_b, "name": "Twin B"},
+            "junk": "not a device record",
+        },
+    )
     client = await hass_ws_client(hass)
     nodes = (await _snapshot(client, init_integration))["nodes"]
     twin_ids = {node["id"] for node in nodes if node["name"].startswith("Twin")}
@@ -2363,7 +2418,11 @@ async def test_node_details_errors(
 
     # A node that left the coordinator data after the card rendered is stale.
     devices = data["devices"][SITE]
-    data["devices"][SITE] = {k: v for k, v in devices.items() if k != "uuid-ap"}
+    data = _publish_site(
+        init_integration,
+        "devices",
+        {k: v for k, v in devices.items() if k != "uuid-ap"},
+    )
     assert await _error("dev:uuid-ap") == "node_not_found"
     ok = await _node_details(
         client, init_integration, "dev:uuid-gw", msg_id=next(message_ids)
@@ -2537,21 +2596,29 @@ async def test_node_details_group_ids_are_not_found(
 WAN_IP = "203.0.113.7"
 
 
-def _seed_wans(entry: MockConfigEntry) -> dict[str, Any]:
+def _seed_wans(entry: MockConfigEntry) -> FacadeData:
     """Give the seeded gateway a connected fiber WAN and a down 5G backup WAN."""
     data = _seed(entry)
     devices = data["devices"][SITE]
-    data["devices"][SITE] = {
-        **devices,
-        "uuid-gw": {
-            **devices["uuid-gw"],
-            "wans": [
-                {"key": "wan", "name": "Fiber", "connected": True, "ip": WAN_IP},
-                {"key": "wan2", "name": "5G Backup", "connected": False, "ip": None},
-            ],
+    return _publish_site(
+        entry,
+        "devices",
+        {
+            **devices,
+            "uuid-gw": {
+                **devices["uuid-gw"],
+                "wans": [
+                    {"key": "wan", "name": "Fiber", "connected": True, "ip": WAN_IP},
+                    {
+                        "key": "wan2",
+                        "name": "5G Backup",
+                        "connected": False,
+                        "ip": None,
+                    },
+                ],
+            },
         },
-    }
-    return data
+    )
 
 
 async def test_node_details_wan_resolves_to_gateway_and_connection_sensor(
@@ -2619,14 +2686,18 @@ async def test_node_details_unknown_wan_is_not_found(
     """A WAN id of no gateway WAN record names no node."""
     data = _seed_wans(init_integration)
     devices = data["devices"][SITE]
-    data["devices"][SITE] = {
-        **devices,
-        "uuid-gw": {
-            **devices["uuid-gw"],
-            "wans": [*devices["uuid-gw"]["wans"], "wan3", {"key": ""}],
+    data = _publish_site(
+        init_integration,
+        "devices",
+        {
+            **devices,
+            "uuid-gw": {
+                **devices["uuid-gw"],
+                "wans": [*devices["uuid-gw"]["wans"], "wan3", {"key": ""}],
+            },
+            "uuid-ap": {**devices["uuid-ap"], "wans": [{"key": "wan"}]},
         },
-        "uuid-ap": {**devices["uuid-ap"], "wans": [{"key": "wan"}]},
-    }
+    )
     client = await hass_ws_client(hass)
 
     msg = await _node_details(client, init_integration, node_id)
@@ -2651,13 +2722,20 @@ async def test_subscribe_pushes_when_a_wan_disconnects(
 
     devices = data["devices"][SITE]
     gateway = devices["uuid-gw"]
-    data["devices"][SITE] = {
-        **devices,
-        "uuid-gw": {
-            **gateway,
-            "wans": [{**gateway["wans"][0], "connected": False}, gateway["wans"][1]],
+    data = _publish_site(
+        init_integration,
+        "devices",
+        {
+            **devices,
+            "uuid-gw": {
+                **gateway,
+                "wans": [
+                    {**gateway["wans"][0], "connected": False},
+                    gateway["wans"][1],
+                ],
+            },
         },
-    }
+    )
     facade.async_update_listeners()
     pushed = await client.receive_json()
 
@@ -2675,16 +2753,25 @@ async def test_node_details_wan_with_repeated_key_matches_the_snapshot(
     """Keys differing only in case resolve to the first WAN, as in the snapshot."""
     data = _seed_wans(init_integration)
     devices = data["devices"][SITE]
-    data["devices"][SITE] = {
-        **devices,
-        "uuid-gw": {
-            **devices["uuid-gw"],
-            "wans": [
-                {"key": "wan", "name": "Fiber", "connected": True, "ip": WAN_IP},
-                {"key": "WAN", "name": "Other", "connected": True, "ip": "203.0.113.9"},
-            ],
+    data = _publish_site(
+        init_integration,
+        "devices",
+        {
+            **devices,
+            "uuid-gw": {
+                **devices["uuid-gw"],
+                "wans": [
+                    {"key": "wan", "name": "Fiber", "connected": True, "ip": WAN_IP},
+                    {
+                        "key": "WAN",
+                        "name": "Other",
+                        "connected": True,
+                        "ip": "203.0.113.9",
+                    },
+                ],
+            },
         },
-    }
+    )
     client = await hass_ws_client(hass)
     snapshot = await _snapshot(client, init_integration)
     (wan,) = [node for node in snapshot["nodes"] if node["kind"] == "wan"]

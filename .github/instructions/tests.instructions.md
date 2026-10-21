@@ -35,6 +35,7 @@ pytest --cov-report=xml && python script/check_coverage_per_file.py coverage.xml
 - Name test files after the module they cover: `tests/<pkg>/test_<module>.py` (for example `tests/coordinators/test_protect.py`). Add a feature suffix (`test_sensor_ports.py`) only when the module's tests exceed about 2,000 lines (ADR-007)
 - Mock at the API client boundary (`network_client`, `protect_client`, `access_client`, `innerspace_client`, `site_manager_client`, `mobility_client`, `carrier_fabric_client`, or `probe.py`), not internal coordinator methods
 - Access runtime state via `entry.runtime_data`, never `hass.data[DOMAIN]`
+- Build facade snapshots with the builders in `tests/fixtures/facade_data.py` (`facade_data`, `with_network_device`, `with_protect_device`, `with_sections`, `set_availability`, ...). Snapshots are read-only (ADR-013), and `mock_coordinator.data` is frozen, so never write into `coordinator.data`: assign a new snapshot (`mock_coordinator.data = with_camera(mock_coordinator.data, "cam1", {...})`) before the entity reads it. An owner coordinator's mocked `.data` is not a facade snapshot
 
 ## HA 2026.8–2026.11 Test Assertions
 

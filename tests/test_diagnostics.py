@@ -48,7 +48,7 @@ from custom_components.unifi_insights.diagnostics import (
     _redact_coordinator_data,
     async_get_config_entry_diagnostics,
 )
-from tests.fixtures.facade_data import with_sections
+from tests.fixtures.facade_data import frozen, with_protect_collection, with_sections
 from tests.fixtures.library_responses import (
     SAMPLE_ALARM_HUB,
     SAMPLE_ALARM_HUB_TAMPER_EVENT,
@@ -615,7 +615,9 @@ async def test_diagnostics_pseudonymizes_siren_mac(
 ) -> None:
     """A siren's MAC reaches the report only as a placeholder."""
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["protect"]["sirens"] = {"siren_1": copy.deepcopy(SAMPLE_SIREN)}
+    coordinator.data = with_protect_collection(
+        coordinator.data, "sirens", {"siren_1": copy.deepcopy(SAMPLE_SIREN)}
+    )
 
     diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
 
@@ -813,7 +815,10 @@ async def test_diagnostics_show_whether_the_global_alarm_manager_is_enabled(
 ) -> None:
     """The flag that hides the alarm panel is in the report, so it can be checked."""
     coordinator = init_integration.runtime_data.coordinator
-    coordinator.data["protect"]["global_alarm_manager"] = enabled
+    coordinator.data = with_sections(
+        coordinator.data,
+        protect={**coordinator.data["protect"], "global_alarm_manager": enabled},
+    )
 
     diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
 
@@ -1147,7 +1152,7 @@ async def test_diagnostics_exclude_network_facts(
         }
     }
     stats = {device_mac.lower(): dict(SAMPLE_UDM_PRO_STATS)}
-    facts = {"site-1": build_site_network_facts(devices, stats)}
+    facts = frozen({"site-1": build_site_network_facts(devices, stats)})
     coordinator = init_integration.runtime_data.coordinator
     coordinator.data = with_sections(coordinator.data, devices={"site-1": devices})
     coordinator.data = with_sections(coordinator.data, stats={"site-1": stats})

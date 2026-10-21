@@ -47,6 +47,15 @@ from custom_components.unifi_insights.switch import (
 from custom_components.unifi_insights.update import (
     async_setup_entry as async_setup_update,
 )
+from tests.fixtures.facade_data import (
+    frozen,
+    with_camera,
+    with_client,
+    with_network_device,
+    with_protect_collection,
+    with_protect_device,
+    with_sections,
+)
 
 
 @pytest.fixture
@@ -56,35 +65,37 @@ def mock_coordinator() -> MagicMock:
     coordinator.protect_client = MagicMock()
     coordinator.network_client = MagicMock()
     coordinator.network_client.base_url = "https://192.168.1.1"
-    coordinator.data = {
-        "devices": {
-            "site1": {},
-        },
-        "protect": {
-            "cameras": {},
-            "lights": {},
-            "sensors": {},
-            "nvrs": {},
-            "viewers": {},
-            "chimes": {},
-            "liveviews": {},
-        },
-        "wifi": {
-            "site1": {},
-        },
-        "clients": {
-            "site1": {},
-        },
-        "firewall_rules": {
-            "site1": {},
-        },
-        "policy_based_routes": {
-            "site1": {},
-        },
-        "vpn_clients": {
-            "site1": {},
-        },
-    }
+    coordinator.data = frozen(
+        {
+            "devices": {
+                "site1": {},
+            },
+            "protect": {
+                "cameras": {},
+                "lights": {},
+                "sensors": {},
+                "nvrs": {},
+                "viewers": {},
+                "chimes": {},
+                "liveviews": {},
+            },
+            "wifi": {
+                "site1": {},
+            },
+            "clients": {
+                "site1": {},
+            },
+            "firewall_rules": {
+                "site1": {},
+            },
+            "policy_based_routes": {
+                "site1": {},
+            },
+            "vpn_clients": {
+                "site1": {},
+            },
+        }
+    )
     return coordinator
 
 
@@ -138,46 +149,51 @@ class TestDynamicNetworkDeviceDiscovery:
         initial_call_counts = {k: m.call_count for k, m in add_mocks.items()}
 
         # Now adopt a new network switch with ports and outlets
-        mock_coordinator.data["devices"]["site1"]["device_switch_1"] = {
-            "id": "device_switch_1",
-            "name": "Core Switch 24",
-            "model": "USW-24-POE",
-            "state": "ONLINE",
-            "firmwareVersion": "6.5.55",
-            "upgradeAvailable": False,
-            "system-stats": {"cpu": 15.2, "mem": 42.1, "uptime": 12345},
-            "interfaces": {
-                "ports": [
+        mock_coordinator.data = with_network_device(
+            mock_coordinator.data,
+            "site1",
+            "device_switch_1",
+            {
+                "id": "device_switch_1",
+                "name": "Core Switch 24",
+                "model": "USW-24-POE",
+                "state": "ONLINE",
+                "firmwareVersion": "6.5.55",
+                "upgradeAvailable": False,
+                "system-stats": {"cpu": 15.2, "mem": 42.1, "uptime": 12345},
+                "interfaces": {
+                    "ports": [
+                        {
+                            "idx": 1,
+                            "name": "Port 1",
+                            "state": "up",
+                            "poe": {"power": 5.4, "good": True},
+                            "speed": 1000,
+                            "media": "copper",
+                        },
+                        {
+                            "idx": 25,
+                            "name": "SFP 1",
+                            "state": "up",
+                            "media": "sfp",
+                            "sfp": {"present": True, "vendor": "Ubiquiti"},
+                        },
+                    ]
+                },
+                "outlet_table": [
                     {
-                        "idx": 1,
-                        "name": "Port 1",
-                        "state": "up",
-                        "poe": {"power": 5.4, "good": True},
-                        "speed": 1000,
-                        "media": "copper",
-                    },
-                    {
-                        "idx": 25,
-                        "name": "SFP 1",
-                        "state": "up",
-                        "media": "sfp",
-                        "sfp": {"present": True, "vendor": "Ubiquiti"},
-                    },
-                ]
+                        "index": 1,
+                        "name": "Outlet 1",
+                        "relay_state": True,
+                        "power": 12.0,
+                        "voltage": 120.0,
+                        "current": 0.1,
+                        "power_factor": 0.95,
+                    }
+                ],
+                "features": {"switching": True},
             },
-            "outlet_table": [
-                {
-                    "index": 1,
-                    "name": "Outlet 1",
-                    "relay_state": True,
-                    "power": 12.0,
-                    "voltage": 120.0,
-                    "current": 0.1,
-                    "power_factor": 0.95,
-                }
-            ],
-            "features": {"switching": True},
-        }
+        )
 
         # Trigger coordinator listeners for each platform without reload
         for callback in callbacks.values():
@@ -239,74 +255,97 @@ class TestDynamicProtectDeviceDiscovery:
         initial_call_counts = {k: m.call_count for k, m in add_mocks.items()}
 
         # Dynamically discover a camera, light, sensor, and chime in Protect
-        mock_coordinator.data["protect"]["cameras"]["cam_1"] = {
-            "id": "cam_1",
-            "name": "Front Door Camera",
-            "state": "CONNECTED",
-            "type": "camera",
-            "modelKey": "camera",
-            "featureFlags": {
-                "hasMic": True,
-                "hasSpeaker": True,
-                "hasHdr": True,
-                "hasPtz": True,
-                "isDoorbell": True,
-                "smartDetectTypes": ["person", "vehicle"],
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data,
+            "cam_1",
+            {
+                "id": "cam_1",
+                "name": "Front Door Camera",
+                "state": "CONNECTED",
+                "type": "camera",
+                "modelKey": "camera",
+                "featureFlags": {
+                    "hasMic": True,
+                    "hasSpeaker": True,
+                    "hasHdr": True,
+                    "hasPtz": True,
+                    "isDoorbell": True,
+                    "smartDetectTypes": ["person", "vehicle"],
+                },
+                "micVolume": 80,
+                "hdrMode": "auto",
+                "videoMode": "default",
+                "ptz": {"presets": [{"id": 1, "name": "Entrance"}]},
+                "isMicEnabled": True,
+                "isLedEnabled": True,
             },
-            "micVolume": 80,
-            "hdrMode": "auto",
-            "videoMode": "default",
-            "ptz": {"presets": [{"id": 1, "name": "Entrance"}]},
-            "isMicEnabled": True,
-            "isLedEnabled": True,
-        }
+        )
         # Speaker-less camera to prove negative capability gating
-        mock_coordinator.data["protect"]["cameras"]["cam_2"] = {
-            "id": "cam_2",
-            "name": "Backyard Camera",
-            "state": "CONNECTED",
-            "type": "camera",
-            "modelKey": "camera",
-            "hasSpeaker": False,
-            "featureFlags": {
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data,
+            "cam_2",
+            {
+                "id": "cam_2",
+                "name": "Backyard Camera",
+                "state": "CONNECTED",
+                "type": "camera",
+                "modelKey": "camera",
                 "hasSpeaker": False,
-                "hasRemovableSpeaker": False,
+                "featureFlags": {
+                    "hasSpeaker": False,
+                    "hasRemovableSpeaker": False,
+                },
             },
-        }
-        mock_coordinator.data["protect"]["lights"]["light_1"] = {
-            "id": "light_1",
-            "name": "Porch Floodlight",
-            "state": "CONNECTED",
-            "isLedEnabled": True,
-            "lightDeviceSettings": {"ledLevel": 6},
-        }
-        mock_coordinator.data["protect"]["sensors"]["sensor_1"] = {
-            "id": "sensor_1",
-            "name": "Front Door Sensor",
-            "state": "CONNECTED",
-            "type": "sensor",
-            "modelKey": "sensor",
-            "stats": {
-                "temperature": {"value": 21.5},
-                "humidity": {"value": 45.0},
-                "light": {"value": 150.0},
+        )
+        mock_coordinator.data = with_protect_device(
+            mock_coordinator.data,
+            "lights",
+            "light_1",
+            {
+                "id": "light_1",
+                "name": "Porch Floodlight",
+                "state": "CONNECTED",
+                "isLedEnabled": True,
+                "lightDeviceSettings": {"ledLevel": 6},
             },
-            "batteryStatus": {"percentage": 92},
-            "isOpened": False,
-            "isTamperingDetected": False,
-        }
-        mock_coordinator.data["protect"]["chimes"]["chime_1"] = {
-            "id": "chime_1",
-            "name": "Hallway Chime",
-            "state": "CONNECTED",
-            "ringSettings": [
-                {
-                    "volume": 70,
-                    "repeatTimes": 2,
-                    "ringtone": "dingdong",
-                }
-            ],
-        }
+        )
+        mock_coordinator.data = with_protect_device(
+            mock_coordinator.data,
+            "sensors",
+            "sensor_1",
+            {
+                "id": "sensor_1",
+                "name": "Front Door Sensor",
+                "state": "CONNECTED",
+                "type": "sensor",
+                "modelKey": "sensor",
+                "stats": {
+                    "temperature": {"value": 21.5},
+                    "humidity": {"value": 45.0},
+                    "light": {"value": 150.0},
+                },
+                "batteryStatus": {"percentage": 92},
+                "isOpened": False,
+                "isTamperingDetected": False,
+            },
+        )
+        mock_coordinator.data = with_protect_device(
+            mock_coordinator.data,
+            "chimes",
+            "chime_1",
+            {
+                "id": "chime_1",
+                "name": "Hallway Chime",
+                "state": "CONNECTED",
+                "ringSettings": [
+                    {
+                        "volume": 70,
+                        "repeatTimes": 2,
+                        "ringtone": "dingdong",
+                    }
+                ],
+            },
+        )
 
         # Trigger listener updates across all platforms
         for callback in callbacks.values():
@@ -349,12 +388,17 @@ class TestDynamicOptionsAndCapabilities:
         """Buttons and switches for client control dynamically respect options."""
         mock_config_entry.options = {CONF_CLIENT_CONTROL: False}
 
-        mock_coordinator.data["clients"]["site1"]["client_mac_1"] = {
-            "id": "client_mac_1",
-            "mac": "aa:bb:cc:dd:ee:ff",
-            "name": "Guest Phone",
-            "blocked": False,
-        }
+        mock_coordinator.data = with_client(
+            mock_coordinator.data,
+            "site1",
+            "client_mac_1",
+            {
+                "id": "client_mac_1",
+                "mac": "aa:bb:cc:dd:ee:ff",
+                "name": "Guest Phone",
+                "blocked": False,
+            },
+        )
 
         button_add = MagicMock()
         await async_setup_button(hass, mock_config_entry, button_add)
@@ -392,12 +436,17 @@ class TestDynamicOptionsAndCapabilities:
         mock_coordinator.async_get_wake_history = AsyncMock(return_value={})
         mock_config_entry.options = {CONF_CLIENT_CONTROL: False}
 
-        mock_coordinator.data["clients"]["site1"]["wired_pc"] = {
-            "id": "wired_pc",
-            "type": "WIRED",
-            "macAddress": "00:11:22:33:44:55",
-            "name": "Workstation",
-        }
+        mock_coordinator.data = with_client(
+            mock_coordinator.data,
+            "site1",
+            "wired_pc",
+            {
+                "id": "wired_pc",
+                "type": "WIRED",
+                "macAddress": "00:11:22:33:44:55",
+                "name": "Workstation",
+            },
+        )
 
         button_add = MagicMock()
         await async_setup_button(hass, mock_config_entry, button_add)
@@ -443,12 +492,19 @@ class TestDynamicOptionsAndCapabilities:
         sensor_listener = mock_coordinator.async_add_listener.call_args[0][0]
 
         # Now add a new WiFi network
-        mock_coordinator.data["wifi"]["site1"]["wifi_guest"] = {
-            "id": "wifi_guest",
-            "name": "Guest WiFi",
-            "qr_code": "WIFI:S:Guest WiFi;T:WPA;P:secret;;",
-            "num_sta": 5,
-        }
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            wifi={
+                "site1": {
+                    "wifi_guest": {
+                        "id": "wifi_guest",
+                        "name": "Guest WiFi",
+                        "qr_code": "WIFI:S:Guest WiFi;T:WPA;P:secret;;",
+                        "num_sta": 5,
+                    }
+                }
+            },
+        )
 
         image_listener()
         sensor_listener()
@@ -698,9 +754,11 @@ class TestDiscoveryRegressions:
         await async_setup_light(hass, mock_config_entry, add_entities)
         listener = mock_coordinator.async_add_listener.call_args[0][0]
 
-        mock_coordinator.data["protect"]["lights"] = {
-            "light1": {"id": "light1", "name": "Porch"}
-        }
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "lights",
+            {"light1": {"id": "light1", "name": "Porch"}},
+        )
 
         with patch(
             "custom_components.unifi_insights.light.UnifiProtectLight",
@@ -726,9 +784,12 @@ class TestDiscoveryRegressions:
         await async_setup_binary_sensor(hass, mock_config_entry, add_entities)
         listener = mock_coordinator.async_add_listener.call_args[0][0]
 
-        mock_coordinator.data["devices"]["site1"] = {
-            "dev1": {"id": "dev1", "name": "Mesh AP", "model": None}
-        }
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            devices={
+                "site1": {"dev1": {"id": "dev1", "name": "Mesh AP", "model": None}}
+            },
+        )
 
         listener()
 
@@ -751,15 +812,20 @@ class TestDiscoveryRegressions:
         await async_setup_sensor(hass, mock_config_entry, add_entities)
         listener = mock_coordinator.async_add_listener.call_args[0][0]
 
-        mock_coordinator.data["devices"]["site1"] = {
-            "dev1": {
-                "id": "dev1",
-                "name": "Switch",
-                "model": "USW-24",
-                "features": {"switching": True},
-            }
-        }
-        mock_coordinator.data["stats"] = {"site1": {"dev1": {"poe_total_w": 12.0}}}
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            devices={
+                "site1": {
+                    "dev1": {
+                        "id": "dev1",
+                        "name": "Switch",
+                        "model": "USW-24",
+                        "features": {"switching": True},
+                    }
+                }
+            },
+            stats={"site1": {"dev1": {"poe_total_w": 12.0}}},
+        )
 
         listener()
 
@@ -783,20 +849,25 @@ class TestDiscoveryRegressions:
         await async_setup_sensor(hass, mock_config_entry, add_entities)
         listener = mock_coordinator.async_add_listener.call_args[0][0]
 
-        mock_coordinator.data["devices"]["site1"] = {
-            "dev1": {
-                "id": "dev1",
-                "name": "Switch",
-                "model": "USW-24",
-                "features": {"switching": True},
-                "interfaces": {
-                    "ports": [
-                        {"idx": "1", "state": "UP", "poe": {"good": True}},
-                    ]
-                },
-            }
-        }
-        mock_coordinator.data["stats"] = {"site1": {"dev1": {"poe_ports": {"1": 5.0}}}}
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            devices={
+                "site1": {
+                    "dev1": {
+                        "id": "dev1",
+                        "name": "Switch",
+                        "model": "USW-24",
+                        "features": {"switching": True},
+                        "interfaces": {
+                            "ports": [
+                                {"idx": "1", "state": "UP", "poe": {"good": True}},
+                            ]
+                        },
+                    }
+                }
+            },
+            stats={"site1": {"dev1": {"poe_ports": {"1": 5.0}}}},
+        )
 
         listener()
 
@@ -813,7 +884,9 @@ class TestDiscoveryRegressions:
     ) -> None:
         """Report data discovers site activity sensors without changing site IDs."""
         add_entities = MagicMock()
-        mock_coordinator.data["internet_activity"] = {}
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data, internet_activity={}
+        )
         await async_setup_sensor(hass, mock_config_entry, add_entities)
         listener = mock_coordinator.async_add_listener.call_args[0][0]
 
@@ -839,14 +912,17 @@ class TestDiscoveryRegressions:
 
         # Report data appears on a later refresh -> creates 8 sensors once
         add_entities.reset_mock()
-        mock_coordinator.data["internet_activity"] = {
-            "site1": {
-                "1h": {"rx_bytes": 100, "tx_bytes": 200},
-                "1d": {"rx_bytes": 300, "tx_bytes": 400},
-                "1w": {"rx_bytes": 500, "tx_bytes": 600},
-                "1m": {"rx_bytes": 700, "tx_bytes": 800},
-            }
-        }
+        mock_coordinator.data = with_sections(
+            mock_coordinator.data,
+            internet_activity={
+                "site1": {
+                    "1h": {"rx_bytes": 100, "tx_bytes": 200},
+                    "1d": {"rx_bytes": 300, "tx_bytes": 400},
+                    "1w": {"rx_bytes": 500, "tx_bytes": 600},
+                    "1m": {"rx_bytes": 700, "tx_bytes": 800},
+                }
+            },
+        )
         listener()
         assert add_entities.call_count == 1
         discovered = add_entities.call_args[0][0]

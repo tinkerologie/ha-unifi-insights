@@ -8,8 +8,8 @@ would. ``facade_data`` builds a complete snapshot through the facade's own
 ``build_facade_data``; the ``with_*`` builders return a new snapshot with one
 record added or replaced, copy-on-write. Every section and record they take is
 deep-frozen (``frozen``), so code under test that writes into the snapshot
-fails. ``with_sections`` and ``without_sections`` replace whole top-level
-sections as given, unfrozen.
+fails. ``with_sections`` replaces whole top-level sections, frozen too, and
+``without_sections`` drops them.
 """
 
 from __future__ import annotations
@@ -81,17 +81,35 @@ def frozen(value: Any) -> Any:
     Mappings become ``ReadOnlyDict``, lists ``FrozenList`` and sets
     ``frozenset``; tuples are frozen item by item. Both stay a ``dict`` and a
     ``list``, so the result still serializes to JSON and passes
-    ``async_redact_data``. Anything else is returned as is.
+    ``async_redact_data``. A value that is already frozen all the way down
+    is returned as is, so frozen sections and records keep their identity.
+    Anything else is returned as is.
     """
     if isinstance(value, Mapping):
-        return ReadOnlyDict({key: frozen(item) for key, item in value.items()})
+        items = {key: frozen(item) for key, item in value.items()}
+        if isinstance(value, ReadOnlyDict) and _same_items(
+            value.values(), items.values()
+        ):
+            return value
+        return ReadOnlyDict(items)
     if isinstance(value, list):
-        return FrozenList(frozen(item) for item in value)
-    if isinstance(value, (set, frozenset)):
+        listed = [frozen(item) for item in value]
+        if isinstance(value, FrozenList) and _same_items(value, listed):
+            return value
+        return FrozenList(listed)
+    if isinstance(value, frozenset):
+        return value
+    if isinstance(value, set):
         return frozenset(value)
     if isinstance(value, tuple):
-        return tuple(frozen(item) for item in value)
+        parts = tuple(frozen(item) for item in value)
+        return value if _same_items(value, parts) else parts
     return value
+
+
+def _same_items(old: Iterable[Any], new: Iterable[Any]) -> bool:
+    """Return whether freezing kept every item, by identity."""
+    return all(a is b for a, b in zip(old, new, strict=True))
 
 
 def _snapshot(data: Mapping[str, Any]) -> FacadeData:
@@ -144,8 +162,10 @@ def facade_data(
 
 
 def with_sections(data: Mapping[str, Any], **sections: Any) -> FacadeData:
-    """Return a copy of ``data`` with the given top-level sections replaced."""
-    return _snapshot({**data, **sections})
+    """Return a copy of ``data`` with the given top-level sections replaced, frozen."""
+    return _snapshot(
+        {**data, **{key: frozen(value) for key, value in sections.items()}}
+    )
 
 
 def without_sections(data: Mapping[str, Any], *keys: str) -> FacadeData:
@@ -341,8 +361,7 @@ def with_availability(
     Return ``data`` with its availability captured anew, as the facade would.
 
     ``site_ids`` defaults to the sites ``data`` lists. A read-only snapshot
-    stays read-only; a plain dict (the ``mock_coordinator`` data) is copied
-    as a plain dict, so in-place writes into it still work.
+    stays read-only; a plain dict is copied as a plain dict.
     """
     if site_ids is None:
         sites = data.get("sites")

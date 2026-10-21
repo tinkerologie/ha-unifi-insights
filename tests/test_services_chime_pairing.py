@@ -46,7 +46,7 @@ from custom_components.unifi_insights.services import (
     async_unload_services,
 )
 from tests.conftest import _create_mock_protect_client
-from tests.fixtures.facade_data import without_sections
+from tests.fixtures.facade_data import with_protect_collection, without_sections
 from tests.fixtures.library_responses import SAMPLE_DOORBELL_CAMERA, SAMPLE_PUBLIC_CHIME
 
 if TYPE_CHECKING:
@@ -409,7 +409,7 @@ async def test_console_without_loaded_cameras_raises_translated_error(
     elif unloaded == "protect":
         coordinator.data = without_sections(coordinator.data, "protect")
     else:
-        coordinator.data["protect"]["cameras"] = None
+        coordinator.data = with_protect_collection(coordinator.data, "cameras", None)
 
     with pytest.raises(HomeAssistantError) as err:
         await _call(hass, chime_id="chime_1", doorbells={"entity_id": ring})

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -28,6 +28,29 @@ from custom_components.unifi_insights.light import (
     async_setup_entry,
 )
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
+from tests.fixtures.facade_data import (
+    with_protect_collection,
+    with_protect_device,
+    with_protect_fields,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from homeassistant.core import HomeAssistant
+
+    from custom_components.unifi_insights.coordinators.facade import FacadeData
+
+
+def _with_led_level(data: Mapping[str, Any], led_level: Any) -> FacadeData:
+    """Return ``data`` with ``light1``'s ledLevel replaced."""
+    light1 = data["protect"]["lights"]["light1"]
+    return with_protect_fields(
+        data,
+        "lights",
+        "light1",
+        lightDeviceSettings={**light1["lightDeviceSettings"], "ledLevel": led_level},
+    )
 
 
 class TestParallelUpdates:
@@ -64,7 +87,9 @@ class TestAsyncSetupEntry:
         return coordinator
 
     @pytest.mark.asyncio
-    async def test_setup_entry_no_protect_client(self, hass, mock_coordinator) -> None:
+    async def test_setup_entry_no_protect_client(
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test setup when Protect API is not available."""
         mock_coordinator.protect_client = None
 
@@ -80,17 +105,23 @@ class TestAsyncSetupEntry:
         async_add_entities.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_setup_entry_with_lights(self, hass, mock_coordinator) -> None:
+    async def test_setup_entry_with_lights(
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test setup with lights present."""
-        mock_coordinator.data["protect"]["lights"] = {
-            "light1": {
-                "id": "light1",
-                "name": "Test Light",
-                "state": "CONNECTED",
-                "lightModeSettings": {"mode": "motion"},
-                "lightDeviceSettings": {"ledLevel": 75},
-            }
-        }
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "lights",
+            {
+                "light1": {
+                    "id": "light1",
+                    "name": "Test Light",
+                    "state": "CONNECTED",
+                    "lightModeSettings": {"mode": "motion"},
+                    "lightDeviceSettings": {"ledLevel": 75},
+                }
+            },
+        )
 
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
@@ -108,14 +139,22 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_with_multiple_lights(
-        self, hass, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Test setup with multiple lights."""
-        mock_coordinator.data["protect"]["lights"] = {
-            "light1": {"id": "light1", "name": "Front Light", "state": "CONNECTED"},
-            "light2": {"id": "light2", "name": "Back Light", "state": "CONNECTED"},
-            "light3": {"id": "light3", "name": "Side Light", "state": "DISCONNECTED"},
-        }
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "lights",
+            {
+                "light1": {"id": "light1", "name": "Front Light", "state": "CONNECTED"},
+                "light2": {"id": "light2", "name": "Back Light", "state": "CONNECTED"},
+                "light3": {
+                    "id": "light3",
+                    "name": "Side Light",
+                    "state": "DISCONNECTED",
+                },
+            },
+        )
 
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
@@ -130,23 +169,27 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_skips_light_that_fails_to_initialize(
-        self, hass, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """A light whose data raises during initialization is skipped, not fatal."""
-        mock_coordinator.data["protect"]["lights"] = {
-            "light_bad": {
-                "id": "light_bad",
-                "name": "Bad Light",
-                "state": "CONNECTED",
-                "lightDeviceSettings": {"ledLevel": "not-a-number"},
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "lights",
+            {
+                "light_bad": {
+                    "id": "light_bad",
+                    "name": "Bad Light",
+                    "state": "CONNECTED",
+                    "lightDeviceSettings": {"ledLevel": "not-a-number"},
+                },
+                "light_good": {
+                    "id": "light_good",
+                    "name": "Good Light",
+                    "state": "CONNECTED",
+                    "lightDeviceSettings": {"ledLevel": 6},
+                },
             },
-            "light_good": {
-                "id": "light_good",
-                "name": "Good Light",
-                "state": "CONNECTED",
-                "lightDeviceSettings": {"ledLevel": 6},
-            },
-        }
+        )
 
         mock_entry = MagicMock()
         mock_entry.runtime_data = MagicMock()
@@ -156,7 +199,7 @@ class TestAsyncSetupEntry:
 
         orig_init = UnifiProtectLight.__init__
 
-        def bad_init(self, *args, **kwargs):
+        def bad_init(self: UnifiProtectLight, *args: Any, **kwargs: Any) -> None:
             if kwargs.get("light_id") == "light_bad":
                 raise TypeError
             return orig_init(self, *args, **kwargs)
@@ -210,7 +253,7 @@ class TestUnifiProtectLight:
         }
         return coordinator
 
-    def test_initialization(self, mock_coordinator) -> None:
+    def test_initialization(self, mock_coordinator: MagicMock) -> None:
         """Test light entity initialization."""
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
@@ -225,7 +268,7 @@ class TestUnifiProtectLight:
         assert ColorMode.BRIGHTNESS in light._attr_supported_color_modes
         assert light._attr_entity_category is None
 
-    def test_update_from_data_connected(self, mock_coordinator) -> None:
+    def test_update_from_data_connected(self, mock_coordinator: MagicMock) -> None:
         """Test _update_from_data with connected light."""
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
@@ -236,11 +279,14 @@ class TestUnifiProtectLight:
         assert light._attr_is_on is True  # mode is "motion", not OFF
         assert light._attr_brightness == 255
 
-    def test_update_from_data_off_mode(self, mock_coordinator) -> None:
+    def test_update_from_data_off_mode(self, mock_coordinator: MagicMock) -> None:
         """Test _update_from_data with light in OFF mode."""
-        mock_coordinator.data["protect"]["lights"]["light1"]["lightModeSettings"] = {
-            "mode": LIGHT_MODE_OFF
-        }
+        mock_coordinator.data = with_protect_fields(
+            mock_coordinator.data,
+            "lights",
+            "light1",
+            lightModeSettings={"mode": LIGHT_MODE_OFF},
+        )
 
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
@@ -249,11 +295,14 @@ class TestUnifiProtectLight:
 
         assert light._attr_is_on is False
 
-    def test_update_from_data_always_on_mode(self, mock_coordinator) -> None:
+    def test_update_from_data_always_on_mode(self, mock_coordinator: MagicMock) -> None:
         """Test _update_from_data with light in always-on mode."""
-        mock_coordinator.data["protect"]["lights"]["light1"]["lightModeSettings"] = {
-            "mode": LIGHT_MODE_ALWAYS
-        }
+        mock_coordinator.data = with_protect_fields(
+            mock_coordinator.data,
+            "lights",
+            "light1",
+            lightModeSettings={"mode": LIGHT_MODE_ALWAYS},
+        )
 
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
@@ -262,9 +311,11 @@ class TestUnifiProtectLight:
 
         assert light._attr_is_on is True
 
-    def test_update_from_data_disconnected(self, mock_coordinator) -> None:
+    def test_update_from_data_disconnected(self, mock_coordinator: MagicMock) -> None:
         """Test _update_from_data with disconnected light."""
-        mock_coordinator.data["protect"]["lights"]["light1"]["state"] = "DISCONNECTED"
+        mock_coordinator.data = with_protect_fields(
+            mock_coordinator.data, "lights", "light1", state="DISCONNECTED"
+        )
 
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
@@ -273,7 +324,7 @@ class TestUnifiProtectLight:
 
         assert light.available is False
 
-    def test_extra_state_attributes(self, mock_coordinator) -> None:
+    def test_extra_state_attributes(self, mock_coordinator: MagicMock) -> None:
         """Test extra state attributes."""
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
@@ -289,12 +340,10 @@ class TestUnifiProtectLight:
         assert attrs[ATTR_LIGHT_MOTION] == 1234567890
         assert attrs[ATTR_LIGHT_DARK] is True
 
-    def test_brightness_calculation(self, mock_coordinator) -> None:
+    def test_brightness_calculation(self, mock_coordinator: MagicMock) -> None:
         """Test brightness value calculation from LED level."""
         # Test 100% brightness (ledLevel 6 -> 255)
-        mock_coordinator.data["protect"]["lights"]["light1"]["lightDeviceSettings"][
-            "ledLevel"
-        ] = 6
+        mock_coordinator.data = _with_led_level(mock_coordinator.data, 6)
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
             light_id="light1",
@@ -302,29 +351,25 @@ class TestUnifiProtectLight:
         assert light._attr_brightness == 255
 
         # Test out of range (0 -> None)
-        mock_coordinator.data["protect"]["lights"]["light1"]["lightDeviceSettings"][
-            "ledLevel"
-        ] = 0
+        mock_coordinator.data = _with_led_level(mock_coordinator.data, 0)
         light._update_from_data()
         assert light._attr_brightness is None
 
         # Test out of range (7 -> None)
-        mock_coordinator.data["protect"]["lights"]["light1"]["lightDeviceSettings"][
-            "ledLevel"
-        ] = 7
+        mock_coordinator.data = _with_led_level(mock_coordinator.data, 7)
         light._update_from_data()
         assert light._attr_brightness is None
 
         # Test 50% brightness (ledLevel 3 -> 128)
-        mock_coordinator.data["protect"]["lights"]["light1"]["lightDeviceSettings"][
-            "ledLevel"
-        ] = 3
+        mock_coordinator.data = _with_led_level(mock_coordinator.data, 3)
         light._update_from_data()
         assert light._attr_brightness == 128
 
-    def test_default_led_level(self, mock_coordinator) -> None:
+    def test_default_led_level(self, mock_coordinator: MagicMock) -> None:
         """Test default LED level when not provided."""
-        mock_coordinator.data["protect"]["lights"]["light1"]["lightDeviceSettings"] = {}
+        mock_coordinator.data = with_protect_fields(
+            mock_coordinator.data, "lights", "light1", lightDeviceSettings={}
+        )
 
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
@@ -335,7 +380,7 @@ class TestUnifiProtectLight:
         assert light._attr_brightness is None
 
     @pytest.mark.asyncio
-    async def test_async_turn_on(self, mock_coordinator) -> None:
+    async def test_async_turn_on(self, mock_coordinator: MagicMock) -> None:
         """Test turning light on."""
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
@@ -350,14 +395,19 @@ class TestUnifiProtectLight:
             LIGHT_MODE_ALWAYS,
         )
         # The owner publishes the mode; the state follows from the data.
-        mock_coordinator.data["protect"]["lights"]["light1"]["lightModeSettings"] = {
-            "mode": LIGHT_MODE_ALWAYS
-        }
+        mock_coordinator.data = with_protect_fields(
+            mock_coordinator.data,
+            "lights",
+            "light1",
+            lightModeSettings={"mode": LIGHT_MODE_ALWAYS},
+        )
         light._update_from_data()
         assert light._attr_is_on is True
 
     @pytest.mark.asyncio
-    async def test_async_turn_on_with_brightness(self, mock_coordinator) -> None:
+    async def test_async_turn_on_with_brightness(
+        self, mock_coordinator: MagicMock
+    ) -> None:
         """Test turning light on with specific brightness."""
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
@@ -381,7 +431,9 @@ class TestUnifiProtectLight:
         )
 
     @pytest.mark.asyncio
-    async def test_async_turn_on_with_full_brightness(self, mock_coordinator) -> None:
+    async def test_async_turn_on_with_full_brightness(
+        self, mock_coordinator: MagicMock
+    ) -> None:
         """Test turning light on with full brightness."""
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
@@ -399,7 +451,7 @@ class TestUnifiProtectLight:
         )
 
     @pytest.mark.asyncio
-    async def test_async_turn_off(self, mock_coordinator) -> None:
+    async def test_async_turn_off(self, mock_coordinator: MagicMock) -> None:
         """Test turning light off."""
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
@@ -413,14 +465,19 @@ class TestUnifiProtectLight:
             "light1",
             LIGHT_MODE_OFF,
         )
-        mock_coordinator.data["protect"]["lights"]["light1"]["lightModeSettings"] = {
-            "mode": LIGHT_MODE_OFF
-        }
+        mock_coordinator.data = with_protect_fields(
+            mock_coordinator.data,
+            "lights",
+            "light1",
+            lightModeSettings={"mode": LIGHT_MODE_OFF},
+        )
         light._update_from_data()
         assert light._attr_is_on is False
 
     @pytest.mark.asyncio
-    async def test_async_turn_off_with_kwargs(self, mock_coordinator) -> None:
+    async def test_async_turn_off_with_kwargs(
+        self, mock_coordinator: MagicMock
+    ) -> None:
         """Test turning light off ignores extra kwargs."""
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
@@ -436,7 +493,7 @@ class TestUnifiProtectLight:
         )
 
     @pytest.mark.asyncio
-    async def test_async_turn_on_error(self, mock_coordinator) -> None:
+    async def test_async_turn_on_error(self, mock_coordinator: MagicMock) -> None:
         """Test turning light on surfaces Home Assistant errors."""
         protect_owner(
             mock_coordinator
@@ -456,7 +513,7 @@ class TestUnifiProtectLight:
         light.async_write_ha_state.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_async_turn_off_error(self, mock_coordinator) -> None:
+    async def test_async_turn_off_error(self, mock_coordinator: MagicMock) -> None:
         """Test turning light off surfaces Home Assistant errors."""
         protect_owner(
             mock_coordinator
@@ -475,9 +532,11 @@ class TestUnifiProtectLight:
 
         light.async_write_ha_state.assert_not_called()
 
-    def test_missing_light_data(self, mock_coordinator) -> None:
+    def test_missing_light_data(self, mock_coordinator: MagicMock) -> None:
         """Test handling missing light data."""
-        mock_coordinator.data["protect"]["lights"]["light1"] = {}
+        mock_coordinator.data = with_protect_device(
+            mock_coordinator.data, "lights", "light1", {}
+        )
 
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
@@ -489,9 +548,15 @@ class TestUnifiProtectLight:
         assert light._attr_is_on is False
         assert light._attr_brightness is None
 
-    def test_missing_mode_settings(self, mock_coordinator) -> None:
+    def test_missing_mode_settings(self, mock_coordinator: MagicMock) -> None:
         """Test handling missing mode settings."""
-        del mock_coordinator.data["protect"]["lights"]["light1"]["lightModeSettings"]
+        light1 = mock_coordinator.data["protect"]["lights"]["light1"]
+        mock_coordinator.data = with_protect_device(
+            mock_coordinator.data,
+            "lights",
+            "light1",
+            {key: value for key, value in light1.items() if key != "lightModeSettings"},
+        )
 
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
@@ -599,9 +664,7 @@ class TestProtectLightWrites:
         coordinator, protect, light = self._setup_light(led_level=3)
         await light.async_turn_on(**{ATTR_BRIGHTNESS: 255})
         protect.async_set_light_brightness.assert_awaited_once_with("light1", 6)
-        coordinator.data["protect"]["lights"]["light1"]["lightDeviceSettings"][
-            "ledLevel"
-        ] = 6
+        coordinator.data = _with_led_level(coordinator.data, 6)
         light._update_from_data()
         assert light._attr_brightness == 255
         assert light._attr_extra_state_attributes[ATTR_LIGHT_LEVEL] == 6

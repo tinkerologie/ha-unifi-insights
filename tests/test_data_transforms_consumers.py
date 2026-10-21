@@ -66,13 +66,20 @@ from custom_components.unifi_insights.topology import build_site_topology
 from custom_components.unifi_insights.topology import (
     device_kind as topology_device_kind,
 )
-from tests.fixtures.facade_data import set_availability
+from tests.fixtures.facade_data import (
+    set_availability,
+    with_network_device,
+    with_sections,
+    without_sections,
+)
 from tests.fixtures.library_responses import (
     SAMPLE_UDM_PRO_OVERVIEW,
     SAMPLE_UDM_PRO_STATS,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from homeassistant.core import HomeAssistant
 
 SITE = "site1"
@@ -107,7 +114,7 @@ def _coordinator(
     coordinator.protect_client = None
     coordinator.get_site = MagicMock(return_value={"id": SITE})
     coordinator.async_get_wake_history = AsyncMock(return_value={})
-    coordinator.data = {
+    data: dict[str, Any] = {
         "sites": {SITE: {"id": SITE, "name": "Default"}},
         "devices": {SITE: devices},
         "stats": {SITE: stats or {}},
@@ -122,16 +129,18 @@ def _coordinator(
             "liveviews": {},
         },
     }
-    if publish:
-        _publish(coordinator.data)
+    coordinator.data = _published(data) if publish else data
     return coordinator
 
 
-def _publish(data: dict[str, Any]) -> None:
-    """Publish the facts like the device coordinator does after a refresh."""
-    data[NETWORK_FACTS_KEY] = {
-        site_id: build_site_network_facts(devices, data["stats"].get(site_id))
-        for site_id, devices in data["devices"].items()
+def _published(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Return ``data`` with the facts published like the device coordinator does."""
+    return {
+        **data,
+        NETWORK_FACTS_KEY: {
+            site_id: build_site_network_facts(devices, data["stats"].get(site_id))
+            for site_id, devices in data["devices"].items()
+        },
     }
 
 
@@ -223,13 +232,14 @@ def test_site_grouping_uses_the_published_gateway() -> None:
         "stats": {SITE: {}},
     }
     raw_info = build_site_device_info(data, SITE)
-    _publish(data)
+    data = _published(data)
     with _no_rebuild():
         assert build_site_device_info(data, SITE) == raw_info
     assert raw_info == {"identifiers": {(DOMAIN, f"{SITE}_udm")}}
 
-    data["devices"][SITE] = {"sw1": _switch()}
-    data.pop(NETWORK_FACTS_KEY)
+    data = without_sections(
+        with_sections(data, devices={SITE: {"sw1": _switch()}}), NETWORK_FACTS_KEY
+    )
     assert build_site_device_info(data, SITE)["identifiers"] == {
         (DOMAIN, f"site_{SITE}")
     }
@@ -243,25 +253,33 @@ async def test_availability_and_status_read_published_facts(
     status = next(d for d in BINARY_SENSOR_TYPES if d.key == "device_status")
     entity = UnifiInsightsBinarySensor(coordinator, status, SITE, "sw1")
     # The raw record changes, the published facts do not: facts win.
-    coordinator.data["devices"][SITE]["sw1"]["state"] = "OFFLINE"
+    coordinator.data = with_sections(
+        coordinator.data, devices={SITE: {"sw1": _switch(state="OFFLINE")}}
+    )
     with _no_rebuild():
         assert entity.device_facts is not None
         assert entity.available is True
         assert entity.is_on is True
 
-    coordinator.data["devices"][SITE]["sw1"]["state"] = "CONNECTED"
-    coordinator.data.pop(NETWORK_FACTS_KEY)
+    coordinator.data = without_sections(
+        with_sections(
+            coordinator.data, devices={SITE: {"sw1": _switch(state="CONNECTED")}}
+        ),
+        NETWORK_FACTS_KEY,
+    )
     assert entity.available is False
     assert entity.is_on is None
 
-    coordinator.data["devices"][SITE] = {}
+    coordinator.data = with_sections(coordinator.data, devices={SITE: {}})
     assert entity.device_facts is None
     assert entity.available is False
     assert entity.is_on is None
 
-    coordinator.data["devices"][SITE]["sw1"] = {}
+    coordinator.data = with_sections(coordinator.data, devices={SITE: {"sw1": {}}})
     assert entity.is_on is None
-    coordinator.data["devices"][SITE]["sw1"] = {"state": "ONLINE"}
+    coordinator.data = with_sections(
+        coordinator.data, devices={SITE: {"sw1": {"state": "ONLINE"}}}
+    )
     set_availability(coordinator, device=False)
     assert entity.available is False
 
@@ -293,11 +311,10 @@ async def test_system_and_uplink_sensors_read_published_facts(
     # Sensors that still read raw stats have no value without them.
     wired = next(d for d in SENSOR_TYPES if d.key == "wired_clients")
     wired_sensor = UnifiInsightsSensor(coordinator, wired, SITE, "udm")
-    coordinator.data["stats"][SITE] = {}
+    coordinator.data = with_sections(coordinator.data, stats={SITE: {}})
     assert wired_sensor.native_value is None
 
-    coordinator.data["devices"][SITE] = {}
-    _publish(coordinator.data)
+    coordinator.data = _published(with_sections(coordinator.data, devices={SITE: {}}))
     assert sensor.native_value is None
 
 
@@ -372,8 +389,9 @@ async def test_sfp_binaries_share_the_port_source(hass: HomeAssistant) -> None:
         assert [e.unique_id for e in sfp] == ["sw1_port_sfp_present_25"]
         assert sfp[0].is_on is True
 
-    coordinator.data["devices"][SITE]["sw1"] = _switch()
-    _publish(coordinator.data)
+    coordinator.data = _published(
+        with_network_device(coordinator.data, SITE, "sw1", _switch())
+    )
     assert sfp[0].is_on is None
 
 
@@ -467,8 +485,7 @@ def _site_data(devices: dict[str, Any], stats: dict[str, Any]) -> dict[str, Any]
         "internet_activity": {SITE: {"1h": {"rx_bytes": 1, "tx_bytes": 1}}},
         "internet_activity_unavailable": set(),
     }
-    _publish(data)
-    return data
+    return _published(data)
 
 
 def _snapshots(data: dict[str, Any]) -> dict[str, Any]:
@@ -581,8 +598,9 @@ async def test_drift_3_ports_share_one_source(hass: HomeAssistant) -> None:
 
     # The legacy fetch fails: the overview has list-shaped interfaces only.
     v1_only = {**_switch(), "interfaces": ["ports"], "ports": []}
-    coordinator.data["devices"][SITE]["sw1"] = v1_only
-    _publish(coordinator.data)
+    coordinator.data = _published(
+        with_network_device(coordinator.data, SITE, "sw1", v1_only)
+    )
     rediscovered: list = []
     _discover_port_sensors(
         coordinator, SITE, "sw1", v1_only, set(), entities=rediscovered

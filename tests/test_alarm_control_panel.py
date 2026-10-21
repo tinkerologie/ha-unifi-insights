@@ -45,7 +45,11 @@ from custom_components.unifi_insights.alarm_control_panel import (
     async_setup_entry,
 )
 from custom_components.unifi_insights.const import DOMAIN
-from tests.fixtures.facade_data import set_availability
+from tests.fixtures.facade_data import (
+    facade_data,
+    set_availability,
+    with_protect_device,
+)
 from tests.fixtures.library_responses import SAMPLE_NVR, SAMPLE_NVR_WITH_ARM_MODE
 from tests.fixtures.protect_ws import FakeProtectWebSocket
 
@@ -264,12 +268,12 @@ async def test_discovery_adds_each_panel_once(hass: HomeAssistant) -> None:
     """A panel is added when armMode first shows up and never twice."""
     entry = MagicMock()
     coordinator = entry.runtime_data.coordinator
-    coordinator.data = {
-        "protect": {
+    coordinator.data = facade_data(
+        protect={
             "nvrs": {"nvr_old": {"id": "nvr_old"}},
             "global_alarm_manager": False,
         }
-    }
+    )
     add_entities = MagicMock()
     built = MagicMock()
 
@@ -280,8 +284,8 @@ async def test_discovery_adds_each_panel_once(hass: HomeAssistant) -> None:
         add_entities.assert_not_called()
 
         # The NVR gains an armMode (a firmware upgrade) on a later update.
-        coordinator.data["protect"]["nvrs"]["nvr_old"] = copy.deepcopy(
-            SAMPLE_NVR_WITH_ARM_MODE
+        coordinator.data = with_protect_device(
+            coordinator.data, "nvrs", "nvr_old", SAMPLE_NVR_WITH_ARM_MODE
         )
         (listener,) = coordinator.async_add_listener.call_args.args
         listener()

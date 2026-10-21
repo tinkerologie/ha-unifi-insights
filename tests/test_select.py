@@ -29,6 +29,7 @@ from custom_components.unifi_insights.select import (
     resolve_liveview_id,
 )
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
+from tests.fixtures.facade_data import with_protect_collection, with_protect_fields
 
 
 @pytest.fixture
@@ -346,7 +347,9 @@ class TestUnifiProtectHDRModeSelect:
 
         assert entity._attr_current_option == "on"
 
-    async def test_async_select_option_success(self, mock_coordinator):
+    async def test_async_select_option_success(
+        self, mock_coordinator: MagicMock
+    ) -> None:
         """Test selecting HDR mode option successfully."""
         mock_coordinator.data = {
             "sites": {},
@@ -380,7 +383,9 @@ class TestUnifiProtectHDRModeSelect:
             "cam1", "on"
         )
         # The owner publishes hdrType; the option follows from the data.
-        mock_coordinator.data["protect"]["cameras"]["cam1"]["hdrType"] = "on"
+        mock_coordinator.data = with_protect_fields(
+            mock_coordinator.data, "cameras", "cam1", hdrType="on"
+        )
         entity._update_from_data()
         assert entity._attr_current_option == "on"
 
@@ -460,7 +465,9 @@ class TestUnifiProtectVideoModeSelect:
         assert VIDEO_MODE_DEFAULT in entity._attr_options
         assert VIDEO_MODE_HIGH_FPS in entity._attr_options
 
-    async def test_async_select_option_success(self, mock_coordinator):
+    async def test_async_select_option_success(
+        self, mock_coordinator: MagicMock
+    ) -> None:
         """Test selecting video mode option successfully."""
         mock_coordinator.data = {
             "sites": {},
@@ -493,7 +500,9 @@ class TestUnifiProtectVideoModeSelect:
         protect_owner(mock_coordinator).async_set_video_mode.assert_awaited_once_with(
             "cam1", "highFps"
         )
-        mock_coordinator.data["protect"]["cameras"]["cam1"]["videoMode"] = "highFps"
+        mock_coordinator.data = with_protect_fields(
+            mock_coordinator.data, "cameras", "cam1", videoMode="highFps"
+        )
         entity._update_from_data()
         assert entity._attr_current_option == "highFps"
 
@@ -541,21 +550,25 @@ class TestUnifiProtectChimeRingtoneSelect:
     @pytest.fixture
     def ringtone_coordinator(self, mock_coordinator: MagicMock) -> MagicMock:
         """Provide two console-local ringtone IDs and a facade action."""
-        mock_coordinator.data["protect"]["chimes"] = {
-            "chime1": {
-                "id": "chime1",
-                "name": "Test Chime",
-                "state": "CONNECTED",
-                "ringSettings": [{"ringtoneId": "tone-2"}],
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "chimes",
+            {
+                "chime1": {
+                    "id": "chime1",
+                    "name": "Test Chime",
+                    "state": "CONNECTED",
+                    "ringSettings": [{"ringtoneId": "tone-2"}],
+                },
+                "chime2": {
+                    "id": "chime2",
+                    "ringSettings": [
+                        {"ringtoneId": "tone-1"},
+                        {"ringtoneId": "tone-2"},
+                    ],
+                },
             },
-            "chime2": {
-                "id": "chime2",
-                "ringSettings": [
-                    {"ringtoneId": "tone-1"},
-                    {"ringtoneId": "tone-2"},
-                ],
-            },
-        }
+        )
         return mock_coordinator
 
     def test_initialization(self, ringtone_coordinator: MagicMock) -> None:
@@ -599,8 +612,8 @@ class TestUnifiProtectChimeRingtoneSelect:
         self, ringtone_coordinator: MagicMock, settings: object
     ) -> None:
         """Missing or malformed settings have no fabricated current ringtone."""
-        ringtone_coordinator.data["protect"]["chimes"]["chime1"]["ringSettings"] = (
-            settings
+        ringtone_coordinator.data = with_protect_fields(
+            ringtone_coordinator.data, "chimes", "chime1", ringSettings=settings
         )
         entity = UnifiProtectChimeRingtoneSelect(
             coordinator=ringtone_coordinator,
@@ -616,22 +629,34 @@ class TestUnifiProtectChimeRingtoneSelect:
     ) -> None:
         """Malformed neighbouring chimes do not crash or add invalid options."""
         chimes = ringtone_coordinator.data["protect"]["chimes"]
-        chimes["bad-chime"] = None
-        chimes["bad-settings"] = {"ringSettings": {"ringtoneId": "foreign-tone"}}
-        chimes["bad-entries"] = {
-            "ringSettings": [None, "bad", {}, {"ringtoneId": False}]
-        }
+        ringtone_coordinator.data = with_protect_collection(
+            ringtone_coordinator.data,
+            "chimes",
+            {
+                **chimes,
+                "bad-chime": None,
+                "bad-settings": {"ringSettings": {"ringtoneId": "foreign-tone"}},
+                "bad-entries": {
+                    "ringSettings": [None, "bad", {}, {"ringtoneId": False}]
+                },
+            },
+        )
         entity = UnifiProtectChimeRingtoneSelect(
             coordinator=ringtone_coordinator,
             chime_id="chime1",
         )
         assert entity._attr_options == ["tone-1", "tone-2"]
 
-        chimes["chime1"] = None
+        chimes = ringtone_coordinator.data["protect"]["chimes"]
+        ringtone_coordinator.data = with_protect_collection(
+            ringtone_coordinator.data, "chimes", {**chimes, "chime1": None}
+        )
         entity._update_from_data()
         assert entity._attr_current_option is None
 
-        ringtone_coordinator.data["protect"]["chimes"] = []
+        ringtone_coordinator.data = with_protect_collection(
+            ringtone_coordinator.data, "chimes", []
+        )
         entity._update_from_data()
         assert entity._attr_options == []
         assert entity._attr_current_option is None
@@ -655,11 +680,19 @@ class TestUnifiProtectChimeRingtoneSelect:
         assert other_entity._attr_options == ["foreign-tone"]
         assert "foreign-tone" not in entity._attr_options
 
-        ringtone_coordinator.data["protect"]["chimes"]["chime1"]["ringSettings"] = [
-            {"ringtoneId": "tone-new"},
-            {"ringtoneId": "tone-1"},
-        ]
-        ringtone_coordinator.data["protect"]["chimes"].pop("chime2")
+        ringtone_coordinator.data = with_protect_collection(
+            ringtone_coordinator.data,
+            "chimes",
+            {
+                "chime1": {
+                    **ringtone_coordinator.data["protect"]["chimes"]["chime1"],
+                    "ringSettings": [
+                        {"ringtoneId": "tone-new"},
+                        {"ringtoneId": "tone-1"},
+                    ],
+                }
+            },
+        )
         entity._update_from_data()
         assert entity._attr_options == ["tone-1", "tone-new"]
         assert entity._attr_current_option is None
@@ -675,8 +708,12 @@ class TestUnifiProtectChimeRingtoneSelect:
             await entity.async_select_option("tone-1")
         protect = protect_owner(ringtone_coordinator)
         protect.async_set_chime_ringtone.assert_awaited_once_with("chime1", "tone-1")
-        chime = ringtone_coordinator.data["protect"]["chimes"]["chime1"]
-        chime["ringSettings"] = [{"ringtoneId": "tone-1"}]
+        ringtone_coordinator.data = with_protect_fields(
+            ringtone_coordinator.data,
+            "chimes",
+            "chime1",
+            ringSettings=[{"ringtoneId": "tone-1"}],
+        )
         entity._update_from_data()
         assert entity._attr_current_option == "tone-1"
 
@@ -777,7 +814,9 @@ class TestUnifiProtectPTZPresetSelect:
         assert entity._attr_current_option == "2"
         assert "0" in entity._attr_options
 
-    async def test_async_select_option_success(self, mock_coordinator):
+    async def test_async_select_option_success(
+        self, mock_coordinator: MagicMock
+    ) -> None:
         """Test selecting PTZ preset option successfully."""
         mock_coordinator.data = {
             "sites": {},
@@ -923,7 +962,9 @@ class TestUnifiProtectViewerLiveviewSelect:
 
         assert entity._attr_current_option is None
 
-    async def test_async_select_option_success(self, mock_coordinator):
+    async def test_async_select_option_success(
+        self, mock_coordinator: MagicMock
+    ) -> None:
         """Test selecting liveview option successfully."""
         mock_coordinator.data = {
             "sites": {},
@@ -960,7 +1001,9 @@ class TestUnifiProtectViewerLiveviewSelect:
         protect_owner(mock_coordinator).async_update_viewer.assert_awaited_once_with(
             "viewer1", liveview="lv2"
         )
-        mock_coordinator.data["protect"]["viewers"]["viewer1"]["liveview"] = "lv2"
+        mock_coordinator.data = with_protect_fields(
+            mock_coordinator.data, "viewers", "viewer1", liveview="lv2"
+        )
         entity._update_from_data()
         assert entity._attr_current_option == "All Cameras"
 

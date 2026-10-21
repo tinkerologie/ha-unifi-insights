@@ -72,6 +72,7 @@ from tests.fixtures.facade_data import (
     with_protect_device,
     with_protect_fields,
     with_rule,
+    with_sections,
 )
 from tests.fixtures.library_responses import (
     SAMPLE_UDM_PRO_OVERVIEW,
@@ -1847,3 +1848,41 @@ def test_with_protect_collection_replaces_one_collection() -> None:
     assert with_protect_collection(base, "cameras", None)["protect"]["cameras"] is None
     bare = with_protect_collection({}, "sensors", {})
     assert bare["protect"] == {"sensors": {}}
+
+
+def test_frozen_keeps_frozen_values_and_copies_the_rest() -> None:
+    """A value frozen all the way down is kept; a writable part is copied."""
+    value = frozen({"a": {"b": [1, {"c": 2}]}, "s": {"x"}, "t": ("y", [3])})
+
+    assert frozen(value) is value
+    assert frozen(value["s"]) is value["s"]
+    assert frozen(value["t"]) is value["t"]
+
+    mixed = ReadOnlyDict({"kept": value["a"], "plain": {"d": [4]}})
+    refrozen = frozen(mixed)
+    assert refrozen is not mixed
+    assert refrozen["kept"] is value["a"]
+    assert refrozen == {"kept": value["a"], "plain": {"d": [4]}}
+    with pytest.raises(RuntimeError):
+        refrozen["plain"]["d"].append(5)
+    partly = FrozenList([value["a"], {"e": 5}])
+    assert frozen(partly) is not partly
+    assert frozen(partly)[0] is value["a"]
+    assert frozen(("z", {"f": 6}))[1] == {"f": 6}
+
+
+def test_with_sections_freezes_the_sections_it_replaces() -> None:
+    """Replaced sections are frozen; frozen ones keep their identity."""
+    base = facade_data()
+    clients = frozen({"site1": {"c1": {"id": "c1"}}})
+
+    data = with_sections(
+        base, devices={"site1": {"d1": {"ports": [1]}}}, clients=clients
+    )
+
+    assert data["clients"] is clients
+    assert data["stats"] is base["stats"]
+    with pytest.raises(RuntimeError):
+        data["devices"]["site1"]["d1"]["ports"].append(2)
+    with pytest.raises(RuntimeError):
+        data["devices"]["site1"]["d2"] = {}

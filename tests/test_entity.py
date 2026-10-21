@@ -29,15 +29,36 @@ from custom_components.unifi_insights.entity import (
 )
 from tests.fixtures.facade_data import (
     facade_data,
+    frozen,
     set_availability,
     with_camera,
+    with_device_stats,
     with_network_device,
+    with_protect_device,
+    with_protect_fields,
     with_sections,
     without_sections,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from homeassistant.core import HomeAssistant
+
+    from custom_components.unifi_insights.coordinators.facade import FacadeData
+
+
+def _without_record(
+    data: Mapping[str, Any], section: str, group: str, key: str
+) -> FacadeData:
+    """Return ``data`` without the record at ``[section][group][key]``."""
+    by_group = data[section]
+    records = {
+        record_key: record
+        for record_key, record in by_group[group].items()
+        if record_key != key
+    }
+    return with_sections(data, **{section: {**by_group, group: records}})
 
 
 class TestGetField:
@@ -329,48 +350,50 @@ class TestUnifiInsightsEntity:
     """Tests for UnifiInsightsEntity base class."""
 
     @pytest.fixture
-    def mock_coordinator(self, hass: HomeAssistant):
+    def mock_coordinator(self, hass: HomeAssistant) -> MagicMock:
         """Create mock coordinator with test data."""
         coordinator = MagicMock()
         coordinator.hass = hass
         coordinator.available = True
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
-        coordinator.data = {
-            "sites": {
-                "site1": {"id": "site1", "meta": {"name": "Default"}},
-            },
-            "devices": {
-                "site1": {
-                    "device1": {
-                        "id": "device1",
-                        "name": "Test Switch",
-                        "model": "USW-24-POE",
-                        "firmwareVersion": "6.5.55",
-                        "macAddress": "AA:BB:CC:DD:EE:FF",
-                        "ipAddress": "192.168.1.10",
-                        "state": "ONLINE",
-                    },
-                    "device2": {
-                        "id": "device2",
-                        "name": "Test AP",
-                        "model": "UAP-AC-PRO",
-                        "state": "OFFLINE",
+        coordinator.data = frozen(
+            {
+                "sites": {
+                    "site1": {"id": "site1", "meta": {"name": "Default"}},
+                },
+                "devices": {
+                    "site1": {
+                        "device1": {
+                            "id": "device1",
+                            "name": "Test Switch",
+                            "model": "USW-24-POE",
+                            "firmwareVersion": "6.5.55",
+                            "macAddress": "AA:BB:CC:DD:EE:FF",
+                            "ipAddress": "192.168.1.10",
+                            "state": "ONLINE",
+                        },
+                        "device2": {
+                            "id": "device2",
+                            "name": "Test AP",
+                            "model": "UAP-AC-PRO",
+                            "state": "OFFLINE",
+                        },
                     },
                 },
-            },
-            "stats": {},
-            "clients": {},
-            "protect": {
-                "cameras": {},
-                "lights": {},
-                "sensors": {},
-                "nvrs": {},
-                "viewers": {},
-                "chimes": {},
-                "liveviews": {},
-            },
-        }
+                "stats": {},
+                "clients": {},
+                "protect": {
+                    "cameras": {},
+                    "lights": {},
+                    "sensors": {},
+                    "nvrs": {},
+                    "viewers": {},
+                    "chimes": {},
+                    "liveviews": {},
+                },
+            }
+        )
         return coordinator
 
     async def test_entity_initialization(self, hass: HomeAssistant, mock_coordinator):
@@ -459,7 +482,7 @@ class TestUnifiInsightsEntity:
         )
         assert entity.available is True
 
-        mock_coordinator.data["devices"] = devices
+        mock_coordinator.data = with_sections(mock_coordinator.data, devices=devices)
 
         assert entity.available is expected
 
@@ -547,11 +570,13 @@ class TestUnifiInsightsEntity:
         assert device_data["id"] == "device1"
         assert device_data["name"] == "Test Switch"
 
-    async def test_entity_device_stats(self, hass: HomeAssistant, mock_coordinator):
+    async def test_entity_device_stats(
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test entity device_stats property."""
-        mock_coordinator.data["stats"]["site1"] = {
-            "device1": {"cpuUtilizationPct": 25.5},
-        }
+        mock_coordinator.data = with_device_stats(
+            mock_coordinator.data, "site1", "device1", {"cpuUtilizationPct": 25.5}
+        )
         description = EntityDescription(key="test", name="Test")
 
         entity = UnifiInsightsEntity(
@@ -585,7 +610,7 @@ class TestUnifiProtectEntity:
     """Tests for UnifiProtectEntity base class."""
 
     @pytest.fixture
-    def mock_coordinator(self, hass: HomeAssistant):
+    def mock_coordinator(self, hass: HomeAssistant) -> MagicMock:
         """Create mock coordinator with protect data."""
         coordinator = MagicMock()
         coordinator.hass = hass
@@ -594,62 +619,64 @@ class TestUnifiProtectEntity:
         coordinator.network_client.base_url = "https://192.168.1.1"
         coordinator.protect_client = MagicMock()
         coordinator.protect_client.base_url = "https://192.168.1.1"
-        coordinator.data = {
-            "sites": {},
-            "devices": {
-                "site1": {
-                    "device1": {
-                        "id": "device1",
-                        "name": "UDM Pro",
-                        "macAddress": "AA:BB:CC:DD:EE:FF",
-                        "model": "UDM-PRO",
-                        "firmwareVersion": "2.0.0",
-                        "ipAddress": "192.168.1.1",
-                        "state": "ONLINE",
+        coordinator.data = frozen(
+            {
+                "sites": {},
+                "devices": {
+                    "site1": {
+                        "device1": {
+                            "id": "device1",
+                            "name": "UDM Pro",
+                            "macAddress": "AA:BB:CC:DD:EE:FF",
+                            "model": "UDM-PRO",
+                            "firmwareVersion": "2.0.0",
+                            "ipAddress": "192.168.1.1",
+                            "state": "ONLINE",
+                        },
                     },
                 },
-            },
-            "stats": {},
-            "clients": {},
-            "protect": {
-                "cameras": {
-                    "camera1": {
-                        "id": "camera1",
-                        "name": "Front Door",
-                        "state": "CONNECTED",
-                        "mac": "AA:BB:CC:DD:EE:FF",
-                        "type": "UVC-G4-PRO",
-                        "firmwareVersion": "4.50.0",
+                "stats": {},
+                "clients": {},
+                "protect": {
+                    "cameras": {
+                        "camera1": {
+                            "id": "camera1",
+                            "name": "Front Door",
+                            "state": "CONNECTED",
+                            "mac": "AA:BB:CC:DD:EE:FF",
+                            "type": "UVC-G4-PRO",
+                            "firmwareVersion": "4.50.0",
+                        },
+                        "camera2": {
+                            "id": "camera2",
+                            "name": "Backyard",
+                            "state": "DISCONNECTED",
+                            "type": "UVC-G3-FLEX",
+                        },
                     },
-                    "camera2": {
-                        "id": "camera2",
-                        "name": "Backyard",
-                        "state": "DISCONNECTED",
-                        "type": "UVC-G3-FLEX",
+                    "lights": {
+                        "light1": {
+                            "id": "light1",
+                            "name": "Garage Light",
+                            "state": "CONNECTED",
+                            "type": "UP-FLOODLIGHT",
+                        },
                     },
+                    "sensors": {
+                        "sensor1": {
+                            "id": "sensor1",
+                            "name": "Front Door Sensor",
+                            "state": "CONNECTED",
+                            "type": "UP-SENSE",
+                        },
+                    },
+                    "nvrs": {},
+                    "viewers": {},
+                    "chimes": {},
+                    "liveviews": {},
                 },
-                "lights": {
-                    "light1": {
-                        "id": "light1",
-                        "name": "Garage Light",
-                        "state": "CONNECTED",
-                        "type": "UP-FLOODLIGHT",
-                    },
-                },
-                "sensors": {
-                    "sensor1": {
-                        "id": "sensor1",
-                        "name": "Front Door Sensor",
-                        "state": "CONNECTED",
-                        "type": "UP-SENSE",
-                    },
-                },
-                "nvrs": {},
-                "viewers": {},
-                "chimes": {},
-                "liveviews": {},
-            },
-        }
+            }
+        )
         return coordinator
 
     async def test_protect_entity_initialization(
@@ -764,8 +791,8 @@ class TestUnifiProtectEntity:
         assert entity.available is True
 
     async def test_protect_entity_coordinator_update_refreshes_state(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test coordinator updates refresh Protect entity state."""
         entity = UnifiProtectEntity(
             coordinator=mock_coordinator,
@@ -775,7 +802,9 @@ class TestUnifiProtectEntity:
         entity.async_write_ha_state = MagicMock()
         entity._update_from_data = MagicMock()
 
-        mock_coordinator.data["protect"]["cameras"]["camera1"]["state"] = "DISCONNECTED"
+        mock_coordinator.data = with_protect_fields(
+            mock_coordinator.data, "cameras", "camera1", state="DISCONNECTED"
+        )
 
         entity._handle_coordinator_update()
 
@@ -784,8 +813,8 @@ class TestUnifiProtectEntity:
         entity.async_write_ha_state.assert_called_once()
 
     async def test_protect_entity_coordinator_update_handles_missing_device(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test coordinator updates mark missing Protect devices unavailable."""
         entity = UnifiProtectEntity(
             coordinator=mock_coordinator,
@@ -795,7 +824,9 @@ class TestUnifiProtectEntity:
         entity.async_write_ha_state = MagicMock()
         entity._update_from_data = MagicMock()
 
-        del mock_coordinator.data["protect"]["cameras"]["camera1"]
+        mock_coordinator.data = _without_record(
+            mock_coordinator.data, "protect", "cameras", "camera1"
+        )
 
         entity._handle_coordinator_update()
 
@@ -874,16 +905,21 @@ class TestUnifiProtectEntity:
         assert (DOMAIN, "site1_device1") in identifiers
 
     async def test_protect_entity_nvr_network_device_matching(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test protect NVR entity matches network device by MAC (UDM-Pro fix)."""
         # Add NVR with MAC that matches a network device (like UDM-Pro)
-        mock_coordinator.data["protect"]["nvrs"]["nvr1"] = {
-            "id": "nvr1",
-            "name": "UDM-Pro NVR",
-            "state": "CONNECTED",
-            "mac": "AA:BB:CC:DD:EE:FF",  # Same MAC as device1
-        }
+        mock_coordinator.data = with_protect_device(
+            mock_coordinator.data,
+            "nvrs",
+            "nvr1",
+            {
+                "id": "nvr1",
+                "name": "UDM-Pro NVR",
+                "state": "CONNECTED",
+                "mac": "AA:BB:CC:DD:EE:FF",  # Same MAC as device1
+            },
+        )
 
         entity = UnifiProtectEntity(
             coordinator=mock_coordinator,
@@ -915,25 +951,33 @@ class TestUnifiProtectEntity:
         assert (DOMAIN, "protect_camera_camera2") in identifiers
 
     async def test_protect_entity_dual_camera_parent(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test protect entity handles dual-camera parent ID."""
         # Add a camera with _parent_camera_id
-        mock_coordinator.data["protect"]["cameras"]["camera_pkg"] = {
-            "id": "camera_pkg",
-            "name": "Front Door Package Camera",
-            "state": "CONNECTED",
-            "type": "UVC-G4-DOORBELL",
-            "_parent_camera_id": "camera_main",
-            "_is_package_camera": True,
-        }
-        mock_coordinator.data["protect"]["cameras"]["camera_main"] = {
-            "id": "camera_main",
-            "name": "Front Door Main Camera",
-            "state": "CONNECTED",
-            "type": "UVC-G4-DOORBELL",
-            "mac": "11:22:33:44:55:66",
-        }
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data,
+            "camera_pkg",
+            {
+                "id": "camera_pkg",
+                "name": "Front Door Package Camera",
+                "state": "CONNECTED",
+                "type": "UVC-G4-DOORBELL",
+                "_parent_camera_id": "camera_main",
+                "_is_package_camera": True,
+            },
+        )
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data,
+            "camera_main",
+            {
+                "id": "camera_main",
+                "name": "Front Door Main Camera",
+                "state": "CONNECTED",
+                "type": "UVC-G4-DOORBELL",
+                "mac": "11:22:33:44:55:66",
+            },
+        )
 
         entity = UnifiProtectEntity(
             coordinator=mock_coordinator,
@@ -948,28 +992,36 @@ class TestUnifiProtectEntity:
         assert (DOMAIN, "protect_camera_camera_main") in identifiers
 
     async def test_protect_entity_dual_camera_package_name_stripping(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test protect entity strips Package Camera suffix (line 211)."""
         # Add a package camera with " Package Camera" suffix but NO " Main Camera"
         # This specifically tests the elif branch at line 211
-        mock_coordinator.data["protect"]["cameras"]["camera_pkg2"] = {
-            "id": "camera_pkg2",
-            # Has " Package Camera" but NOT " Main Camera"
-            "name": "Garage Package Camera",
-            "state": "CONNECTED",
-            "type": "UVC-G4-PRO",
-            # Has parent so stripping logic runs
-            "_parent_camera_id": "camera_garage_main",
-            "_is_package_camera": True,
-        }
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data,
+            "camera_pkg2",
+            {
+                "id": "camera_pkg2",
+                # Has " Package Camera" but NOT " Main Camera"
+                "name": "Garage Package Camera",
+                "state": "CONNECTED",
+                "type": "UVC-G4-PRO",
+                # Has parent so stripping logic runs
+                "_parent_camera_id": "camera_garage_main",
+                "_is_package_camera": True,
+            },
+        )
         # Add the parent camera
-        mock_coordinator.data["protect"]["cameras"]["camera_garage_main"] = {
-            "id": "camera_garage_main",
-            "name": "Garage",
-            "state": "CONNECTED",
-            "type": "UVC-G4-PRO",
-        }
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data,
+            "camera_garage_main",
+            {
+                "id": "camera_garage_main",
+                "name": "Garage",
+                "state": "CONNECTED",
+                "type": "UVC-G4-PRO",
+            },
+        )
 
         entity = UnifiProtectEntity(
             coordinator=mock_coordinator,
@@ -983,26 +1035,34 @@ class TestUnifiProtectEntity:
         assert "Package Camera" not in device_info.get("name", "")
 
     async def test_protect_entity_dual_camera_main_name_stripping(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test protect entity strips Main Camera suffix (line 209)."""
         # Add a main camera with " Main Camera" suffix AND _parent_camera_id
         # This specifically tests the if branch at line 209 (when the entity
         # itself has " Main Camera" in its name but is referencing a parent)
-        mock_coordinator.data["protect"]["cameras"]["camera_main_sub"] = {
-            "id": "camera_main_sub",
-            "name": "Backyard Main Camera",  # Has " Main Camera"
-            "state": "CONNECTED",
-            "type": "UVC-G4-PRO",
-            "_parent_camera_id": "camera_backyard_parent",  # Has parent ID
-        }
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data,
+            "camera_main_sub",
+            {
+                "id": "camera_main_sub",
+                "name": "Backyard Main Camera",  # Has " Main Camera"
+                "state": "CONNECTED",
+                "type": "UVC-G4-PRO",
+                "_parent_camera_id": "camera_backyard_parent",  # Has parent ID
+            },
+        )
         # Add the parent camera
-        mock_coordinator.data["protect"]["cameras"]["camera_backyard_parent"] = {
-            "id": "camera_backyard_parent",
-            "name": "Backyard",
-            "state": "CONNECTED",
-            "type": "UVC-G4-PRO",
-        }
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data,
+            "camera_backyard_parent",
+            {
+                "id": "camera_backyard_parent",
+                "name": "Backyard",
+                "state": "CONNECTED",
+                "type": "UVC-G4-PRO",
+            },
+        )
 
         entity = UnifiProtectEntity(
             coordinator=mock_coordinator,
@@ -1017,8 +1077,8 @@ class TestUnifiProtectEntity:
         assert device_info.get("name") == "Backyard"
 
     async def test_protect_entity_available_non_dict(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test protect entity available with non-dict device data."""
         # Create entity with valid data first
         entity = UnifiProtectEntity(
@@ -1028,24 +1088,32 @@ class TestUnifiProtectEntity:
         )
 
         # Now set device data to non-dict
-        mock_coordinator.data["protect"]["cameras"]["camera1"] = "not a dict"
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data, "camera1", "not a dict"
+        )
 
         assert entity.available is False
 
     async def test_protect_entity_device_data_non_dict(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test protect entity device_data with non-dict value."""
         # Set device data to non-dict
-        mock_coordinator.data["protect"]["cameras"]["camera_test"] = "not a dict"
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data, "camera_test", "not a dict"
+        )
 
         # Need to create entity with valid data first
-        mock_coordinator.data["protect"]["cameras"]["camera_test"] = {
-            "id": "camera_test",
-            "name": "Test",
-            "state": "CONNECTED",
-            "type": "UVC-G4",
-        }
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data,
+            "camera_test",
+            {
+                "id": "camera_test",
+                "name": "Test",
+                "state": "CONNECTED",
+                "type": "UVC-G4",
+            },
+        )
         entity = UnifiProtectEntity(
             coordinator=mock_coordinator,
             device_type=DEVICE_TYPE_CAMERA,
@@ -1053,21 +1121,27 @@ class TestUnifiProtectEntity:
         )
 
         # Now change to non-dict
-        mock_coordinator.data["protect"]["cameras"]["camera_test"] = "not a dict"
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data, "camera_test", "not a dict"
+        )
 
         assert entity.device_data is None
 
     async def test_protect_entity_suggested_area_camera(
-        self, hass: HomeAssistant, mock_coordinator
-    ):
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
         """Test protect camera entity gets Security suggested area."""
         # Camera without network device match
-        mock_coordinator.data["protect"]["cameras"]["camera_new"] = {
-            "id": "camera_new",
-            "name": "New Camera",
-            "state": "CONNECTED",
-            "type": "UVC-G4-PRO",
-        }
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data,
+            "camera_new",
+            {
+                "id": "camera_new",
+                "name": "New Camera",
+                "state": "CONNECTED",
+                "type": "UVC-G4-PRO",
+            },
+        )
 
         entity = UnifiProtectEntity(
             coordinator=mock_coordinator,
@@ -1109,12 +1183,16 @@ class TestUnifiProtectEntity:
         self, hass: HomeAssistant, mock_coordinator: MagicMock
     ) -> None:
         """Test protect entity with empty mac address does not match network device."""
-        mock_coordinator.data["protect"]["cameras"]["cam_empty_mac"] = {
-            "id": "cam_empty_mac",
-            "name": "No MAC Cam",
-            "state": "CONNECTED",
-            "mac": None,
-        }
+        mock_coordinator.data = with_camera(
+            mock_coordinator.data,
+            "cam_empty_mac",
+            {
+                "id": "cam_empty_mac",
+                "name": "No MAC Cam",
+                "state": "CONNECTED",
+                "mac": None,
+            },
+        )
 
         entity = UnifiProtectEntity(
             coordinator=mock_coordinator,
@@ -1131,55 +1209,57 @@ class TestUnifiInsightsEntityEdgeCases:
     """Tests for edge cases in UnifiInsightsEntity."""
 
     @pytest.fixture
-    def mock_coordinator_with_ports(self, hass: HomeAssistant):
+    def mock_coordinator_with_ports(self, hass: HomeAssistant) -> MagicMock:
         """Create mock coordinator with port and radio data."""
         coordinator = MagicMock()
         coordinator.hass = hass
         coordinator.network_client = MagicMock()
         coordinator.network_client.base_url = "https://192.168.1.1"
-        coordinator.data = {
-            "sites": {"site1": {"id": "site1"}},
-            "devices": {
-                "site1": {
-                    "switch1": {
-                        "id": "switch1",
-                        "name": "Main Switch",
-                        "model": "USW-24-POE",
-                        "state": "ONLINE",
-                        "port_table": [
-                            {"port_idx": 1, "name": "Port 1"},
-                            {"port_idx": 2, "name": "Port 2"},
-                        ],
-                    },
-                    "ap1": {
-                        "id": "ap1",
-                        "name": "Access Point",
-                        "model": "UAP-AC-PRO",
-                        "state": "ONLINE",
-                        "radio_table": [
-                            {"name": "ra0", "radio": "ng"},
-                            {"name": "rai0", "radio": "na"},
-                        ],
-                    },
-                    "device_minimal": {
-                        "id": "device_minimal",
-                        "model": "Unknown",
-                        "state": "ONLINE",
+        coordinator.data = frozen(
+            {
+                "sites": {"site1": {"id": "site1"}},
+                "devices": {
+                    "site1": {
+                        "switch1": {
+                            "id": "switch1",
+                            "name": "Main Switch",
+                            "model": "USW-24-POE",
+                            "state": "ONLINE",
+                            "port_table": [
+                                {"port_idx": 1, "name": "Port 1"},
+                                {"port_idx": 2, "name": "Port 2"},
+                            ],
+                        },
+                        "ap1": {
+                            "id": "ap1",
+                            "name": "Access Point",
+                            "model": "UAP-AC-PRO",
+                            "state": "ONLINE",
+                            "radio_table": [
+                                {"name": "ra0", "radio": "ng"},
+                                {"name": "rai0", "radio": "na"},
+                            ],
+                        },
+                        "device_minimal": {
+                            "id": "device_minimal",
+                            "model": "Unknown",
+                            "state": "ONLINE",
+                        },
                     },
                 },
-            },
-            "stats": {},
-            "clients": {},
-            "protect": {
-                "cameras": {},
-                "lights": {},
-                "sensors": {},
-                "nvrs": {},
-                "viewers": {},
-                "chimes": {},
-                "liveviews": {},
-            },
-        }
+                "stats": {},
+                "clients": {},
+                "protect": {
+                    "cameras": {},
+                    "lights": {},
+                    "sensors": {},
+                    "nvrs": {},
+                    "viewers": {},
+                    "chimes": {},
+                    "liveviews": {},
+                },
+            }
+        )
         return coordinator
 
     async def test_entity_with_port_table(
@@ -1235,8 +1315,8 @@ class TestUnifiInsightsEntityEdgeCases:
         assert "name" in device_info
 
     async def test_entity_device_data_missing(
-        self, hass: HomeAssistant, mock_coordinator_with_ports
-    ):
+        self, hass: HomeAssistant, mock_coordinator_with_ports: MagicMock
+    ) -> None:
         """Test entity device_data when device is missing."""
         description = EntityDescription(key="test", name="Test")
 
@@ -1248,13 +1328,15 @@ class TestUnifiInsightsEntityEdgeCases:
         )
 
         # Remove device from data
-        del mock_coordinator_with_ports.data["devices"]["site1"]["switch1"]
+        mock_coordinator_with_ports.data = _without_record(
+            mock_coordinator_with_ports.data, "devices", "site1", "switch1"
+        )
 
         assert entity.device_data is None
 
     async def test_entity_device_stats_non_dict(
-        self, hass: HomeAssistant, mock_coordinator_with_ports
-    ):
+        self, hass: HomeAssistant, mock_coordinator_with_ports: MagicMock
+    ) -> None:
         """Test entity device_stats returns None for non-dict."""
         description = EntityDescription(key="test", name="Test")
 
@@ -1266,13 +1348,15 @@ class TestUnifiInsightsEntityEdgeCases:
         )
 
         # Set stats to non-dict
-        mock_coordinator_with_ports.data["stats"]["site1"] = {"switch1": "not a dict"}
+        mock_coordinator_with_ports.data = with_device_stats(
+            mock_coordinator_with_ports.data, "site1", "switch1", "not a dict"
+        )
 
         assert entity.device_stats is None
 
     async def test_entity_available_missing_device(
-        self, hass: HomeAssistant, mock_coordinator_with_ports
-    ):
+        self, hass: HomeAssistant, mock_coordinator_with_ports: MagicMock
+    ) -> None:
         """Test entity available when device is missing."""
         description = EntityDescription(key="test", name="Test")
 
@@ -1284,7 +1368,9 @@ class TestUnifiInsightsEntityEdgeCases:
         )
 
         # Remove device from data
-        del mock_coordinator_with_ports.data["devices"]["site1"]["switch1"]
+        mock_coordinator_with_ports.data = _without_record(
+            mock_coordinator_with_ports.data, "devices", "site1", "switch1"
+        )
 
         assert entity.available is False
 
@@ -1311,8 +1397,8 @@ class TestUnifiInsightsEntityEdgeCases:
         entity.async_write_ha_state.assert_called()
 
     async def test_entity_handle_coordinator_update_missing_device(
-        self, hass: HomeAssistant, mock_coordinator_with_ports
-    ):
+        self, hass: HomeAssistant, mock_coordinator_with_ports: MagicMock
+    ) -> None:
         """Test entity _handle_coordinator_update with missing device."""
         description = EntityDescription(key="test", name="Test")
 
@@ -1327,7 +1413,9 @@ class TestUnifiInsightsEntityEdgeCases:
         entity.async_write_ha_state = MagicMock()
 
         # Remove device from data
-        del mock_coordinator_with_ports.data["devices"]["site1"]["switch1"]
+        mock_coordinator_with_ports.data = _without_record(
+            mock_coordinator_with_ports.data, "devices", "site1", "switch1"
+        )
 
         # Call update handler
         entity._handle_coordinator_update()
@@ -1369,17 +1457,22 @@ class TestUnifiInsightsEntityEdgeCases:
         assert device_info.get("suggested_area") == "Network"
 
     async def test_entity_empty_port_table(
-        self, hass: HomeAssistant, mock_coordinator_with_ports
-    ):
+        self, hass: HomeAssistant, mock_coordinator_with_ports: MagicMock
+    ) -> None:
         """Test entity with empty port_table."""
         # Add device with empty port_table
-        mock_coordinator_with_ports.data["devices"]["site1"]["switch_empty"] = {
-            "id": "switch_empty",
-            "name": "Empty Switch",
-            "model": "USW",
-            "state": "ONLINE",
-            "port_table": [],
-        }
+        mock_coordinator_with_ports.data = with_network_device(
+            mock_coordinator_with_ports.data,
+            "site1",
+            "switch_empty",
+            {
+                "id": "switch_empty",
+                "name": "Empty Switch",
+                "model": "USW",
+                "state": "ONLINE",
+                "port_table": [],
+            },
+        )
 
         description = EntityDescription(key="test", name="Test")
 
@@ -1396,21 +1489,26 @@ class TestUnifiInsightsEntityEdgeCases:
         assert "Ports" not in hw_version
 
     async def test_entity_radio_table_non_dict_entry(
-        self, hass: HomeAssistant, mock_coordinator_with_ports
-    ):
+        self, hass: HomeAssistant, mock_coordinator_with_ports: MagicMock
+    ) -> None:
         """Test entity handles non-dict entries in radio_table."""
         # Add device with mixed radio_table
-        mock_coordinator_with_ports.data["devices"]["site1"]["ap_mixed"] = {
-            "id": "ap_mixed",
-            "name": "Mixed AP",
-            "model": "UAP",
-            "state": "ONLINE",
-            "radio_table": [
-                {"name": "ra0", "radio": "ng"},
-                "not a dict",  # Invalid entry
-                None,  # Another invalid entry
-            ],
-        }
+        mock_coordinator_with_ports.data = with_network_device(
+            mock_coordinator_with_ports.data,
+            "site1",
+            "ap_mixed",
+            {
+                "id": "ap_mixed",
+                "name": "Mixed AP",
+                "model": "UAP",
+                "state": "ONLINE",
+                "radio_table": [
+                    {"name": "ra0", "radio": "ng"},
+                    "not a dict",  # Invalid entry
+                    None,  # Another invalid entry
+                ],
+            },
+        )
 
         description = EntityDescription(key="test", name="Test")
 
@@ -1430,17 +1528,22 @@ class TestUnifiInsightsEntityEdgeCases:
         self, hass: HomeAssistant, mock_coordinator_with_ports: MagicMock
     ) -> None:
         """Test entity handles radio table with missing name or type."""
-        mock_coordinator_with_ports.data["devices"]["site1"]["ap_empty_radio"] = {
-            "id": "ap_empty_radio",
-            "name": "Empty Radio AP",
-            "model": "UAP",
-            "state": "ONLINE",
-            "radio_table": [
-                {"name": "", "radio": "ng"},
-                {"name": "ra0", "radio": ""},
-                {"name": "ra1", "radio": "na"},
-            ],
-        }
+        mock_coordinator_with_ports.data = with_network_device(
+            mock_coordinator_with_ports.data,
+            "site1",
+            "ap_empty_radio",
+            {
+                "id": "ap_empty_radio",
+                "name": "Empty Radio AP",
+                "model": "UAP",
+                "state": "ONLINE",
+                "radio_table": [
+                    {"name": "", "radio": "ng"},
+                    {"name": "ra0", "radio": ""},
+                    {"name": "ra1", "radio": "na"},
+                ],
+            },
+        )
 
         description = EntityDescription(key="test", name="Test")
 
@@ -1473,10 +1576,12 @@ def test_network_serviceable_availability(
     """Base entities need fresh Device data and a serviceable device."""
     coordinator = MagicMock()
     coordinator.network_client.base_url = "https://example.test"
-    coordinator.data = {
-        "devices": {"site": {"pdu": {"state": state, "model": "USP-PDU-Pro"}}},
-        "stats": {},
-    }
+    coordinator.data = frozen(
+        {
+            "devices": {"site": {"pdu": {"state": state, "model": "USP-PDU-Pro"}}},
+            "stats": {},
+        }
+    )
     set_availability(coordinator, device=healthy)
     entity = UnifiInsightsEntity(
         coordinator, EntityDescription(key="test"), "site", "pdu"

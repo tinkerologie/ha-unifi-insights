@@ -74,6 +74,7 @@ from custom_components.unifi_insights.sensor import (
     SITE_INTERNET_ACTIVITY_SENSOR_TYPES,
     VOUCHER_SENSOR_TYPES,
 )
+from tests.fixtures.facade_data import with_client, with_protect_device, with_sections
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -1056,8 +1057,10 @@ async def test_missing_namespace_skips_until_later_discovery_and_reload(
 
 
 async def test_platform_discovery_never_claims_disabled_foreign_targets(
-    hass, entity_registry, mock_coordinator
-):
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    mock_coordinator: MagicMock,
+) -> None:
     """Protect disabled and unloaded foreign ownership during logical discovery."""
     entry = _entry(hass)
     other = _entry(hass, "console_b", "entry_b")
@@ -1091,9 +1094,9 @@ async def test_platform_discovery_never_claims_disabled_foreign_targets(
     entities = await _discover_all(hass, entry, mock_coordinator)
     assert [entity.unique_id for entity in entities] == [legacy.unique_id]
     assert entities[0].native_value == 0
-    mock_coordinator.data["clients"]["site_shared"]["synthetic_client"] = {
-        "type": "WIRED"
-    }
+    mock_coordinator.data = with_client(
+        mock_coordinator.data, "site_shared", "synthetic_client", {"type": "WIRED"}
+    )
     assert entities[0].native_value == 1
     assert entity_registry.async_get(legacy.entity_id).unique_id == legacy.unique_id
     assert all(
@@ -2194,8 +2197,12 @@ async def test_local_reconfigure_compares_normalized_hardware_addresses(
     ("port_name", "port_label"), [("Port 25", "SFP+ 25"), ("Uplink", "Uplink")]
 )
 async def test_affected_entities_retain_registry_identities_after_setup(
-    hass, entity_registry, mock_coordinator, port_name, port_label
-):
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    mock_coordinator: MagicMock,
+    port_name: str,
+    port_label: str,
+) -> None:
     """Add every renamed family to HA and reuse its existing registry identity."""
     entry = _entry(hass, "console_a", "entry_a")
     hass.config_entries.async_update_entry(entry, options={CONF_CLIENT_CONTROL: True})
@@ -2204,60 +2211,62 @@ async def test_affected_entities_retain_registry_identities_after_setup(
     mock_coordinator.async_add_listener.return_value = lambda: None
     mock_coordinator.async_get_wake_history = AsyncMock(return_value={})
     mock_coordinator.get_site.return_value = {"meta": {"name": "Default"}}
-    mock_coordinator.data.update(
-        {
-            "sites": {"site_shared": {"id": "site_shared", "name": "Default"}},
-            "devices": {
-                "site_shared": {
-                    "device1": {
-                        "id": "device1",
-                        "name": "Switch",
-                        "state": "ONLINE",
-                        "model": "USW-24",
-                        "mac": "aa:bb:cc:dd:ee:ff",
-                        "ports": [
-                            {
-                                "idx": 25,
-                                "name": port_name,
-                                "media": "SFP+",
-                                "sfp_found": True,
-                                "state": "UP",
-                                "speedMbps": 10000,
-                            }
-                        ],
-                    }
+    mock_coordinator.data = with_sections(
+        mock_coordinator.data,
+        sites={"site_shared": {"id": "site_shared", "name": "Default"}},
+        devices={
+            "site_shared": {
+                "device1": {
+                    "id": "device1",
+                    "name": "Switch",
+                    "state": "ONLINE",
+                    "model": "USW-24",
+                    "mac": "aa:bb:cc:dd:ee:ff",
+                    "ports": [
+                        {
+                            "idx": 25,
+                            "name": port_name,
+                            "media": "SFP+",
+                            "sfp_found": True,
+                            "state": "UP",
+                            "speedMbps": 10000,
+                        }
+                    ],
                 }
-            },
-            "clients": {
-                "site_shared": {
-                    "client1": {
-                        "id": "client1",
-                        "name": "Laptop",
-                        "type": "WIRELESS",
-                        "uplinkDeviceId": "device1",
-                    }
+            }
+        },
+        clients={
+            "site_shared": {
+                "client1": {
+                    "id": "client1",
+                    "name": "Laptop",
+                    "type": "WIRELESS",
+                    "uplinkDeviceId": "device1",
                 }
-            },
-            "wifi": {
-                "site_shared": {
-                    "wifi1": {
-                        "id": "wifi1",
-                        "name": "Guests",
-                        "qr_code": "WIFI:S:Guests;;",
-                    }
+            }
+        },
+        wifi={
+            "site_shared": {
+                "wifi1": {
+                    "id": "wifi1",
+                    "name": "Guests",
+                    "qr_code": "WIFI:S:Guests;;",
                 }
-            },
-            "vouchers": {},
-            "internet_activity": {
-                "site_shared": {
-                    window: {"rx_bytes": 100, "tx_bytes": 200}
-                    for window in ("1h", "1d", "1w", "1m")
-                }
-            },
-        }
+            }
+        },
+        vouchers={},
+        internet_activity={
+            "site_shared": {
+                window: {"rx_bytes": 100, "tx_bytes": 200}
+                for window in ("1h", "1d", "1w", "1m")
+            }
+        },
     )
-    mock_coordinator.data["protect"]["sensors"] = {
-        "sensor1": {
+    mock_coordinator.data = with_protect_device(
+        mock_coordinator.data,
+        "sensors",
+        "sensor1",
+        {
             "id": "sensor1",
             "name": "Environment",
             "state": "CONNECTED",
@@ -2265,17 +2274,20 @@ async def test_affected_entities_retain_registry_identities_after_setup(
                 name: {"value": 20} for name in ("temperature", "humidity", "light")
             },
             "batteryStatus": {"percentage": 90},
-        }
-    }
-    mock_coordinator.data["protect"]["nvrs"] = {
-        "nvr1": {
+        },
+    )
+    mock_coordinator.data = with_protect_device(
+        mock_coordinator.data,
+        "nvrs",
+        "nvr1",
+        {
             "id": "nvr1",
             "name": "NVR",
             "state": "CONNECTED",
             "storage_used_bytes": 1024**3,
             "storage_total_bytes": 2 * 1024**3,
-        }
-    }
+        },
+    )
     entry.runtime_data = SimpleNamespace(
         coordinator=mock_coordinator, mobility_coordinator=None, access_coordinator=None
     )

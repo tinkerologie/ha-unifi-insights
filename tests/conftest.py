@@ -25,7 +25,7 @@ from .fixtures.command_owners import (
     async_shutdown_owners,
     build_seeded_owners,
 )
-from .fixtures.facade_data import with_availability
+from .fixtures.facade_data import facade_data
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
@@ -355,45 +355,18 @@ def mock_api_key_auth() -> Generator[MagicMock]:
 
 @pytest.fixture
 def mock_coordinator() -> MagicMock:
-    """Return a mocked UniFi Insights coordinator."""
+    """Return a mocked UniFi Insights coordinator with a frozen facade snapshot."""
     coordinator = MagicMock()
     coordinator.last_update_success = True
     coordinator.available = True
     coordinator.network_client = _create_mock_network_client()
     coordinator.protect_client = _create_mock_protect_client()
     coordinator.innerspace_client = None
-    coordinator.data = {
-        "sites": {"default": {"id": "default", "name": "Default"}},
-        "devices": {},
-        "clients": {},
-        "stats": {},
-        "network_info": {},
-        "vouchers": {},
-        "protect": {
-            "cameras": {},
-            "lights": {},
-            "sensors": {},
-            "nvrs": {},
-            "viewers": {},
-            "chimes": {},
-            "liveviews": {},
-            "protect_info": {},
-            "events": {},
-        },
-        "innerspace": {
-            "project": None,
-            "floor_plans": {},
-            "access_points": {},
-            "switches": {},
-            "placed_devices": {},
-            "inventory": {},
-            "devices": {},
-            "correlations": {},
-            "last_update": None,
-        },
-        "last_update": None,
-    }
-    coordinator.data = with_availability(coordinator.data)
+    coordinator.data = facade_data(
+        sites={"default": {"id": "default", "name": "Default"}},
+        site_ids=("default",),
+        last_update=None,
+    )
     coordinator.async_refresh = AsyncMock()
     coordinator.async_request_refresh = AsyncMock()
     return coordinator
