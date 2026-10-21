@@ -301,8 +301,8 @@ The integration supports three connection modes:
 
 All base classes live in `entity.py` (`UnifiAccessEntity`, `UnifiInnerSpaceEntity`, `UnifiMobilityRouterEntity`, `UnifiCarrierFabricEntity` and `UnifiSiteEntity` beside the two below):
 
-- **`UnifiInsightsEntity`** — Network devices; availability gated on `coordinator.device_available` and `serviceable` / `is_device_serviceable(device_data)`; `is_device_online` remains the strict connectivity check
-- **`UnifiProtectEntity`** — Protect devices; availability gated on `coordinator.protect_available` and `state == "CONNECTED"`
+- **`UnifiInsightsEntity`** — Network devices; availability gated on the snapshot's captured device availability (`owner_available(coordinator.data, "device")`) and `serviceable` / `is_device_serviceable(device_data)`; `is_device_online` remains the strict connectivity check
+- **`UnifiProtectEntity`** — Protect devices; availability gated on the snapshot's captured Protect availability (`owner_available(coordinator.data, "protect")`) and `state == "CONNECTED"`
 
 ## Home Assistant Patterns (2026.10+ Standards)
 
@@ -367,7 +367,7 @@ See `.github/instructions/repairs.instructions.md` for comprehensive patterns.
 
 **Entity availability:**
 
-- Gate availability on both coordinator health (`device_available` / `protect_available` / `last_update_success`) and service eligibility (`serviceable` / `is_device_serviceable` for Network devices, `state == "CONNECTED"` for Protect). `is_device_online` remains the strict Network connectivity check
+- Gate availability on both coordinator health, read from the snapshot (`owner_available` / `site_section_available` in `data_transforms.py`, plus `last_update_success`), and service eligibility (`serviceable` / `is_device_serviceable` for Network devices, `state == "CONNECTED"` for Protect). `is_device_online` remains the strict Network connectivity check
 - Never raise exceptions from `@property` methods; return `None` when value is unknown
 
 **Diagnostics (`diagnostics.py`):**
