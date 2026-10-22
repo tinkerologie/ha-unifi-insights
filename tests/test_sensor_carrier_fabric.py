@@ -890,6 +890,29 @@ async def test_subscriber_devices_link_to_the_organisation_device(hass, carrier_
     ]
 
 
+@pytest.mark.parametrize("unique_id", [None, ""])
+async def test_organisation_device_falls_back_to_the_entry_id(
+    hass, carrier_entry, unique_id
+):
+    """An entry without a unique ID keys its organisation device by entry ID."""
+    hass.config_entries.async_update_entry(
+        carrier_entry, unique_id=unique_id, options={CONF_TRACK_SUBSCRIBERS: True}
+    )
+
+    added: list = []
+    await async_setup_entry(hass, carrier_entry, added.extend)
+    _register_devices(hass, carrier_entry, added)
+
+    org_device = get_device_by_identifier(
+        dr.async_get(hass), (DOMAIN, carrier_entry.entry_id), carrier_entry.entry_id
+    )
+    assert org_device is not None
+    assert org_device.identifiers == {(DOMAIN, carrier_entry.entry_id)}
+    assert _subscriber_device(hass, carrier_entry, "sub_1").via_device_id == (
+        org_device.id
+    )
+
+
 async def test_existing_devices_are_kept_and_not_duplicated(hass, carrier_entry):
     """Existing organisation and subscriber devices keep their IDs."""
     hass.config_entries.async_update_entry(

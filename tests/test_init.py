@@ -848,6 +848,31 @@ async def test_remove_config_entry_device_of_a_deleted_site_without_protect_link
 
 
 @pytest.mark.parametrize(
+    ("unique_id", "entry_id", "identifier"),
+    [
+        ("console_mac", "entry-1", "console_mac"),
+        ("console-mac", "entry_1", "entry_1"),
+    ],
+)
+async def test_remove_config_entry_device_refuses_the_console_of_a_deleted_site(
+    hass: HomeAssistant,
+    unique_id: str,
+    entry_id: str,
+    identifier: str,
+) -> None:
+    """A console id shaped like ``{site}_{device}`` is not a deleted site's (#394)."""
+    entry = _entry_with_sites({"default": "Default"}, ["default"])
+    entry.unique_id = unique_id
+    entry.entry_id = entry_id
+    entry.runtime_data.mobility_coordinator.last_update_success = False
+
+    assert (
+        await async_remove_config_entry_device(hass, entry, _device_entry(identifier))
+        is False
+    )
+
+
+@pytest.mark.parametrize(
     ("available", "last_update_success"),
     [({}, True), ({"default": "Default"}, False)],
     ids=["no-site-listed", "refresh-failed"],
