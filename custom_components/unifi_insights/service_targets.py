@@ -990,18 +990,26 @@ def _select_protect_entry(
     secondary_resource_id: str | None = None,
     console_id: str | None = None,
 ) -> tuple[UnifiInsightsConfigEntry, str | None]:
-    """Return the Protect console owning a resource, and the native resource ID."""
+    """
+    Return the Protect console owning a resource, and the native resource ID.
+
+    Without a resource, ``console_id`` alone picks the console. With a
+    resource, ``console_id`` only chooses among the consoles that own it: a
+    console that does not own the resource is refused.
+    """
     protect_entries = _protect_entries(hass)
     if not protect_entries:
         msg = "No UniFi Protect coordinator found"
         raise _invalid(msg, "no_protect_coordinator")
 
-    # 0. An explicit console always wins. It skips the ownership checks below.
-    if console_id:
-        entry = _select_console(protect_entries, console_id, "UniFi Protect console")
-        return entry, None
-
+    selected = (
+        _select_console(protect_entries, console_id, "UniFi Protect console")
+        if console_id
+        else None
+    )
     if resource_type is None or resource_id is None:
+        if selected is not None:
+            return selected, None
         if len(protect_entries) > 1:
             known = _console_titles(protect_entries)
             msg = (
@@ -1030,6 +1038,24 @@ def _select_protect_entry(
             " configured UniFi Protect console"
         )
         raise _invalid(msg, "protect_resource_not_found", **placeholders)
+
+    if selected is not None:
+        if selected not in matching_entries or resolved_reg_entry not in (
+            None,
+            selected,
+        ):
+            msg = (
+                f"{resource_type.capitalize()} '{resource_id}' does not belong to"
+                f" the UniFi Protect console '{selected.title}'"
+            )
+            raise _invalid(
+                msg,
+                "protect_resource_not_on_console",
+                resource_type=resource_type,
+                resource_id=resource_id,
+                console=selected.title,
+            )
+        matching_entries = [selected]
 
     if resolved_reg_entry is not None and resolved_reg_entry not in matching_entries:
         msg = (

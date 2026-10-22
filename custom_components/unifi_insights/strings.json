@@ -1277,6 +1277,9 @@
     "protect_resource_other_console": {
       "message": "UniFi Protect {resource_type} {resource_id} belongs to a different console than the target console."
     },
+    "protect_resource_not_on_console": {
+      "message": "UniFi Protect {resource_type} {resource_id} does not belong to the console {console}."
+    },
     "protect_resource_ambiguous": {
       "message": "Multiple UniFi Protect consoles contain {resource_type} {resource_id}; the target is ambiguous."
     },
