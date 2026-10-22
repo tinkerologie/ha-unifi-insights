@@ -298,7 +298,12 @@ async def test_carrier_fabric_subscriber_sensors_opt_in(
     # Device info checks
     dev_info1 = s1_state.device_info
     assert dev_info1["identifiers"] == {(DOMAIN, "carrier_subscriber_sub_1")}
-    assert dev_info1["via_device"] == (DOMAIN, "carrier_org_test123")
+    org_device = get_device_by_identifier(
+        dr.async_get(hass), (DOMAIN, "carrier_org_test123"), carrier_entry.entry_id
+    )
+    assert org_device is not None
+    assert dev_info1["via_device_id"] == org_device.id
+    assert "via_device" not in dev_info1
     assert dev_info1["name"] == "Alice Resident"
 
     s1_plan = plans_by_sub["sub_1"]
@@ -747,14 +752,14 @@ async def test_carrier_fabric_sensor_defensive_fallbacks(
 
     # Test subscriber state and plan sensors when subscriber is absent
     ghost_sub_state = UnifiCarrierFabricSubscriberStateSensor(
-        mock_carrier_coordinator, carrier_entry, "ghost_sub"
+        mock_carrier_coordinator, carrier_entry, "ghost_sub", "org-device"
     )
     assert ghost_sub_state.available is False
     assert ghost_sub_state.native_value is None
     assert ghost_sub_state.extra_state_attributes == {}
 
     ghost_sub_plan = UnifiCarrierFabricSubscriberPlanSensor(
-        mock_carrier_coordinator, carrier_entry, "ghost_sub"
+        mock_carrier_coordinator, carrier_entry, "ghost_sub", "org-device"
     )
     assert ghost_sub_plan.available is False
     assert ghost_sub_plan.native_value is None
@@ -782,18 +787,18 @@ async def test_carrier_fabric_sensor_defensive_fallbacks(
         "status": "active",
     }
     snake_state = UnifiCarrierFabricSubscriberStateSensor(
-        mock_carrier_coordinator, carrier_entry, "sub_snake"
+        mock_carrier_coordinator, carrier_entry, "sub_snake", "org-device"
     )
     assert snake_state.extra_state_attributes == {}
 
     snake_unassigned = UnifiCarrierFabricSubscriberPlanSensor(
-        mock_carrier_coordinator, carrier_entry, "sub_snake"
+        mock_carrier_coordinator, carrier_entry, "sub_snake", "org-device"
     )
     assert snake_unassigned.native_value is None
     assert snake_unassigned.extra_state_attributes == {}
 
     snake_plan = UnifiCarrierFabricSubscriberPlanSensor(
-        mock_carrier_coordinator, carrier_entry, "sub_snake_plan"
+        mock_carrier_coordinator, carrier_entry, "sub_snake_plan", "org-device"
     )
     assert snake_plan.native_value == "Snake Plan"
     assert snake_plan.extra_state_attributes == {}
@@ -822,3 +827,142 @@ async def test_carrier_fabric_sensor_defensive_fallbacks(
     mock_carrier_coordinator.data["subscribers"] = None
     assert snake_state.available is False
     assert snake_state._subscriber_data is None
+
+
+async def _setup_and_register(hass, entry) -> list:
+    """Set up the sensors and register their devices as the platform would."""
+    added: list = []
+    await async_setup_entry(hass, entry, added.extend)
+    _register_devices(hass, entry, added)
+    return added
+
+
+def _register_devices(hass, entry, entities) -> None:
+    """Create or update each entity's device in the entry, like entity setup."""
+    dev_reg = dr.async_get(hass)
+    for entity in entities:
+        dev_reg.async_get_or_create(
+            config_entry_id=entry.entry_id, **entity.device_info
+        )
+
+
+def _subscriber_device(hass, entry, sub_id: str) -> dr.DeviceEntry:
+    """Return a subscriber's device in the entry."""
+    device = get_device_by_identifier(
+        dr.async_get(hass), (DOMAIN, f"carrier_subscriber_{sub_id}"), entry.entry_id
+    )
+    assert device is not None
+    return device
+
+
+def _org_devices(hass, entry) -> list[dr.DeviceEntry]:
+    """Return the entry's devices that carry the organisation identifier."""
+    return [
+        device
+        for device in dr.async_entries_for_config_entry(
+            dr.async_get(hass), entry.entry_id
+        )
+        if (DOMAIN, "carrier_org_test123") in device.identifiers
+    ]
+
+
+async def test_subscriber_devices_link_to_the_organisation_device(hass, carrier_entry):
+    """Setup registers the organisation device before any subscriber links to it."""
+    hass.config_entries.async_update_entry(
+        carrier_entry, options={CONF_TRACK_SUBSCRIBERS: True}
+    )
+    assert _org_devices(hass, carrier_entry) == []
+
+    added: list = []
+    await async_setup_entry(hass, carrier_entry, added.extend)
+
+    # Registered by setup itself, before any entity's device is created.
+    (org_device,) = _org_devices(hass, carrier_entry)
+    assert org_device.name == "UniFi Carrier Fabric"
+    assert org_device.entry_type is dr.DeviceEntryType.SERVICE
+
+    _register_devices(hass, carrier_entry, added)
+    for sub_id in ("sub_1", "sub_2", "sub_3_12345678"):
+        device = _subscriber_device(hass, carrier_entry, sub_id)
+        assert device.via_device_id == org_device.id
+    assert [device.id for device in _org_devices(hass, carrier_entry)] == [
+        org_device.id
+    ]
+
+
+async def test_existing_devices_are_kept_and_not_duplicated(hass, carrier_entry):
+    """Existing organisation and subscriber devices keep their IDs."""
+    hass.config_entries.async_update_entry(
+        carrier_entry, options={CONF_TRACK_SUBSCRIBERS: True}
+    )
+    dev_reg = dr.async_get(hass)
+    org = dev_reg.async_get_or_create(
+        config_entry_id=carrier_entry.entry_id,
+        identifiers={(DOMAIN, "carrier_org_test123")},
+    )
+    sub = dev_reg.async_get_or_create(
+        config_entry_id=carrier_entry.entry_id,
+        identifiers={(DOMAIN, "carrier_subscriber_sub_1")},
+    )
+    before = len(dr.async_entries_for_config_entry(dev_reg, carrier_entry.entry_id))
+
+    await _setup_and_register(hass, carrier_entry)
+    # A later coordinator update finds nothing new and adds no device.
+    for listener in carrier_entry.runtime_data.coordinator._listeners:
+        listener()
+
+    assert [device.id for device in _org_devices(hass, carrier_entry)] == [org.id]
+    sub_device = _subscriber_device(hass, carrier_entry, "sub_1")
+    assert sub_device.id == sub.id
+    assert sub_device.via_device_id == org.id
+    # Only the two other subscribers are new.
+    entries = dr.async_entries_for_config_entry(dev_reg, carrier_entry.entry_id)
+    assert len(entries) == before + 2
+
+
+async def test_subscribers_link_to_their_own_entrys_organisation_device(
+    hass, carrier_entry
+):
+    """An organisation device with the same identifier in another entry is ignored."""
+    hass.config_entries.async_update_entry(
+        carrier_entry, options={CONF_TRACK_SUBSCRIBERS: True}
+    )
+    other_entry = MockConfigEntry(domain=DOMAIN, title="Other organisation")
+    other_entry.add_to_hass(hass)
+    dev_reg = dr.async_get(hass)
+    foreign = dev_reg.async_get_or_create(
+        config_entry_id=other_entry.entry_id,
+        identifiers={(DOMAIN, "carrier_org_test123")},
+    )
+
+    await _setup_and_register(hass, carrier_entry)
+
+    (org_device,) = _org_devices(hass, carrier_entry)
+    assert org_device.id != foreign.id
+    sub_device = _subscriber_device(hass, carrier_entry, "sub_1")
+    assert sub_device.via_device_id == org_device.id
+    assert dev_reg.async_get(foreign.id) == foreign
+
+
+async def test_subscriber_found_later_links_to_the_organisation_device(
+    hass, carrier_entry, mock_carrier_coordinator
+):
+    """A subscriber added by a later update links to the same parent."""
+    hass.config_entries.async_update_entry(
+        carrier_entry, options={CONF_TRACK_SUBSCRIBERS: True}
+    )
+
+    def add(entities) -> None:
+        _register_devices(hass, carrier_entry, entities)
+
+    await async_setup_entry(hass, carrier_entry, add)
+    mock_carrier_coordinator.data["subscribers"]["sub_4"] = {
+        "id": "sub_4",
+        "name": "Late Subscriber",
+    }
+    for listener in mock_carrier_coordinator._listeners:
+        listener()
+
+    (org_device,) = _org_devices(hass, carrier_entry)
+    sub_device = _subscriber_device(hass, carrier_entry, "sub_4")
+    assert sub_device.via_device_id == org_device.id

@@ -110,6 +110,7 @@ from .entity import (
     UnifiProtectEntity,
     UnifiSiteEntity,
     async_add_mobility_router_entities,
+    carrier_organisation_device_info,
     device_has_feature,
     first_not_none,
     get_field,
@@ -3509,9 +3510,10 @@ class UnifiCarrierFabricSubscriberStateSensor(
         coordinator: UnifiInsightsCarrierFabricCoordinator,
         entry: CarrierFabricConfigEntry,
         subscriber_id: str,
+        organisation_device_id: str,
     ) -> None:
         """Initialize the subscriber state sensor."""
-        super().__init__(coordinator, entry, subscriber_id)
+        super().__init__(coordinator, entry, subscriber_id, organisation_device_id)
         self._attr_options = list(SUBSCRIBER_STATES)
         self._attr_unique_id = f"carrier_subscriber_{subscriber_id}_state"
 
@@ -3550,9 +3552,10 @@ class UnifiCarrierFabricSubscriberPlanSensor(
         coordinator: UnifiInsightsCarrierFabricCoordinator,
         entry: CarrierFabricConfigEntry,
         subscriber_id: str,
+        organisation_device_id: str,
     ) -> None:
         """Initialize the subscriber plan sensor."""
-        super().__init__(coordinator, entry, subscriber_id)
+        super().__init__(coordinator, entry, subscriber_id, organisation_device_id)
         self._attr_unique_id = f"carrier_subscriber_{subscriber_id}_service_plan"
 
     @property
@@ -3619,8 +3622,17 @@ async def async_setup_carrier_fabric_sensors(
 
     known_keys: set[str] = set()
     initial_entities: list[SensorEntity] = []
+    # Subscriber devices link to the organisation device by its registry ID,
+    # so it is registered in this entry before any subscriber is created.
+    organisation_device_id = (
+        dr.async_get(hass)
+        .async_get_or_create(
+            config_entry_id=config_entry.entry_id,
+            **carrier_organisation_device_info(config_entry),
+        )
+        .id
+    )
 
-    # Ensure organization device is registered first by creating aggregate sensors
     for desc in AGGREGATE_SENSOR_DESCRIPTIONS:
         uid = f"{config_entry.unique_id}_{desc.key}"
         known_keys.add(uid)
@@ -3651,7 +3663,10 @@ async def async_setup_carrier_fabric_sensors(
                     known_keys.add(state_uid)
                     new_entities.append(
                         UnifiCarrierFabricSubscriberStateSensor(
-                            coordinator, config_entry, str(sub_id)
+                            coordinator,
+                            config_entry,
+                            str(sub_id),
+                            organisation_device_id,
                         )
                     )
 
@@ -3660,7 +3675,10 @@ async def async_setup_carrier_fabric_sensors(
                     known_keys.add(plan_uid)
                     new_entities.append(
                         UnifiCarrierFabricSubscriberPlanSensor(
-                            coordinator, config_entry, str(sub_id)
+                            coordinator,
+                            config_entry,
+                            str(sub_id),
+                            organisation_device_id,
                         )
                     )
 

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
@@ -724,6 +724,17 @@ def async_discover_access_entities(
 # Base entity classes for UniFi Carrier Fabric integration.
 
 
+def carrier_organisation_device_info(entry: CarrierFabricConfigEntry) -> DeviceInfo:
+    """Return the service device that groups an organisation's entities."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, entry.unique_id or entry.entry_id)},
+        name="UniFi Carrier Fabric",
+        manufacturer="Ubiquiti",
+        model="Carrier Fabric",
+        entry_type=DeviceEntryType.SERVICE,
+    )
+
+
 class UnifiCarrierFabricEntity(
     CoordinatorEntity["UnifiInsightsCarrierFabricCoordinator"]
 ):
@@ -744,13 +755,7 @@ class UnifiCarrierFabricEntity(
     @property
     def device_info(self) -> DeviceInfo:
         """Return organisation device info."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry_unique_id)},
-            name="UniFi Carrier Fabric",
-            manufacturer="Ubiquiti",
-            model="Carrier Fabric",
-            entry_type=DeviceEntryType.SERVICE,
-        )
+        return carrier_organisation_device_info(self._entry)
 
 
 class UnifiCarrierFabricSubscriberEntity(UnifiCarrierFabricEntity):
@@ -761,10 +766,12 @@ class UnifiCarrierFabricSubscriberEntity(UnifiCarrierFabricEntity):
         coordinator: UnifiInsightsCarrierFabricCoordinator,
         entry: CarrierFabricConfigEntry,
         subscriber_id: str,
+        organisation_device_id: str,
     ) -> None:
-        """Initialize the subscriber entity."""
+        """Initialize the subscriber entity under its organisation's device."""
         super().__init__(coordinator, entry)
         self._subscriber_id = subscriber_id
+        self._organisation_device_id = organisation_device_id
 
     @property
     def _subscriber_data(self) -> dict[str, Any] | None:
@@ -791,15 +798,14 @@ class UnifiCarrierFabricSubscriberEntity(UnifiCarrierFabricEntity):
             or sub.get("subscriberNumber")
             or f"Subscriber {self._subscriber_id[:8]}"
         )
-        info: dict[str, Any] = {
-            "identifiers": {(DOMAIN, f"carrier_subscriber_{self._subscriber_id}")},
-            "via_device": (DOMAIN, self._entry_unique_id),
-            "name": str(name),
-            "manufacturer": "Ubiquiti",
-            "model": "Subscriber",
-            "entry_type": DeviceEntryType.SERVICE,
-        }
-        return cast("DeviceInfo", info)
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"carrier_subscriber_{self._subscriber_id}")},
+            via_device_id=self._organisation_device_id,
+            name=str(name),
+            manufacturer="Ubiquiti",
+            model="Subscriber",
+            entry_type=DeviceEntryType.SERVICE,
+        )
 
 
 # --- InnerSpace --------------------------------------------------------------
