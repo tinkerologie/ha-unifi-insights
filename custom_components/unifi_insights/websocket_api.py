@@ -27,7 +27,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util.hass_dict import HassKey
 
 from .console_identity import async_get_device_entry, resolve_console_namespace
-from .const import DOMAIN
+from .const import DOMAIN, TIMELINE_MAX_HOURS
 from .dashboard_snapshots import (
     as_dict,
     build_internet_activity_snapshot,
@@ -914,7 +914,7 @@ _TIMELINE_OPTIONS_SCHEMA: dict[str | vol.Marker, Any] = {
         vol.Coerce(int), vol.Range(min=1, max=50)
     ),
     vol.Optional("hours", default=6): vol.All(
-        vol.Coerce(int), vol.Range(min=1, max=24)
+        vol.Coerce(int), vol.Range(min=1, max=TIMELINE_MAX_HOURS)
     ),
     vol.Optional("categories", default=["security"]): [str],
 }

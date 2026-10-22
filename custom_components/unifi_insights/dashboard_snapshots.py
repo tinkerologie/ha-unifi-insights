@@ -22,7 +22,7 @@ from .console_identity import (
     build_site_unique_id,
     owned_site_entity_unique_id,
 )
-from .const import DOMAIN
+from .const import DOMAIN, TIMELINE_MAX_HOURS
 from .data_transforms import (
     client_connection_type,
     network_device,
@@ -447,7 +447,7 @@ def build_timeline_snapshot(
     """Build a compact recent-activity timeline from cached Protect events."""
     categories = categories or ["security"]
     max_items = max(1, min(MAX_ITEMS, max_items))
-    hours = max(1, min(24, hours))
+    hours = max(1, min(TIMELINE_MAX_HOURS, hours))
 
     protect = as_dict(data.get("protect"))
     events = as_dict(protect.get("events"))

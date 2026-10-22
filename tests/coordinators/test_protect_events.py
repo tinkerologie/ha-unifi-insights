@@ -6,8 +6,7 @@ feeds a list of operations into the reconciler, checks after each one that
 its inputs were left untouched (deep copies before, equality after), and
 returns the final state, cache and every step. Times are plain numbers: `at`
 turns ``t`` into an `Instant` whose monotonic clock is ``t`` and whose wall
-clock is ``T0 + t`` seconds. Tests of a behaviour kept on purpose although
-it is questionable have ``quirk`` in their id.
+clock is ``T0 + t`` seconds.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from __future__ import annotations
 import ast
 import copy
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -23,6 +22,8 @@ from typing import TYPE_CHECKING, Any, Literal
 import pytest
 
 from custom_components.unifi_insights.coordinators.protect_events import (
+    EVENT_RETENTION,
+    EVENT_SWEEP_INTERVAL,
     FAMILIES,
     MAX_CONSECUTIVE_EMPTY_FETCHES,
     MAX_CONSECUTIVE_MISSING_POLLS,
@@ -54,6 +55,9 @@ from custom_components.unifi_insights.coordinators.protect_events import (
     initial_state,
     reconcile,
 )
+from custom_components.unifi_insights.dashboard_snapshots import (
+    build_timeline_snapshot,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -67,6 +71,8 @@ if TYPE_CHECKING:
 
 T0 = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
 TIMEOUT = STALE_EVENT_TIMEOUT.total_seconds()
+RETENTION = EVENT_RETENTION.total_seconds()
+SWEEP = EVENT_SWEEP_INTERVAL.total_seconds()
 ACTIVATED_AT = 1_760_000_000_000
 
 
@@ -1758,12 +1764,133 @@ def test_event_is_stored_and_published_even_unapplied(fields: dict[str, Any]) ->
     assert result.effects(PublishUpdate) == [PublishUpdate(mark_success=False)]
 
 
-def test_event_store_keeps_every_event_quirk() -> None:
-    """The store is unbounded; each event copies only its type's map."""
+def test_event_frame_copies_only_its_type_map() -> None:
+    """A new event replaces its type's map and shares every other type's."""
     first = run(cache(), [(0.0, event("ring", "e1")), (1.0, event("motion", "m1"))])
     result = run(first.cache, [(2.0, event("ring", "e2"))], state=first.state)
     assert set(result.cache["events"]["ring"]) == {"e1", "e2"}
+    assert result.cache["events"] is not first.cache["events"]
     assert result.cache["events"]["motion"] is first.cache["events"]["motion"]
+    assert first.cache["events"]["ring"].keys() == {"e1"}
+
+
+def test_changed_event_frame_replaces_the_stored_event() -> None:
+    """A later frame of a stored event replaces it in a new map."""
+    first = run(cache(), [(0.0, event("motion", "m1", start=1))])
+    result = run(first.cache, [(1.0, event("motion", "m1", end=2))], state=first.state)
+    assert result.cache["events"]["motion"]["m1"] == {
+        "type": "motion",
+        "id": "m1",
+        "end": 2,
+    }
+    assert result.cache["events"]["motion"] is not first.cache["events"]["motion"]
+
+
+def test_repeated_event_frame_keeps_the_cache() -> None:
+    """A frame equal to the stored event changes nothing but still publishes."""
+    first = run(cache(), [(0.0, event("motion", "m1", start=1))])
+    result = run(
+        first.cache, [(1.0, event("motion", "m1", start=1))], state=first.state
+    )
+    assert result.cache is first.cache
+    assert result.effects(PublishUpdate) == [PublishUpdate(mark_success=False)]
+
+
+def test_event_store_drops_events_past_the_retention() -> None:
+    """An event first seen more than the retention ago is dropped by a sweep."""
+    result = run(
+        cache(),
+        [
+            # Sweeps the empty store, then stores m1.
+            (0.0, event("motion", "m1")),
+            # Sweeps and stamps m1, then stores r1 (stamped by the next sweep).
+            (SWEEP, event("ring", "r1")),
+            # m1 is exactly the retention old: kept.
+            (SWEEP + RETENTION, event("ring", "r2")),
+        ],
+    )
+    assert set(result.cache["events"]) == {"motion", "ring"}
+    kept = result.cache
+    result = run(
+        kept,
+        [(SWEEP + RETENTION + SWEEP, event("ring", "r3"))],
+        state=result.state,
+    )
+    # m1 is past the retention: dropped, and its empty type with it.
+    assert set(result.cache["events"]) == {"ring"}
+    assert set(result.cache["events"]["ring"]) == {"r1", "r2", "r3"}
+    assert set(result.state.event_seen) == {"ring"}
+    assert kept["events"]["motion"].keys() == {"m1"}
+
+
+def test_sweep_copies_only_the_maps_that_lose_events() -> None:
+    """A type that loses events gets a new map; the others keep theirs."""
+    first = run(
+        cache(),
+        [
+            (0.0, event("ring", "r1")),
+            (0.0, event("motion", "m1")),
+            (SWEEP, event("motion", "m2")),
+        ],
+    )
+    result = run(
+        first.cache,
+        [(SWEEP + RETENTION + 1, event("access", "a1"))],
+        state=first.state,
+    )
+    # r1 and m1 were stamped at SWEEP and are past the retention; m2 was
+    # stored after that sweep and stamped by this one.
+    assert set(result.cache["events"]) == {"motion", "access"}
+    assert result.cache["events"]["motion"].keys() == {"m2"}
+    assert result.cache["events"]["motion"] is not first.cache["events"]["motion"]
+
+
+def test_sweep_that_drops_nothing_keeps_the_maps() -> None:
+    """A due sweep that drops nothing shares every type's map."""
+    first = run(cache(), [(0.0, event("ring", "r1")), (1.0, event("motion", "m1"))])
+    result = run(first.cache, [(SWEEP, event("motion", "m1"))], state=first.state)
+    assert result.cache is first.cache
+    assert result.state.events_swept_at == at(SWEEP).wall
+    assert set(result.state.event_seen) == {"ring", "motion"}
+
+
+@pytest.mark.parametrize(
+    ("later", "sweeps"),
+    [
+        pytest.param(SWEEP - 1, False, id="within-the-interval"),
+        pytest.param(SWEEP, True, id="interval-elapsed"),
+        pytest.param(-1.0, True, id="wall-clock-went-back"),
+    ],
+)
+def test_event_store_sweeps_at_most_every_interval(
+    later: float, *, sweeps: bool
+) -> None:
+    """Event frames sweep once per interval, or when the wall clock went back."""
+    result = run(cache(), [(0.0, event("ring", "r1")), (later, event("ring", "r2"))])
+    assert result.state.events_swept_at == at(later if sweeps else 0.0).wall
+    assert ("ring" in result.state.event_seen) is sweeps
+
+
+def test_timeline_oldest_event_survives_the_sweep() -> None:
+    """The oldest event the 24-hour timeline shows is kept by the sweep."""
+    now = datetime.now(tz=UTC)
+    received = now - timedelta(hours=24) + timedelta(minutes=1)
+    oldest = event("motion", "oldest", start=received.timestamp() * 1000)
+    # Stamped at the instant it arrived, the earliest any sweep can stamp it.
+    state = replace(
+        initial_state(),
+        event_seen={"motion": {"oldest": received}},
+        events_swept_at=received,
+    )
+    seed = cache(events={"motion": {"oldest": oldest.fields}})
+    newest = event("motion", "newest", start=now.timestamp() * 1000)
+    step = reconcile(state, seed, newest, Instant(monotonic=0.0, wall=now))
+    assert step.state.events_swept_at == now
+    timeline = build_timeline_snapshot(
+        {"protect": step.cache}, entry_id="entry", site_id="site", hours=24
+    )
+    assert [item["id"] for item in timeline["items"]] == ["evt:newest", "evt:oldest"]
+    assert timeline["recording_since"] == timeline["items"][-1]["timestamp"]
 
 
 def test_light_motion_event_uses_its_own_latch() -> None:

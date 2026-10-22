@@ -194,6 +194,10 @@ SCAN_INTERVAL_PROTECT = timedelta(seconds=30)
 # Three polls is about 90 seconds.
 MAX_CONSECUTIVE_MISSING_POLLS: Final = 3
 
+# The longest window the event timeline card can show. The Protect event store
+# keeps every event at least this long (`coordinators/protect_events.py`).
+TIMELINE_MAX_HOURS: Final = 24
+
 
 UNIFI_API_HEADERS = {"Accept": "application/json", "Content-Type": "application/json"}
 
