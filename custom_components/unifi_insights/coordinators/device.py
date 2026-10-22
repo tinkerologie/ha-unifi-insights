@@ -1666,12 +1666,13 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             )
 
             # 1. Eligibility check
-            is_eligible = (
+            source_trustworthy = (
                 previous_source is not None
                 and previous_source == current_source
                 and not (len(current_site_devs) == 0 and len(previous_tracked) > 0)
-                and not (missing and legacy_macs == LEGACY_UNVERIFIED)
             )
+            legacy_unverified = bool(missing) and legacy_macs == LEGACY_UNVERIFIED
+            is_eligible = source_trustworthy and not legacy_unverified
 
             new_site_sources[site_id] = current_source
 
@@ -1691,9 +1692,16 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                     new_tracked_devices[site_id] = dict(current_tracked)
                 else:
                     new_tracked_devices[site_id] = previous_tracked
-                new_absence_counts[site_id] = dict(
-                    self._site_absence_counts.get(site_id, {})
-                )
+                kept_counts = dict(self._site_absence_counts.get(site_id, {}))
+                if source_trustworthy:
+                    # Only the legacy cross-check is unverifiable: the v1 poll
+                    # itself is good, so a device it lists (by ID or MAC) is
+                    # back and its count starts over. Missing devices keep
+                    # theirs until the legacy list can confirm them.
+                    for dev_id in list(kept_counts):
+                        if dev_id not in missing:
+                            kept_counts.pop(dev_id)
+                new_absence_counts[site_id] = kept_counts
                 new_site_aliases[site_id] = site_aliases
                 continue
 

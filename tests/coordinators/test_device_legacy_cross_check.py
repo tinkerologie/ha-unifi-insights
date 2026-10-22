@@ -348,3 +348,47 @@ async def test_multi_site_cross_check_is_per_site(hass: HomeAssistant) -> None:
         assert owners.device._site_absence_counts[SITE_ID] == {}
     finally:
         await async_shutdown_owners(owners)
+
+
+async def test_unverified_legacy_list_restarts_the_count_of_a_device_that_is_back(
+    hass: HomeAssistant,
+) -> None:
+    """While only the legacy check is unverifiable, a device v1 lists again restarts."""
+    other_id = "switch2_v1_id"
+    other_mac = "aa:aa:aa:aa:aa:03"
+    other_v1 = {**SWITCH_V1, "id": other_id, "mac": other_mac, "name": "Switch 2"}
+    other_legacy = {**SWITCH_LEGACY, "_id": "switch2_legacy_id", "mac": other_mac}
+    owners = build_seeded_owners(hass)
+    try:
+        devices = owners.network_client.devices
+        devices.get_all.return_value = _v1(SWITCH_V1, other_v1)
+        devices.get_legacy_site_devices.return_value = _legacy(
+            SWITCH_LEGACY, other_legacy
+        )
+        await owners.config.async_refresh()
+        await owners.device.async_refresh()
+        await owners.device.async_refresh()
+        _register(owners, SITE_ID, SWITCH_ID, SWITCH_MAC)
+        _register(owners, SITE_ID, other_id, other_mac)
+
+        # Both switches drop out of v1 and legacy: both counts advance.
+        devices.get_all.return_value = _v1()
+        devices.get_legacy_site_devices.return_value = _legacy()
+        await owners.device.async_refresh()
+        assert _count(owners, SITE_ID, SWITCH_ID) == 1
+        assert _count(owners, SITE_ID, other_id) == 1
+
+        # Switch 2 is back in v1, the legacy check fails: switch 2's count
+        # restarts, the still-missing switch keeps its count.
+        devices.get_all.return_value = _v1(other_v1)
+        devices.get_legacy_site_devices.side_effect = UniFiResponseError(
+            "server error", status_code=500
+        )
+        await owners.device.async_refresh()
+        assert owners.device.last_update_success
+        assert _count(owners, SITE_ID, other_id) is None
+        assert _count(owners, SITE_ID, SWITCH_ID) == 1
+        assert _registered(owners, SITE_ID, SWITCH_ID)
+        assert _registered(owners, SITE_ID, other_id)
+    finally:
+        await async_shutdown_owners(owners)
