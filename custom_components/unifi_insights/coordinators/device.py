@@ -74,6 +74,13 @@ _LOGGER = logging.getLogger(__name__)
 
 WAKE_BROADCAST_TIMEOUT_SECONDS: Final = 5
 
+# A site's legacy device MACs from the same poll, for the stale-device
+# cross-check: the normalized MACs, LEGACY_UNVERIFIED when the legacy call
+# failed or returned no devices, or None when the site has no classic name
+# and so no legacy view at all.
+LEGACY_UNVERIFIED: Final = "unverified"
+type LegacyMacs = frozenset[str] | Literal["unverified"] | None
+
 
 class SiteProcessResult(NamedTuple):
     """Result of processing a single site's devices and clients."""
@@ -83,6 +90,7 @@ class SiteProcessResult(NamedTuple):
     clients: dict[str, dict[str, Any]]
     source: Literal["v1", "legacy"]
     device_macs: dict[str, str]
+    legacy_macs: LegacyMacs = None
 
 
 def get_device_port(
@@ -1220,6 +1228,17 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
         else:
             self._legacy_wan_failures.pop(site_id, None)
 
+        legacy_macs: LegacyMacs = None
+        if legacy_site_name is not None:
+            # An empty legacy answer next to a non-empty v1 one is not
+            # evidence that a device is gone, just as it is not a usable
+            # fallback list above.
+            legacy_macs = (
+                frozenset(legacy_devices_by_mac)
+                if legacy_devices_by_mac
+                else LEGACY_UNVERIFIED
+            )
+
         _LOGGER.debug(
             "Device coordinator: Site %s - Found %d devices and %d clients",
             site_id,
@@ -1275,6 +1294,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             clients=clients_dict,
             source=source,
             device_macs=device_macs,
+            legacy_macs=legacy_macs,
         )
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -1402,6 +1422,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
 
             site_sources: dict[str, str] = {}
             site_device_macs: dict[str, dict[str, str]] = {}
+            site_legacy_macs: dict[str, LegacyMacs] = {}
 
             # Put the results into the local section maps
             for site_id, (
@@ -1410,12 +1431,14 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 clients_dict,
                 source,
                 dev_macs,
+                legacy_macs,
             ), vpn in zip(site_ids, site_results, vpn_results, strict=True):
                 sections["devices"][site_id] = devices_dict
                 sections["stats"][site_id] = stats_dict
                 sections["clients"][site_id] = clients_dict
                 site_sources[site_id] = source
                 site_device_macs[site_id] = dev_macs
+                site_legacy_macs[site_id] = legacy_macs
                 connections = self._vpn_connections_or_previous(site_id, vpn)
                 if connections is None:
                     sections["vpn_connections"].pop(site_id, None)
@@ -1465,8 +1488,13 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 "last_update": datetime.now(tz=UTC),
             }
 
-            # Clean up stale devices (Gold requirement)
-            self._cleanup_stale_devices(site_sources, site_device_macs)
+            # Clean up stale devices (Gold requirement). The legacy
+            # cross-check reuses the legacy device list each site fetched in
+            # this refresh, so cleanup needs no request of its own and stays
+            # after the publish without an await.
+            self._cleanup_stale_devices(
+                site_sources, site_device_macs, site_legacy_macs
+            )
 
             _LOGGER.debug(
                 "Device coordinator: Update complete - %d sites processed",
@@ -1566,6 +1594,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
         self,
         site_sources: dict[str, str],
         site_device_macs: dict[str, dict[str, str]],
+        site_legacy_macs: Mapping[str, LegacyMacs] | None = None,
     ) -> None:
         """
         Remove stale network devices from the device registry (Gold requirement).
@@ -1582,6 +1611,13 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
         - MAC guard: an identifier missing by ID is retained without advancing absence
           counters if its normalized MAC is present in the current site snapshot under
           any ID (prevents purges when an identifier changes representation).
+        - Legacy cross-check (v1 polls only): a device the v1 list omits but the
+          same poll's legacy list still has (by normalized MAC) is held: its
+          counter neither advances nor resets, as on an ineligible poll. When a
+          counter would advance but the legacy list is unverified (the call
+          failed or returned no devices), the whole site is ineligible for that
+          poll. A site without a classic name has no legacy list to check, so
+          the v1 result alone decides.
         - Truly missing devices must be absent for MAX_CONSECUTIVE_MISSING_POLLS
           consecutive eligible polls before being detached via _remove_stale_device.
         - Reappearance resets the device's absence counter.
@@ -1615,12 +1651,28 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                     {mac: dev_id for dev_id, mac in current_tracked.items()}
                 )
 
+            current_site_macs = set(current_tracked.values())
+            missing = {
+                dev_id: dev_mac
+                for dev_id, dev_mac in previous_tracked.items()
+                if dev_id not in current_site_devs and dev_mac not in current_site_macs
+            }
+            # The legacy list only checks a v1 poll; on a fallback poll it is
+            # the device list itself.
+            legacy_macs = (
+                (site_legacy_macs or {}).get(site_id)
+                if current_source == "v1"
+                else None
+            )
+
             # 1. Eligibility check
-            is_eligible = (
+            source_trustworthy = (
                 previous_source is not None
                 and previous_source == current_source
                 and not (len(current_site_devs) == 0 and len(previous_tracked) > 0)
             )
+            legacy_unverified = bool(missing) and legacy_macs == LEGACY_UNVERIFIED
+            is_eligible = source_trustworthy and not legacy_unverified
 
             new_site_sources[site_id] = current_source
 
@@ -1628,31 +1680,48 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 _LOGGER.debug(
                     "Device coordinator: Site %s is not eligible for stale "
                     "device cleanup (source=%s, prev_source=%s, devices=%d, "
-                    "prev_tracked=%d); retaining tracking",
+                    "prev_tracked=%d, legacy_verified=%s); retaining tracking",
                     site_id,
                     current_source,
                     previous_source,
                     len(current_site_devs),
                     len(previous_tracked),
+                    legacy_macs != LEGACY_UNVERIFIED,
                 )
                 if previous_source is None:
                     new_tracked_devices[site_id] = dict(current_tracked)
+                elif source_trustworthy:
+                    # Only the legacy cross-check is unverifiable: the v1 poll
+                    # is good, so a device it reports for the first time is
+                    # tracked too; missing devices stay tracked until legacy
+                    # can confirm them.
+                    new_tracked_devices[site_id] = {
+                        **previous_tracked,
+                        **current_tracked,
+                    }
                 else:
                     new_tracked_devices[site_id] = previous_tracked
-                new_absence_counts[site_id] = dict(
-                    self._site_absence_counts.get(site_id, {})
-                )
+                kept_counts = dict(self._site_absence_counts.get(site_id, {}))
+                if source_trustworthy:
+                    # Only the legacy cross-check is unverifiable: the v1 poll
+                    # itself is good, so a device it lists (by ID or MAC) is
+                    # back and its count starts over. Missing devices keep
+                    # theirs until the legacy list can confirm them.
+                    for dev_id in list(kept_counts):
+                        if dev_id not in missing:
+                            kept_counts.pop(dev_id)
+                new_absence_counts[site_id] = kept_counts
                 new_site_aliases[site_id] = site_aliases
                 continue
 
             # Eligible: perform stale device evaluation
             site_counters = dict(self._site_absence_counts.get(site_id, {}))
-            current_site_macs = set(current_tracked.values())
+            held: set[str] = set()
 
             for dev_id, dev_mac in previous_tracked.items():
                 if dev_id in current_site_devs:
                     site_counters.pop(dev_id, None)
-                elif dev_mac in current_site_macs:
+                elif dev_id not in missing:
                     _LOGGER.debug(
                         "Device coordinator: Device %s absent by ID but MAC "
                         "present in site %s; retaining",
@@ -1660,6 +1729,13 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                         site_id,
                     )
                     site_counters.pop(dev_id, None)
+                elif isinstance(legacy_macs, frozenset) and dev_mac in legacy_macs:
+                    _LOGGER.debug(
+                        "Device coordinator: Device %s absent from v1 but "
+                        "present in the legacy device list; holding",
+                        f"{site_id}_{dev_id}",
+                    )
+                    held.add(dev_id)
                 else:
                     count = site_counters.get(dev_id, 0) + 1
                     site_counters[dev_id] = count
@@ -1681,7 +1757,8 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 **{
                     dev_id: dev_mac
                     for dev_id, dev_mac in previous_tracked.items()
-                    if dev_id not in current_site_devs and dev_id in site_counters
+                    if dev_id not in current_site_devs
+                    and (dev_id in site_counters or dev_id in held)
                 },
             }
 
