@@ -362,6 +362,31 @@ def _protect_entry_has_resource(
     return True if owns is None else owns
 
 
+def _owned_elsewhere_while_unverified(
+    selected: UnifiInsightsConfigEntry,
+    resolved_reg_entry: UnifiInsightsConfigEntry | None,
+    candidates: list[UnifiInsightsConfigEntry],
+    collection_key: str,
+    resource_id: str,
+) -> bool:
+    """
+    Return True if another console owns a resource the selected one cannot vouch for.
+
+    A console still warming up stays a candidate only while no other console
+    has positive evidence of owning the resource. The registry entry the
+    resource was resolved from counts as that console's evidence.
+    """
+    if resolved_reg_entry is selected:
+        return False
+    if _protect_owns_resource(selected, collection_key, resource_id) is not None:
+        return False
+    return any(
+        entry is not selected
+        and _protect_owns_resource(entry, collection_key, resource_id) is True
+        for entry in candidates
+    )
+
+
 # --- Client identity --------------------------------------------------------
 
 
@@ -1040,9 +1065,16 @@ def _select_protect_entry(
         raise _invalid(msg, "protect_resource_not_found", **placeholders)
 
     if selected is not None:
-        if selected not in matching_entries or resolved_reg_entry not in (
-            None,
-            selected,
+        if (
+            selected not in matching_entries
+            or resolved_reg_entry not in (None, selected)
+            or _owned_elsewhere_while_unverified(
+                selected,
+                resolved_reg_entry,
+                matching_entries,
+                collection_key,
+                native_resource_id,
+            )
         ):
             msg = (
                 f"{resource_type.capitalize()} '{resource_id}' does not belong to"

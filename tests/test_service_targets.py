@@ -1115,7 +1115,8 @@ async def test_protect_console_id_without_a_target_picks_the_console(
         ({"cameras": {"cam1": {}}}, None, "Garage", "Garage"),
         ({"cameras": {"cam1": {}}}, None, "Office", "Office"),
         ({"cameras": {"cam1": {}}}, "office", "Office", "Office"),
-        ("loading", None, "Garage", "Garage"),
+        ("loading", None, "Garage", "refused"),
+        ("loading", "garage", "Garage", "Garage"),
         ({"cameras": {}}, None, "nowhere", "console_not_found"),
     ],
     ids=[
@@ -1125,7 +1126,8 @@ async def test_protect_console_id_without_a_target_picks_the_console(
         "collision-picks-named-console",
         "collision-picks-the-other-console",
         "registered-on-the-named-console",
-        "named-console-not-loaded-yet",
+        "named-console-not-loaded-yet-owned-elsewhere",
+        "named-console-not-loaded-yet-registered-on-it",
         "unknown-console",
     ],
 )
@@ -1173,6 +1175,18 @@ async def test_protect_console_id_with_a_target_must_own_it(
         }
     else:
         assert _key(err) == expect
+
+
+async def test_protect_console_id_falls_back_while_no_console_owns_it(
+    hass: HomeAssistant,
+) -> None:
+    """While no console can tell it owns the target, the named one is used."""
+    _console(hass, "Office", {"protect": "loading"}, protect=True)
+    garage = _console(hass, "Garage", {"protect": "loading"}, protect=True)
+
+    assert _select_protect_entry(
+        hass, resource_type="camera", resource_id="cam1", console_id="Garage"
+    ) == (garage, "cam1")
 
 
 async def test_protect_console_id_still_checks_the_secondary_target(
