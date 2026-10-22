@@ -1793,9 +1793,10 @@ def test_changed_event_frame_replaces_the_stored_event() -> None:
 
 def test_repeated_event_frame_keeps_the_cache() -> None:
     """A frame equal to the stored event changes nothing but still publishes."""
-    first = run(cache(), [(0.0, event("motion", "m1", start=1))])
+    first = run(cache(), [(0.0, event("motion", "m1", start=START))])
+    assert first.cache["events"]["motion"]["m1"]["start"] == START
     result = run(
-        first.cache, [(1.0, event("motion", "m1", start=1))], state=first.state
+        first.cache, [(1.0, event("motion", "m1", start=START))], state=first.state
     )
     assert result.cache is first.cache
     assert result.effects(PublishUpdate) == [PublishUpdate(mark_success=False)]
