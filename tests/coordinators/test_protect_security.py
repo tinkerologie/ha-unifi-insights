@@ -1297,7 +1297,10 @@ class TestProtectSecurityDeviceFamilies:
     def test_unrelated_model_key_leaves_security_collections_alone(
         self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
-        """A frame for a family this coordinator doesn't track changes nothing."""
+        """A frame for a family this coordinator doesn't track changes nothing.
+
+        It notifies nobody either, so it cannot re-arm the poll timer.
+        """
         self._seed_hub(coordinator)
         before = copy.deepcopy(coordinator.data["alarm_hubs"])
         listener = MagicMock()
@@ -1308,7 +1311,7 @@ class TestProtectSecurityDeviceFamilies:
         assert coordinator.data["alarm_hubs"] == before
         assert coordinator.data["fobs"] == {}
         assert coordinator.data["link_stations"] == {}
-        listener.assert_called()
+        listener.assert_not_called()
 
     def test_later_frame_of_same_event_with_status_replaces_it(
         self, coordinator: UnifiInsightsProtectCoordinator

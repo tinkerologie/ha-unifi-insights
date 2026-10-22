@@ -32,8 +32,8 @@ from the ``coordinators.protect`` logger. This module imports nothing from
 Home Assistant, the API library or the clock; a test enforces that.
 
 The behaviour is the coordinator's as it was before the split, quirks
-included (each is pinned by a test whose id contains ``quirk``): an unknown
-frame still resets the poll timer, and the event store keeps every event.
+included (each is pinned by a test whose id contains ``quirk``): the event
+store keeps every event.
 """
 
 from __future__ import annotations
@@ -204,6 +204,19 @@ _SHALLOW_FRAME_COLLECTIONS: Final[dict[str, str]] = {
     DEVICE_TYPE_DOORLOCK: "doorlocks",
     DEVICE_TYPE_VIEWPORT: "viewports",
 }
+
+# Every model key a device frame is applied for; any other is ignored.
+_KNOWN_FRAME_MODEL_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        DEVICE_TYPE_CAMERA,
+        DEVICE_TYPE_SENSOR,
+        DEVICE_TYPE_NVR,
+        DEVICE_TYPE_SIREN,
+        MODEL_KEY_FOB,
+        MODEL_KEY_LINKSTATION,
+        *_SHALLOW_FRAME_COLLECTIONS,
+    }
+)
 
 # Latch kind -> (collection, field prefix, list field emptied on expiry).
 _LATCHES: Final[dict[LatchKind, tuple[Family, str, str | None]]] = {
@@ -482,6 +495,9 @@ class ReconcilerState:
     # Frames applied per family; a REST answer requested before one is older.
     ws_generation: Mapping[GuardedFamily, int]
     families: Mapping[Family, FamilyTracking]
+    # Frame model keys already logged as unknown (bounded by the console's
+    # own model keys), so each is logged once.
+    unknown_model_keys: frozenset[str] = frozenset()
 
 
 def initial_state() -> ReconcilerState:
@@ -800,8 +816,28 @@ def reconcile(
 
 
 def _apply_device_frame(run: _Run, frame: DeviceFrame) -> bool:
-    """Merge a device frame into its collection; return True if it published."""
+    """
+    Merge a device frame into its collection; return True if it published.
+
+    A frame with a model key nothing tracks changes nothing, so it publishes
+    nothing either: marking it successful would re-arm the poll timer, and a
+    console that keeps sending such frames would hold the poll off for good.
+    Its model key is logged once.
+    """
     model_key, device_id, fields = frame.model_key, frame.device_id, frame.fields
+    if model_key not in _KNOWN_FRAME_MODEL_KEYS:
+        if model_key not in run.state.unknown_model_keys:
+            run.state = replace(
+                run.state,
+                unknown_model_keys=run.state.unknown_model_keys | {model_key},
+            )
+            run.log(
+                logging.DEBUG,
+                "Protect coordinator: ignoring WebSocket device updates for "
+                "unknown model key %s",
+                model_key,
+            )
+        return False
     run.log(
         logging.DEBUG,
         "Protect coordinator: WebSocket device update for %s: %s",
@@ -850,9 +886,9 @@ def _apply_device_frame(run: _Run, frame: DeviceFrame) -> bool:
             return False
         existing = run.records(target).get(device_id, {})
         run.put(target, device_id, deep_merge(existing, fields))
-    # Every frame, an unknown model key included (quirk), marks the update
-    # successful and re-arms the poll timer, so entities stay available while
-    # frames flow and the fallback poll waits for a quiet stream.
+    # Every applied frame marks the update successful and re-arms the poll
+    # timer, so entities stay available while frames flow and the fallback
+    # poll waits for a quiet stream.
     run.effects.append(PublishUpdate(mark_success=True))
     return True
 

@@ -1673,12 +1673,40 @@ def test_unknown_linkstation_frame_is_dropped() -> None:
     assert "dropping WebSocket linkstation update" in result.logs()[-1]
 
 
-def test_unknown_model_key_still_marks_success_quirk() -> None:
-    """Any frame re-arms the poll timer, even one nothing applies."""
+def test_unknown_model_key_publishes_nothing_and_logs_once() -> None:
+    """A frame nothing applies leaves the poll timer alone; each key logs once."""
     seed = cache()
-    result = run(seed, [(0.0, device("bridge", "b1", name="x"))])
+    result = run(
+        seed,
+        [
+            (0.0, device("bridge", "b1", name="x")),
+            (1.0, device("bridge", "b2", name="y")),
+            (2.0, device("gateway", "g1", name="z")),
+        ],
+    )
     assert result.cache is seed
-    assert result.effects(PublishUpdate) == [PublishUpdate(mark_success=True)]
+    assert result.effects(PublishUpdate) == []
+    prefix = "Protect coordinator: ignoring WebSocket device updates for unknown"
+    assert result.logs() == [
+        f"{prefix} model key bridge",
+        f"{prefix} model key gateway",
+    ]
+    assert result.state.unknown_model_keys == {"bridge", "gateway"}
+
+
+def test_unknown_model_key_frame_that_sweeps_notifies_without_marking_success() -> None:
+    """It still ends a stale latch, which listeners see; the timer is left alone."""
+    started = run(
+        cache(cameras={"c1": _camera()}),
+        [(0.0, event("motion", "e1", device="c1", start=1))],
+    )
+    result = run(
+        started.cache,
+        [(TIMEOUT, device("bridge", "b1", name="x"))],
+        state=started.state,
+    )
+    assert result.cache["cameras"]["c1"]["lastMotionEnd"] is not None
+    assert result.effects(PublishUpdate) == [PublishUpdate(mark_success=False)]
 
 
 def test_frames_share_untouched_collections() -> None:

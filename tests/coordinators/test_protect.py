@@ -1700,8 +1700,8 @@ class TestUnifiProtectCoordinator:
     def test_device_frame_unknown_model_type(
         self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
-        """Test handling unknown device model type notifies listeners and
-        preserves collections.
+        """Test an unknown device model type changes nothing and publishes
+        nothing, so it neither notifies listeners nor re-arms the poll timer.
         """
         coordinator.data["cameras"] = {"camera1": {"id": "camera1", "name": "Cam 1"}}
         coordinator.data["lights"] = {"light1": {"id": "light1", "name": "Light 1"}}
@@ -1726,11 +1726,10 @@ class TestUnifiProtectCoordinator:
             listener.assert_not_called()
             mock_set_data.assert_not_called()
 
-            # 2. Update with id notifies through async_set_updated_data fall-through
+            # 2. Update with id is ignored too: nothing to publish
             send_device(coordinator, "unknown_type", {"id": "unk1", "name": "Unknown"})
-            listener.assert_called_once()
-            mock_set_data.assert_called_once_with(coordinator.data)
-            assert coordinator.last_update_success is True
+            listener.assert_not_called()
+            mock_set_data.assert_not_called()
 
         # 3. Known collections are untouched
         assert coordinator.data["cameras"] == snapshot_cameras
