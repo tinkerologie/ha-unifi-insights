@@ -2818,7 +2818,11 @@ class TestUnifiDeviceCoordinator:
             assert owners.device._site_aliases[SITE_ID][sw_v1["mac"]] == sw_v1["id"]
 
             # Poll 2: eligible v1 poll omitting PDU (advances PDU absence counter to 1)
+            # while the legacy list agrees that the PDU is gone
             owners.network_client.devices.get_all.return_value = [dict(sw_v1)]
+            owners.network_client.devices.get_legacy_site_devices.return_value = [
+                dict(sw_legacy)
+            ]
             await owners.device.async_refresh()
 
             assert owners.device._site_absence_counts[SITE_ID][PDU_ID] == 1
@@ -2892,8 +2896,12 @@ class TestUnifiDeviceCoordinator:
 
             assert owners.device._site_aliases[SITE_ID][pdu_mac] == PDU_ID
 
-            # Poll 3: eligible v1 poll omits PDU (omitted for one poll)
+            # Poll 3: eligible v1 poll omits PDU (omitted for one poll), and so
+            # does the legacy list
             owners.network_client.devices.get_all.return_value = [dict(sw_v1)]
+            owners.network_client.devices.get_legacy_site_devices.return_value = [
+                {"_id": "64switch_legacy_id12345678", "mac": sw_v1["mac"], "up": True}
+            ]
             await owners.device.async_refresh()
 
             # Merging aliases ensures PDU alias is preserved even when omitted
