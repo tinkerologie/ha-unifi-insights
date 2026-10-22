@@ -8,7 +8,6 @@ import pytest
 from homeassistant import config_entries
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
 from homeassistant.data_entry_flow import FlowResultType
-from pydantic import ValidationError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from unifi_official_api import (
     UniFiAuthenticationError,
@@ -319,40 +318,6 @@ async def test_local_flow_unknown_error(hass: HomeAssistant) -> None:
 
         assert result["type"] == FlowResultType.FORM
         assert result["errors"] == {"base": "unknown"}
-
-
-async def test_local_flow_validation_error(hass: HomeAssistant) -> None:
-    """Test local flow with site validation/parse error."""
-    validation_err = ValidationError.from_exception_data("Site", line_errors=[])
-    async_cm = MagicMock()
-    async_cm.__aenter__ = AsyncMock(side_effect=validation_err)
-    async_cm.__aexit__ = AsyncMock(return_value=None)
-
-    with (
-        patch(
-            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
-            return_value=async_cm,
-        ),
-        patch("custom_components.unifi_insights.config_flow.LocalAuth"),
-    ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": config_entries.SOURCE_USER}
-        )
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            user_input={CONF_CONNECTION_TYPE: CONNECTION_TYPE_LOCAL},
-        )
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            user_input={
-                CONF_HOST: "https://192.168.1.1",
-                CONF_API_KEY: "test_api_key",
-                CONF_VERIFY_SSL: False,
-            },
-        )
-
-        assert result["type"] == FlowResultType.FORM
-        assert result["errors"] == {"base": "site_parse_error"}
 
 
 async def test_local_flow_success_with_missing_site_id(
@@ -802,58 +767,6 @@ async def test_local_flow_protect_timeout_error(
 
         assert result["type"] == FlowResultType.FORM
         assert result["errors"] == {"base": "cannot_connect"}
-
-
-async def test_local_flow_protect_validation_error(
-    hass: HomeAssistant,
-) -> None:
-    """Test local flow when Protect returns invalid model data."""
-    mock_net_client = MagicMock()
-    mock_net_client.sites = MagicMock()
-    mock_net_client.sites.get_all = AsyncMock(return_value=[])
-
-    net_cm = MagicMock()
-    net_cm.__aenter__ = AsyncMock(return_value=mock_net_client)
-    net_cm.__aexit__ = AsyncMock(return_value=None)
-
-    protect_mock = MagicMock()
-    protect_mock.cameras = MagicMock()
-    protect_mock.cameras.get_all = AsyncMock(
-        side_effect=ValidationError.from_exception_data("Camera", [])
-    )
-    protect_cm = MagicMock()
-    protect_cm.__aenter__ = AsyncMock(return_value=protect_mock)
-    protect_cm.__aexit__ = AsyncMock(return_value=None)
-
-    with (
-        patch(
-            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
-            return_value=net_cm,
-        ),
-        patch(
-            "custom_components.unifi_insights.config_flow.UniFiProtectClient",
-            return_value=protect_cm,
-        ),
-        patch("custom_components.unifi_insights.config_flow.LocalAuth"),
-    ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": config_entries.SOURCE_USER}
-        )
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            user_input={CONF_CONNECTION_TYPE: CONNECTION_TYPE_LOCAL},
-        )
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            user_input={
-                CONF_HOST: "https://192.168.1.1",
-                CONF_API_KEY: "test_api_key",
-                CONF_VERIFY_SSL: False,
-            },
-        )
-
-        assert result["type"] == FlowResultType.FORM
-        assert result["errors"] == {"base": "site_parse_error"}
 
 
 async def test_remote_flow_success_protect_nvr(
@@ -2126,11 +2039,28 @@ async def _submit_local_flow(hass: HomeAssistant) -> dict:
             {"nvr": UniFiResponseError("Unavailable", status_code=503)},
             {"base": "cannot_connect"},
         ),
-        # No sites and "NVR not found": api_unsupported, as before.
+        # No sites and a successful answer without an NVR record:
+        # api_unsupported, as before.
         (
             {"sites": []},
-            {"nvr": ValueError("NVR not found")},
+            {"nvr": UniFiNotFoundError("NVR not found", status_code=200)},
             {"base": "api_unsupported"},
+        ),
+        # No sites and an NVR record that failed to parse.
+        (
+            {"sites": []},
+            {
+                "nvr": UniFiResponseError(
+                    "NVR response failed validation (id)", status_code=200
+                )
+            },
+            {"base": "site_parse_error"},
+        ),
+        # An unexpected NVR probe error.
+        (
+            {"sites": []},
+            {"nvr": RuntimeError("unexpected")},
+            {"base": "unknown"},
         ),
         # No sites and no NVR record at all: the invalid_auth fallback.
         (
@@ -2144,6 +2074,8 @@ async def _submit_local_flow(hass: HomeAssistant) -> dict:
         "network-401-protect-timeout",
         "nvr-503",
         "nvr-not-found",
+        "nvr-malformed",
+        "nvr-unexpected",
         "no-nvr-record",
     ],
 )

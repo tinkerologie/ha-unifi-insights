@@ -2,7 +2,7 @@
 """
 Tests for the Protect owner's commands (ADR-010).
 
-Pins the second test adapter against the real ``unifi_official_api`` 2.0.0
+Pins the second test adapter against the real ``unifi_official_api`` 3.0.0
 classes: the seeded Protect owner refreshes through real coordinator code,
 and the autospecced client rejects methods and arguments the library does
 not have. Each Protect command is tested once here: its request, its
@@ -22,7 +22,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import UpdateFailed
-from pydantic import ValidationError
 from unifi_official_api import (
     ApiKeyAuth,
     ConnectionType,
@@ -49,6 +48,7 @@ from unifi_official_api.protect.talkback import (
     TalkbackSchemeError,
     TalkbackStreamError,
 )
+from unifi_official_api.validation import parse_record
 
 from custom_components.unifi_insights.const import (
     DOMAIN,
@@ -910,7 +910,7 @@ class TestTalkback:
     async def test_session_failure_logs_only_sanitised_fields(
         self, seeded_owners: SeededOwners, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A failed session is translated; a validation error logs field names."""
+        """A failed session is translated; a malformed one logs field names."""
         create = seeded_owners.protect_client.cameras.create_talkback_session
         create.side_effect = ValueError("Session failed")
         with pytest.raises(HomeAssistantError) as err:
@@ -918,20 +918,12 @@ class TestTalkback:
         assert err.value.translation_key == "talkback_session_invalid"
 
         leaked_url = "rtp://custom-token@192.168.1.10:7004"
-        create.side_effect = ValidationError.from_exception_data(
-            "TalkbackSession",
-            [
-                {
-                    "type": "string_type",
-                    "loc": ("url",),
-                    "msg": "Input should be a valid string",
-                    "input": leaked_url,
-                }
-            ],
-        )
+        with pytest.raises(UniFiResponseError) as invalid:
+            parse_record(TalkbackSession, {"url": [leaked_url]}, "Talkback session")
+        create.side_effect = invalid.value
         with caplog.at_level(logging.WARNING), pytest.raises(HomeAssistantError):
             await seeded_owners.protect.async_start_camera_talkback(CAMERA_ID, "a.mp3")
-        assert "invalid fields: url" in caplog.text
+        assert "Talkback session response failed validation (url)" in caplog.text
         assert leaked_url not in caplog.text
 
     @pytest.mark.parametrize(

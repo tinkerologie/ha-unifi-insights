@@ -15,7 +15,6 @@ import pytest
 from homeassistant.const import CONF_API_KEY
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.util import dt as dt_util
-from pydantic import ValidationError
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
@@ -33,6 +32,7 @@ from unifi_official_api import (
 from unifi_official_api.network import UniFiNetworkClient
 from unifi_official_api.network.endpoints.vouchers import VouchersEndpoint
 from unifi_official_api.network.models.voucher import Voucher
+from unifi_official_api.validation import parse_record
 
 from custom_components.unifi_insights.const import (
     CONF_SITE_IDS,
@@ -407,11 +407,13 @@ async def test_root_validation_error_does_not_log_credential(
         )
     _assert_credential_absent(caplog, code)
     assert code not in "".join(traceback.format_exception(caught.value))
+    assert caught.value.translation_key == "invalid_api_response"
     cause = caught.value.__cause__
-    assert isinstance(cause, ValueError)
-    assert str(cause) == "Invalid voucher data (fields: root)"
+    assert isinstance(cause, UniFiResponseError)
+    assert cause.status_code == 200
+    assert cause.message == "Voucher response failed validation (root)"
     assert cause.__cause__ is None
-    assert cause.__suppress_context__ is True
+    assert cause.__context__ is None
     assert caught.value.__suppress_context__ is True
 
 
@@ -611,11 +613,11 @@ async def test_root_validation_error_does_not_log_credential_sanitizers(
     caplog: pytest.LogCaptureFixture,
     boundary: str,
 ) -> None:
-    """The fetch and command sanitizers handle direct empty-location errors safely."""
+    """The fetch and command boundaries log a malformed voucher without its code."""
     config, _ = voucher_flow
     code = "1234567890"
-    with pytest.raises(ValidationError) as invalid:
-        Voucher.model_validate(code)
+    with pytest.raises(UniFiResponseError) as invalid:
+        parse_record(Voucher, code, "Voucher")
     fetch = AsyncMock(side_effect=invalid.value)
     with caplog.at_level(logging.DEBUG):
         if boundary == "config":
@@ -628,11 +630,11 @@ async def test_root_validation_error_does_not_log_credential_sanitizers(
                 await config.async_generate_voucher(
                     "site1", name="Guest", time_limit_minutes=60
                 )
-            assert caught.value.__cause__ is None
-            assert caught.value.__suppress_context__ is True
+            assert caught.value.translation_key == "invalid_api_response"
+            assert caught.value.__cause__ is invalid.value
             assert code not in "".join(traceback.format_exception(caught.value))
     _assert_credential_absent(caplog, code)
-    assert "root" in caplog.text
+    assert "Voucher response failed validation (root)" in caplog.text
 
 
 async def test_voucher_inventory_skips_records_without_id(
@@ -787,7 +789,9 @@ class TestConfigCoordinatorVouchers:
             UniFiNotFoundError("Not found", status_code=404),
             UniFiResponseError("Bad request", status_code=400),
             UniFiAuthenticationError("Forbidden", status_code=403),
-            UniFiResponseError("HTML instead of JSON", status_code=200),
+            UniFiResponseError(
+                "HTML instead of JSON", status_code=200, response_body="<html></html>"
+            ),
         ],
         ids=["404", "400", "403", "200-non-json"],
     )
@@ -970,7 +974,7 @@ class TestConfigCoordinatorVouchers:
         coordinator: UnifiInsightsConfigCoordinator,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Pydantic validation error during polling does not log the voucher code."""
+        """A malformed voucher during polling does not log the voucher code."""
         synthetic_code = "1234567890"
 
         class _TestClient:
@@ -997,7 +1001,7 @@ class TestConfigCoordinatorVouchers:
 
         assert coordinator.vouchers_available("default") is False
         assert synthetic_code not in caplog.text
-        assert "Invalid voucher data (fields: id)" in caplog.text
+        assert "Voucher response failed validation (id)" in caplog.text
 
 
 # --- Voucher commands and state on the config coordinator (ADR-013) ----------
@@ -1196,10 +1200,10 @@ class TestConfigGenerateVoucher:
         seeded_owners: SeededOwners,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Pydantic validation error does not leak code in logs."""
+        """A malformed created voucher does not leak its code in logs."""
         synthetic_code = "1234567890"
-        with pytest.raises(ValidationError) as validation_info:
-            Voucher.model_validate({"code": synthetic_code})
+        with pytest.raises(UniFiResponseError) as validation_info:
+            parse_record(Voucher, {"code": synthetic_code}, "Voucher")
         config = seeded_owners.config
         config.network_client.vouchers.create.side_effect = validation_info.value
         with (
@@ -1251,7 +1255,7 @@ class TestConfigGenerateVoucher:
             )
 
         assert synthetic_code not in caplog.text
-        assert "Invalid voucher data (fields: id)" in caplog.text
+        assert "Voucher response failed validation (id)" in caplog.text
 
     async def test_refresh_vouchers_auth_failure_starts_reauth_and_notifies(
         self, seeded_owners: SeededOwners

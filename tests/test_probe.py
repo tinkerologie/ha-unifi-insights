@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
 import pytest
-from pydantic import BaseModel, ValidationError
 from unifi_official_api import (
     ApiKeyAuth,
     ConnectionType,
@@ -35,20 +34,22 @@ from custom_components.unifi_insights.probe import (
     async_probe_protect,
     async_probe_with_client,
     classify_error,
+    is_malformed_response,
     is_transient_error,
 )
 from tests.fixtures.http_fakes import FakeResponse, fake_session
 
-
-def _validation_error() -> ValidationError:
-    class _Model(BaseModel):
-        value: int
-
-    try:
-        _Model.model_validate({"value": "not an int"})
-    except ValidationError as err:
-        return err
-    raise AssertionError  # pragma: no cover
+# What unifi-official-api 3.0.0 raises for a successful answer that holds no
+# record, and for one whose record fails validation.
+_NO_RECORD = UniFiNotFoundError("NVR not found", status_code=200)
+_MALFORMED = UniFiResponseError(
+    "NVR response failed validation (uptime)", status_code=200
+)
+_NON_JSON_PAGE = UniFiResponseError(
+    "API returned non-JSON response (status 200)",
+    status_code=200,
+    response_body="<html>UniFi OS</html>",
+)
 
 
 @pytest.mark.parametrize(
@@ -113,10 +114,14 @@ async def test_probe_network_statuses() -> None:
         ([MagicMock()], None, "available"),
         ([], MagicMock(id="nvr1"), "available"),
         ([], None, "empty"),
-        ([], ValueError("NVR not found"), "empty"),
-        ([], "validation", "error"),
+        ([], _NO_RECORD, "empty"),
+        ([], _MALFORMED, "error"),
+        ([], _NON_JSON_PAGE, "unsupported"),
+        ([], UniFiNotFoundError("Not found", status_code=404), "unsupported"),
+        ([], UniFiResponseError("Bad request", status_code=400), "unsupported"),
         ([], UniFiResponseError("Server error", status_code=503), "unreachable"),
         ([], UniFiAuthenticationError("Unauthorized", status_code=401), "auth_failed"),
+        ([], RuntimeError("Unexpected"), "error"),
         (UniFiTimeoutError("Timed out"), None, "unreachable"),
         (UniFiNotFoundError("Not found", status_code=404), None, "unsupported"),
     ],
@@ -124,10 +129,14 @@ async def test_probe_network_statuses() -> None:
         "cameras",
         "camera-free-nvr",
         "no-nvr-record",
-        "nvr-not-found",
-        "nvr-parse-error",
+        "nvr-200-no-record",
+        "nvr-200-malformed",
+        "nvr-200-non-json",
+        "nvr-404",
+        "nvr-400",
         "nvr-5xx",
         "nvr-401",
+        "nvr-unexpected",
         "cameras-timeout",
         "cameras-404",
     ],
@@ -141,9 +150,7 @@ async def test_probe_protect_statuses(
         client.cameras.get_all = AsyncMock(side_effect=cameras)
     else:
         client.cameras.get_all = AsyncMock(return_value=cameras)
-    if nvr == "validation":
-        client.nvr.get = AsyncMock(side_effect=_validation_error())
-    elif isinstance(nvr, Exception):
+    if isinstance(nvr, Exception):
         client.nvr.get = AsyncMock(side_effect=nvr)
     else:
         client.nvr.get = AsyncMock(return_value=nvr)
@@ -151,7 +158,63 @@ async def test_probe_protect_statuses(
     result = await async_probe_protect(client)
 
     assert result.status is ProbeStatus(expected)
+    raised = cameras if isinstance(cameras, Exception) else nvr
+    assert result.error is (raised if isinstance(raised, Exception) else None)
     client.cameras.get_all.assert_awaited_once_with(expected_unsupported=True)
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (_MALFORMED, True),
+        (_NO_RECORD, False),
+        (_NON_JSON_PAGE, False),
+        (UniFiResponseError("Bad request", status_code=400), False),
+        (UniFiNotFoundError("Not found", status_code=404), False),
+        (ValueError("Unexpected"), False),
+    ],
+    ids=["malformed", "no-record", "non-json", "400", "404", "other"],
+)
+def test_is_malformed_response(error: Exception, *, expected: bool) -> None:
+    """Only a 200 JSON answer whose record failed to parse is malformed."""
+    assert is_malformed_response(error) is expected
+
+
+def _protect_client(*responses: FakeResponse) -> UniFiProtectClient:
+    return UniFiProtectClient(
+        auth=ApiKeyAuth(api_key="test-key"),
+        base_url="https://192.168.1.1",
+        connection_type=ConnectionType.LOCAL,
+        session=fake_session(*responses),
+    )
+
+
+@pytest.mark.parametrize(
+    ("nvr_body", "expected", "error_type"),
+    [
+        ({"data": []}, "empty", UniFiNotFoundError),
+        ({}, "empty", UniFiNotFoundError),
+        ({"id": "nvr-1", "uptime": "not-a-number"}, "error", UniFiResponseError),
+        ({"id": "nvr-1", "name": "NVR"}, "available", None),
+    ],
+    ids=["no-record", "empty-object", "malformed", "nvr"],
+)
+async def test_probe_protect_nvr_through_the_library(
+    nvr_body: dict[str, object], expected: str, error_type: type[Exception] | None
+) -> None:
+    """The real NVR endpoint's 3.0.0 errors reach the probe's mapping."""
+    client = _protect_client(
+        FakeResponse(200, "[]"), FakeResponse(200, json.dumps(nvr_body))
+    )
+
+    result = await async_probe_protect(client)
+
+    assert result.status is ProbeStatus(expected)
+    if error_type is None:
+        assert result.error is None
+    else:
+        assert type(result.error) is error_type
+        assert getattr(result.error, "status_code", None) == 200
 
 
 async def test_probe_with_client_classifies_context_errors() -> None:
@@ -220,6 +283,15 @@ async def test_probe_with_client_classifies_context_errors() -> None:
             [],
             "unreachable",
         ),
+        (
+            UniFiResponseError(
+                "/v1/project response failed validation (id)", status_code=200
+            ),
+            [],
+            [],
+            "error",
+        ),
+        (_NON_JSON_PAGE, [], [], "unsupported"),
     ],
     ids=[
         "project-id",
@@ -230,6 +302,8 @@ async def test_probe_with_client_classifies_context_errors() -> None:
         "401-auth-failed",
         "timeout-unreachable",
         "secondary-502-unreachable",
+        "200-malformed-error",
+        "200-non-json-unsupported",
     ],
 )
 async def test_probe_innerspace_statuses(

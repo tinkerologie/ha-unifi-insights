@@ -932,7 +932,9 @@ class TestProtectOnlyPollingBehavior:
         """Test sites.get_all non-JSON error marks network unavailable."""
         network_client = _create_site_listing_client()
         network_client.sites.get_all = AsyncMock(
-            side_effect=UniFiResponseError("Response is not JSON", status_code=200)
+            side_effect=UniFiResponseError(
+                "Response is not JSON", status_code=200, response_body="<html></html>"
+            )
         )
 
         coordinator = UnifiInsightsConfigCoordinator(
@@ -1183,7 +1185,9 @@ class TestUnifiConfigCoordinator:
             UniFiNotFoundError("Not found", status_code=404),
             UniFiResponseError("Bad request", status_code=400),
             UniFiAuthenticationError("Forbidden", status_code=403),
-            UniFiResponseError("HTML instead of JSON", status_code=200),
+            UniFiResponseError(
+                "HTML instead of JSON", status_code=200, response_body="<html></html>"
+            ),
         ],
         ids=["404", "400", "403", "200-non-json"],
     )
@@ -1522,7 +1526,9 @@ class TestUnifiConfigCoordinator:
         """Test fetch succeeds when the sites endpoint returns 200 and no JSON."""
         coordinator.network_client.sites.get_all = AsyncMock(
             side_effect=UniFiResponseError(
-                "API returned non-JSON response (status 200)", status_code=200
+                "API returned non-JSON response (status 200)",
+                status_code=200,
+                response_body="<html></html>",
             )
         )
 
@@ -1540,7 +1546,9 @@ class TestUnifiConfigCoordinator:
         coordinator.protect_client = None
         coordinator.network_client.sites.get_all = AsyncMock(
             side_effect=UniFiResponseError(
-                "API returned non-JSON response (status 200)", status_code=200
+                "API returned non-JSON response (status 200)",
+                status_code=200,
+                response_body="<html></html>",
             )
         )
 
@@ -2073,7 +2081,9 @@ class TestUnifiConfigCoordinator:
         [
             UniFiAuthenticationError("Forbidden", status_code=403),
             UniFiNotFoundError("Not found", status_code=404),
-            UniFiResponseError("Non-JSON body", status_code=200),
+            UniFiResponseError(
+                "Non-JSON body", status_code=200, response_body="<html></html>"
+            ),
         ],
     )
     async def test_rule_section_unsupported_response_stores_empty(
@@ -2491,7 +2501,9 @@ class TestUnifiConfigCoordinator:
         )
 
         mock_network_client.reports.get_site_report = AsyncMock(
-            side_effect=UniFiResponseError("HTML", status_code=200)
+            side_effect=UniFiResponseError(
+                "HTML", status_code=200, response_body="<html></html>"
+            )
         )
         await coord._async_update_data()
         assert "site1" not in coord.data["internet_activity"]

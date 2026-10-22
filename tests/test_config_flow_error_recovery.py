@@ -15,12 +15,12 @@ import pytest
 from homeassistant import config_entries
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
 from homeassistant.data_entry_flow import FlowResultType
-from pydantic import ValidationError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiNotFoundError,
+    UniFiResponseError,
     UniFiTimeoutError,
 )
 
@@ -37,6 +37,13 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
+
+
+# What unifi-official-api 3.0.0 raises for a successful answer whose record
+# failed to parse (2.x raised pydantic's ValidationError).
+_MALFORMED_SITES = UniFiResponseError(
+    "Site response failed validation (id)", status_code=200
+)
 
 
 @pytest.fixture(autouse=True)
@@ -354,7 +361,7 @@ async def test_select_console_jumps_to_remote_when_state_missing(
             {CONF_CONSOLE_ID: "invalid_console_id"},
         ),
         (
-            ValidationError.from_exception_data("Site", line_errors=[]),
+            _MALFORMED_SITES,
             "call",
             {CONF_CONSOLE_ID: "invalid_console_id"},
         ),
@@ -367,7 +374,7 @@ async def test_select_console_jumps_to_remote_when_state_missing(
             {"base": "api_unsupported"},
         ),
         (
-            ValidationError.from_exception_data("Site", line_errors=[]),
+            _MALFORMED_SITES,
             "construct",
             {"base": "site_parse_error"},
         ),
@@ -458,7 +465,7 @@ async def test_select_console_errors_and_recovery(
             {"base": "api_unsupported"},
         ),
         (
-            ValidationError.from_exception_data("Site", line_errors=[]),
+            _MALFORMED_SITES,
             {"base": "site_parse_error"},
         ),
         (RuntimeError("unexpected"), {"base": "unknown"}),
@@ -545,7 +552,7 @@ async def test_reauth_remote_discovery_errors_and_recovery(
             {"base": "invalid_console_id"},
         ),
         (
-            ValidationError.from_exception_data("Site", line_errors=[]),
+            _MALFORMED_SITES,
             {"base": "invalid_console_id"},
         ),
         (RuntimeError("unexpected"), {"base": "invalid_console_id"}),
@@ -641,7 +648,7 @@ async def test_reauth_remote_validation_errors_and_recovery(
             {"base": "api_unsupported"},
         ),
         (
-            ValidationError.from_exception_data("Site", line_errors=[]),
+            _MALFORMED_SITES,
             "console123",
             {"base": "site_parse_error"},
         ),
@@ -737,7 +744,7 @@ async def test_reconfigure_remote_discovery_errors_and_recovery(
             {CONF_CONSOLE_ID: "invalid_console_id"},
         ),
         (
-            ValidationError.from_exception_data("Site", line_errors=[]),
+            _MALFORMED_SITES,
             {CONF_CONSOLE_ID: "invalid_console_id"},
         ),
         (RuntimeError("unexpected"), {CONF_CONSOLE_ID: "invalid_console_id"}),

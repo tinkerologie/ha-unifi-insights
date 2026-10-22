@@ -1036,7 +1036,14 @@ _SITES = [{"id": "default", "name": "Default"}]
             False,
         ),
         # Network-only console: Protect answers without an NVR.
-        (_SITES, [], ValueError("NVR not found"), "loaded", False, False),
+        (
+            _SITES,
+            [],
+            UniFiNotFoundError("NVR not found", status_code=200),
+            "loaded",
+            False,
+            False,
+        ),
         # Protect-only console with an NVR and no cameras yet.
         (
             UniFiResponseError("HTML page", status_code=200),

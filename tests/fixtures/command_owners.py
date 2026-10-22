@@ -4,7 +4,7 @@ Seeded real command owners over autospecced UniFi clients (ADR-010).
 
 The second adapter for command tests. The coordinators are the real config,
 device, Protect and facade classes; only the API clients are replaced, by
-``unittest.mock.create_autospec`` of the real ``unifi_official_api`` 2.0.0
+``unittest.mock.create_autospec`` of the real ``unifi_official_api`` 3.0.0
 client and endpoint classes. Calling a method the library does not have, or
 calling one with arguments its signature does not accept, fails the test,
 which a hand-written fake or a bare ``MagicMock`` would let pass.

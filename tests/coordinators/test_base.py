@@ -20,14 +20,15 @@ from homeassistant.exceptions import (
     ServiceValidationError,
 )
 from homeassistant.helpers.update_coordinator import UpdateFailed
-from pydantic import ValidationError
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
+    UniFiNotFoundError,
     UniFiResponseError,
     UniFiTimeoutError,
 )
 from unifi_official_api.network.models.voucher import Voucher
+from unifi_official_api.validation import parse_record
 
 from custom_components.unifi_insights.const import (
     DOMAIN,
@@ -61,10 +62,11 @@ _COMMAND_KEYS: dict[str, set[str]] = {
 }
 
 
-def _invalid_voucher() -> ValidationError:
-    """Return a pydantic error whose text would echo a voucher code."""
-    with pytest.raises(ValidationError) as invalid:
-        Voucher.model_validate("1234567890")
+def _invalid_voucher() -> UniFiResponseError:
+    """Return the library's error for a voucher record that failed to parse."""
+    code = "1234567890"
+    with pytest.raises(UniFiResponseError) as invalid:
+        parse_record(Voucher, code, "Voucher")
     return invalid.value
 
 
@@ -147,11 +149,12 @@ async def test_fixed_message_is_kept_for_existing_callers() -> None:
 
 
 @pytest.mark.parametrize("message", [None, "Unable to generate voucher"])
-async def test_validation_error_is_sanitised_and_unchained(
+async def test_malformed_response_is_invalid_api_response(
     caplog: pytest.LogCaptureFixture, message: str | None
 ) -> None:
-    """Pydantic errors log field paths only and suppress the raw chain."""
-    action = AsyncMock(side_effect=_invalid_voucher())
+    """A record that failed to parse raises invalid_api_response, fields only."""
+    error = _invalid_voucher()
+    action = AsyncMock(side_effect=error)
 
     with (
         caplog.at_level(logging.DEBUG),
@@ -164,13 +167,66 @@ async def test_validation_error_is_sanitised_and_unchained(
 
     assert caught.value.translation_key == "invalid_api_response"
     assert caught.value.translation_placeholders == {}
-    assert caught.value.__cause__ is None
-    assert caught.value.__suppress_context__ is True
+    assert caught.value.__cause__ is error
     assert "1234567890" not in caplog.text
     assert "1234567890" not in "".join(traceback.format_exception(caught.value))
-    assert "Invalid API response data (fields: root)" in caplog.text
+    assert (
+        "Invalid API response data (Voucher response failed validation (root))"
+        in caplog.text
+    )
     if message is not None:
         assert str(caught.value).startswith(f"{message}: Invalid API response data")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        UniFiNotFoundError("Voucher v1 not found", status_code=200),
+        UniFiResponseError(
+            "API returned non-JSON response (status 200)",
+            status_code=200,
+            response_body="<html></html>",
+        ),
+        UniFiResponseError("Bad request", status_code=400),
+    ],
+    ids=["200-no-record", "200-non-json", "400"],
+)
+async def test_other_response_errors_raise_the_command_key(error: Exception) -> None:
+    """Only a malformed record is invalid_api_response; others keep the key."""
+    action = AsyncMock(side_effect=error)
+
+    with pytest.raises(HomeAssistantError) as caught:
+        await async_execute_command(
+            CommandFailure(translation_key="command_failed"), action
+        )
+
+    assert caught.value.translation_key == "command_failed"
+    assert caught.value.__cause__ is error
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (
+            UniFiResponseError(
+                "API returned non-JSON response (status 200)",
+                status_code=200,
+                response_body="<html></html>",
+            ),
+            True,
+        ),
+        (UniFiResponseError("Voucher response failed validation", 200), False),
+        (UniFiNotFoundError("Voucher v1 not found", status_code=200), False),
+        (UniFiNotFoundError("Not found", status_code=404), True),
+        (UniFiResponseError("Server error", status_code=500), False),
+    ],
+    ids=["200-non-json", "200-malformed", "200-no-record", "404", "500"],
+)
+def test_unsupported_response_needs_a_body_on_2xx(
+    error: Exception, *, expected: bool
+) -> None:
+    """A 2xx counts as "not offered" only for a non-JSON page, not a bad record."""
+    assert UnifiInsightsBaseCoordinator._is_unsupported_response(error) is expected
 
 
 @pytest.mark.parametrize("result", [False, None, [], {}])
