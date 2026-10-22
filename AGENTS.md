@@ -281,7 +281,7 @@ All entities must provide consistent `DeviceInfo` via the base entity classes in
 - `iot_class: "local_polling"` — Local polling with WebSocket/webhook push where available
 - `dependencies: ["ffmpeg", "media_source", "stream", "wake_on_lan", "webhook", "websocket_api"]`
 - `after_dependencies: ["http", "frontend", "lovelace"]` — Ensures custom card static paths and Lovelace resources register cleanly
-- `requirements: ["segno==1.6.6", "unifi-official-api[talkback]==2.0.0"]` — QR code generation for WiFi/vouchers, and the UniFi API client library (the `talkback` extra declares PyAV for Protect talkback)
+- `requirements: ["segno==1.6.6", "unifi-official-api[talkback]==3.0.0"]` — QR code generation for WiFi/vouchers, and the UniFi API client library (the `talkback` extra declares PyAV for Protect talkback)
 
 Keep the `unifi-official-api` pin identical in `manifest.json`, `pyproject.toml` `[project].dependencies`, and `requirements.txt`.
 

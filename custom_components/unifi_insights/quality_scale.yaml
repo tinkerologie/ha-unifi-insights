@@ -25,7 +25,7 @@ rules:
   dependency-transparency:
     status: done
     comment: >-
-      manifest.json pins unifi-official-api 2.0.0, published to PyPI by its
+      manifest.json pins unifi-official-api 3.0.0, published to PyPI by its
       release workflow at a tagged release (ADR-008).
   docs-actions:
     status: done

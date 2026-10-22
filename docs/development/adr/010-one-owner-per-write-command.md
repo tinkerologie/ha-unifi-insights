@@ -74,7 +74,7 @@ PoE port lookup and eligibility live in `coordinators/device.py`, next to the po
 
 ### Tests
 
-Each command is tested once, in the test file of its owner (`tests/coordinators/test_config.py`, `test_device.py`, `test_protect.py`, the future ADR-007 mirror), against seeded real owners and `unittest.mock.create_autospec` of the real `unifi_official_api` 2.0.0 client and endpoint classes. Calling a method or argument that the library does not have fails the test. Entity tests check only the typed call and the optimistic state.
+Each command is tested once, in the test file of its owner (`tests/coordinators/test_config.py`, `test_device.py`, `test_protect.py`, the future ADR-007 mirror), against seeded real owners and `unittest.mock.create_autospec` of the real `unifi_official_api` 3.0.0 client and endpoint classes. Calling a method or argument that the library does not have fails the test. Entity tests check only the typed call and the optimistic state.
 
 ### Protect module size
 

@@ -52,7 +52,7 @@ docs/development/               # This document, DECISIONS.md and adr/
 
 ### API client
 
-**Library:** [`unifi-official-api`](https://pypi.org/project/unifi-official-api/) from PyPI, pinned in `manifest.json` as `unifi-official-api[talkback]==2.0.0` and imported as `unifi_official_api` (see [ADR-008](./adr/008-depend-on-unifi-official-api-from-pypi.md), which supersedes the vendored copy of [ADR-003](./adr/003-vendor-the-unifi-api-client.md)). API contract fixes go to [tinkerologie/unifi-official-api](https://github.com/tinkerologie/unifi-official-api) first; the integration then raises its pin.
+**Library:** [`unifi-official-api`](https://pypi.org/project/unifi-official-api/) from PyPI, pinned in `manifest.json` as `unifi-official-api[talkback]==3.0.0` and imported as `unifi_official_api` (see [ADR-008](./adr/008-depend-on-unifi-official-api-from-pypi.md), which supersedes the vendored copy of [ADR-003](./adr/003-vendor-the-unifi-api-client.md)). API contract fixes go to [tinkerologie/unifi-official-api](https://github.com/tinkerologie/unifi-official-api) first; the integration then raises its pin.
 
 The package provides one async client per UniFi application:
 

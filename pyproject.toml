@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.14.2"
 license = {text = "Apache-2.0"}
 dependencies = [
-    "unifi-official-api[talkback]==2.0.0",
+    "unifi-official-api[talkback]==3.0.0",
 ]
 
 [project.optional-dependencies]

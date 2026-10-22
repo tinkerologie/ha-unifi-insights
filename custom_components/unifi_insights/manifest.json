@@ -19,7 +19,7 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/tinkerologie/ha-unifi-insights/issues",
   "loggers": ["custom_components.unifi_insights"],
-  "requirements": ["segno==1.6.6", "unifi-official-api[talkback]==2.0.0"],
+  "requirements": ["segno==1.6.6", "unifi-official-api[talkback]==3.0.0"],
   "usb": [],
   "version": "2026.10.2",
   "zeroconf": []
