@@ -793,6 +793,61 @@ async def test_remove_config_entry_device_of_a_deleted_site(
 
 
 @pytest.mark.parametrize(
+    ("protect_data", "expected"),
+    [
+        # Protect still reports the camera or NVR merged into the device.
+        ({"cameras": {"cam-1": {"mac": "AA-BB-CC-DD-EE-FF"}}, "nvrs": {}}, False),
+        ({"cameras": {}, "nvrs": {"nvr-1": {"mac": "aa:bb:cc:dd:ee:ff"}}}, False),
+        # Protect no longer reports it.
+        ({"cameras": {"cam-2": {"mac": "11:22:33:44:55:66"}}, "nvrs": {}}, True),
+        ({"cameras": {"cam-1": "not-a-record"}, "nvrs": None}, True),
+        ({}, True),
+    ],
+)
+async def test_remove_config_entry_device_of_a_deleted_site_shared_with_protect(
+    hass: HomeAssistant,
+    protect_data: dict[str, Any],
+    expected: bool,  # noqa: FBT001
+) -> None:
+    """A deleted site's device that Protect still reports is kept (#394)."""
+    entry = _entry_with_sites({"default": "Default"}, ["default"])
+    entry.runtime_data.protect_coordinator.data = protect_data
+    entry.runtime_data.mobility_coordinator.last_update_success = False
+    device = _device_entry("gone_device-1")
+    device.connections = {
+        (dr.CONNECTION_NETWORK_MAC, "aa:bb:cc:dd:ee:ff"),
+        ("zigbee", "00:11"),
+    }
+
+    assert await async_remove_config_entry_device(hass, entry, device) is expected
+
+
+@pytest.mark.parametrize(
+    ("connections", "protect_coordinator"),
+    [
+        # A device without a MAC connection holds no Protect camera or NVR.
+        (set(), MagicMock(data={"cameras": {"c": {"mac": "aa:bb:cc:dd:ee:ff"}}})),
+        # An entry without Protect has nothing to keep alive.
+        ({(dr.CONNECTION_NETWORK_MAC, "aa:bb:cc:dd:ee:ff")}, None),
+    ],
+    ids=["no-mac", "no-protect"],
+)
+async def test_remove_config_entry_device_of_a_deleted_site_without_protect_link(
+    hass: HomeAssistant,
+    connections: set[tuple[str, str]],
+    protect_coordinator: MagicMock | None,
+) -> None:
+    """Without a MAC or a Protect coordinator the deleted site rule applies."""
+    entry = _entry_with_sites({"default": "Default"}, ["default"])
+    entry.runtime_data.mobility_coordinator.last_update_success = False
+    entry.runtime_data.protect_coordinator = protect_coordinator
+    device = _device_entry("gone_device-1")
+    device.connections = connections
+
+    assert await async_remove_config_entry_device(hass, entry, device) is True
+
+
+@pytest.mark.parametrize(
     ("available", "last_update_success"),
     [({}, True), ({"default": "Default"}, False)],
     ids=["no-site-listed", "refresh-failed"],

@@ -13,6 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL, Platform
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
 from homeassistant.util.hass_dict import HassKey
 from unifi_official_api import (
     ApiKeyAuth,
@@ -79,6 +80,7 @@ from .coordinators.site_manager import (
     async_acquire_site_manager,
     async_release_site_manager,
 )
+from .data_transforms import normalize_mac as canonical_mac
 from .frontend import async_register_frontend
 from .probe import (
     ProbeResult,
@@ -918,7 +920,8 @@ async def async_remove_config_entry_device(
     Deselecting a site in options stops it being polled, so its devices can
     never come back and would otherwise sit unavailable with no way to remove
     them. Devices of a site deleted on the console are allowed too, once a
-    successful refresh no longer lists that site. WiFi devices carry no site
+    successful refresh no longer lists that site and Protect reports no
+    camera or NVR on them. WiFi devices carry no site
     id, so they are allowed once no polled site serves that network any more.
     Mobility routers and workspaces are allowed once Mobility no longer
     reports them. Everything else is refused:
@@ -960,7 +963,11 @@ async def async_remove_config_entry_device(
         for domain, identifier in device_entry.identifiers
     ):
         return True
-    return _is_deleted_site_device(entry, config_coordinator, polled, device_entry)
+    return _is_deleted_site_device(
+        entry, config_coordinator, polled, device_entry
+    ) and not _has_live_protect_counterpart(
+        runtime_data.protect_coordinator, device_entry
+    )
 
 
 # Device identifier families that are not site-scoped. A new family must be
@@ -1015,6 +1022,38 @@ def _is_deleted_site_device(
         )
         for identifier in identifiers
     )
+
+
+def _has_live_protect_counterpart(
+    protect_coordinator: UnifiInsightsProtectCoordinator | None,
+    device_entry: DeviceEntry,
+) -> bool:
+    """
+    Return True if Protect still reports a camera or NVR on this device.
+
+    A camera or NVR matched to a Network device by MAC joins that device and
+    adds no ``protect_`` identifier, so only its MAC connection shows that
+    Protect entities live on it.
+    """
+    if protect_coordinator is None or not protect_coordinator.data:
+        return False
+    macs = {
+        canonical_mac(value)
+        for kind, value in device_entry.connections
+        if kind == CONNECTION_NETWORK_MAC
+    } - {None}
+    if not macs:
+        return False
+    for collection in ("cameras", "nvrs"):
+        records = protect_coordinator.data.get(collection)
+        if not isinstance(records, dict):
+            continue
+        if any(
+            isinstance(record, dict) and canonical_mac(record.get("mac")) in macs
+            for record in records.values()
+        ):
+            return True
+    return False
 
 
 def _is_stale_mobility_identifier(
