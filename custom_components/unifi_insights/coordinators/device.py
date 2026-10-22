@@ -1690,6 +1690,15 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 )
                 if previous_source is None:
                     new_tracked_devices[site_id] = dict(current_tracked)
+                elif source_trustworthy:
+                    # Only the legacy cross-check is unverifiable: the v1 poll
+                    # is good, so a device it reports for the first time is
+                    # tracked too; missing devices stay tracked until legacy
+                    # can confirm them.
+                    new_tracked_devices[site_id] = {
+                        **previous_tracked,
+                        **current_tracked,
+                    }
                 else:
                     new_tracked_devices[site_id] = previous_tracked
                 kept_counts = dict(self._site_absence_counts.get(site_id, {}))

@@ -392,3 +392,40 @@ async def test_unverified_legacy_list_restarts_the_count_of_a_device_that_is_bac
         assert _registered(owners, SITE_ID, other_id)
     finally:
         await async_shutdown_owners(owners)
+
+
+async def test_unverified_legacy_list_tracks_a_new_v1_device(
+    hass: HomeAssistant,
+) -> None:
+    """A device v1 first reports while legacy is unverifiable is tracked."""
+    new_id = "switch_new_v1_id"
+    new_mac = "aa:aa:aa:aa:aa:04"
+    new_v1 = {**SWITCH_V1, "id": new_id, "mac": new_mac, "name": "New switch"}
+    owners = build_seeded_owners(hass)
+    try:
+        await _seed_switch(owners)
+        devices = owners.network_client.devices
+        # The switch goes missing (a removal is pending) while a new switch
+        # appears and the legacy check fails.
+        devices.get_all.return_value = _v1(new_v1)
+        devices.get_legacy_site_devices.side_effect = UniFiResponseError(
+            "server error", status_code=500
+        )
+        await owners.device.async_refresh()
+        assert owners.device.last_update_success
+        tracked = owners.device._site_tracked_devices[SITE_ID]
+        assert new_id in tracked
+        assert SWITCH_ID in tracked
+        _register(owners, SITE_ID, new_id, new_mac)
+
+        # Legacy answers again and both switches are gone from both lists:
+        # each is counted and removed on the Nth eligible poll.
+        devices.get_legacy_site_devices.side_effect = None
+        devices.get_legacy_site_devices.return_value = _legacy()
+        devices.get_all.return_value = _v1()
+        for _ in range(MAX_CONSECUTIVE_MISSING_POLLS):
+            await owners.device.async_refresh()
+        assert not _registered(owners, SITE_ID, new_id)
+        assert not _registered(owners, SITE_ID, SWITCH_ID)
+    finally:
+        await async_shutdown_owners(owners)
