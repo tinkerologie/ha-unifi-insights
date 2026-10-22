@@ -787,7 +787,8 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         (re)connect of either stream, the stale-latch sweep: the stream was
         down for a while and may have missed an "end" frame, so waiting for
         the next poll would leave a latched sensor on longer than needed.
-        The sweep notifies nobody (kept as it was); the next update shows it.
+        A sweep that ends a latch notifies listeners (without re-arming the
+        poll timer).
         """
         self._streams.connection_changed(stream, connected=connected)
         if connected:

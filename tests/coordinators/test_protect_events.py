@@ -18,7 +18,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
 
@@ -1395,16 +1395,41 @@ def test_latch_of_a_vanished_device_is_dropped_silently() -> None:
     assert result.logs() == []
 
 
-def test_reconnect_sweeps_without_notifying_quirk() -> None:
-    """A reconnect expires latches but publishes nothing; the next one shows it."""
+@pytest.mark.parametrize("stream", ["devices", "events"])
+def test_reconnect_sweep_that_ends_a_latch_notifies(
+    stream: Literal["devices", "events"],
+) -> None:
+    """Listeners see the end at once, without re-arming the poll timer."""
     started = run(
         cache(cameras={"c1": _camera()}),
         [(0.0, event("motion", "e1", device="c1", start=1))],
     )
     result = run(
-        started.cache, [(TIMEOUT, StreamReconnected("events"))], state=started.state
+        started.cache, [(TIMEOUT, StreamReconnected(stream))], state=started.state
     )
-    assert result.cache["cameras"]["c1"]["lastMotionEnd"] is not None
+    assert (
+        result.cache["cameras"]["c1"]["lastMotionEnd"] == at(TIMEOUT).wall.isoformat()
+    )
+    assert result.effects(PublishUpdate) == [PublishUpdate(mark_success=False)]
+
+
+@pytest.mark.parametrize(
+    ("seed", "t"),
+    [
+        pytest.param(cache(cameras={"c1": _camera()}), TIMEOUT - 1, id="not-yet-stale"),
+        pytest.param(cache(), TIMEOUT, id="device-gone"),
+    ],
+)
+def test_reconnect_sweep_that_ends_nothing_publishes_nothing(
+    seed: dict[str, Any], t: float
+) -> None:
+    """A running latch, or one of a vanished device, shows nothing new."""
+    started = run(
+        cache(cameras={"c1": _camera()}),
+        [(0.0, event("motion", "e1", device="c1", start=1))],
+    )
+    result = run(seed, [(t, StreamReconnected("events"))], state=started.state)
+    assert result.cache is seed
     assert result.effects(PublishUpdate) == []
 
 

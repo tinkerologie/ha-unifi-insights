@@ -33,9 +33,9 @@ Home Assistant, the API library or the clock; a test enforces that.
 
 The behaviour is the coordinator's as it was before the split, quirks
 included (each is pinned by a test whose id contains ``quirk``): the latch
-sweep runs only on polls and reconnects, a reconnect sweep notifies nobody, a
-REST rebuild can give a light a false motion end, an unknown frame still
-resets the poll timer, and the event store keeps every event.
+sweep runs only on polls and reconnects, a REST rebuild can give a light a
+false motion end, an unknown frame still resets the poll timer, and the event
+store keeps every event.
 """
 
 from __future__ import annotations
@@ -773,11 +773,14 @@ def reconcile(
             _apply_event_frame(run, event)
         case RestBatch():
             _apply_rest_batch(run, event)
-        case PollStarted() | StreamReconnected():
-            # The sweep runs only here (quirk: under steady frames that keep
-            # postponing the poll it can starve), and a reconnect sweep
-            # notifies nobody (quirk): the next notification shows it.
+        case PollStarted():
+            # The poll publishes once it has fetched, which shows the sweep.
+            # The sweep runs only here and on a reconnect (quirk: under steady
+            # frames that keep postponing the poll it can starve).
             _expire_stale_latches(run)
+        case StreamReconnected():
+            if _expire_stale_latches(run):
+                run.effects.append(PublishUpdate(mark_success=False))
         case PollCompleted():
             _evict_missing_devices(run)
         case SirenStopped():
@@ -1475,16 +1478,18 @@ def _group_state_agrees(
 # --- latches -------------------------------------------------------------------
 
 
-def _expire_stale_latches(run: _Run) -> None:
+def _expire_stale_latches(run: _Run) -> bool:
     """
     Force-expire motion, smart-detect and ring latches held open too long.
 
     A latch at least `STALE_EVENT_TIMEOUT` old is dropped; if its device is
     still cached with no end, the end is written as the current wall time
     (and a camera's smart detections are cleared). A latch whose device has
-    gone is dropped too.
+    gone is dropped too. Returns True if an end was written, so the caller
+    knows whether listeners have anything new to show.
     """
     now = run.now.wall
+    wrote_end = False
     for kind, (collection, prefix, cleared) in _LATCHES.items():
         end_key = f"{prefix}End"
         latch = run.latch(kind)
@@ -1512,10 +1517,12 @@ def _expire_stale_latches(run: _Run) -> None:
                 if cleared is not None:
                     record[cleared] = []
                 run.put(collection, device_id, record)
+                wrote_end = True
         run.set_latch(
             kind,
             {k: v for k, v in latch.items() if k not in expired},
         )
+    return wrote_end
 
 
 # --- registry clean-up ---------------------------------------------------------
