@@ -17,10 +17,15 @@ refresh_data:
 restart_device:
   name: Restart Device
   description: Restart a UniFi device.
-  target:
-    entity:
-      integration: unifi_insights
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the device to target. Use this or the device ID.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
     site_id:
       name: Site ID
       description: The site ID where the device is located (optional when targeting an entity or device).
@@ -37,10 +42,15 @@ restart_device:
 power_cycle_port:
   name: Power Cycle PoE Port
   description: Power-cycle a PoE-enabled port on a UniFi network device.
-  target:
-    entity:
-      integration: unifi_insights
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the device to target. Use this or the device ID.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
     site_id:
       name: Site ID
       description: The site ID where the device is located (optional when targeting a device).
@@ -66,11 +76,24 @@ power_cycle_port:
 set_hdr_mode:
   name: Set HDR Mode
   description: Set the HDR mode for a UniFi Protect camera.
-  target:
-    entity:
-      integration: unifi_insights
-      domain: camera
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the camera to target. Use this or the camera ID.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
+          domain: camera
+    device_id:
+      name: Device
+      description: >-
+        The camera device to target. Use this or the camera ID.
+      required: false
+      selector:
+        device:
+          integration: unifi_insights
     camera_id:
       name: Camera ID
       description: The ID of the camera
@@ -91,11 +114,24 @@ set_hdr_mode:
 set_video_mode:
   name: Set Video Mode
   description: Set the video mode (FPS) for a UniFi Protect camera.
-  target:
-    entity:
-      integration: unifi_insights
-      domain: camera
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the camera to target. Use this or the camera ID.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
+          domain: camera
+    device_id:
+      name: Device
+      description: >-
+        The camera device to target. Use this or the camera ID.
+      required: false
+      selector:
+        device:
+          integration: unifi_insights
     camera_id:
       name: Camera ID
       description: The ID of the camera
@@ -117,11 +153,24 @@ set_video_mode:
 set_mic_volume:
   name: Set Microphone Volume
   description: Set the microphone volume level for a UniFi Protect camera.
-  target:
-    entity:
-      integration: unifi_insights
-      domain: camera
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the camera to target. Use this or the camera ID.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
+          domain: camera
+    device_id:
+      name: Device
+      description: >-
+        The camera device to target. Use this or the camera ID.
+      required: false
+      selector:
+        device:
+          integration: unifi_insights
     camera_id:
       name: Camera ID
       description: The ID of the camera
@@ -141,11 +190,24 @@ set_mic_volume:
 ptz_move:
   name: PTZ Move
   description: Move a PTZ camera to a preset.
-  target:
-    entity:
-      integration: unifi_insights
-      domain: camera
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the camera to target. Use this or the camera ID.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
+          domain: camera
+    device_id:
+      name: Device
+      description: >-
+        The camera device to target. Use this or the camera ID.
+      required: false
+      selector:
+        device:
+          integration: unifi_insights
     camera_id:
       name: Camera ID
       description: The ID of the camera
@@ -165,11 +227,24 @@ ptz_move:
 ptz_patrol:
   name: PTZ Patrol
   description: Control the patrol function on a PTZ camera.
-  target:
-    entity:
-      integration: unifi_insights
-      domain: camera
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the camera to target. Use this or the camera ID.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
+          domain: camera
+    device_id:
+      name: Device
+      description: >-
+        The camera device to target. Use this or the camera ID.
+      required: false
+      selector:
+        device:
+          integration: unifi_insights
     camera_id:
       name: Camera ID
       description: The ID of the camera
@@ -199,11 +274,24 @@ ptz_patrol:
 set_light_mode:
   name: Set Light Mode
   description: Set the lighting mode for a UniFi Protect light.
-  target:
-    entity:
-      integration: unifi_insights
-      domain: light
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the light to target. Use this or the light ID.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
+          domain: light
+    device_id:
+      name: Device
+      description: >-
+        The light device to target. Use this or the light ID.
+      required: false
+      selector:
+        device:
+          integration: unifi_insights
     light_id:
       name: Light ID
       description: The ID of the light
@@ -224,11 +312,24 @@ set_light_mode:
 set_light_level:
   name: Set Light Level
   description: Set the brightness level for a UniFi Protect light.
-  target:
-    entity:
-      integration: unifi_insights
-      domain: light
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the light to target. Use this or the light ID.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
+          domain: light
+    device_id:
+      name: Device
+      description: >-
+        The light device to target. Use this or the light ID.
+      required: false
+      selector:
+        device:
+          integration: unifi_insights
     light_id:
       name: Light ID
       description: The ID of the light
@@ -249,10 +350,23 @@ set_light_level:
 set_chime_volume:
   name: Set Chime Volume
   description: Set the volume level for a UniFi Protect chime.
-  target:
-    entity:
-      integration: unifi_insights
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the chime to target. Use this or the chime ID.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
+    device_id:
+      name: Device
+      description: >-
+        The chime device to target. Use this or the chime ID.
+      required: false
+      selector:
+        device:
+          integration: unifi_insights
     chime_id:
       name: Chime ID
       description: ID of the chime
@@ -289,10 +403,23 @@ play_chime_ringtone:
   description: >-
     This action always raises a not supported error because the official
     Protect API has no chime playback route.
-  target:
-    entity:
-      integration: unifi_insights
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the chime to target. Use this or the chime ID.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
+    device_id:
+      name: Device
+      description: >-
+        The chime device to target. Use this or the chime ID.
+      required: false
+      selector:
+        device:
+          integration: unifi_insights
     chime_id:
       name: Chime ID
       description: ID of the chime
@@ -313,10 +440,23 @@ play_chime_ringtone:
 set_chime_ringtone:
   name: Set Chime Ringtone
   description: Set the ringtone for a UniFi Protect chime.
-  target:
-    entity:
-      integration: unifi_insights
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the chime to target. Use this or the chime ID.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
+    device_id:
+      name: Device
+      description: >-
+        The chime device to target. Use this or the chime ID.
+      required: false
+      selector:
+        device:
+          integration: unifi_insights
     chime_id:
       name: Chime ID
       description: ID of the chime
@@ -351,10 +491,23 @@ set_chime_ringtone:
 set_chime_repeat_times:
   name: Set Chime Repeat Times
   description: Set the number of times a chime repeats when triggered.
-  target:
-    entity:
-      integration: unifi_insights
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the chime to target. Use this or the chime ID.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
+    device_id:
+      name: Device
+      description: >-
+        The chime device to target. Use this or the chime ID.
+      required: false
+      selector:
+        device:
+          integration: unifi_insights
     chime_id:
       name: Chime ID
       description: ID of the chime
@@ -392,10 +545,23 @@ set_chime_paired_doorbells:
     Choose which doorbells ring a UniFi Protect chime. The selection replaces
     the chime's current pairing. Leave Doorbells empty to unpair every
     doorbell.
-  target:
-    entity:
-      integration: unifi_insights
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the chime to target. Use this or the chime ID.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
+    device_id:
+      name: Device
+      description: >-
+        The chime device to target. Use this or the chime ID.
+      required: false
+      selector:
+        device:
+          integration: unifi_insights
     chime_id:
       name: Chime ID
       description: >-
@@ -421,10 +587,23 @@ set_chime_paired_doorbells:
 
 # UniFi Network services
 reconnect_client:
-  target:
-    entity:
-      integration: unifi_insights
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the client to target. Use this or the client ID.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
+    device_id:
+      name: Device
+      description: >-
+        The client device to target. Use this or the client ID.
+      required: false
+      selector:
+        device:
+          integration: unifi_insights
     site_id:
       required: true
       selector:
@@ -439,10 +618,23 @@ remove_clients:
 authorize_guest:
   name: Authorize Guest
   description: Authorize guest access for a client on the UniFi Network.
-  target:
-    entity:
-      integration: unifi_insights
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the client to target. Use this or the client ID.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
+    device_id:
+      name: Device
+      description: >-
+        The client device to target. Use this or the client ID.
+      required: false
+      selector:
+        device:
+          integration: unifi_insights
     site_id:
       name: Site ID
       description: The site ID where the client is located
@@ -648,10 +840,23 @@ create_liveview:
 set_liveview:
   name: Set Live View
   description: Set the active live view for a viewer.
-  target:
-    entity:
-      integration: unifi_insights
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the viewer to target. Use this or the viewer ID.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
+    device_id:
+      name: Device
+      description: >-
+        The viewer device to target. Use this or the viewer ID.
+      required: false
+      selector:
+        device:
+          integration: unifi_insights
     viewer_id:
       name: Viewer ID
       description: The ID of the viewer
@@ -671,10 +876,23 @@ carrier_suspend_subscriber:
     Stop a subscriber's internet service. Requires the "Enable service actions"
     option to be enabled on the Carrier Fabric integration entry, and an ISP
     API key with the suspend:service scope.
-  target:
-    entity:
-      integration: unifi_insights
   fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the subscriber to target.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
+    device_id:
+      name: Device
+      description: >-
+        The subscriber device to target.
+      required: false
+      selector:
+        device:
+          integration: unifi_insights
     reason:
       name: Reason
       description: >-
@@ -689,9 +907,23 @@ carrier_resume_subscriber:
     Restore a subscriber's internet service. Requires the "Enable service actions"
     option to be enabled on the Carrier Fabric integration entry, and an ISP
     API key with the resume:service scope.
-  target:
-    entity:
-      integration: unifi_insights
+  fields:
+    entity_id:
+      name: Entity
+      description: >-
+        An entity of the subscriber to target.
+      required: false
+      selector:
+        entity:
+          integration: unifi_insights
+    device_id:
+      name: Device
+      description: >-
+        The subscriber device to target.
+      required: false
+      selector:
+        device:
+          integration: unifi_insights
 
 set_access_user_pin:
   fields:

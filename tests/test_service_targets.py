@@ -1983,7 +1983,7 @@ async def test_carrier_identifier_in_two_entries_is_ambiguous(
 
 
 async def test_carrier_entity_of_a_subscriber_resolves(hass: HomeAssistant) -> None:
-    """A subscriber entity resolves through its device; areas are ignored."""
+    """A subscriber entity resolves through its device."""
     entry = _carrier_entry(hass, "carrier_a")
     (device,) = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
     entity = er.async_get(hass).async_get_or_create(
@@ -1995,7 +1995,7 @@ async def test_carrier_entity_of_a_subscriber_resolves(hass: HomeAssistant) -> N
         _call(
             hass,
             "carrier_suspend_subscriber",
-            target={"entity_id": [entity.entity_id], "area_id": "porch"},
+            target={"entity_id": [entity.entity_id]},
             entity_id=entity.entity_id,
         ),
     )

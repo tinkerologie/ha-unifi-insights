@@ -88,7 +88,7 @@ else:
     import voluptuous as vol
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable
+    from collections.abc import Awaitable, Callable
 
     from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
 
@@ -163,11 +163,32 @@ SERVICE_REFRESH_DATA = "refresh_data"
 SERVICE_RESTART_DEVICE = "restart_device"
 
 TARGET_SELECTOR_SCHEMA = vol.Any(cv.string, [cv.string])
+
+
+def _unsupported_target(key: str) -> Callable[[Any], NoReturn]:
+    """Return a validator that refuses a target key the action cannot resolve."""
+
+    def _refuse(_value: Any) -> NoReturn:
+        msg = (
+            f"{key} is not supported by this action; target one entity, device"
+            " or resource ID"
+        )
+        raise vol.Invalid(msg)
+
+    return _refuse
+
+
+# Single-target actions resolve one entity, device or resource ID. Area, floor
+# and label targets expand to many and are refused here, so they are never
+# silently ignored. Other keys (such as a nested camera_id) pass through.
 TARGET_DICT_SCHEMA = vol.Schema(
     {
         vol.Optional("entity_id"): TARGET_SELECTOR_SCHEMA,
         vol.Optional("device_id"): TARGET_SELECTOR_SCHEMA,
-        vol.Optional("area_id"): TARGET_SELECTOR_SCHEMA,
+        **{
+            vol.Optional(key): _unsupported_target(key)
+            for key in ("area_id", "floor_id", "label_id")
+        },
     },
     extra=vol.ALLOW_EXTRA,
 )

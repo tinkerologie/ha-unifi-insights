@@ -754,13 +754,19 @@ async def test_setup_registers_and_unload_removes_the_action(
 
 
 def test_services_yaml_defines_the_action_with_hassfest_safe_targets() -> None:
-    """The service target is entity-only; doorbells filter on ring sensors."""
+    """The chime is one entity or device; doorbells filter on ring sensors."""
     definitions = yaml.safe_load((COMPONENT_DIR / "services.yaml").read_text())
     service = definitions[SERVICE_SET_CHIME_PAIRED_DOORBELLS]
 
-    # hassfest rejects device filters on a service target.
-    assert service["target"] == {"entity": {"integration": DOMAIN}}
-    assert set(service["fields"]) == {"chime_id", "doorbells"}
+    # The chime is a single target, so no area-offering action target.
+    assert "target" not in service
+    assert set(service["fields"]) == {"entity_id", "device_id", "chime_id", "doorbells"}
+    assert service["fields"]["entity_id"]["selector"] == {
+        "entity": {"integration": DOMAIN}
+    }
+    assert service["fields"]["device_id"]["selector"] == {
+        "device": {"integration": DOMAIN}
+    }
     selector = service["fields"]["doorbells"]["selector"]["target"]
     assert selector == {
         "entity": {

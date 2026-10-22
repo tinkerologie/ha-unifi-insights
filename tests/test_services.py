@@ -1109,6 +1109,156 @@ def test_protect_ui_selectors_match_service_schemas(
         assert "direction" not in fields
 
 
+# The actions that act on exactly one entity, device or resource. Only the
+# doorbells field of set_chime_paired_doorbells expands areas, floors and labels.
+_SINGLE_TARGET_ACTIONS = {
+    "restart_device": None,
+    "power_cycle_port": None,
+    "set_hdr_mode": "camera",
+    "set_video_mode": "camera",
+    "set_mic_volume": "camera",
+    "ptz_move": "camera",
+    "ptz_patrol": "camera",
+    "set_light_mode": "light",
+    "set_light_level": "light",
+    "set_chime_volume": None,
+    "play_chime_ringtone": None,
+    "set_chime_ringtone": None,
+    "set_chime_repeat_times": None,
+    "set_chime_paired_doorbells": None,
+    "reconnect_client": None,
+    "authorize_guest": None,
+    "set_liveview": None,
+    "carrier_suspend_subscriber": None,
+    "carrier_resume_subscriber": None,
+}
+
+
+@pytest.mark.usefixtures("services_ready")
+async def test_single_target_actions_are_the_actions_with_a_nested_target(
+    hass: HomeAssistant,
+) -> None:
+    """Every action whose schema takes a nested target is a single-target action."""
+    registered = hass.services.async_services_for_domain(DOMAIN)
+    with_target = {
+        name
+        for name, service in registered.items()
+        if service.schema is not None
+        and any(str(key) == "target" for key in service.schema.schema)
+    }
+    assert with_target == set(_SINGLE_TARGET_ACTIONS)
+
+
+@pytest.mark.usefixtures("services_ready")
+@pytest.mark.parametrize("key", ["area_id", "floor_id", "label_id"])
+@pytest.mark.parametrize("service", _SINGLE_TARGET_ACTIONS)
+@pytest.mark.parametrize("with_entity", [False, True], ids=["alone", "with-entity"])
+async def test_single_target_actions_refuse_area_floor_and_label_targets(
+    hass: HomeAssistant, service: str, key: str, *, with_entity: bool
+) -> None:
+    """A nested area, floor or label target is a schema error naming the field."""
+    target: dict[str, Any] = {key: "kitchen"}
+    if with_entity:
+        target["entity_id"] = "sensor.any"
+    schema = hass.services.async_services_for_domain(DOMAIN)[service].schema
+    assert schema is not None
+
+    with pytest.raises(vol.MultipleInvalid) as err:
+        schema({"target": target})
+    refused = [error for error in err.value.errors if error.path == ["target", key]]
+    assert len(refused) == 1
+    assert key in refused[0].error_message
+    assert "not supported by this action" in refused[0].error_message
+
+
+@pytest.mark.usefixtures("services_ready")
+@pytest.mark.parametrize("key", ["area_id", "floor_id", "label_id"])
+async def test_top_level_area_floor_and_label_targets_are_refused(
+    hass: HomeAssistant, key: str
+) -> None:
+    """An action-level area target reaches the schema as an unknown key."""
+    with pytest.raises(vol.Invalid, match=key):
+        await hass.services.async_call(
+            DOMAIN,
+            "set_hdr_mode",
+            {"mode": "auto"},
+            target={key: "kitchen"},
+            blocking=True,
+        )
+
+
+@pytest.mark.usefixtures("services_ready")
+async def test_nested_resource_and_entity_targets_still_validate(
+    hass: HomeAssistant,
+) -> None:
+    """Nested entity, device and resource IDs pass the nested target schema."""
+    schema = hass.services.async_services_for_domain(DOMAIN)["set_hdr_mode"].schema
+    assert schema is not None
+    target = {"entity_id": "camera.door", "device_id": "dev1", "camera_id": "cam1"}
+
+    assert schema({"mode": "auto", "target": target})["target"] == target
+
+
+@pytest.mark.parametrize(("service", "domain"), _SINGLE_TARGET_ACTIONS.items())
+def test_single_target_actions_offer_one_entity_or_device_in_the_ui(
+    service: str, domain: str | None
+) -> None:
+    """
+    The UI offers one entity or device, never an area.
+
+    Home Assistant's target selector always offers areas, so these actions
+    have entity and device fields instead of an action-level target.
+    """
+    definitions = yaml.safe_load(
+        Path(services.__file__).with_suffix(".yaml").read_text(encoding="utf-8")
+    )
+    definition = definitions[service]
+    assert "target" not in definition
+    fields = definition["fields"]
+    entity_filter = {"integration": DOMAIN} | ({"domain": domain} if domain else {})
+    assert fields["entity_id"]["selector"] == {"entity": entity_filter}
+    assert fields["entity_id"]["required"] is False
+    if service in {"restart_device", "power_cycle_port"}:
+        # These two also take a native device ID, so the field stays text.
+        assert fields["device_id"]["selector"] == {"text": None}
+    else:
+        assert fields["device_id"]["selector"] == {"device": {"integration": DOMAIN}}
+        assert fields["device_id"]["required"] is False
+
+
+def test_no_action_has_an_action_level_target() -> None:
+    """No action offers Home Assistant's target selector, which includes areas."""
+    definitions = yaml.safe_load(
+        Path(services.__file__).with_suffix(".yaml").read_text(encoding="utf-8")
+    )
+    assert [
+        name for name, spec in definitions.items() if "target" in (spec or {})
+    ] == []
+
+
+def test_new_target_fields_are_translated_in_both_files() -> None:
+    """Actions with translations name their new entity and device fields."""
+    loaded = [
+        json.loads((Path(services.__file__).parent / path).read_text(encoding="utf-8"))[
+            "services"
+        ]
+        for path in ("strings.json", "translations/en.json")
+    ]
+    for service, strings in loaded[0].items():
+        if service not in _SINGLE_TARGET_ACTIONS:
+            continue
+        assert strings["fields"]["entity_id"]["name"] == "Entity"
+        assert (
+            strings["fields"]["entity_id"] == loaded[1][service]["fields"]["entity_id"]
+        )
+        if service not in {"restart_device", "power_cycle_port"}:
+            assert strings["fields"]["device_id"]["name"] == "Device"
+            assert (
+                strings["fields"]["device_id"]
+                == loaded[1][service]["fields"]["device_id"]
+            )
+
+
 class TestChimeServices:
     """Chime schemas, and the ringtone action against the real Protect owner."""
 

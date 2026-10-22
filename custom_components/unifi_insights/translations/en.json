@@ -182,6 +182,10 @@
         "device_id": {
           "name": "Device ID",
           "description": "The ID of the device to restart."
+        },
+        "entity_id": {
+          "name": "Entity",
+          "description": "An entity of the device to target. Use this or the device ID."
         }
       }
     },
@@ -196,6 +200,14 @@
         "doorbells": {
           "name": "Doorbells",
           "description": "Doorbell ring sensors of this integration, or the doorbell devices or areas that hold them. Only doorbells on the chime's console are accepted."
+        },
+        "entity_id": {
+          "name": "Entity",
+          "description": "An entity of the chime to target. Use this or the chime ID."
+        },
+        "device_id": {
+          "name": "Device",
+          "description": "The chime device to target. Use this or the chime ID."
         }
       }
     },
@@ -206,12 +218,30 @@
         "reason": {
           "name": "Reason",
           "description": "Optional reason for stopping the subscriber's service (maximum 1024 characters)."
+        },
+        "entity_id": {
+          "name": "Entity",
+          "description": "An entity of the subscriber to target."
+        },
+        "device_id": {
+          "name": "Device",
+          "description": "The subscriber device to target."
         }
       }
     },
     "carrier_resume_subscriber": {
       "name": "Resume Subscriber",
-      "description": "Restore a subscriber's internet service. Requires the \"Enable service actions\" option to be enabled on the Carrier Fabric integration entry, and an ISP API key with the resume:service scope."
+      "description": "Restore a subscriber's internet service. Requires the \"Enable service actions\" option to be enabled on the Carrier Fabric integration entry, and an ISP API key with the resume:service scope.",
+      "fields": {
+        "entity_id": {
+          "name": "Entity",
+          "description": "An entity of the subscriber to target."
+        },
+        "device_id": {
+          "name": "Device",
+          "description": "The subscriber device to target."
+        }
+      }
     },
     "power_cycle_port": {
       "name": "Power Cycle PoE Port",
@@ -228,6 +258,10 @@
         "port_idx": {
           "name": "Port Index",
           "description": "The 1-based port index to power-cycle."
+        },
+        "entity_id": {
+          "name": "Entity",
+          "description": "An entity of the device to target. Use this or the device ID."
         }
       }
     },
@@ -242,6 +276,14 @@
         "client_id": {
           "name": "Client ID",
           "description": "The client ID or MAC address of the connected wireless client to reconnect."
+        },
+        "entity_id": {
+          "name": "Entity",
+          "description": "An entity of the client to target. Use this or the client ID."
+        },
+        "device_id": {
+          "name": "Device",
+          "description": "The client device to target. Use this or the client ID."
         }
       }
     },
@@ -260,6 +302,14 @@
         "ringtone_id": {
           "name": "Ringtone ID",
           "description": "Kept only so existing automations stay valid. The action raises the same not supported error with or without this field."
+        },
+        "entity_id": {
+          "name": "Entity",
+          "description": "An entity of the chime to target. Use this or the chime ID."
+        },
+        "device_id": {
+          "name": "Device",
+          "description": "The chime device to target. Use this or the chime ID."
         }
       }
     },

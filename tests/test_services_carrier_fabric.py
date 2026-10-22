@@ -552,18 +552,18 @@ async def test_unexpected_exceptions_are_not_mapped(
         )
 
 
-async def test_area_only_target_is_ignored(hass, setup_carrier_services):
-    """Areas are unsupported: an area-only target is the same as no target."""
+async def test_area_target_is_refused(hass, setup_carrier_services):
+    """Areas are unsupported: a nested area target fails schema validation."""
     coord = setup_carrier_services["coordinator"]
+    sub_device = setup_carrier_services["sub_device"]
 
-    with pytest.raises(ServiceValidationError) as exc_info:
+    with pytest.raises(vol.Invalid, match="area_id is not supported"):
         await hass.services.async_call(
             DOMAIN,
             SERVICE_CARRIER_SUSPEND_SUBSCRIBER,
-            {"target": {"area_id": "living_room"}},
+            {"target": {"area_id": "living_room", "device_id": sub_device.id}},
             blocking=True,
         )
-    assert exc_info.value.translation_key == "carrier_target_required"
     coord.async_suspend_subscriber.assert_not_called()
 
 

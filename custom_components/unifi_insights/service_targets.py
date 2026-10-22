@@ -1287,8 +1287,8 @@ def _extract_carrier_targets(call: ServiceCall) -> list[str]:
     """
     Extract all target entity or device IDs from a service call.
 
-    Subscribers are devices, so area targets are not supported and are
-    ignored wherever they appear.
+    Subscribers are devices, so area targets are not supported; the action
+    schemas refuse them before this runs.
     """
     targets: list[str] = []
 
