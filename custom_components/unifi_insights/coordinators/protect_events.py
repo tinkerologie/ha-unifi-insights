@@ -32,10 +32,9 @@ from the ``coordinators.protect`` logger. This module imports nothing from
 Home Assistant, the API library or the clock; a test enforces that.
 
 The behaviour is the coordinator's as it was before the split, quirks
-included (each is pinned by a test whose id contains ``quirk``): the latch
-sweep runs only on polls and reconnects, a REST rebuild can give a light a
-false motion end, an unknown frame still resets the poll timer, and the event
-store keeps every event.
+included (each is pinned by a test whose id contains ``quirk``): a REST
+rebuild can give a light a false motion end, an unknown frame still resets the
+poll timer, and the event store keeps every event.
 """
 
 from __future__ import annotations
@@ -768,15 +767,18 @@ def reconcile(
     run = _Run(state, cache, now)
     match event:
         case DeviceFrame():
-            _apply_device_frame(run, event)
+            # Every device frame re-arms the poll timer, so under steady
+            # frames the poll and its sweep can wait indefinitely: the frame
+            # sweeps too. A frame that publishes shows the sweep with it.
+            swept = _expire_stale_latches(run)
+            if not _apply_device_frame(run, event) and swept:
+                run.effects.append(PublishUpdate(mark_success=False))
         case EventFrame():
             _apply_event_frame(run, event)
         case RestBatch():
             _apply_rest_batch(run, event)
         case PollStarted():
             # The poll publishes once it has fetched, which shows the sweep.
-            # The sweep runs only here and on a reconnect (quirk: under steady
-            # frames that keep postponing the poll it can starve).
             _expire_stale_latches(run)
         case StreamReconnected():
             if _expire_stale_latches(run):
@@ -795,8 +797,8 @@ def reconcile(
 # --- device frames -------------------------------------------------------------
 
 
-def _apply_device_frame(run: _Run, frame: DeviceFrame) -> None:
-    """Merge a device frame into its collection."""
+def _apply_device_frame(run: _Run, frame: DeviceFrame) -> bool:
+    """Merge a device frame into its collection; return True if it published."""
     model_key, device_id, fields = frame.model_key, frame.device_id, frame.fields
     run.log(
         logging.DEBUG,
@@ -843,13 +845,14 @@ def _apply_device_frame(run: _Run, frame: DeviceFrame) -> None:
                 "for unknown device %s; the next poll will pick it up",
                 device_id,
             )
-            return
+            return False
         existing = run.records(target).get(device_id, {})
         run.put(target, device_id, deep_merge(existing, fields))
     # Every frame, an unknown model key included (quirk), marks the update
     # successful and re-arms the poll timer, so entities stay available while
     # frames flow and the fallback poll waits for a quiet stream.
     run.effects.append(PublishUpdate(mark_success=True))
+    return True
 
 
 def _stamp_sensor_groups(run: _Run, sensor_id: str, fields: Mapping[str, Any]) -> None:

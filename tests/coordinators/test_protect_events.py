@@ -1452,16 +1452,64 @@ def test_light_rebuild_gets_a_false_motion_end_quirk() -> None:
     assert len(rebuilt.logs(logging.INFO)) == 1
 
 
-def test_latch_sweep_starves_without_a_poll_quirk() -> None:
-    """Frames never sweep: only a poll or a reconnect expires a latch."""
+def test_device_frame_sweeps_stale_latches_of_every_device() -> None:
+    """Steady frames that postpone the poll still end a stale latch, anywhere."""
     started = run(
-        cache(cameras={"c1": _camera()}),
+        cache(cameras={"c1": _camera(), "c2": _camera(id="c2")}),
         [
             (0.0, event("motion", "e1", device="c1", start=1)),
-            (TIMEOUT * 3, device("camera", "c1", name="still streaming")),
+            (0.0, event("ring", "e2", device="c2", start=1)),
         ],
     )
-    assert started.cache["cameras"]["c1"]["lastMotionEnd"] is None
+    short = run(
+        started.cache,
+        [(TIMEOUT - 1, device("camera", "c2", name="still streaming"))],
+        state=started.state,
+    )
+    assert short.cache["cameras"]["c1"]["lastMotionEnd"] is None
+    assert short.effects(PublishUpdate) == [PublishUpdate(mark_success=True)]
+
+    result = run(
+        short.cache,
+        [(TIMEOUT, device("camera", "c2", name="still streaming"))],
+        state=short.state,
+    )
+    expected_end = at(TIMEOUT).wall.isoformat()
+    assert result.cache["cameras"]["c1"]["lastMotionEnd"] == expected_end
+    assert result.cache["cameras"]["c2"]["lastRingEnd"] == expected_end
+    assert result.cache["cameras"]["c2"]["name"] == "still streaming"
+    assert all(not latch for latch in result.state.latches.values())
+    # The frame's own publish shows the expiry: no second one.
+    assert result.effects(PublishUpdate) == [PublishUpdate(mark_success=True)]
+
+
+def test_device_frame_wins_over_the_sweep_end() -> None:
+    """The sweep runs first, so an end the frame carries is kept."""
+    started = run(
+        cache(cameras={"c1": _camera()}),
+        [(0.0, event("motion", "e1", device="c1", start=1))],
+    )
+    result = run(
+        started.cache,
+        [(TIMEOUT, device("camera", "c1", lastMotionEnd=42))],
+        state=started.state,
+    )
+    assert result.cache["cameras"]["c1"]["lastMotionEnd"] == 42
+
+
+def test_dropped_frame_that_sweeps_notifies_without_marking_success() -> None:
+    """A frame with no target still ends a stale latch, and listeners see it."""
+    started = run(
+        cache(cameras={"c1": _camera()}),
+        [(0.0, event("motion", "e1", device="c1", start=1))],
+    )
+    result = run(
+        started.cache,
+        [(TIMEOUT, device("linkstation", "d1", name="x"))],
+        state=started.state,
+    )
+    assert result.cache["cameras"]["c1"]["lastMotionEnd"] is not None
+    assert result.effects(PublishUpdate) == [PublishUpdate(mark_success=False)]
 
 
 def test_motion_hits_the_camera_before_a_light_with_the_same_id() -> None:
