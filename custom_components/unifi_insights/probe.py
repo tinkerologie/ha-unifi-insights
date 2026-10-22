@@ -15,11 +15,12 @@ import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
+    UniFiNotFoundError,
     UniFiRateLimitError,
     UniFiResponseError,
     UniFiTimeoutError,
@@ -66,6 +67,25 @@ class ProbeResult:
     sites: list[Any] = field(default_factory=list)
     org_id: str | None = None
     missing_scope: bool = False
+
+
+def is_malformed_response(err: object) -> TypeGuard[UniFiResponseError]:
+    """
+    Return True for a successful JSON answer whose record failed to parse.
+
+    ``unifi-official-api`` raises ``UniFiResponseError`` with status 200 and
+    no response body for a record that fails validation (it raised pydantic's
+    ``ValidationError`` before 3.0.0); its message names the failing fields
+    only. ``UniFiNotFoundError`` with status 200 - no record at all - is not
+    malformed, and a 2xx non-JSON page (a web UI in place of the API) keeps
+    its body and stays an unsupported answer.
+    """
+    return (
+        isinstance(err, UniFiResponseError)
+        and not isinstance(err, UniFiNotFoundError)
+        and err.status_code == HTTPStatus.OK
+        and err.response_body is None
+    )
 
 
 def classify_error(err: Exception) -> ProbeStatus:
@@ -125,17 +145,15 @@ async def async_probe_protect(client: UniFiProtectClient) -> ProbeResult:
 
     try:
         nvr = await client.nvr.get()
-    except ValueError as err:
-        # nvr.get() raises ValueError("NVR not found") when the response
-        # holds no NVR record; pydantic's ValidationError also subclasses
-        # ValueError but means an NVR payload that failed to parse.
-        if type(err) is ValueError:
+    except Exception as err:
+        # A successful answer without an NVR record means Protect is empty;
+        # one whose NVR record fails to parse is an error, not "unsupported".
+        if isinstance(err, UniFiNotFoundError) and err.status_code == HTTPStatus.OK:
             _LOGGER.debug("Protect API probe: no cameras and no NVR")
             return ProbeResult(ProbeStatus.EMPTY, err)
-        _LOGGER.debug("Protect API probe (nvr): %s (%r)", ProbeStatus.ERROR, err)
-        return ProbeResult(ProbeStatus.ERROR, err)
-    except Exception as err:
-        status = classify_error(err)
+        status = (
+            ProbeStatus.ERROR if is_malformed_response(err) else classify_error(err)
+        )
         _LOGGER.debug("Protect API probe (nvr): %s (%r)", status, err)
         return ProbeResult(status, err)
     if not nvr:
@@ -157,7 +175,10 @@ async def async_probe_innerspace(client: UniFiInnerSpaceClient) -> ProbeResult:
     try:
         project = await client.get_project(expected_unsupported=True)
     except Exception as err:
-        status = classify_error(err)
+        # A project that fails to parse is an error, not "unsupported".
+        status = (
+            ProbeStatus.ERROR if is_malformed_response(err) else classify_error(err)
+        )
         status_code = getattr(err, "status_code", None)
         _LOGGER.debug(
             "InnerSpace API probe (project): %s (status=%s, %r)",

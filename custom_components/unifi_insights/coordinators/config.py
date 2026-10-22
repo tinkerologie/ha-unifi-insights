@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_call_later
-from pydantic import ValidationError
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
@@ -24,7 +23,6 @@ from unifi_official_api import (
     UniFiRuleNotEditableError,
     UniFiTimeoutError,
 )
-from unifi_official_api.validation import sanitized_validation_fields
 
 from custom_components.unifi_insights.const import (
     CONF_SITE_IDS,
@@ -36,6 +34,7 @@ from custom_components.unifi_insights.data_transforms import (
     refresh_latest_voucher,
     voucher_to_record,
 )
+from custom_components.unifi_insights.probe import is_malformed_response
 
 from .base import CommandFailure, UnifiInsightsBaseCoordinator, async_execute_command
 from .config_sections import (
@@ -274,12 +273,9 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
                     if (section, site_id) in self._failed_sections
                     else _LOGGER.warning
                 )
-                if isinstance(err, ValidationError):
-                    err_msg: Any = (
-                        f"ValidationError(fields: {sanitized_validation_fields(err)})"
-                    )
-                else:
-                    err_msg = err
+                # A record that failed to parse: the message names its
+                # fields, which the exception's own text leaves out.
+                err_msg: Any = err.message if is_malformed_response(err) else err
                 log(
                     "Config coordinator: Unable to fetch %s for site %s, keeping "
                     "the last known data: %s",
@@ -829,7 +825,7 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
             self._legacy_remap_at = now
             try:
                 legacy_sites = await self.network_client.sites.get_legacy_all()
-            except (UniFiError, ValidationError) as err:
+            except UniFiError as err:
                 _LOGGER.debug(
                     "Config coordinator: On-demand legacy site lookup failed: %s",
                     type(err).__name__,

@@ -242,7 +242,7 @@ def _seed_outlet_overrides(device: Mapping[str, Any]) -> list[dict[str, Any]]:
     """
     Seed a full ``outlet_overrides`` array from the sensed ``outlet_table``.
 
-    Copies ``_seed_outlet_overrides`` from ``unifi-official-api`` 2.0.0; see
+    Copies ``_seed_outlet_overrides`` from ``unifi-official-api`` 3.0.0; see
     ``_build_outlet_overrides``.
     """
     outlet_table = device.get("outlet_table")
@@ -288,7 +288,7 @@ def _build_outlet_overrides(
     The controller treats ``outlet_overrides`` as the complete desired state,
     so the cache must hold exactly what was sent or the next write reverts
     earlier outlets (#358). This copies the read-modify-write rule of
-    ``DevicesEndpoint.set_outlet_state`` in ``unifi-official-api`` 2.0.0 and
+    ``DevicesEndpoint.set_outlet_state`` in ``unifi-official-api`` 3.0.0 and
     returns ``None`` where that method raises ``UniFiValidationError``.
     Re-check it against the library whenever the version pin changes.
     """

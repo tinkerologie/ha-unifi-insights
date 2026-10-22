@@ -15,7 +15,6 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
 )
-from pydantic import ValidationError
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
@@ -23,10 +22,10 @@ from unifi_official_api import (
     UniFiResponseError,
     UniFiTimeoutError,
 )
-from unifi_official_api.validation import sanitized_validation_fields
 
 from custom_components.unifi_insights.console_identity import async_get_device_entry
 from custom_components.unifi_insights.const import DOMAIN
+from custom_components.unifi_insights.probe import is_malformed_response
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -99,9 +98,11 @@ async def async_execute_command[**P, T](
     owner's own translated validation survives. Any other exception is
     wrapped in the translated ``failure`` error raised ``from`` it, keeping
     the API error as the immediate cause for callers that inspect it. A
-    pydantic ``ValidationError`` is the exception: its text can echo
-    credentials from the response (a voucher code, for example), so only the
-    sanitised field paths are logged and the chain is suppressed.
+    successful answer whose record failed to parse (``UniFiResponseError``
+    with status 200, see ``is_malformed_response``) is the exception: it
+    raises ``invalid_api_response`` instead. The library's message names the
+    failing fields only, never their values (a voucher code, for example), so
+    it is logged without a traceback.
 
     The failure is bundled into one object so that ``action``'s own
     arguments (``state=``, ``enabled=`` ...) can never collide with the
@@ -111,23 +112,22 @@ async def async_execute_command[**P, T](
         result = await action(*args, **kwargs)
     except HomeAssistantError:
         raise
-    except ValidationError as err:
-        fields = sanitized_validation_fields(err)
-        context = failure.message or failure.translation_key
-        _LOGGER.error(  # noqa: TRY400
-            "%s: Invalid API response data (fields: %s)", context, fields
-        )
-        message = (
-            f"{failure.message}: Invalid API response data (fields: {fields})"
-            if failure.message
-            else None
-        )
-        raise _command_error(
-            translation_key="invalid_api_response",
-            translation_placeholders={},
-            message=message,
-        ) from None
     except Exception as err:
+        if is_malformed_response(err):
+            context = failure.message or failure.translation_key
+            _LOGGER.error(  # noqa: TRY400
+                "%s: Invalid API response data (%s)", context, err.message
+            )
+            message = (
+                f"{failure.message}: Invalid API response data ({err.message})"
+                if failure.message
+                else None
+            )
+            raise _command_error(
+                translation_key="invalid_api_response",
+                translation_placeholders={},
+                message=message,
+            ) from err
         _LOGGER.exception("%s", failure.message or failure.translation_key)
         raise _command_error(
             translation_key=failure.translation_key,
@@ -233,22 +233,27 @@ class UnifiInsightsBaseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         A 403, a 404 or another 4xx client error from an optional feature
         endpoint (WiFi, firewall policies, per-device statistics) means this
         console or API key does not expose that feature. So does a 2xx whose
-        body is not JSON: the library raises that for consoles that answer an
-        endpoint they lack with the web UI's HTML page (see the sites fetch
-        in coordinators/config.py). Both are valid, stable answers, so the
-        caller treats them as "no data" instead of a failure. A 401 is
-        excluded because it means the credentials themselves were rejected
-        and must trigger reauth, and 429 is excluded because rate limiting is
-        transient.
+        body is not JSON: the library raises that, with the body attached, for
+        consoles that answer an endpoint they lack with the web UI's HTML
+        page (see the sites fetch in coordinators/config.py). Both are valid,
+        stable answers, so the caller treats them as "no data" instead of a
+        failure. A 2xx error without a body is a JSON answer that holds no
+        record or a record that failed to parse (``unifi-official-api`` 3.0.0
+        raises ``UniFiNotFoundError`` / ``UniFiResponseError`` with status
+        200 where 2.x raised ``ValueError`` or pydantic's ``ValidationError``):
+        a failure, so the last known data is kept. A 401 is excluded because
+        it means the credentials themselves were rejected and must trigger
+        reauth, and 429 is excluded because rate limiting is transient.
         """
         if isinstance(err, UniFiAuthenticationError):
             return err.status_code == HTTPStatus.FORBIDDEN
         if isinstance(err, UniFiRateLimitError):
             return False
         if isinstance(err, UniFiResponseError):
+            if err.status_code < HTTPStatus.MULTIPLE_CHOICES:
+                return err.response_body is not None
             return (
-                err.status_code < HTTPStatus.MULTIPLE_CHOICES
-                or HTTPStatus.BAD_REQUEST
+                HTTPStatus.BAD_REQUEST
                 <= err.status_code
                 < HTTPStatus.INTERNAL_SERVER_ERROR
             )

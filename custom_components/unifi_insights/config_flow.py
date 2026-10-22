@@ -24,7 +24,6 @@ from homeassistant.helpers.selector import (
     SelectSelectorConfig,
     SelectSelectorMode,
 )
-from pydantic import ValidationError
 from unifi_official_api import (
     ApiKeyAuth,
     ConnectionType,
@@ -93,6 +92,7 @@ from .probe import (
     async_probe_network,
     async_probe_protect,
     async_probe_with_client,
+    is_malformed_response,
     is_transient_error,
 )
 from .topology import normalize_mac as normalize_hardware_mac
@@ -237,11 +237,11 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
 
         A temporary failure wins, so a correct key is never reported as
         invalid while the console is restarting or answering 5xx. Then a
-        rejected key, a response that failed to parse, other unexpected
-        errors, and a 404 or "NVR not found" (api_unsupported). Anything
-        else - no sites, or a web-UI page in place of the API - keeps the
-        historical "invalid_auth": the console commonly answers that way for
-        a key it does not accept.
+        rejected key, a record that failed to parse, other unexpected
+        errors, and a 404 or a Protect answer without an NVR record
+        (api_unsupported). Anything else - no sites, or a web-UI page in
+        place of the API - keeps the historical "invalid_auth": the console
+        commonly answers that way for a key it does not accept.
         """
         statuses = {probe.status for probe in probes}
         if ProbeStatus.UNREACHABLE in statuses:
@@ -249,17 +249,14 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
         if ProbeStatus.AUTH_FAILED in statuses:
             return "invalid_auth"
         errors = [probe.error for probe in probes if probe.status is ProbeStatus.ERROR]
-        if any(isinstance(error, ValidationError) for error in errors):
+        if any(is_malformed_response(error) for error in errors):
             return "site_parse_error"
         if errors:
             return "unknown"
         # 404 from the integration API, or Protect answering without an NVR
-        # record ("NVR not found"), as before this probe refactor.
-        if any(
-            isinstance(probe.error, UniFiNotFoundError)
-            or type(probe.error) is ValueError
-            for probe in probes
-        ):
+        # record (UniFiNotFoundError with status 200), as before this probe
+        # refactor.
+        if any(isinstance(probe.error, UniFiNotFoundError) for probe in probes):
             return "api_unsupported"
         return "invalid_auth"
 
@@ -794,12 +791,15 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                     "Integration API."
                 )
                 errors["base"] = "api_unsupported"
-            except ValidationError:
-                _LOGGER.exception("Failed to parse site data from remote UniFi console")
-                errors["base"] = "site_parse_error"
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception during console selection")
-                errors["base"] = "unknown"
+            except Exception as err:  # pylint: disable=broad-except
+                if is_malformed_response(err):
+                    _LOGGER.exception(
+                        "Failed to parse site data from remote UniFi console"
+                    )
+                    errors["base"] = "site_parse_error"
+                else:
+                    _LOGGER.exception("Unexpected exception during console selection")
+                    errors["base"] = "unknown"
 
         options: list[SelectOptionDict] = [
             SelectOptionDict(value=console_id, label=label)
@@ -1010,12 +1010,12 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                 if is_transient_error(err):
                     _LOGGER.warning("UniFi API temporarily unavailable: %s", err)
                     errors["base"] = "cannot_connect"
+                elif is_malformed_response(err):
+                    _LOGGER.exception("Failed to parse site data during reauth")
+                    errors["base"] = "site_parse_error"
                 else:
                     _LOGGER.exception("Unexpected UniFi API response")
                     errors["base"] = "unknown"
-            except ValidationError:
-                _LOGGER.exception("Failed to parse site data during reauth")
-                errors["base"] = "site_parse_error"
             except Exception:
                 errors["base"] = "unknown"
 
@@ -1303,12 +1303,14 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                 if is_transient_error(err):
                     _LOGGER.warning("UniFi API temporarily unavailable: %s", err)
                     errors["base"] = "cannot_connect"
+                elif is_malformed_response(err):
+                    _LOGGER.exception(
+                        "Failed to parse site data during reconfiguration"
+                    )
+                    errors["base"] = "site_parse_error"
                 else:
                     _LOGGER.exception("Unexpected UniFi API response")
                     errors["base"] = "unknown"
-            except ValidationError:
-                _LOGGER.exception("Failed to parse site data during reconfiguration")
-                errors["base"] = "site_parse_error"
             except Exception:  # pylint: disable=broad-except
                 _LOGGER.exception("Unexpected exception during reconfiguration")
                 errors["base"] = "unknown"

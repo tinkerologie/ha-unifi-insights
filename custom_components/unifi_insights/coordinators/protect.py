@@ -16,7 +16,6 @@ from homeassistant.core import callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import async_track_time_interval
-from pydantic import ValidationError
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
@@ -32,9 +31,9 @@ from unifi_official_api.protect.talkback import (
     TalkbackSchemeError,
     TalkbackStream,
 )
-from unifi_official_api.validation import sanitized_validation_fields
 
 from custom_components.unifi_insights.const import DOMAIN, SCAN_INTERVAL_PROTECT
+from custom_components.unifi_insights.probe import is_malformed_response
 
 from .base import CommandFailure, UnifiInsightsBaseCoordinator, async_execute_command
 from .protect_events import (
@@ -1713,11 +1712,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
                 camera_id
             )
         except Exception as err:
-            detail = (
-                f"invalid fields: {sanitized_validation_fields(err)}"
-                if isinstance(err, ValidationError)
-                else type(err).__name__
-            )
+            detail = err.message if is_malformed_response(err) else type(err).__name__
             _LOGGER.warning("Talkback session failed for %s: %s", camera_id, detail)
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
@@ -1750,7 +1745,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         return stream
 
     async def async_get_camera_snapshot(self, camera_id: str) -> bytes | None:
-        """Return a camera's snapshot, or None (width/height cause an HTTP 500)."""
+        """Return a camera's snapshot, or None when the console cannot take one."""
         try:
             snapshot = await self._client.cameras.get_snapshot(camera_id)
         except Exception:
