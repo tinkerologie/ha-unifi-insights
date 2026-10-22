@@ -32,9 +32,8 @@ from the ``coordinators.protect`` logger. This module imports nothing from
 Home Assistant, the API library or the clock; a test enforces that.
 
 The behaviour is the coordinator's as it was before the split, quirks
-included (each is pinned by a test whose id contains ``quirk``): a REST
-rebuild can give a light a false motion end, an unknown frame still resets the
-poll timer, and the event store keeps every event.
+included (each is pinned by a test whose id contains ``quirk``): an unknown
+frame still resets the poll timer, and the event store keeps every event.
 """
 
 from __future__ import annotations
@@ -213,10 +212,13 @@ _LATCHES: Final[dict[LatchKind, tuple[Family, str, str | None]]] = {
     "camera_ring": ("cameras", "lastRing", None),
 }
 
-# Latch kind -> the start field a REST camera rebuild drops.
-_CAMERA_LATCH_STARTS: Final[dict[LatchKind, str]] = {
-    "camera_motion": "lastMotionStart",
-    "camera_ring": "lastRingStart",
+# Family -> latch kind -> the start field a REST rebuild of it drops.
+_REBUILT_LATCH_STARTS: Final[dict[Family, dict[LatchKind, str]]] = {
+    "cameras": {
+        "camera_motion": "lastMotionStart",
+        "camera_ring": "lastRingStart",
+    },
+    "lights": {"light_motion": "lastMotionStart"},
 }
 
 # The keys an event may carry its device id under. The library's event model
@@ -1106,8 +1108,8 @@ def _apply_rest_batch(run: _Run, batch: RestBatch) -> None:
         case _:  # pragma: no cover - exhaustive
             assert_never(outcome)
 
-    if family == "cameras":
-        _drop_rebuilt_latches(run)
+    if family in _REBUILT_LATCH_STARTS:
+        _drop_rebuilt_latches(run, family)
     elif family == "alarm_hubs":
         _overlay_tamper_records(run, request.at)
     elif family == "sirens":
@@ -1284,26 +1286,25 @@ def _update_collection(
     run.set_family(family, replace(tracking, empty_fetches=0))
 
 
-def _drop_rebuilt_latches(run: _Run) -> None:
+def _drop_rebuilt_latches(run: _Run, family: Family) -> None:
     """
-    Drop camera latches whose start field a REST rebuild removed.
+    Drop camera and light latches whose start field a REST rebuild removed.
 
-    REST camera records never carry ``lastMotionStart`` or ``lastRingStart``
-    (only an event writes them), so after a rebuild a still-armed latch would
-    point at a camera with no start, and five minutes later the sweep would
-    log a false "missed 'end' event?". A camera that vanished outright is left
-    to the sweep. Lights have no such drop (quirk: a light rebuilt by REST
-    gets a ``lastMotionEnd`` from the sweep five minutes later).
+    REST camera and light records never carry ``lastMotionStart`` or
+    ``lastRingStart`` (only an event writes them), so after a rebuild a
+    still-armed latch would point at a device with no start, and five minutes
+    later the sweep would write a false end and log a false "missed 'end'
+    event?". A device that vanished outright is left to the sweep.
     """
-    cameras = run.records("cameras")
-    for kind, start_key in _CAMERA_LATCH_STARTS.items():
+    records = run.records(family)
+    for kind, start_key in _REBUILT_LATCH_STARTS[family].items():
         latch = run.latch(kind)
         kept = {
             device_id: started
             for device_id, started in latch.items()
             if not (
-                isinstance(camera := cameras.get(device_id), dict)
-                and start_key not in camera
+                isinstance(record := records.get(device_id), dict)
+                and start_key not in record
             )
         }
         if len(kept) != len(latch):

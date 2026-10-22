@@ -1433,23 +1433,54 @@ def test_reconnect_sweep_that_ends_nothing_publishes_nothing(
     assert result.effects(PublishUpdate) == []
 
 
-def test_light_rebuild_gets_a_false_motion_end_quirk() -> None:
-    """Lights have no rebuild drop: five minutes later the sweep ends the latch."""
-    light = {"id": "c1", "name": "Porch"}
+@pytest.mark.parametrize(
+    ("rest_light", "latched", "end"),
+    [
+        pytest.param(
+            {"id": "l1", "name": "Porch"}, False, None, id="rebuilt-without-start"
+        ),
+        pytest.param(
+            {"id": "l1", "name": "Porch", "lastMotionStart": 1},
+            True,
+            at(TIMEOUT).wall.isoformat(),
+            id="rebuilt-with-start",
+        ),
+    ],
+)
+def test_light_rebuild_drops_the_latch_only_without_a_start(
+    rest_light: dict[str, Any],
+    latched: bool,  # noqa: FBT001
+    end: str | None,
+) -> None:
+    """Lights follow the camera rule: no start in REST, no latch to expire."""
     started = run(
-        cache(lights={"c1": light}),
-        [(0.0, event("motion", "e1", device="c1", start=1))],
+        cache(lights={"l1": {"id": "l1", "name": "Porch"}}),
+        [(0.0, event("motion", "e1", device="l1", start=1))],
     )
-    assert started.cache["lights"]["c1"]["lastMotionStart"] == 1
+    assert started.cache["lights"]["l1"]["lastMotionStart"] == 1
     rebuilt = run(
         started.cache,
-        [*poll("lights", Fetched({"c1": light}), 30.0), (TIMEOUT, PollStarted())],
+        poll("lights", Fetched({"l1": rest_light}), 30.0),
         state=started.state,
     )
-    assert (
-        rebuilt.cache["lights"]["c1"]["lastMotionEnd"] == at(TIMEOUT).wall.isoformat()
+    assert ("l1" in rebuilt.state.latches["light_motion"]) is latched
+    swept = run(rebuilt.cache, [(TIMEOUT, PollStarted())], state=rebuilt.state)
+    assert swept.cache["lights"]["l1"].get("lastMotionEnd") == end
+    assert len(swept.logs(logging.INFO)) == int(latched)
+
+
+def test_light_latch_survives_an_absorbed_error() -> None:
+    """The cached light keeps its start, so its latch stays."""
+    started = run(
+        cache(lights={"l1": {"id": "l1"}}),
+        [(0.0, event("motion", "e1", device="l1", start=1))],
     )
-    assert len(rebuilt.logs(logging.INFO)) == 1
+    result = run(
+        started.cache,
+        poll("lights", TransientError(BoomError("x")), 1.0),
+        state=started.state,
+    )
+    assert "l1" in result.state.latches["light_motion"]
 
 
 def test_device_frame_sweeps_stale_latches_of_every_device() -> None:
