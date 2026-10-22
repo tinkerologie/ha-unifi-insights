@@ -73,6 +73,11 @@ T0 = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
 TIMEOUT = STALE_EVENT_TIMEOUT.total_seconds()
 RETENTION = EVENT_RETENTION.total_seconds()
 SWEEP = EVENT_SWEEP_INTERVAL.total_seconds()
+# An event start (epoch ms) at T0, so within the retention of every `at` time.
+START = int(T0.timestamp() * 1000)
+# A run time at which an event stamped by the sweep at SWEEP is past the
+# retention, and a sweep is due.
+EXPIRED = SWEEP + RETENTION + 1
 ACTIVATED_AT = 1_760_000_000_000
 
 
@@ -1776,7 +1781,7 @@ def test_event_frame_copies_only_its_type_map() -> None:
 
 def test_changed_event_frame_replaces_the_stored_event() -> None:
     """A later frame of a stored event replaces it in a new map."""
-    first = run(cache(), [(0.0, event("motion", "m1", start=1))])
+    first = run(cache(), [(0.0, event("motion", "m1", start=START))])
     result = run(first.cache, [(1.0, event("motion", "m1", end=2))], state=first.state)
     assert result.cache["events"]["motion"]["m1"] == {
         "type": "motion",
@@ -1869,6 +1874,156 @@ def test_event_store_sweeps_at_most_every_interval(
     result = run(cache(), [(0.0, event("ring", "r1")), (later, event("ring", "r2"))])
     assert result.state.events_swept_at == at(later if sweeps else 0.0).wall
     assert ("ring" in result.state.event_seen) is sweeps
+
+
+def _expiring_store() -> Result:
+    """Return a run whose stored m1 was stamped by the sweep at SWEEP."""
+    return run(
+        cache(), [(0.0, event("motion", "m1", start=START)), (SWEEP, PollStarted())]
+    )
+
+
+def test_late_frame_of_an_expired_event_is_not_stored() -> None:
+    """A late frame of a swept event keeps it out; a fresh event still goes in."""
+    stored = _expiring_store()
+    result = run(
+        stored.cache,
+        [
+            (EXPIRED, event("motion", "m1", start=START, end=START + 1)),
+            (EXPIRED + 1, event("motion", "m2", start=START + EXPIRED * 1000)),
+        ],
+        state=stored.state,
+    )
+    assert result.cache["events"] == {
+        "motion": {
+            "m2": {"type": "motion", "id": "m2", "start": START + EXPIRED * 1000}
+        }
+    }
+    assert result.effects(PublishUpdate) == [PublishUpdate(mark_success=False)] * 2
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param({"start": 1}, id="start-seconds"),
+        pytest.param({"time": START - (RETENTION + 1) * 1000}, id="time-ms"),
+        pytest.param({"timestamp": "2026-10-19T10:59:59+00:00"}, id="timestamp-iso"),
+    ],
+)
+def test_unstored_event_that_started_past_the_retention_is_not_stored(
+    fields: dict[str, Any],
+) -> None:
+    """The start is read as the timeline reads it: start, time, then timestamp."""
+    seed = cache()
+    result = run(seed, [(0.0, event("motion", "m1", **fields))])
+    assert result.cache["events"] == {}
+    assert result.effects(PublishUpdate) == [PublishUpdate(mark_success=False)]
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param({}, id="no-start"),
+        pytest.param({"start": "soon"}, id="unreadable-start"),
+        pytest.param({"start": START - RETENTION * 1000}, id="exactly-the-retention"),
+    ],
+)
+def test_event_without_an_old_start_is_stored(fields: dict[str, Any]) -> None:
+    """An event whose start is unreadable or within the retention is stored."""
+    result = run(cache(), [(0.0, event("motion", "m1", **fields))])
+    assert result.cache["events"]["motion"].keys() == {"m1"}
+
+
+def test_stored_event_that_started_past_the_retention_still_updates() -> None:
+    """Only an unstored event is judged by its start; a stored one is replaced."""
+    first = run(cache(), [(0.0, event("motion", "m1"))])
+    result = run(
+        first.cache, [(1.0, event("motion", "m1", start=1))], state=first.state
+    )
+    assert result.cache["events"]["motion"]["m1"]["start"] == 1
+
+
+def test_late_frame_of_an_expired_event_still_updates_its_device() -> None:
+    """A frame kept out of the store still writes its end onto the camera."""
+    stored = _expiring_store()
+    seed = {**stored.cache, "cameras": {"c1": _camera(lastMotionStart=START)}}
+    result = run(
+        seed,
+        [(EXPIRED, event("motion", "m1", device="c1", start=START, end=START + 1))],
+        state=stored.state,
+    )
+    assert result.cache["events"] == {}
+    assert result.cache["cameras"]["c1"]["lastMotionEnd"] == START + 1
+
+
+def test_poll_start_expires_old_events_once_per_interval() -> None:
+    """With no event frames, the poll's start sweeps the store and publishes nothing."""
+    stored = _expiring_store()
+    within = run(stored.cache, [(SWEEP + 1, PollStarted())], state=stored.state)
+    assert within.cache is stored.cache
+    assert within.state.events_swept_at == at(SWEEP).wall
+    result = run(
+        stored.cache,
+        [(EXPIRED, PollStarted()), (EXPIRED + 1, PollStarted())],
+        state=stored.state,
+    )
+    assert result.cache["events"] == {}
+    assert result.state.events_swept_at == at(EXPIRED).wall
+    assert result.steps[1].cache is result.steps[0].cache
+    assert result.effects(PublishUpdate) == []
+
+
+def test_poll_start_sweep_that_drops_nothing_keeps_the_cache() -> None:
+    """A due sweep that drops nothing stamps the events and leaves the cache."""
+    first = run(cache(), [(0.0, event("motion", "m1", start=START))])
+    result = run(first.cache, [(SWEEP, PollStarted())], state=first.state)
+    assert result.cache is first.cache
+    assert result.state.events_swept_at == at(SWEEP).wall
+    assert result.state.event_seen == {"motion": {"m1": at(SWEEP).wall}}
+
+
+def test_poll_start_sweep_without_an_event_store_adds_none() -> None:
+    """A sweep of a cache with no events collection leaves it without one."""
+    seed = {"cameras": {}}
+    result = run(seed, [(0.0, PollStarted())])
+    assert result.cache is seed
+
+
+def test_unpublished_device_frame_that_drops_events_notifies() -> None:
+    """A frame that publishes nothing itself still shows the dropped events."""
+    stored = _expiring_store()
+    result = run(
+        stored.cache,
+        [
+            (EXPIRED, device("bridge", "b1", name="x")),
+            (EXPIRED + 1, device("bridge", "b1", name="x")),
+        ],
+        state=stored.state,
+    )
+    assert result.cache["events"] == {}
+    assert result.state.events_swept_at == at(EXPIRED).wall
+    assert result.effects(PublishUpdate) == [PublishUpdate(mark_success=False)]
+
+
+def test_applied_device_frame_that_drops_events_publishes_once() -> None:
+    """A frame that publishes shows the dropped events in its own update."""
+    stored = _expiring_store()
+    seed = {**stored.cache, "lights": {"l1": {"id": "l1"}}}
+    result = run(seed, [(EXPIRED, device("light", "l1", on=True))], state=stored.state)
+    assert result.cache["events"] == {}
+    assert result.cache["lights"]["l1"]["on"] is True
+    assert result.effects(PublishUpdate) == [PublishUpdate(mark_success=True)]
+
+
+def test_device_frame_sweep_that_drops_nothing_keeps_the_cache() -> None:
+    """A due sweep from an ignored frame that drops nothing changes nothing."""
+    first = run(cache(), [(0.0, event("motion", "m1", start=START))])
+    result = run(
+        first.cache, [(SWEEP, device("bridge", "b1", name="x"))], state=first.state
+    )
+    assert result.cache is first.cache
+    assert result.state.events_swept_at == at(SWEEP).wall
+    assert result.effects(PublishUpdate) == []
 
 
 def test_timeline_oldest_event_survives_the_sweep() -> None:

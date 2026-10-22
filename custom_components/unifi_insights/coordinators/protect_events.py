@@ -109,9 +109,9 @@ STALE_EVENT_TIMEOUT: Final = timedelta(minutes=5)
 # margin covers a console clock ahead of Home Assistant's.
 EVENT_RETENTION: Final = timedelta(hours=TIMELINE_MAX_HOURS + 1)
 
-# How often an event frame sweeps the store. A sweep walks every stored event,
-# so it runs at most this often rather than on every frame; an event is kept
-# at most this much longer than `EVENT_RETENTION`.
+# How often the event store is swept. A sweep walks every stored event, so it
+# runs at most this often rather than on every input; an event is kept at
+# most this much longer than `EVENT_RETENTION`.
 EVENT_SWEEP_INTERVAL: Final = timedelta(minutes=5)
 
 # How many empty (or 404) answers in a row keep a family's cached devices,
@@ -804,9 +804,10 @@ def reconcile(
     match event:
         case DeviceFrame():
             # Every device frame re-arms the poll timer, so under steady
-            # frames the poll and its sweep can wait indefinitely: the frame
-            # sweeps too. A frame that publishes shows the sweep with it.
+            # frames the poll and its sweeps can wait indefinitely: the frame
+            # sweeps too. A frame that publishes shows the sweeps with it.
             swept = _expire_stale_latches(run)
+            swept = _sweep_event_store(run) or swept
             if not _apply_device_frame(run, event) and swept:
                 run.effects.append(PublishUpdate(mark_success=False))
         case EventFrame():
@@ -814,8 +815,11 @@ def reconcile(
         case RestBatch():
             _apply_rest_batch(run, event)
         case PollStarted():
-            # The poll publishes once it has fetched, which shows the sweep.
+            # The poll publishes once it has fetched, which shows the sweeps.
+            # Sweeping the event store here too expires old events while no
+            # event frames arrive.
             _expire_stale_latches(run)
+            _sweep_event_store(run)
         case StreamReconnected():
             if _expire_stale_latches(run):
                 run.effects.append(PublishUpdate(mark_success=False))
@@ -965,9 +969,17 @@ def _apply_event_frame(run: _Run, frame: EventFrame) -> None:
     # Sweep first, so the event this frame stores is never the one dropped.
     _sweep_event_store(run)
     by_id = run.records("events").get(event_type, {})
-    if event_id not in by_id or by_id[event_id] != fields:
-        # A new event or a changed one: copy only its type's map, which the
-        # sweep bounds, and leave every other type's map shared.
+    # A new event or a changed one copies only its type's map, which the
+    # sweep bounds, and leaves every other type's map shared. An unstored
+    # event that started more than the retention ago is a late frame the
+    # timeline can no longer show, most likely of an event the sweep already
+    # dropped: storing it would keep it another full retention. It still
+    # updates its device below.
+    if (
+        by_id[event_id] != fields
+        if event_id in by_id
+        else not _started_before_retention(fields, run.now.wall)
+    ):
         run.put_changed("events", event_type, _with(by_id, event_id, fields))
     device_id = pick_field([fields], *_EVENT_DEVICE_KEYS)
     if device_id:
@@ -975,25 +987,42 @@ def _apply_event_frame(run: _Run, frame: EventFrame) -> None:
     run.effects.append(PublishUpdate(mark_success=False))
 
 
-def _sweep_event_store(run: _Run) -> None:
+def _started_before_retention(fields: Mapping[str, Any], now: datetime) -> bool:
+    """
+    Return True if an event's own start is more than `EVENT_RETENTION` ago.
+
+    Reads the start as the timeline does (``start``, then ``time``, then
+    ``timestamp``). An event without a readable start is never judged old.
+    """
+    started = _normalize_epoch_seconds(
+        fields.get("start") or fields.get("time") or fields.get("timestamp")
+    )
+    return started is not None and started < (now - EVENT_RETENTION).timestamp()
+
+
+def _sweep_event_store(run: _Run) -> bool:
     """
     Drop the events first seen more than `EVENT_RETENTION` ago.
 
     Runs at most every `EVENT_SWEEP_INTERVAL` (and again if the wall clock
-    went back). An event is stamped by the first sweep that sees it, so a
-    frame never copies the stamps; its age then runs up to one interval late,
-    which keeps it longer, never shorter. A repeated frame of a stored event
-    keeps its stamp: the timeline places an event by its start. A type whose
-    map loses nothing keeps its map, and a type left empty is removed.
+    went back), from event frames, device frames and the poll's start. An
+    event is stamped by the first sweep that sees it, so a frame never copies
+    the stamps; its age then runs up to one interval late, which keeps it
+    longer, never shorter. A repeated frame of a stored event keeps its
+    stamp: the timeline places an event by its start. A type whose map loses
+    nothing keeps its map, and a type that loses every event is removed. The
+    cache changes only when an event is dropped; returns True if one was, so
+    the caller knows listeners have something new to show.
     """
     now = run.now.wall
     swept_at = run.state.events_swept_at
     if swept_at is not None and swept_at <= now < swept_at + EVENT_SWEEP_INTERVAL:
-        return
+        return False
     cutoff = now - EVENT_RETENTION
+    events = run.records("events")
     kept: dict[str, Any] = {}
     seen: dict[str, dict[str, datetime]] = {}
-    for event_type, by_id in run.records("events").items():
+    for event_type, by_id in events.items():
         type_seen = run.state.event_seen.get(event_type, {})
         stamps = {
             event_id: stamp
@@ -1008,8 +1037,11 @@ def _sweep_event_store(run: _Run) -> None:
             if len(stamps) == len(by_id)
             else {event_id: by_id[event_id] for event_id in stamps}
         )
-    run.replace("events", kept)
     run.state = replace(run.state, event_seen=seen, events_swept_at=now)
+    dropped = sum(map(len, seen.values())) != sum(map(len, events.values()))
+    if dropped:
+        run.replace("events", kept)
+    return dropped
 
 
 def _apply_event_to_device(

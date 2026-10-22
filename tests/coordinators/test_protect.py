@@ -15,7 +15,7 @@ import asyncio
 import contextlib
 import copy
 import logging
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -153,6 +153,8 @@ def test_endpoint_autospec_keeps_instance_attributes() -> None:
 
 
 CAMERA_ID = DOORBELL_IDS[0]
+# An event start (epoch ms) recent enough for the event store to keep.
+RECENT_START = int(datetime.now(tz=UTC).timestamp() * 1000)
 LIGHT_ID = "light_1"
 VIEWER_ID = "viewer_1"
 SIREN_ID = SAMPLE_SIREN["id"]
@@ -1750,13 +1752,13 @@ class TestUnifiProtectCoordinator:
             {
                 "id": "event1",
                 "device": "camera1",
-                "start": 1234567890,
+                "start": RECENT_START,
                 "end": None,
             },
         )
 
         assert "motion" in coordinator.data["events"]
-        assert coordinator.data["cameras"]["camera1"]["lastMotionStart"] == 1234567890
+        assert coordinator.data["cameras"]["camera1"]["lastMotionStart"] == RECENT_START
         assert coordinator.data["cameras"]["camera1"]["lastMotionEnd"] is None
 
     def test_event_frame_smart_detect(
@@ -1854,7 +1856,9 @@ class TestUnifiProtectCoordinator:
 
             # 2. Distinct IDs accumulate and notify once per accepted event
             send_event(
-                coordinator, "motion", {"id": "ev1", "device": "camera1", "start": 100}
+                coordinator,
+                "motion",
+                {"id": "ev1", "device": "camera1", "start": RECENT_START},
             )
             assert notify.call_count == 1
             assert listener.call_count == 1
@@ -1862,11 +1866,13 @@ class TestUnifiProtectCoordinator:
                 "type": "motion",
                 "id": "ev1",
                 "device": "camera1",
-                "start": 100,
+                "start": RECENT_START,
             }
 
             send_event(
-                coordinator, "motion", {"id": "ev2", "device": "camera1", "start": 200}
+                coordinator,
+                "motion",
+                {"id": "ev2", "device": "camera1", "start": RECENT_START + 1},
             )
             assert notify.call_count == 2
             assert listener.call_count == 2
@@ -1875,7 +1881,7 @@ class TestUnifiProtectCoordinator:
                 "type": "motion",
                 "id": "ev2",
                 "device": "camera1",
-                "start": 200,
+                "start": RECENT_START + 1,
             }
 
             # 3. Repeated ID replaces previous event and notifies
@@ -1999,7 +2005,7 @@ class TestUnifiProtectCoordinator:
             {
                 "id": "event_unknown",
                 "device": "unknown_device",
-                "start": 1234567890,
+                "start": RECENT_START,
                 "end": None,
             },
         )
@@ -2017,7 +2023,7 @@ class TestUnifiProtectCoordinator:
             "motion",
             {
                 "id": "event_no_device",
-                "start": 1234567890,
+                "start": RECENT_START,
                 "end": None,
                 # No "device" field
             },
@@ -2092,14 +2098,14 @@ class TestUnifiProtectCoordinator:
                     "type": "motion",
                     "id": "event30",
                     "camera": "camera1",
-                    "start": 555,
+                    "start": RECENT_START,
                     "end": None,
                 },
             }
         )
 
         assert "event30" in coordinator.data["events"]["motion"]
-        assert coordinator.data["cameras"]["camera1"]["lastMotionStart"] == 555
+        assert coordinator.data["cameras"]["camera1"]["lastMotionStart"] == RECENT_START
         assert coordinator.data["cameras"]["camera1"]["lastMotionEnd"] is None
 
     def test_on_websocket_event_message_flat_frame(
@@ -4302,7 +4308,7 @@ class TestProtectCoordinatorEdgeCases:
         send_event(
             coordinator,
             "unknown_event",
-            {"id": "event1", "device": "camera1", "start": 123},
+            {"id": "event1", "device": "camera1", "start": RECENT_START},
         )
 
         # Event should be stored but no device update
@@ -4315,7 +4321,7 @@ class TestProtectCoordinatorEdgeCases:
         send_event(
             coordinator,
             "motion",
-            {"id": "event1", "device": "nonexistent_device", "start": 123},
+            {"id": "event1", "device": "nonexistent_device", "start": RECENT_START},
         )
 
         # Event should be stored but no error
