@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Final, TypeAlias, cast
 
 import homeassistant.helpers.config_validation as cv
 from homeassistant.config_entries import ConfigEntry
@@ -917,9 +917,11 @@ async def async_remove_config_entry_device(
 
     Deselecting a site in options stops it being polled, so its devices can
     never come back and would otherwise sit unavailable with no way to remove
-    them. WiFi devices carry no site id, so they are allowed once no polled
-    site serves that network any more. Mobility routers and workspaces are
-    allowed once Mobility no longer reports them. Everything else is refused:
+    them. Devices of a site deleted on the console are allowed too, once a
+    successful refresh no longer lists that site. WiFi devices carry no site
+    id, so they are allowed once no polled site serves that network any more.
+    Mobility routers and workspaces are allowed once Mobility no longer
+    reports them. Everything else is refused:
     devices of polled sites are live, and Protect and client devices are not
     site-scoped.
     """
@@ -943,7 +945,7 @@ async def async_remove_config_entry_device(
     config_coordinator = runtime_data.config_coordinator
     polled = config_coordinator.get_site_ids()
     deselected = set(config_coordinator.available_sites) - set(polled)
-    return any(
+    if any(
         domain == DOMAIN
         and (
             any(
@@ -956,6 +958,62 @@ async def async_remove_config_entry_device(
             )
         )
         for domain, identifier in device_entry.identifiers
+    ):
+        return True
+    return _is_deleted_site_device(entry, config_coordinator, polled, device_entry)
+
+
+# Device identifier families that are not site-scoped. A new family must be
+# added here, or its devices could be taken for those of a deleted site.
+_NON_SITE_IDENTIFIER_PREFIXES: Final = (
+    "wifi_",
+    "client_",
+    "protect_",
+    "access_",
+    "innerspace_",
+    MOBILITY_DEVICE_PREFIX,
+    "carrier_",
+)
+
+
+def _is_deleted_site_device(
+    entry: ConfigEntry[Any],
+    config_coordinator: UnifiInsightsConfigCoordinator,
+    polled: list[str],
+    device_entry: DeviceEntry,
+) -> bool:
+    """
+    Return True if a device belongs to a site the console no longer reports.
+
+    A deleted site's ID is in no site list, and site and device IDs may both
+    contain underscores, so the site cannot be read back from the identifier.
+    Instead every identifier of this integration must have the
+    ``{site}_{device}`` shape, match no site the console reports and belong to
+    no other identifier family. Only a successful refresh that listed at least
+    one site is trusted, as automatic cleanup does. Automatic cleanup still
+    keeps these devices: a partial site list looks the same as a deleted
+    site (#391).
+    """
+    if (
+        not config_coordinator.last_update_success
+        or not config_coordinator.available_sites
+    ):
+        return False
+    known_sites = set(config_coordinator.available_sites) | set(polled)
+    identifiers = [
+        identifier
+        for domain, identifier in device_entry.identifiers
+        if domain == DOMAIN
+    ]
+    controller = {entry.unique_id, entry.entry_id}
+    return bool(identifiers) and all(
+        "_" in identifier.strip("_")
+        and identifier not in controller
+        and not identifier.startswith(_NON_SITE_IDENTIFIER_PREFIXES)
+        and not any(
+            _is_site_scoped_identifier(identifier, site_id) for site_id in known_sites
+        )
+        for identifier in identifiers
     )
 
 

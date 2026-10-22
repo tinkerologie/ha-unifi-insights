@@ -740,6 +740,93 @@ async def test_remove_config_entry_device_refuses_wifi_a_polled_site_serves(
     )
 
 
+@pytest.mark.parametrize(
+    ("identifiers", "expected"),
+    [
+        # A site deleted on the console is in no site list at all.
+        (("gone_device-1",), True),
+        (("gone_site_device_1",), True),
+        (("site_gone",), True),
+        (("firewall_policies_gone",), True),
+        (("policy_based_routes_gone",), True),
+        (("vpn_clients_gone",), True),
+        # Deselected sites stay removable, polled sites stay live.
+        (("site2_device-1",), True),
+        (("default_device-1",), False),
+        (("site_default",), False),
+        # Other identifier families are not site-scoped.
+        (("protect_camera_cam-1",), False),
+        (("client_aa:bb:cc:dd:ee:ff",), False),
+        (("access_console_ns",), False),
+        (("innerspace_r1",), False),
+        (("mobility_router-1",), False),
+        (("carrier_subscriber_x",), False),
+        # The console device and identifiers without a site part.
+        (("controller-id",), False),
+        (("console-mac",), False),
+        (("gone_",), False),
+        # A merged device with a live or non-site identifier is kept.
+        (("gone_dev", "default_dev2"), False),
+        (("gone_dev", "protect_camera_x"), False),
+        # Identifiers of other integrations neither allow nor block.
+        (("gone_dev", ("other", "default_dev")), True),
+        ((("other", "gone_dev"),), False),
+    ],
+)
+async def test_remove_config_entry_device_of_a_deleted_site(
+    hass: HomeAssistant,
+    identifiers: tuple[str | tuple[str, str], ...],
+    expected: bool,  # noqa: FBT001
+) -> None:
+    """Devices of a site the console no longer lists can be removed (#394)."""
+    entry = _entry_with_sites({"default": "Default", "site2": "Branch"}, ["default"])
+    entry.unique_id = "controller-id"
+    entry.entry_id = "entry-1"
+    entry.runtime_data.mobility_coordinator.last_update_success = False
+    device = MagicMock()
+    device.identifiers = {
+        item if isinstance(item, tuple) else ("unifi_insights", item)
+        for item in identifiers
+    }
+
+    assert await async_remove_config_entry_device(hass, entry, device) is expected
+
+
+@pytest.mark.parametrize(
+    ("available", "last_update_success"),
+    [({}, True), ({"default": "Default"}, False)],
+    ids=["no-site-listed", "refresh-failed"],
+)
+async def test_remove_config_entry_device_needs_a_site_list_to_trust(
+    hass: HomeAssistant,
+    available: dict[str, str],
+    last_update_success: bool,  # noqa: FBT001
+) -> None:
+    """An empty site list or a failed refresh proves no site was deleted."""
+    entry = _entry_with_sites(
+        available, ["default"], last_update_success=last_update_success
+    )
+
+    assert (
+        await async_remove_config_entry_device(
+            hass, entry, _device_entry("gone_device-1")
+        )
+        is False
+    )
+
+
+async def test_remove_config_entry_device_refuses_a_prefix_of_a_polled_site(
+    hass: HomeAssistant,
+) -> None:
+    """A device of polled site ``a_b`` is not taken for one of a site ``a``."""
+    entry = _entry_with_sites({"a_b": "A B"}, ["a_b"])
+
+    assert (
+        await async_remove_config_entry_device(hass, entry, _device_entry("a_b_dev"))
+        is False
+    )
+
+
 async def test_remove_config_entry_device_refused_when_not_loaded(
     hass: HomeAssistant,
 ) -> None:
