@@ -90,6 +90,9 @@ class SiteProcessResult(NamedTuple):
     clients: dict[str, dict[str, Any]]
     source: Literal["v1", "legacy"]
     device_macs: dict[str, str]
+    # Raw controller outlet arrays by device ID, captured before the display
+    # normalizer runs. Private poll data: never added to a device record.
+    raw_outlet_arrays: dict[str, dict[str, Any]]
     legacy_macs: LegacyMacs = None
 
 
@@ -366,7 +369,15 @@ OUTLET_WRITE_GUARD_SECONDS: Final = 60.0
 
 
 class PendingOutletWrite(NamedTuple):
-    """A successful outlet write the controller has not reported back (#376)."""
+    """
+    A successful outlet write the controller has not reported back (#376).
+
+    This record holds only displayed values: the written fields and the sent
+    entry. Confirmation and ``OUTLET_WRITE_GUARD_SECONDS`` release the fields
+    here and nothing else. It never authorises a write: payload safety comes
+    from ``OutletPayloadProvenance``, evaluated on raw poll data before this
+    overlay runs.
+    """
 
     # The written fields ("relay_state" or "cycle_enabled") and their values.
     fields: Mapping[str, bool]
@@ -470,6 +481,10 @@ def reconcile_pending_outlet_writes(
     ``OUTLET_WRITE_GUARD_SECONDS`` have passed since the last write to the
     outlet, or when its device is gone from the poll.
 
+    Release here affects display only: it never drops or restores payload
+    integrity (``OutletPayloadProvenance``), which only a successful poll
+    decides. A saved entry appended below is never a provenance input.
+
     Pure: the polled maps are never mutated. Returns the devices (the given
     map when nothing is patched) and the site's writes still pending.
     """
@@ -501,6 +516,269 @@ def reconcile_pending_outlet_writes(
             result[device_id] = updated
         kept[key] = write._replace(fields=held)
     return result, kept
+
+
+class OutletPayloadProvenance(NamedTuple):
+    """
+    Whether the latest successful poll gave a complete outlet baseline (#376).
+
+    A separate record from ``PendingOutletWrite``, with a different lifetime:
+    only a successful poll that passes the structural rule sets ``trusted``,
+    and confirmation or timeout release of a pending field never touches it.
+    The rule is a structural safeguard. It does not prove the physical outlet
+    inventory or the controller's semantic state, and it never replays a
+    historical sent array.
+    """
+
+    site_id: str
+    device_id: str
+    classic_id: str | None
+    mac: str | None
+    source: Literal["v1", "legacy"]
+    # Every index a complete baseline must keep covering while the identity and
+    # source stay unchanged. Only a trusted poll grows it.
+    required_indexes: frozenset[int]
+    # (index, field) pairs the raw table carried, so the transport payload must
+    # keep them. Raw presence, never a normalizer's manufactured default.
+    required_row_fields: frozenset[tuple[int, str]]
+    trusted: bool
+
+
+# A payload provenance record's site and device ID.
+type OutletProvenanceKey = tuple[str, str]
+
+_ABSENT: Final = object()
+
+# The controller arrays the outlet payload rule judges. They are read before
+# ``_merge_legacy_outlet_data`` normalizes ``outlet_table`` for display.
+RAW_OUTLET_KEYS: Final = ("outlet_table", "outlet_overrides")
+
+
+def _raw_outlet_arrays(device: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the outlet arrays a controller record carries, untouched."""
+    return {key: device[key] for key in RAW_OUTLET_KEYS if key in device}
+
+
+def _outlet_row_index(row: Mapping[str, Any]) -> int | None:
+    """
+    Return a row's outlet index for the payload-integrity rule.
+
+    Stricter than the builder's ``_override_index``: a bool, a float, a
+    non-integral type or a row that only carries the table-only
+    ``outletIdx`` alias is malformed here. The rule accepts exactly what the
+    read-modify-write path reads: ``int`` indexes through ``index`` or
+    ``outlet_idx``, including integer strings that ``int()`` accepts.
+    """
+    index = row.get("index")
+    if index is None:
+        index = row.get("outlet_idx")
+    if isinstance(index, bool):
+        return None
+    if isinstance(index, int):
+        return index
+    if isinstance(index, str):
+        try:
+            return int(index)
+        except ValueError:
+            return None
+    return None
+
+
+def _outlet_rows_by_index(rows: list[Any]) -> dict[int, dict[str, Any]] | None:
+    """Return rows keyed by index, or None when a row or index is malformed."""
+    by_index: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            return None
+        index = _outlet_row_index(row)
+        if index is None or index in by_index:
+            return None
+        by_index[index] = row
+    return by_index
+
+
+def _outlet_identity_mac(device: Mapping[str, Any]) -> str | None:
+    """Return a device's normalized MAC for the provenance identity."""
+    raw_mac = device.get("macAddress") or device.get("mac")
+    if not isinstance(raw_mac, str) or not raw_mac:
+        return None
+    return raw_mac.strip().lower()
+
+
+def evaluate_outlet_payload_provenance(
+    previous: OutletPayloadProvenance | None,
+    site_id: str,
+    device_id: str,
+    source: Literal["v1", "legacy"],
+    *,
+    device: Mapping[str, Any],
+    raw_outlet_arrays: Mapping[str, Any],
+) -> OutletPayloadProvenance:
+    """
+    Return the payload-integrity provenance of one raw polled device (#376).
+
+    Run on the untouched raw controller arrays, before the display normalizer
+    and before the pending-write overlay, so only controller data is judged.
+    ``device`` supplies the identity fields only. A poll is trusted when
+    ``outlet_table`` is a list, ``outlet_overrides`` is a list or absent, every
+    row is a dictionary with a unique integer index, the effective baseline
+    covers the required identity set, and every baseline row keeps its
+    required fields:
+
+    - ``relay_state`` must be a boolean.
+    - ``cycle_enabled`` and ``name`` must be present when the matching
+      ``outlet_table`` row carries that key.
+
+    The effective baseline is a non-empty ``outlet_overrides``; otherwise it
+    is the seed the builder makes from a structurally complete table. A
+    non-empty override array that is sparse, or lacks a table-carried field,
+    is untrusted. A poll that omits a previously required index is untrusted.
+    An untrusted poll keeps the previous required set, so a malformed index
+    cannot make a device permanently unwritable.
+
+    A changed identity (site, device ID, classic ``_id``, normalized MAC or
+    source) discards the previous record and evaluates a cold start. Source
+    switches therefore need their own trusted poll.
+    """
+    mac = _outlet_identity_mac(device)
+    raw_classic_id = device.get("_id")
+    classic_id = raw_classic_id if isinstance(raw_classic_id, str) else None
+    same_identity = (
+        previous is not None
+        and previous.site_id == site_id
+        and previous.device_id == device_id
+        and previous.classic_id == classic_id
+        and previous.mac == mac
+        and previous.source == source
+    )
+    required = (
+        previous.required_indexes
+        if same_identity and previous is not None
+        else frozenset()
+    )
+
+    def record(
+        indexes: frozenset[int],
+        row_fields: frozenset[tuple[int, str]] = frozenset(),
+        *,
+        trusted: bool,
+    ) -> OutletPayloadProvenance:
+        return OutletPayloadProvenance(
+            site_id=site_id,
+            device_id=device_id,
+            classic_id=classic_id,
+            mac=mac,
+            source=source,
+            required_indexes=indexes,
+            required_row_fields=row_fields,
+            trusted=trusted,
+        )
+
+    table = raw_outlet_arrays.get("outlet_table", _ABSENT)
+    if not isinstance(table, list):
+        return record(required, trusted=False)
+    raw_overrides = raw_outlet_arrays.get("outlet_overrides", _ABSENT)
+    if raw_overrides is _ABSENT:
+        overrides: list[Any] | None = None
+    elif isinstance(raw_overrides, list):
+        overrides = raw_overrides
+    else:
+        return record(required, trusted=False)
+
+    table_rows = _outlet_rows_by_index(table)
+    if table_rows is None:
+        return record(required, trusted=False)
+    override_rows = _outlet_rows_by_index(overrides) if overrides is not None else None
+    if overrides is not None and override_rows is None:
+        return record(required, trusted=False)
+
+    poll_indexes = set(table_rows)
+    if override_rows is not None:
+        poll_indexes.update(override_rows)
+    required_now = required | poll_indexes
+    if override_rows:
+        baseline: Mapping[int, Mapping[str, Any]] = override_rows
+    else:
+        # A complete table may seed the payload (#358); its relay states must
+        # be real booleans, not the builder's False default for a missing key.
+        if any(
+            not isinstance(row.get("relay_state"), bool) for row in table_rows.values()
+        ):
+            return record(required, trusted=False)
+        baseline = {
+            row["index"]: row for row in _seed_outlet_overrides({"outlet_table": table})
+        }
+
+    # A baseline can only cover indexes this poll reported, so a poll that
+    # omits an index a trusted poll established fails here. Keep the previous
+    # set: a later complete poll can restore trust.
+    if set(baseline) != required_now:
+        return record(required, trusted=False)
+    required_row_fields: set[tuple[int, str]] = set()
+    for index, raw_table_row in table_rows.items():
+        for field in ("cycle_enabled", "name"):
+            if field in raw_table_row:
+                required_row_fields.add((index, field))
+    for index, row in baseline.items():
+        if not isinstance(row.get("relay_state"), bool):
+            return record(required, trusted=False)
+        table_row = table_rows.get(index)
+        if table_row is None:
+            continue
+        for field in ("cycle_enabled", "name"):
+            if field in table_row and field not in row:
+                return record(required, trusted=False)
+
+    return record(frozenset(required_now), frozenset(required_row_fields), trusted=True)
+
+
+def outlet_payload_is_safe(
+    provenance: OutletPayloadProvenance | None,
+    *,
+    site_id: str,
+    device_id: str,
+    device: Mapping[str, Any],
+    sent: list[dict[str, Any]] | None,
+    outlet_index: int,
+) -> bool:
+    """
+    Return whether ``sent`` is a complete, trusted outlet write payload (#376).
+
+    Called under the refresh lock, before transport. A write needs a trusted
+    provenance record, a cached identity that still matches it, a non-``None``
+    payload with exactly one row for every required index (and no other row),
+    the target index in that set, and every row's required fields. Otherwise
+    the command fails closed with no PUT, no overlay, no pending record and no
+    refresh. The saved entries in a pending write are never consulted.
+    """
+    if provenance is None or not provenance.trusted:
+        return False
+    if provenance.site_id != site_id or provenance.device_id != device_id:
+        return False
+    raw_classic_id = device.get("_id")
+    classic_id = raw_classic_id if isinstance(raw_classic_id, str) else None
+    if provenance.classic_id != classic_id or provenance.mac != _outlet_identity_mac(
+        device
+    ):
+        return False
+    if sent is None:
+        return False
+
+    sent_rows = _outlet_rows_by_index(sent)
+    if sent_rows is None:
+        return False
+    if set(sent_rows) != set(provenance.required_indexes):
+        return False
+    if outlet_index not in sent_rows:
+        return False
+    required_fields = set(provenance.required_row_fields)
+    for index, row in sent_rows.items():
+        if not isinstance(row.get("relay_state"), bool):
+            return False
+        for field in ("cycle_enabled", "name"):
+            if (index, field) in required_fields and field not in row:
+                return False
+    return True
 
 
 # How many consecutive polls a device's last good statistics are reused for
@@ -564,6 +842,11 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
         # Successful outlet writes the controller has not reported back yet
         # (#376), committed at snapshot publication.
         self._pending_outlet_writes: dict[PendingOutletKey, PendingOutletWrite] = {}
+        # Payload integrity of each device's latest raw poll (#376), committed
+        # with the pending map. A failed refresh changes neither.
+        self._outlet_payload_provenance: dict[
+            OutletProvenanceKey, OutletPayloadProvenance
+        ] = {}
         self.data: dict[str, Any] = {
             "devices": {},
             "clients": {},
@@ -1373,6 +1656,20 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             is not None
         }
 
+        # Capture the controller's untouched outlet arrays before
+        # ``_merge_legacy_outlet_data`` replaces ``outlet_table`` with the
+        # normalizer's model dump. The display record keeps that model; the
+        # payload rule judges only these raw values.
+        raw_outlet_arrays: dict[str, dict[str, Any]] = {}
+        for device in devices:
+            raw_device_id = device.get("id")
+            if raw_device_id is None:
+                continue
+            raw_source = self._legacy_device_for(device, legacy_devices_by_mac)
+            raw_outlet_arrays[str(raw_device_id)] = _raw_outlet_arrays(
+                raw_source if raw_source is not None else device
+            )
+
         if legacy_devices_by_mac:
             for device in devices:
                 if not legacy_as_primary:
@@ -1458,6 +1755,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             clients=clients_dict,
             source=source,
             device_macs=device_macs,
+            raw_outlet_arrays=raw_outlet_arrays,
             legacy_macs=legacy_macs,
         )
 
@@ -1509,6 +1807,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 )
                 self._available = True
                 self._pending_outlet_writes = {}
+                self._outlet_payload_provenance = {}
                 self.data = {
                     **self.data,
                     **sections,
@@ -1591,6 +1890,12 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             # Pending outlet writes of sites and devices no longer polled are
             # dropped here; a failed refresh never gets this far.
             pending_outlet_writes: dict[PendingOutletKey, PendingOutletWrite] = {}
+            # Rebuilt from this poll only, so a device or site that is no
+            # longer polled loses its provenance (a reappearing device starts
+            # cold). A failed refresh never gets here.
+            outlet_payload_provenance: dict[
+                OutletProvenanceKey, OutletPayloadProvenance
+            ] = {}
             now = time.monotonic()
 
             # Put the results into the local section maps
@@ -1600,8 +1905,22 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 clients_dict,
                 source,
                 dev_macs,
+                raw_outlet_arrays,
                 legacy_macs,
             ), vpn in zip(site_ids, site_results, vpn_results, strict=True):
+                # Judge the raw controller record before the pending overlay
+                # changes it: a saved entry must never establish provenance.
+                for device_id, polled_device in polled_devices.items():
+                    outlet_payload_provenance[(site_id, device_id)] = (
+                        evaluate_outlet_payload_provenance(
+                            self._outlet_payload_provenance.get((site_id, device_id)),
+                            site_id,
+                            device_id,
+                            source,
+                            device=polled_device,
+                            raw_outlet_arrays=raw_outlet_arrays.get(device_id, {}),
+                        )
+                    )
                 devices_dict, held_writes = reconcile_pending_outlet_writes(
                     site_id, polled_devices, self._pending_outlet_writes, now
                 )
@@ -1654,6 +1973,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
 
             self._available = True
             self._pending_outlet_writes = pending_outlet_writes
+            self._outlet_payload_provenance = outlet_payload_provenance
             # Publish once, after the last await, as a new root: a snapshot
             # taken during the refresh keeps the previous maps unchanged.
             self.data = {
@@ -2015,6 +2335,15 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
         ``relay_state``) is recorded as pending, so polls that still report
         the controller's older value keep the written one (#376).
 
+        Before transport, inside the same lock, the built payload must pass
+        the payload-integrity gate: a trusted provenance record from the raw
+        poll, a matching device identity and exactly one row per required
+        outlet with its required fields. Otherwise the command raises the
+        translated ``command_failed`` error and sends no PUT, records nothing,
+        publishes nothing and requests no refresh. Confirmation or the 60 s
+        timeout of a pending field never restores write eligibility; only a
+        later trusted poll does.
+
         The write holds the coordinator's refresh lock from reading the cached
         record to publishing (#371 review). A poll already in flight finishes
         first, so it cannot replace the published array with its older one,
@@ -2032,6 +2361,26 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 state=state,
                 cycle_enabled=cycle_enabled,
             )
+            if not outlet_payload_is_safe(
+                self._outlet_payload_provenance.get((site_id, device_id)),
+                site_id=site_id,
+                device_id=device_id,
+                device=device_data,
+                sent=sent,
+                outlet_index=outlet_index,
+            ):
+                _LOGGER.debug(
+                    "Device coordinator: Refusing to set outlet %s on device %s: "
+                    "the controller data is not a trusted complete outlet baseline",
+                    outlet_index,
+                    device_id,
+                )
+                msg = f"Unable to set outlet {outlet_index} state on device {device_id}"
+                raise HomeAssistantError(
+                    msg,
+                    translation_domain=DOMAIN,
+                    translation_key="command_failed",
+                )
             result = await async_execute_command(
                 CommandFailure(
                     translation_key="command_failed",
@@ -2104,7 +2453,11 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
         write can finish after this overlay. A poll that starts after it can
         still read the controller's older values for a few seconds while the
         PDU applies the change; ``reconcile_pending_outlet_writes`` keeps the
-        written fields over those polls (#376).
+        written fields over those polls (#376). This overlay and the pending
+        entry only decide displayed values: payload safety comes from
+        ``OutletPayloadProvenance``, which a successful raw poll evaluates
+        before this overlay. The checked payload is complete, and provenance
+        stays trusted, so a second write before the next poll can proceed.
         """
         devices = self.data.get("devices", {})
         site_devices = devices.get(site_id)

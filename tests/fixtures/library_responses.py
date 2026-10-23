@@ -1,6 +1,9 @@
 # Copyright 2026 UniFi Insights contributors
 """Sample library response data for testing."""
 
+import copy
+from typing import Any
+
 from unifi_official_api.network.models.device import Device
 
 # Network API responses
@@ -81,6 +84,97 @@ SAMPLE_PDU_LEGACY_DEVICE = {
             "cycle_enabled": True,
         },
     ],
+}
+
+
+# --- Complete PDU outlet data for the #376 payload-integrity tests ---
+#
+# ``SAMPLE_PDU_LEGACY_DEVICE`` is deliberately sparse (one override for three
+# table rows) and stays the cold-start rejection case. The variants below give
+# the coordinator a structurally complete baseline. They are constructed, not
+# captures: the 21-overrides/20-table shape mirrors the live diagnostics that
+# showed the two arrays can differ, a difference a length or count rule cannot
+# judge.
+def _pdu_outlet_rows(count: int) -> list[dict[str, Any]]:
+    """Return ``count`` complete outlet_overrides rows with mixed values."""
+    return [
+        {
+            "index": index,
+            "name": f"Outlet {index}",
+            "relay_state": index % 2 == 1,
+            "cycle_enabled": index % 2 == 1,
+        }
+        for index in range(1, count + 1)
+    ]
+
+
+_COMPLETE_OUTLET_TABLE = [
+    {
+        "index": 1,
+        "name": "Main Server",
+        "relay_state": True,
+        "cycle_enabled": True,
+        "outlet_caps": 3,
+        "outlet_voltage": "120.2",
+        "outlet_current": "1.25",
+        "outlet_power": "150.0",
+        "outlet_power_factor": "0.98",
+    },
+    {
+        "index": 2,
+        "name": "Backup Server",
+        "relay_state": False,
+        "cycle_enabled": True,
+        "outlet_caps": 3,
+        "outlet_voltage": "120.1",
+        "outlet_current": "0.00",
+        "outlet_power": "0.0",
+        "outlet_power_factor": "0.00",
+    },
+    {
+        "index": 3,
+        "name": "Unmetered Switch",
+        "relay_state": True,
+        "cycle_enabled": False,
+        "outlet_caps": 1,
+        "outlet_voltage": None,
+        "outlet_current": None,
+        "outlet_power": None,
+        "outlet_power_factor": None,
+    },
+]
+
+_COMPLETE_OUTLET_OVERRIDES = [
+    {
+        "index": 1,
+        "name": "Main Server",
+        "relay_state": True,
+        "cycle_enabled": True,
+    },
+    {
+        "index": 2,
+        "name": "Backup Server",
+        "relay_state": False,
+        "cycle_enabled": True,
+    },
+    {
+        "index": 3,
+        "name": "Unmetered Switch",
+        "relay_state": True,
+        "cycle_enabled": False,
+    },
+]
+
+SAMPLE_PDU_LEGACY_DEVICE_COMPLETE = {
+    **SAMPLE_PDU_LEGACY_DEVICE,
+    "outlet_table": copy.deepcopy(_COMPLETE_OUTLET_TABLE),
+    "outlet_overrides": copy.deepcopy(_COMPLETE_OUTLET_OVERRIDES),
+}
+
+SAMPLE_PDU_LEGACY_DEVICE_SUPERSET = {
+    **SAMPLE_PDU_LEGACY_DEVICE,
+    "outlet_table": [{**row, "cycle_enabled": True} for row in _pdu_outlet_rows(20)],
+    "outlet_overrides": _pdu_outlet_rows(21),
 }
 
 # --- Network device read model (#337) ---

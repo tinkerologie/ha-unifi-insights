@@ -22,7 +22,11 @@ import pytest
 
 from custom_components.unifi_insights.data_transforms import NETWORK_FACTS_KEY
 from tests.fixtures.command_owners import PDU_ID, SITE_ID
-from tests.fixtures.library_responses import SAMPLE_PDU_DEVICE, SAMPLE_SITE
+from tests.fixtures.library_responses import (
+    SAMPLE_PDU_DEVICE,
+    SAMPLE_PDU_LEGACY_DEVICE_COMPLETE,
+    SAMPLE_SITE,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -133,6 +137,17 @@ async def _refresh_device(owners: SeededOwners) -> None:
     await owners.device.async_refresh()
 
 
+@pytest.fixture
+async def complete_outlet_baseline(seeded_owners: SeededOwners) -> None:
+    """Trust a complete outlet poll before the test snapshots the facade."""
+    devices = seeded_owners.network_client.devices
+    devices.get_legacy_site_devices.side_effect = None
+    devices.get_legacy_site_devices.return_value = [
+        copy.deepcopy(SAMPLE_PDU_LEGACY_DEVICE_COMPLETE)
+    ]
+    await seeded_owners.device.async_refresh()
+
+
 async def _write_outlet(owners: SeededOwners) -> None:
     """Turn an outlet off through the device owner's overlay."""
     owners.network_client.devices.set_outlet_state.return_value = True
@@ -186,6 +201,7 @@ async def _refresh_protect(owners: SeededOwners) -> None:
 )
 async def test_owner_update_keeps_untouched_sections(
     seeded_owners: SeededOwners,
+    complete_outlet_baseline: None,
     update: Callable[[SeededOwners], Awaitable[None]],
     touched: tuple[str, ...],
     untouched: tuple[str, ...],

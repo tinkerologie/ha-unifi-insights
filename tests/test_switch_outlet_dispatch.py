@@ -15,7 +15,10 @@ from homeassistant.setup import async_setup_component
 from custom_components.unifi_insights import UnifiInsightsData
 from custom_components.unifi_insights.const import DOMAIN
 from tests.fixtures.command_owners import PDU_ID, SITE_ID
-from tests.fixtures.library_responses import SAMPLE_PDU_DEVICE, SAMPLE_PDU_LEGACY_DEVICE
+from tests.fixtures.library_responses import (
+    SAMPLE_PDU_DEVICE,
+    SAMPLE_PDU_LEGACY_DEVICE_COMPLETE,
+)
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -63,11 +66,13 @@ async def test_outlet_service_dispatch_after_refresh(
     # Explicit read responses: a successful mocked write does not change them.
     refreshed = copy.deepcopy(SAMPLE_PDU_DEVICE)
     refreshed["state"] = state
-    legacy = copy.deepcopy(SAMPLE_PDU_LEGACY_DEVICE)
+    legacy = copy.deepcopy(SAMPLE_PDU_LEGACY_DEVICE_COMPLETE)
     legacy["outlet_table"][0]["relay_state"] = True
     legacy["outlet_overrides"][0]["relay_state"] = True
-    endpoint.get_all.return_value = [refreshed]
+    endpoint.get_all.return_value = [copy.deepcopy(SAMPLE_PDU_DEVICE)]
     endpoint.get_legacy_site_devices.return_value = [legacy]
+    await owners.device.async_refresh()
+    endpoint.get_all.return_value = [refreshed]
 
     await hass.services.async_call(
         "switch", "turn_on", {"entity_id": entity_ids[0]}, blocking=True
