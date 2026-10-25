@@ -313,6 +313,7 @@ var e=[`wan`,`gateway`,`switch`,`access_point`,`client`,`other`],t=`unifi_insigh
       gap: var(--ha-space-2, 6px);
     }
     .state {
+      flex-shrink: 0;
       color: var(--uit-text-secondary);
       font-size: var(--ha-font-size-m, 0.88rem);
       padding: var(--ha-space-3, 12px);
@@ -568,16 +569,17 @@ var e=[`wan`,`gateway`,`switch`,`access_point`,`client`,`other`],t=`unifi_insigh
     button.link {
       border: 0;
       background: transparent;
-      color: var(--primary-color);
+      color: var(--ha-color-text-primary, var(--primary-text-color));
       cursor: pointer;
       padding: 0;
       text-align: start;
       font: inherit;
       min-width: 44px;
       min-height: 44px;
-    }
-    button.link:hover {
       text-decoration: underline;
+      text-underline-offset: 3px;
+      white-space: normal;
+      overflow-wrap: anywhere;
     }
     .chip.ok,
     .chip.healthy,
@@ -605,16 +607,6 @@ var e=[`wan`,`gateway`,`switch`,`access_point`,`client`,`other`],t=`unifi_insigh
         --ha-color-fill-danger-quiet-resting,
         color-mix(in srgb, var(--uit-offline) 14%, transparent)
       );
-    }
-    button.link {
-      text-decoration: underline;
-      text-underline-offset: 3px;
-      color: var(--ha-color-text-primary, var(--primary-text-color));
-      white-space: normal;
-      overflow-wrap: anywhere;
-    }
-    .state {
-      flex-shrink: 0;
     }
     .state-detail {
       font-size: var(--ha-font-size-s, 12px);
