@@ -1146,7 +1146,9 @@ def test_protect_ui_selectors_match_service_schemas(
         assert "direction" not in fields
 
 
-@pytest.mark.parametrize("mode", ["lprreflex", "auto", ""])
+@pytest.mark.parametrize(
+    "mode", ["lprreflex", "auto", "", "lpr_reflex", "lpr_none_reflex"]
+)
 def test_video_mode_schema_rejects_undocumented_modes(mode: str) -> None:
     """The action must reject values outside the documented enum and aliases."""
     with pytest.raises(vol.Invalid):

@@ -17,7 +17,10 @@ from custom_components.unifi_insights.const import (
     DOMAIN,
     HDR_MODE_AUTO,
     HDR_MODE_ON,
+    VIDEO_MODE_API_TO_OPTION,
     VIDEO_MODE_DEFAULT,
+    VIDEO_MODE_OPTIONS,
+    VIDEO_MODES,
 )
 from custom_components.unifi_insights.select import (
     PARALLEL_UPDATES,
@@ -437,6 +440,13 @@ class TestUnifiProtectHDRModeSelect:
 class TestUnifiProtectVideoModeSelect:
     """Tests for UnifiProtectVideoModeSelect entity."""
 
+    def test_option_mapping_is_bijective(self) -> None:
+        """Every HA option must round-trip to exactly one supported API mode."""
+        assert tuple(VIDEO_MODE_OPTIONS.values()) == VIDEO_MODES
+        assert len(set(VIDEO_MODE_OPTIONS.values())) == len(VIDEO_MODE_OPTIONS)
+        for option, mode in VIDEO_MODE_OPTIONS.items():
+            assert VIDEO_MODE_API_TO_OPTION[mode] == option
+
     def test_initialization(self, mock_coordinator):
         """Test video mode select initialization."""
         mock_coordinator.data = {
@@ -562,7 +572,9 @@ class TestUnifiProtectVideoModeSelect:
         with pytest.raises(HomeAssistantError, match="Unable to set video mode"):
             await entity.async_select_option("high_fps")
 
-    @pytest.mark.parametrize("mode", [None, 123, ["invalid"], "unsupported"])
+    @pytest.mark.parametrize(
+        "mode", [None, 123, ["invalid"], "unsupported", "high_fps", "slow_shutter"]
+    )
     def test_unknown_api_mode_stays_unknown(
         self, mock_coordinator: MagicMock, mode: object
     ) -> None:
@@ -575,6 +587,17 @@ class TestUnifiProtectVideoModeSelect:
         entity = UnifiProtectVideoModeSelect(mock_coordinator, "cam1")
         assert entity.state is None
         assert entity.extra_state_attributes["video_mode"] == mode
+
+    def test_missing_api_mode_uses_default(self, mock_coordinator: MagicMock) -> None:
+        """An omitted API field retains the established default fallback."""
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "cameras",
+            {"cam1": {"id": "cam1", "state": "CONNECTED"}},
+        )
+        entity = UnifiProtectVideoModeSelect(mock_coordinator, "cam1")
+        assert entity.state == "default"
+        assert entity.extra_state_attributes["video_mode"] == "default"
 
 
 class TestLprVideoModeStates:
@@ -613,6 +636,7 @@ class TestLprVideoModeStates:
         self,
         hass: HomeAssistant,
         init_integration: MockConfigEntry,
+        mock_protect_client: MagicMock,
         mode: str,
         option: str,
     ) -> None:
@@ -634,6 +658,42 @@ class TestLprVideoModeStates:
             "lpr_reflex",
             "lpr_none_reflex",
         ]
+
+        # Public HA service validation rejects legacy select keys before I/O.
+        with pytest.raises(ServiceValidationError):
+            await hass.services.async_call(
+                "select",
+                "select_option",
+                {"entity_id": entity_id, "option": "highFps"},
+                blocking=True,
+            )
+        mock_protect_client.cameras.set_video_mode.assert_not_awaited()
+        await hass.services.async_call(
+            "select",
+            "select_option",
+            {"entity_id": entity_id, "option": option},
+            blocking=True,
+        )
+        mock_protect_client.cameras.set_video_mode.assert_awaited_once_with(
+            "lpr_camera", mode
+        )
+
+        # A fresh API response must publish the new translated state through HA.
+        raw_update = "highFps" if mode == "default" else "default"
+        key_update = "high_fps" if mode == "default" else "default"
+        mock_protect_client.cameras.get_all.return_value = [
+            {
+                **mock_protect_client.cameras.get_all.return_value[0],
+                "videoMode": raw_update,
+            }
+        ]
+        owner = init_integration.runtime_data.coordinator.require_protect_coordinator()
+        await owner.async_refresh()
+        await hass.async_block_till_done()
+        updated = hass.states.get(entity_id)
+        assert updated is not None
+        assert updated.state == key_update
+        assert updated.attributes["video_mode"] == raw_update
 
 
 class TestUnifiProtectChimeRingtoneSelect:

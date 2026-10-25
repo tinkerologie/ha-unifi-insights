@@ -141,7 +141,8 @@ set_video_mode:
     mode:
       name: Video Mode
       description: >-
-        Video mode (default, highFps, sport, slowShutter, lprReflex, lprNoneReflex)
+        Raw Protect video mode (default, highFps, sport, slowShutter, lprReflex,
+        lprNoneReflex). These action values differ from the select entity keys.
       required: true
       selector:
         select:

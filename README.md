@@ -413,7 +413,19 @@ The camera **Video Mode** dropdown uses plain-English labels. Its stored select 
 | License plates (reflective)     | `lpr_reflex`                          | `lprReflex`                           |
 | License plates (non-reflective) | `lpr_none_reflex`                     | `lprNoneReflex`                       |
 
-**Migration:** Update state comparisons and `select.select_option` calls that use `highFps`, `slowShutter`, `lprReflex` or `lprNoneReflex` to the select keys above. Entity IDs and `unifi_insights.set_video_mode` calls are unchanged.
+**Migration:** Update state comparisons and `select.select_option` calls that use `highFps`, `slowShutter`, `lprReflex` or `lprNoneReflex` to the select keys above. Entity IDs and `unifi_insights.set_video_mode` calls are unchanged. Recorder history retains the old values; the migration applies to future states and calls.
+
+For example, a native select action now uses the normalized key:
+
+```yaml
+action: select.select_option
+target:
+  entity_id: select.my_camera_video_mode
+data:
+  option: lpr_none_reflex
+```
+
+A `unifi_insights.set_video_mode` action continues to use `mode: lprNoneReflex`.
 
 | Action                                      | Description                                                                                            |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------ |

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from pathlib import Path
 from string import Formatter
 from typing import Any, Final, cast
@@ -58,6 +59,10 @@ def test_video_mode_options_have_readable_native_translations() -> None:
     for path in (_STRINGS_JSON, _EN_JSON):
         strings = json.loads(path.read_text())
         assert strings["entity"]["select"]["video_mode"]["state"] == expected
+        assert all(
+            re.fullmatch(r"(?!.+[_-]{2})(?![_-])[a-z0-9-_]+(?<![_-])", key)
+            for key in strings["entity"]["select"]["video_mode"]["state"]
+        )
 
 
 def test_binary_sensor_camera_and_sensor_translation_keys_present_in_en_json() -> None:
