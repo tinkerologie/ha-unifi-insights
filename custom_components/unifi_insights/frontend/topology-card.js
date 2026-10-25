@@ -287,7 +287,7 @@ import{$ as e,A as t,At as n,C as r,Ct as i,D as a,Dt as o,E as s,Et as c,F as l
         <path d=${p}></path>
       </svg>
       <circle class="status" cx=${r*.72} cy=${-r*.72} r=${Math.max(4,r*.24)}></circle>
-      ${t.type===`group`&&!this.showLabels?g`<text class="badge" x=${r*.95} y=${r+2}>${t.counts.total}</text>`:b}
+      ${t.type===`group`&&(!this.showLabels||t.id===`group:root`||t.id===`group:unconnected`)?g`<text class="badge" x=${r*.95} y=${r+2}>${t.counts.total}</text>`:b}
       ${this.showLabels?g`<text class="label" y=${m}>${pt(u,Is)}</text>`:b}
       ${l===`offline`?g`<text class="state-text" y=${this.showLabels?m+14:m}>${s(yt(t))}</text>`:b}
     </g>`}renderGhost(e,t,n){return this.renderNode(e,t.visual,t.point,n,new Set,!1)}static styles=[s,re`

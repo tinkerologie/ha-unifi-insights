@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeLocalize } from "../src/localize";
 import { describeVisual } from "../src/views/describe";
+import { ROOT_CLIENT_GROUP, UNCONNECTED_GROUP } from "../src/model/graph-model";
 import {
   SPACING,
   fitTransform,
@@ -85,6 +86,37 @@ describe("<uit-graph-view> rendering", () => {
     );
     expect(gw.querySelector("text.label")!.textContent).toMatch(/…$/);
   });
+
+  it.each([true, false])(
+    "keeps group counts visible without duplicating labelled client totals (labels: %s)",
+    async (showLabels) => {
+      const regular = await graph({ showLabels });
+      expect(
+        byId(regular, "group:dev:uuid-ap").querySelector("text.badge")
+          ?.textContent ?? null,
+      ).toBe(showLabels ? null : "1");
+
+      const root = await graph({
+        showLabels,
+        model: fixtureModel({ kinds: new Set(["client"]) }),
+      });
+      expect(
+        byId(root, ROOT_CLIENT_GROUP).querySelector("text.badge")?.textContent,
+      ).toBe("2");
+
+      const snapshot = fixtureSnapshot();
+      snapshot.nodes = snapshot.nodes.filter((node) => node.kind === "client");
+      snapshot.edges = [];
+      const unconnected = await graph({
+        showLabels,
+        model: fixtureModel({}, snapshot),
+      });
+      expect(
+        byId(unconnected, UNCONNECTED_GROUP).querySelector("text.badge")
+          ?.textContent,
+      ).toBe("2");
+    },
+  );
 
   it("highlights the path from the selection to the root, via a collapsed client group", async () => {
     const el = await graph({ selectedId: "cli:cli-tv" });
