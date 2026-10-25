@@ -63,7 +63,20 @@
       frame.style.width = `${params.get("width") ?? 800}px`;
       if (params.get("height") !== "auto")
         frame.style.height = `${params.get("height") ?? 360}px`;
-      const cardName = params.get("card") ?? "topology";
+      const requestedCard = params.get("card") ?? "topology";
+      const cardOption = [
+        { name: "topology", tag: "unifi-insights-topology-card" },
+        { name: "site-health", tag: "unifi-insights-site-health-card" },
+        {
+          name: "internet-activity",
+          tag: "unifi-insights-internet-activity-card",
+        },
+        { name: "performance", tag: "unifi-insights-performance-card" },
+        { name: "protect-status", tag: "unifi-insights-protect-status-card" },
+        { name: "timeline", tag: "unifi-insights-timeline-card" },
+      ].find((option) => option.name === requestedCard);
+      if (!cardOption) throw new Error("Unknown fixture card");
+      const cardName = cardOption.name;
       const editorMode = params.get("editor") === "1";
       if (params.get("theme") === "dark")
         document.documentElement.dataset.theme = "dark";
@@ -112,7 +125,7 @@
         const snapshots = await fetch(
           "/test/fixtures/dashboard-cards.json",
         ).then((response) => response.json());
-        snapshot = snapshots[cardName];
+        snapshot = structuredClone(snapshots[cardName]);
         if (!snapshot) throw new Error("Unknown fixture card");
         if (params.has("status")) snapshot.status = params.get("status");
       }
@@ -139,7 +152,7 @@
           return Promise.resolve(async () => undefined);
         },
       };
-      const tag = `unifi-insights-${cardName}-card`;
+      const tag = cardOption.tag;
       const card = document.createElement(
         `${tag}${editorMode ? "-editor" : ""}`,
       );

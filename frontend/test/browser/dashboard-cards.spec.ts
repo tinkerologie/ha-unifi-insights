@@ -167,3 +167,18 @@ for (const name of cards.filter((name) => name !== "topology")) {
     await audit(page);
   });
 }
+
+test("fixture rejects prototype keys before mutating a snapshot", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto("/test/browser/fixture.html?card=__proto__&status=polluted");
+  await expect.poll(() => errors).toContain("Unknown fixture card");
+  expect(
+    await page.evaluate(() =>
+      Object.prototype.hasOwnProperty.call(Object.prototype, "status"),
+    ),
+  ).toBe(false);
+  expect(await page.locator("main > *").count()).toBe(0);
+});
