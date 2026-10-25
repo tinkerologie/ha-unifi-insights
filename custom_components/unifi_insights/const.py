@@ -290,6 +290,16 @@ VIDEO_MODE_DEFAULT: Final = "default"
 VIDEO_MODE_HIGH_FPS: Final = "highFps"
 VIDEO_MODE_SPORT: Final = "sport"
 VIDEO_MODE_SLOW_SHUTTER: Final = "slowShutter"
+VIDEO_MODE_LPR_REFLEX: Final = "lprReflex"
+VIDEO_MODE_LPR_NONE_REFLEX: Final = "lprNoneReflex"
+VIDEO_MODES: Final = (
+    VIDEO_MODE_DEFAULT,
+    VIDEO_MODE_HIGH_FPS,
+    VIDEO_MODE_SPORT,
+    VIDEO_MODE_SLOW_SHUTTER,
+    VIDEO_MODE_LPR_REFLEX,
+    VIDEO_MODE_LPR_NONE_REFLEX,
+)
 
 # Smart detect types
 SMART_DETECT_PERSON: Final = "person"

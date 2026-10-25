@@ -402,23 +402,23 @@ refer to are not included, and there is no import action.
 
 ### Protect actions
 
-| Action                                      | Description                                                              |
-| ------------------------------------------- | ------------------------------------------------------------------------ |
-| `unifi_insights.set_hdr_mode`               | Set a camera's HDR mode (`auto`, `on`, `off`)                            |
-| `unifi_insights.set_video_mode`             | Set a camera's video mode (`default`, `highFps`, `sport`, `slowShutter`) |
-| `unifi_insights.set_mic_volume`             | Set a camera's microphone volume (1–100)                                 |
-| `unifi_insights.ptz_move`                   | Move a PTZ camera to a preset (0–15)                                     |
-| `unifi_insights.ptz_patrol`                 | Start or stop a PTZ patrol                                               |
-| `unifi_insights.set_light_mode`             | Set a light's mode (`always`, `motion`, `off`)                           |
-| `unifi_insights.set_light_level`            | Set a light's brightness (0–100)                                         |
-| `unifi_insights.play_chime_ringtone`        | Always raises a not supported error; sends no request                    |
-| `unifi_insights.set_chime_volume`           | Set a chime's volume (0–100)                                             |
-| `unifi_insights.set_chime_ringtone`         | Set an opaque Protect ringtone ID for every paired doorbell              |
-| `unifi_insights.set_chime_repeat_times`     | Set how many times a chime repeats (1–10)                                |
-| `unifi_insights.set_chime_paired_doorbells` | Choose which doorbells ring a chime (replaces its current pairing)       |
-| `unifi_insights.trigger_alarm`              | Trigger an Alarm Manager webhook alarm                                   |
-| `unifi_insights.create_liveview`            | Create a live view                                                       |
-| `unifi_insights.set_liveview`               | Set the live view shown on a viewer                                      |
+| Action                                      | Description                                                                                            |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `unifi_insights.set_hdr_mode`               | Set a camera's HDR mode (`auto`, `on`, `off`)                                                          |
+| `unifi_insights.set_video_mode`             | Set a camera's video mode (`default`, `highFps`, `sport`, `slowShutter`, `lprReflex`, `lprNoneReflex`) |
+| `unifi_insights.set_mic_volume`             | Set a camera's microphone volume (1–100)                                                               |
+| `unifi_insights.ptz_move`                   | Move a PTZ camera to a preset (0–15)                                                                   |
+| `unifi_insights.ptz_patrol`                 | Start or stop a PTZ patrol                                                                             |
+| `unifi_insights.set_light_mode`             | Set a light's mode (`always`, `motion`, `off`)                                                         |
+| `unifi_insights.set_light_level`            | Set a light's brightness (0–100)                                                                       |
+| `unifi_insights.play_chime_ringtone`        | Always raises a not supported error; sends no request                                                  |
+| `unifi_insights.set_chime_volume`           | Set a chime's volume (0–100)                                                                           |
+| `unifi_insights.set_chime_ringtone`         | Set an opaque Protect ringtone ID for every paired doorbell                                            |
+| `unifi_insights.set_chime_repeat_times`     | Set how many times a chime repeats (1–10)                                                              |
+| `unifi_insights.set_chime_paired_doorbells` | Choose which doorbells ring a chime (replaces its current pairing)                                     |
+| `unifi_insights.trigger_alarm`              | Trigger an Alarm Manager webhook alarm                                                                 |
+| `unifi_insights.create_liveview`            | Create a live view                                                                                     |
+| `unifi_insights.set_liveview`               | Set the live view shown on a viewer                                                                    |
 
 ```yaml
 # Move a PTZ camera to a preset position

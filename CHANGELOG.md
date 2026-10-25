@@ -73,6 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Camera Video Mode selects now show and offer `lprReflex` and `lprNoneReflex` instead of showing `unknown`, and the `set_video_mode` action accepts both modes. Entity IDs, existing mode values and legacy action aliases are unchanged. The options retain Protect's raw values because Hassfest does not allow camelCase translation keys. [#415](https://github.com/tinkerologie/ha-unifi-insights/issues/415)
+
 - The topology card keeps client counts visible for root and unconnected groups when labels are enabled, while regular client groups show their count only once. [#413](https://github.com/tinkerologie/ha-unifi-insights/issues/413)
 
 - A PDU outlet command sent a few seconds after another one no longer switches the earlier outlet back. While the PDU applies a change the controller still reports the old outlet values, and a poll in that window put them back in Home Assistant, so the next command sent them to the controller again. UniFi Insights now keeps each outlet's written on/off or power-cycling value until the controller reports it, for up to 60 seconds; other values from the poll still update, and after 60 seconds the controller's value wins. A command also needs a complete controller baseline now: while the polled outlet data is incomplete, sparse or malformed, it is refused without sending anything, and it works again after a poll that reports every outlet. [#376](https://github.com/tinkerologie/ha-unifi-insights/issues/376) [#371](https://github.com/tinkerologie/ha-unifi-insights/issues/371) [#412](https://github.com/tinkerologie/ha-unifi-insights/pull/412)

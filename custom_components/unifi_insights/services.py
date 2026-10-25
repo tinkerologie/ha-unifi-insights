@@ -52,10 +52,7 @@ from .const import (
     SERVICE_SET_MIC_VOLUME,
     SERVICE_SET_VIDEO_MODE,
     SERVICE_TRIGGER_ALARM,
-    VIDEO_MODE_DEFAULT,
-    VIDEO_MODE_HIGH_FPS,
-    VIDEO_MODE_SLOW_SHUTTER,
-    VIDEO_MODE_SPORT,
+    VIDEO_MODES,
 )
 from .coordinators.carrier_fabric import InvalidSubscriberIdError
 from .coordinators.rule_audit import RULE_TYPES
@@ -240,16 +237,7 @@ SET_VIDEO_MODE_SCHEMA = vol.Schema(
         vol.Optional("device_id"): TARGET_SELECTOR_SCHEMA,
         vol.Optional("entity_id"): TARGET_SELECTOR_SCHEMA,
         vol.Optional("target"): TARGET_DICT_SCHEMA,
-        vol.Required("mode"): vol.In(
-            [
-                VIDEO_MODE_DEFAULT,
-                VIDEO_MODE_HIGH_FPS,
-                VIDEO_MODE_SPORT,
-                VIDEO_MODE_SLOW_SHUTTER,
-                "high_fps",
-                "slow_shutter",
-            ]
-        ),
+        vol.Required("mode"): vol.In([*VIDEO_MODES, "high_fps", "slow_shutter"]),
     }
 )
 

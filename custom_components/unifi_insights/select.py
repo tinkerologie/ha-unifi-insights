@@ -29,9 +29,7 @@ from .const import (
     HDR_MODE_OFF,
     HDR_MODE_ON,
     VIDEO_MODE_DEFAULT,
-    VIDEO_MODE_HIGH_FPS,
-    VIDEO_MODE_SLOW_SHUTTER,
-    VIDEO_MODE_SPORT,
+    VIDEO_MODES,
 )
 from .data_transforms import (
     current_chime_ringtone_id,
@@ -264,12 +262,7 @@ class UnifiProtectVideoModeSelect(UnifiProtectEntity, SelectEntity):
 
     _attr_has_entity_name = True
     _attr_translation_key = "video_mode"
-    _attr_options: ClassVar[list[str]] = [  # type: ignore[misc]
-        VIDEO_MODE_DEFAULT,
-        VIDEO_MODE_HIGH_FPS,
-        VIDEO_MODE_SPORT,
-        VIDEO_MODE_SLOW_SHUTTER,
-    ]
+    _attr_options: ClassVar[list[str]] = list(VIDEO_MODES)  # type: ignore[misc]
 
     def __init__(
         self,

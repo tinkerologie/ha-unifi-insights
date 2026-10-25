@@ -1,10 +1,14 @@
 # Copyright 2026 UniFi Insights contributors
 """Tests for UniFi Protect select entities."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import entity_registry as er
 
 from custom_components.unifi_insights.const import (
     DEVICE_TYPE_CAMERA,
@@ -30,6 +34,10 @@ from custom_components.unifi_insights.select import (
 )
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
 from tests.fixtures.facade_data import with_protect_collection, with_protect_fields
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 
 @pytest.fixture
@@ -465,8 +473,9 @@ class TestUnifiProtectVideoModeSelect:
         assert VIDEO_MODE_DEFAULT in entity._attr_options
         assert VIDEO_MODE_HIGH_FPS in entity._attr_options
 
+    @pytest.mark.parametrize("mode", ["highFps", "lprReflex", "lprNoneReflex"])
     async def test_async_select_option_success(
-        self, mock_coordinator: MagicMock
+        self, mock_coordinator: MagicMock, mode: str
     ) -> None:
         """Test selecting video mode option successfully."""
         mock_coordinator.data = {
@@ -495,16 +504,16 @@ class TestUnifiProtectVideoModeSelect:
         )
         entity.async_write_ha_state = MagicMock()
 
-        await entity.async_select_option("highFps")
+        await entity.async_select_option(mode)
 
         protect_owner(mock_coordinator).async_set_video_mode.assert_awaited_once_with(
-            "cam1", "highFps"
+            "cam1", mode
         )
         mock_coordinator.data = with_protect_fields(
-            mock_coordinator.data, "cameras", "cam1", videoMode="highFps"
+            mock_coordinator.data, "cameras", "cam1", videoMode=mode
         )
         entity._update_from_data()
-        assert entity._attr_current_option == "highFps"
+        assert entity._attr_current_option == mode
 
     async def test_async_select_option_error(self, mock_coordinator):
         """Test selecting video mode option with error."""
@@ -542,6 +551,54 @@ class TestUnifiProtectVideoModeSelect:
 
         with pytest.raises(HomeAssistantError, match="Unable to set video mode"):
             await entity.async_select_option("highFps")
+
+
+class TestLprVideoModeStates:
+    """Exercise camera API responses through the real HA state machine."""
+
+    @pytest.fixture
+    def mock_protect_client(
+        self, mock_protect_client: MagicMock, mode: str
+    ) -> MagicMock:
+        """Seed the API boundary before the integration builds its snapshots."""
+        mock_protect_client.cameras.get_all.return_value = [
+            {
+                "id": "lpr_camera",
+                "name": "LPR Camera",
+                "state": "CONNECTED",
+                "model": "UVC-G5-Bullet",
+                "mac": "11:22:33:44:55:66",
+                "videoMode": mode,
+                "featureFlags": {},
+            }
+        ]
+        return mock_protect_client
+
+    @pytest.mark.parametrize("mode", ["lprReflex", "lprNoneReflex"])
+    async def test_lpr_mode_serializes_as_reported(
+        self,
+        hass: HomeAssistant,
+        init_integration: MockConfigEntry,
+        mode: str,
+    ) -> None:
+        """A documented LPR mode must serialize as its value, never unknown."""
+        registry = er.async_get(hass)
+        entity_id = registry.async_get_entity_id(
+            "select", DOMAIN, "unifi_insights_camera_lpr_camera_video_mode"
+        )
+        assert entity_id is not None
+        state = hass.states.get(entity_id)
+        assert state is not None
+        assert state.state == mode
+        assert state.attributes["video_mode"] == mode
+        assert state.attributes["options"] == [
+            "default",
+            "highFps",
+            "sport",
+            "slowShutter",
+            "lprReflex",
+            "lprNoneReflex",
+        ]
 
 
 class TestUnifiProtectChimeRingtoneSelect:

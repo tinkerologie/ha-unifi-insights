@@ -244,6 +244,24 @@ _HANDLER_CASES: list[tuple[Any, ...]] = [
         {},
     ),
     (
+        "set_video_mode",
+        {"camera_id": "x", "mode": "lprReflex"},
+        "resolve_protect_call",
+        ("camera",),
+        "async_set_video_mode",
+        ("r1", "lprReflex"),
+        {},
+    ),
+    (
+        "set_video_mode",
+        {"camera_id": "x", "mode": "lprNoneReflex"},
+        "resolve_protect_call",
+        ("camera",),
+        "async_set_video_mode",
+        ("r1", "lprNoneReflex"),
+        {},
+    ),
+    (
         "set_mic_volume",
         {"camera_id": "x", "volume": 100},
         "resolve_protect_call",
@@ -1071,7 +1089,14 @@ class TestAsyncUnloadServices:
         (
             "set_video_mode",
             "mode",
-            ["default", "highFps", "sport", "slowShutter"],
+            [
+                "default",
+                "highFps",
+                "sport",
+                "slowShutter",
+                "lprReflex",
+                "lprNoneReflex",
+            ],
             {},
         ),
         ("set_light_mode", "mode", ["always", "motion", "off"], {}),
@@ -1107,6 +1132,19 @@ def test_protect_ui_selectors_match_service_schemas(
     if service == "ptz_move":
         assert fields["preset"]["required"] is True
         assert "direction" not in fields
+
+
+@pytest.mark.parametrize("mode", ["lprreflex", "auto", ""])
+def test_video_mode_schema_rejects_undocumented_modes(mode: str) -> None:
+    """The action must reject values outside the documented enum and aliases."""
+    with pytest.raises(vol.Invalid):
+        services.SET_VIDEO_MODE_SCHEMA({"mode": mode})
+
+
+@pytest.mark.parametrize("mode", ["high_fps", "slow_shutter"])
+def test_video_mode_schema_preserves_legacy_aliases(mode: str) -> None:
+    """Existing action payload aliases must remain accepted without rewriting."""
+    assert services.SET_VIDEO_MODE_SCHEMA({"mode": mode})["mode"] == mode
 
 
 # The actions that act on exactly one entity, device or resource. Only the

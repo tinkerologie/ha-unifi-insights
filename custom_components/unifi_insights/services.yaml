@@ -140,7 +140,8 @@ set_video_mode:
         text:
     mode:
       name: Video Mode
-      description: Video mode (default, highFps, sport, slowShutter)
+      description: >-
+        Video mode (default, highFps, sport, slowShutter, lprReflex, lprNoneReflex)
       required: true
       selector:
         select:
@@ -149,6 +150,8 @@ set_video_mode:
             - "highFps"
             - "sport"
             - "slowShutter"
+            - "lprReflex"
+            - "lprNoneReflex"
 
 set_mic_volume:
   name: Set Microphone Volume
