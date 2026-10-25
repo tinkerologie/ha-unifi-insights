@@ -22,6 +22,8 @@ export function registerDashboardCard(
       name: registration.name,
       description: registration.description,
       preview: true,
+      documentationURL:
+        "https://github.com/tinkerologie/ha-unifi-insights#dashboard-cards",
     });
   }
 }

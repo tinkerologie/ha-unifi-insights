@@ -4,6 +4,7 @@ import { LitElement, css, html } from "lit";
 import { allSites } from "./config";
 import { type TopologySource } from "./contract";
 import { fireEvent, type HomeAssistant } from "./ha-types";
+import { controlStyles, themeTokens } from "./styles";
 import {
   mdiAccessPoint,
   mdiDevices,
@@ -209,8 +210,13 @@ export class GenericEditor extends LitElement {
         : "";
     return html`
       <div class="editor">
-        <label>Site</label>
+        <label for="source"
+          >${this.sourceCommand === "unifi_insights/protect/sources"
+            ? "Integration"
+            : "Site"}</label
+        >
         <select
+          id="source"
           @change=${(ev: Event) =>
             this.applySite((ev.target as HTMLSelectElement).value)}
         >
@@ -222,8 +228,9 @@ export class GenericEditor extends LitElement {
             </option>`;
           })}
         </select>
-        <label>Title</label>
+        <label for="title">Title</label>
         <input
+          id="title"
           .value=${this.config.title ?? ""}
           @input=${(ev: Event) =>
             this.applyTitle((ev.target as HTMLInputElement).value)}
@@ -232,23 +239,33 @@ export class GenericEditor extends LitElement {
     `;
   }
 
-  static override styles = css`
-    .editor {
-      display: grid;
-      gap: 8px;
-    }
-    label {
-      font-size: 0.85rem;
-      color: var(--secondary-text-color);
-    }
-    select,
-    input {
-      min-height: 36px;
-      border: 1px solid var(--divider-color);
-      border-radius: 8px;
-      padding: 4px 8px;
-      background: var(--card-background-color);
-      color: var(--primary-text-color);
-    }
-  `;
+  static override styles = [
+    themeTokens,
+    controlStyles,
+    css`
+      :host {
+        display: block;
+        min-width: 0;
+      }
+      .editor {
+        display: grid;
+        gap: 8px;
+      }
+      label {
+        font-size: 0.85rem;
+        color: var(--secondary-text-color);
+      }
+      select,
+      input {
+        min-height: 44px;
+        width: 100%;
+        min-width: 0;
+        border: 1px solid var(--divider-color);
+        border-radius: 8px;
+        padding: 4px 8px;
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+      }
+    `,
+  ];
 }

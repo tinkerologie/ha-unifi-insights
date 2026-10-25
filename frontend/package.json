@@ -6,7 +6,7 @@
   "description": "Network topology Lovelace card for the UniFi Insights integration (built into custom_components/unifi_insights/frontend/).",
   "scripts": {
     "build": "vite build",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node ./node_modules/@typescript/native/bin/tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
     "test:browser": "node test/browser/run.mjs",
@@ -30,9 +30,10 @@
     "axe-core": "4.14.0",
     "eslint": "10.13.0",
     "jsdom": "30.1.3",
-    "typescript": "6.0.3",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
     "typescript-eslint": "8.71.2",
     "vite": "8.3.4",
-    "vitest": "5.0.5"
+    "vitest": "5.0.5",
+    "@typescript/native": "npm:typescript@7.0.2"
   }
 }

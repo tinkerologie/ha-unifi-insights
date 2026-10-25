@@ -267,6 +267,7 @@ describe("dashboard card registration", () => {
     await settle(timelineEl);
     expect(timelineEl.shadowRoot?.textContent).toContain("No events");
     fake.subs[4]?.callback({
+      status: "ok",
       items: [],
     } as never);
     await settle(timelineEl);
@@ -447,5 +448,214 @@ describe("dashboard card registration", () => {
     }).hass;
     document.body.append(protectEditor);
     await settle(protectEditor);
+    expect(protectEditor.shadowRoot?.querySelectorAll("option")).toHaveLength(
+      1,
+    );
+    expect(protectEditor.shadowRoot?.querySelector("label")?.textContent).toBe(
+      "Integration",
+    );
+  });
+});
+
+describe("dashboard availability and accessible editors", () => {
+  const names = [
+    "site-health",
+    "internet-activity",
+    "performance",
+    "protect-status",
+    "timeline",
+  ];
+  async function companion(name: string, snapshot: Record<string, unknown>) {
+    const fake = fakeHass();
+    const tag = `unifi-insights-${name}-card`;
+    const el = document.createElement(
+      tag,
+    ) as import("../src/dashboard-cards-base").BaseDashboardCard;
+    el.setConfig({
+      type: `custom:${tag}`,
+      entry_id: "entry-1",
+      site_id: "site-1",
+    });
+    el.hass = fake.hass;
+    document.body.append(el);
+    await settle(el);
+    fake.subs[0]!.callback(snapshot);
+    await settle(el);
+    return el;
+  }
+  for (const name of names) {
+    it(`${name} announces unavailable without healthy zero values`, async () => {
+      const el = await companion(name, {
+        status: "unavailable",
+        issues: [{ code: "devices_unavailable", severity: "error" }],
+      });
+      expect(
+        el.shadowRoot?.querySelector('[role="alert"]')?.textContent,
+      ).toContain("temporarily unavailable");
+      expect(
+        el.shadowRoot?.querySelector(".kpi-grid, .ring-strip, .empty-hero"),
+      ).toBeNull();
+      expect(
+        el.shadowRoot?.querySelector(".header-actions")?.textContent?.trim(),
+      ).toBe("");
+    });
+    it(`${name} editor associates labels and emits full configuration`, async () => {
+      const tag = `unifi-insights-${name}-card`;
+      const editor = document.createElement(
+        `${tag}-editor`,
+      ) as import("../src/dashboard-cards-editor").GenericEditor;
+      editor.setConfig({
+        type: `custom:${tag}`,
+        title: "Original",
+        custom_option: true,
+      });
+      editor.hass = fakeHass().hass;
+      document.body.append(editor);
+      await settle(editor);
+      for (const control of editor.shadowRoot!.querySelectorAll<
+        HTMLInputElement | HTMLSelectElement
+      >("input, select"))
+        expect(control.labels?.length).toBe(1);
+      let config: Record<string, unknown> | undefined;
+      editor.addEventListener("config-changed", ((event: CustomEvent) => {
+        config = event.detail.config;
+      }) as EventListener);
+      const input = editor.shadowRoot!.querySelector("input")!;
+      input.value = "Updated";
+      input.dispatchEvent(new Event("input"));
+      expect(config).toMatchObject({
+        type: `custom:${tag}`,
+        title: "Updated",
+        custom_option: true,
+      });
+    });
+  }
+  it("announces loading and actionable errors", async () => {
+    const el = await companion("site-health", { status: "ok" });
+    el.loading = true;
+    await settle(el);
+    expect(
+      el.shadowRoot?.querySelector('[role="status"]')?.textContent,
+    ).toContain("Loading Site Health");
+    el.loading = false;
+    el.error = { code: "entry_not_loaded", message: "" };
+    await settle(el);
+    expect(
+      el.shadowRoot?.querySelector('[role="alert"]')?.textContent,
+    ).toContain("Check the integration and connection");
+    expect(el.shadowRoot?.querySelector(".state-detail")?.textContent).toBe(
+      "entry_not_loaded",
+    );
+  });
+  it("shows stale site health with neutral unknown accent", async () => {
+    const el = await companion("site-health", {
+      status: "partial",
+      freshness: "stale",
+      health: { level: "unknown" },
+    });
+    expect(
+      el.shadowRoot?.querySelector('[role="status"]')?.textContent,
+    ).toContain("last available readings");
+    expect(
+      el.shadowRoot?.querySelector("ha-card")?.getAttribute("style"),
+    ).toContain("--uit-unknown");
+  });
+  it("distinguishes Protect not configured and degraded", async () => {
+    const el = await companion("protect-status", {
+      status: "no_protect",
+      devices: [],
+    });
+    expect(
+      el.shadowRoot?.querySelector('[role="status"]')?.textContent,
+    ).toContain("not configured");
+    el.snapshot = {
+      status: "degraded",
+      devices: [],
+      warnings: ["storage_unhealthy"],
+    };
+    await settle(el);
+    expect(
+      el.shadowRoot?.querySelector('[role="status"]')?.textContent,
+    ).toContain("storage unhealthy");
+    expect(el.shadowRoot?.querySelector(".kpi-grid")).toBeNull();
+    expect(
+      el.shadowRoot?.querySelector(".header-actions")?.textContent?.trim(),
+    ).toBe("");
+    el.snapshot = {
+      status: "degraded",
+      devices: [{ name: "Door", connected: true }],
+    };
+    await settle(el);
+    expect(el.shadowRoot?.querySelector(".chip.warning")).not.toBeNull();
+    expect(el.shadowRoot?.querySelector(".kpi-grid")?.textContent).toContain(
+      "Needs attention",
+    );
+    expect(
+      el.shadowRoot?.querySelector(".kpi-grid")?.textContent,
+    ).not.toContain("All connected");
+  });
+  it("excludes null performance values and preserves zero", async () => {
+    const el = await companion("performance", {
+      status: "partial",
+      devices: [
+        { cpu_pct: null, memory_pct: null },
+        { cpu_pct: 60, memory_pct: 40 },
+      ],
+    });
+    const gauges = () =>
+      [...el.shadowRoot!.querySelectorAll(".ring-gauge span")].map(
+        (e) => e.textContent,
+      );
+    expect(gauges()).toEqual(["60%", "40%"]);
+    expect(el.shadowRoot?.querySelector(".header-actions .ok")).toBeNull();
+    el.snapshot = {
+      status: "ok",
+      devices: [{ cpu_pct: null, memory_pct: null }],
+    };
+    await settle(el);
+    expect(gauges()).toEqual(["--", "--"]);
+    el.snapshot = { status: "ok", devices: [{ cpu_pct: 0, memory_pct: 0 }] };
+    await settle(el);
+    expect(gauges()).toEqual(["0%", "0%"]);
+  });
+  it("renders null traffic and missing rates as unknown", async () => {
+    const el = await companion("internet-activity", {
+      status: "ok",
+      windows: { "1d": { download_bytes: null, upload_bytes: null } },
+      throughput: { rx_bps: null, tx_bps: 100 },
+    });
+    expect(
+      [...el.shadowRoot!.querySelectorAll(".kpi-value")].map(
+        (e) => e.textContent,
+      ),
+    ).toEqual(["--", "--"]);
+    expect(el.shadowRoot?.querySelector(".hero-meta")?.textContent).toContain(
+      "↓ --",
+    );
+    expect(el.shadowRoot?.querySelector(".chip.ok")).toBeNull();
+    el.snapshot = {
+      status: "ok",
+      windows: { "1d": { download_bytes: 0, upload_bytes: 0 } },
+      throughput: { rx_bps: 0, tx_bps: 0 },
+    };
+    await settle(el);
+    expect(el.shadowRoot?.querySelector(".chip.ok")?.textContent).toContain(
+      "Live",
+    );
+    expect(el.shadowRoot?.querySelector(".kpi-sub")?.textContent).toContain(
+      "0 MB",
+    );
+  });
+  it("shows all quiet only for healthy empty timeline", async () => {
+    const el = await companion("timeline", { status: "partial", items: [] });
+    expect(el.shadowRoot?.querySelector(".empty-hero")).toBeNull();
+    expect(el.shadowRoot?.querySelector(".content")?.textContent).toContain(
+      "No recent events",
+    );
+    el.snapshot = { status: "ok", items: [] };
+    await settle(el);
+    expect(el.shadowRoot?.querySelector(".empty-hero")?.textContent).toContain(
+      "All Quiet",
+    );
   });
 });

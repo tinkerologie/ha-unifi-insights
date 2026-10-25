@@ -40,6 +40,7 @@ import {
   type WsError,
 } from "./ha-types";
 import { iconTemplate } from "./icons";
+import { makeLocalize } from "./localize";
 
 export {
   type DashboardCardConfig,
@@ -65,6 +66,13 @@ export {
 
 interface SnapshotIssue {
   code?: string;
+  severity?: "info" | "warning" | "error";
+}
+
+interface CompanionSnapshot extends Record<string, unknown> {
+  status?: "ok" | "partial" | "degraded" | "unavailable" | "no_protect";
+  issues?: SnapshotIssue[];
+  freshness?: "fresh" | "stale" | "unavailable";
 }
 
 export abstract class BaseDashboardCard extends LitElement {
@@ -87,7 +95,7 @@ export abstract class BaseDashboardCard extends LitElement {
 
   declare hass?: HomeAssistant;
   declare config: DashboardCardConfig;
-  declare snapshot: Record<string, unknown> | undefined;
+  declare snapshot: CompanionSnapshot | undefined;
   declare sources: TopologySource[] | ProtectSource[];
   declare loading: boolean;
   declare error: WsError | undefined;
@@ -291,7 +299,7 @@ export abstract class BaseDashboardCard extends LitElement {
           this.failedBindingKey = undefined;
           this.retryAfterMs = 0;
           this.error = undefined;
-          this.snapshot = msg as Record<string, unknown>;
+          this.snapshot = msg as CompanionSnapshot;
           this.loading = false;
         },
         message,
@@ -324,7 +332,74 @@ export abstract class BaseDashboardCard extends LitElement {
     fireEvent(this, "hass-more-info", { entityId });
   }
 
+  private renderStatus() {
+    const localize = makeLocalize(
+      this.hass?.language ?? this.hass?.locale?.language,
+    );
+    if (this.loading) {
+      return html`<div
+        class="state loading-box"
+        role="status"
+        aria-live="polite"
+      >
+        <span class="pulse-dot" aria-hidden="true"></span>
+        ${localize("dashboard.loading", { title: this.defaultTitle })}
+      </div>`;
+    }
+    if (this.error) {
+      return html`<div class="state error" role="alert">
+        ${iconTemplate(mdiAlertCircleOutline)}
+        <div>
+          ${localize("dashboard.error")}
+          <span class="state-detail">${this.error.code}</span>
+        </div>
+      </div>`;
+    }
+    const status = this.snapshot?.status;
+    if (status === "unavailable") {
+      return html`<div class="state error" role="alert">
+        ${iconTemplate(mdiAlertCircleOutline)}
+        ${localize("dashboard.unavailable")}
+      </div>`;
+    }
+    if (status === "no_protect") {
+      return html`<div class="state" role="status" aria-live="polite">
+        ${localize("dashboard.no_protect")}
+      </div>`;
+    }
+    if (
+      status === "partial" ||
+      status === "degraded" ||
+      this.snapshot?.freshness === "stale"
+    ) {
+      return html`<div class="state" role="status" aria-live="polite">
+        ${iconTemplate(mdiAlertCircleOutline)}
+        <div>
+          ${localize(
+            this.snapshot?.freshness === "stale"
+              ? "dashboard.stale"
+              : "dashboard.partial",
+          )}
+          ${Array.isArray(this.snapshot?.warnings) &&
+          this.snapshot.warnings.length
+            ? html`<span class="state-detail"
+                >${this.snapshot.warnings
+                  .map((warning) => String(warning).replaceAll("_", " "))
+                  .join(" · ")}</span
+              >`
+            : nothing}
+        </div>
+      </div>`;
+    }
+    return nothing;
+  }
+
   override render() {
+    const contentAvailable =
+      !this.loading &&
+      !this.error &&
+      this.snapshot?.status !== "unavailable" &&
+      this.snapshot?.status !== "no_protect";
     const subtitle =
       typeof this.snapshot?.site_name === "string" &&
       this.snapshot.site_name.trim()
@@ -339,29 +414,27 @@ export abstract class BaseDashboardCard extends LitElement {
           <div class="header-main">
             <div class="header-icon">${iconTemplate(this.headerIcon)}</div>
             <div class="header-titles">
-              <div class="header-title">
+              <h2 class="header-title" id="card-title">
                 ${this.config.title ?? this.defaultTitle}
-              </div>
+              </h2>
               ${subtitle
                 ? html`<div class="header-subtitle">${subtitle}</div>`
                 : nothing}
             </div>
           </div>
-          <div class="header-actions">${this.renderHeaderBadge()}</div>
+          <div class="header-actions">
+            ${contentAvailable ? this.renderHeaderBadge() : nothing}
+          </div>
         </div>
-        ${this.loading
-          ? html`<div class="state loading-box">
-              <span class="pulse-dot"></span>
-              <span>${this.loadingLabel}</span>
-            </div>`
-          : nothing}
-        ${this.error
-          ? html`<div class="state error">
-              ${iconTemplate(mdiAlertCircleOutline)}
-              <span>${this.error.code}</span>
-            </div>`
-          : nothing}
-        ${!this.loading && !this.error ? this.renderContent() : nothing}
+        <div
+          class="content"
+          tabindex="0"
+          role="region"
+          aria-labelledby="card-title"
+        >
+          ${this.renderStatus()}
+          ${contentAvailable ? this.renderContent() : nothing}
+        </div>
       </ha-card>
     `;
   }

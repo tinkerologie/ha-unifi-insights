@@ -57,10 +57,16 @@ export class UnifiInsightsProtectStatusCard extends BaseDashboardCard {
     const devices = Array.isArray(this.snapshot.devices)
       ? (this.snapshot.devices as Record<string, unknown>[])
       : [];
+    if (this.snapshot.status === "degraded" && devices.length === 0)
+      return nothing;
     const offline = devices.filter((d) => d.connected === false).length;
     const online = devices.length - offline;
     return html`
-      <span class="chip ${offline > 0 ? "warning" : "ok"}">
+      <span
+        class="chip ${offline > 0 || this.snapshot.status === "degraded"
+          ? "warning"
+          : "ok"}"
+      >
         <span class="status-dot"></span>
         ${online}/${devices.length} Online
       </span>
@@ -75,6 +81,7 @@ export class UnifiInsightsProtectStatusCard extends BaseDashboardCard {
     const devices = Array.isArray(snapshot.devices)
       ? (snapshot.devices as Record<string, unknown>[])
       : [];
+    if (snapshot.status === "degraded" && devices.length === 0) return nothing;
     const offline = devices.filter(
       (device) => device.connected === false,
     ).length;
@@ -97,7 +104,9 @@ export class UnifiInsightsProtectStatusCard extends BaseDashboardCard {
           </div>
           <div class="kpi-value">${offline}</div>
           <div class="kpi-sub">
-            ${offline === 0 ? "All connected" : "Needs attention"}
+            ${offline === 0 && snapshot.status !== "degraded"
+              ? "All connected"
+              : "Needs attention"}
           </div>
         </div>
       </div>

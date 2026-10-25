@@ -38,11 +38,11 @@ export class UnifiInsightsSiteHealthCard extends BaseDashboardCard {
   protected override get headerAccent(): string {
     const level = String(
       (this.snapshot?.health as Record<string, unknown> | undefined)?.level ??
-        "healthy",
+        "unknown",
     );
     if (level === "critical") return "var(--uit-offline)";
     if (level === "degraded") return "var(--uit-warning)";
-    return "var(--uit-online)";
+    return level === "healthy" ? "var(--uit-online)" : "var(--uit-unknown)";
   }
 
   protected override renderHeaderBadge(): TemplateResult | typeof nothing {

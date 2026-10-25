@@ -191,3 +191,50 @@ describe("WCAG 2.2 AA (axe-core)", () => {
     });
   });
 });
+
+describe("companion card accessibility", () => {
+  for (const name of [
+    "site-health",
+    "internet-activity",
+    "performance",
+    "protect-status",
+    "timeline",
+  ]) {
+    for (const status of [
+      "ok",
+      "partial",
+      "unavailable",
+      "no_protect",
+    ] as const) {
+      it(`${name}: ${status}`, async () => {
+        const fake = fakeHass();
+        const tag = `unifi-insights-${name}-card`;
+        const el = document.createElement(
+          tag,
+        ) as import("../src/dashboard-cards-base").BaseDashboardCard;
+        el.setConfig({
+          type: `custom:${tag}`,
+          entry_id: "entry-1",
+          site_id: "site-1",
+        });
+        el.hass = fake.hass;
+        document.body.append(el);
+        await settle(el);
+        fake.subs[0]!.callback({ status, devices: [], items: [] });
+        await settle(el);
+        expect(await audit(el)).toEqual([]);
+      });
+    }
+    it(`${name} editor`, async () => {
+      const tag = `unifi-insights-${name}-card`;
+      const el = document.createElement(
+        `${tag}-editor`,
+      ) as import("../src/dashboard-cards-editor").GenericEditor;
+      el.setConfig({ type: `custom:${tag}` });
+      el.hass = fakeHass().hass;
+      document.body.append(el);
+      await settle(el);
+      expect(await audit(el)).toEqual([]);
+    });
+  }
+});

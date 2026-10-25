@@ -1,22 +1,55 @@
 import { css } from "lit";
 
-import { themeTokens } from "./styles";
+import { controlStyles, themeTokens } from "./styles";
 
 export const dashboardCardStyles = [
   themeTokens,
+  controlStyles,
   css`
     :host {
       display: block;
       height: 100%;
+      min-width: 0;
+      --uit-text-secondary: var(
+        --ha-color-text-secondary,
+        var(--primary-text-color)
+      );
     }
     ha-card {
       height: 100%;
       box-sizing: border-box;
-      padding: 16px;
+      padding: var(--ha-space-4, 16px);
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: var(--ha-space-3, 12px);
       overflow: hidden;
+      container-type: inline-size;
+      min-height: 0;
+    }
+    .header {
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+    .content {
+      display: flex;
+      flex-direction: column;
+      gap: var(--ha-space-3, 12px);
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
+      padding: var(--ha-space-1, 4px);
+      margin: calc(-1 * var(--ha-space-1, 4px));
+    }
+    .content > * {
+      flex-shrink: 0;
+    }
+    .content > .list {
+      flex: 1 1 auto;
+      min-height: 44px;
+      overflow: auto;
+      padding: var(--ha-space-1, 4px);
+      margin: calc(-1 * var(--ha-space-1, 4px));
+      align-content: start;
     }
     .icon {
       width: 20px;
@@ -62,7 +95,7 @@ export const dashboardCardStyles = [
     .header-icon {
       width: 38px;
       height: 38px;
-      border-radius: 12px;
+      border-radius: var(--ha-border-radius-lg, 12px);
       background: color-mix(
         in srgb,
         var(--card-accent, var(--primary-color)) 15%,
@@ -89,36 +122,37 @@ export const dashboardCardStyles = [
     .kpi-top,
     .pill-tab,
     button.link {
-      font-weight: 600;
+      font-weight: var(--ha-font-weight-medium, 600);
     }
     .header-title {
-      font-size: 1.02rem;
-      line-height: 1.25;
+      font-size: var(--ha-font-size-l, 1.02rem);
+      line-height: var(--ha-line-height-condensed, 1.25);
+      margin: 0;
     }
     .header-subtitle,
     .hero-meta,
     .kpi-sub,
     .item-meta,
     .empty-sub {
-      font-size: 0.75rem;
-      color: var(--secondary-text-color);
+      font-size: var(--ha-font-size-s, 0.75rem);
+      color: var(--uit-text-secondary);
     }
     .header-actions,
     .kpi-top,
     .item-meta,
     .empty-hero,
     .chip {
-      gap: 6px;
+      gap: var(--ha-space-2, 6px);
     }
     .state {
-      color: var(--secondary-text-color);
-      font-size: 0.88rem;
-      padding: 12px;
-      border-radius: 12px;
+      color: var(--uit-text-secondary);
+      font-size: var(--ha-font-size-m, 0.88rem);
+      padding: var(--ha-space-3, 12px);
+      border-radius: var(--ha-border-radius-lg, 12px);
       background: color-mix(in srgb, var(--primary-text-color) 4%, transparent);
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: var(--ha-space-2, 8px);
     }
     .error,
     .chip.critical,
@@ -141,7 +175,7 @@ export const dashboardCardStyles = [
       align-items: center;
       border-radius: 999px;
       padding: 4px 10px;
-      font-size: 0.74rem;
+      font-size: var(--ha-font-size-s, 0.74rem);
       text-transform: capitalize;
       background: color-mix(in srgb, var(--primary-text-color) 8%, transparent);
       color: var(--primary-text-color);
@@ -162,7 +196,7 @@ export const dashboardCardStyles = [
     }
     .hero-banner {
       padding: 10px 12px;
-      border-radius: 12px;
+      border-radius: var(--ha-border-radius-lg, 12px);
       background: color-mix(
         in srgb,
         var(--card-accent, var(--primary-color)) 8%,
@@ -179,35 +213,36 @@ export const dashboardCardStyles = [
       color: var(--card-accent, var(--primary-color));
     }
     .hero-title {
-      font-size: 0.9rem;
+      font-size: var(--ha-font-size-m, 0.9rem);
     }
     .kpi-grid,
     .ring-strip,
     .list {
       display: grid;
-      gap: 8px;
+      gap: var(--ha-space-2, 8px);
     }
     .kpi-grid {
       grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
     }
     .ring-strip {
-      grid-template-columns: repeat(2, 1fr);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .kpi-tile,
     .ring-card,
     .item-card {
-      border-radius: 12px;
+      border-radius: var(--ha-border-radius-lg, 12px);
       background: color-mix(in srgb, var(--primary-text-color) 4%, transparent);
       border: 1px solid var(--uit-line);
     }
     .kpi-tile {
       appearance: none;
+      align-items: stretch;
       padding: 10px 12px;
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: var(--ha-space-1, 4px);
       min-width: 0;
-      text-align: left;
+      text-align: start;
       font: inherit;
       color: inherit;
     }
@@ -217,22 +252,22 @@ export const dashboardCardStyles = [
     }
     .kpi-tile.clickable {
       cursor: pointer;
-      transition: background 150ms ease;
+      transition: background var(--ha-animation-duration-fast, 150ms) ease;
     }
     .kpi-tile.clickable:hover {
       background: color-mix(in srgb, var(--primary-color) 10%, transparent);
     }
     .kpi-top {
-      font-size: 0.73rem;
+      font-size: var(--ha-font-size-s, 0.73rem);
       text-transform: uppercase;
       letter-spacing: 0.03em;
-      color: var(--secondary-text-color);
+      color: var(--uit-text-secondary);
     }
     .kpi-value {
-      font-size: 1.18rem;
-      font-weight: 700;
+      font-size: var(--ha-font-size-xl, 1.18rem);
+      font-weight: var(--ha-font-weight-bold, 700);
       font-variant-numeric: tabular-nums;
-      line-height: 1.2;
+      line-height: var(--ha-line-height-condensed, 1.2);
       text-transform: capitalize;
     }
     .bar-track {
@@ -251,7 +286,7 @@ export const dashboardCardStyles = [
       height: 100%;
       border-radius: 999px;
       background: var(--primary-color);
-      transition: width 250ms ease;
+      transition: width var(--ha-animation-duration-normal, 250ms) ease;
     }
     .bar-fill.ok {
       background: var(--uit-online);
@@ -263,7 +298,7 @@ export const dashboardCardStyles = [
       background: var(--uit-offline);
     }
     .bar-fill.secondary {
-      background: #8b5cf6;
+      background: var(--purple-color, var(--primary-color));
     }
     .ring-card,
     .item-card {
@@ -288,8 +323,8 @@ export const dashboardCardStyles = [
     }
     .ring-gauge span {
       position: relative;
-      font-size: 0.7rem;
-      font-weight: 700;
+      font-size: var(--ha-font-size-s, 0.7rem);
+      font-weight: var(--ha-font-weight-bold, 700);
       font-variant-numeric: tabular-nums;
     }
     .item-icon {
@@ -304,14 +339,14 @@ export const dashboardCardStyles = [
       min-width: 0;
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: var(--ha-space-1, 4px);
     }
     .item-name {
-      font-size: 0.88rem;
+      font-size: var(--ha-font-size-m, 0.88rem);
     }
     .item-value {
-      font-size: 0.85rem;
-      font-weight: 700;
+      font-size: var(--ha-font-size-m, 0.85rem);
+      font-weight: var(--ha-font-weight-bold, 700);
       font-variant-numeric: tabular-nums;
       flex-shrink: 0;
     }
@@ -325,17 +360,23 @@ export const dashboardCardStyles = [
     .pill-tab {
       border: 0;
       background: transparent;
-      color: var(--secondary-text-color);
+      color: var(--uit-text-secondary);
       font: inherit;
-      font-size: 0.7rem;
+      font-size: var(--ha-font-size-s, 0.7rem);
       padding: 3px 8px;
       border-radius: 999px;
       cursor: pointer;
       text-transform: uppercase;
+      min-width: 44px;
+      min-height: 44px;
+      justify-content: center;
     }
     .pill-tab[aria-pressed="true"] {
-      background: var(--primary-color);
-      color: var(--text-primary-color, #fff);
+      background: var(
+        --ha-color-fill-primary-quiet-resting,
+        color-mix(in srgb, var(--primary-color) 16%, transparent)
+      );
+      color: var(--ha-color-text-primary, var(--primary-text-color));
     }
     .empty-hero {
       display: flex;
@@ -354,7 +395,7 @@ export const dashboardCardStyles = [
       border-radius: 50%;
     }
     .empty-title {
-      font-size: 0.92rem;
+      font-size: var(--ha-font-size-l, 0.92rem);
     }
     button.link {
       border: 0;
@@ -362,11 +403,93 @@ export const dashboardCardStyles = [
       color: var(--primary-color);
       cursor: pointer;
       padding: 0;
-      text-align: left;
+      text-align: start;
       font: inherit;
+      min-width: 44px;
+      min-height: 44px;
     }
     button.link:hover {
       text-decoration: underline;
+    }
+    .chip.ok,
+    .chip.healthy,
+    .chip.online {
+      color: var(--ha-color-text-primary, var(--primary-text-color));
+      background: var(
+        --ha-color-fill-success-quiet-resting,
+        color-mix(in srgb, var(--uit-online) 16%, transparent)
+      );
+    }
+    .chip.warning,
+    .chip.degraded,
+    .chip.partial {
+      color: var(--ha-color-text-primary, var(--primary-text-color));
+      background: var(
+        --ha-color-fill-warning-quiet-resting,
+        color-mix(in srgb, var(--uit-warning) 18%, transparent)
+      );
+    }
+    .chip.critical,
+    .chip.offline,
+    .state.error {
+      color: var(--ha-color-text-primary, var(--primary-text-color));
+      background: var(
+        --ha-color-fill-danger-quiet-resting,
+        color-mix(in srgb, var(--uit-offline) 14%, transparent)
+      );
+    }
+    button.link {
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      color: var(--ha-color-text-primary, var(--primary-text-color));
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .state {
+      flex-shrink: 0;
+    }
+    .state-detail {
+      font-size: var(--ha-font-size-s, 12px);
+      display: block;
+    }
+    .header-main {
+      flex: 1 1 140px;
+    }
+    .header-actions {
+      flex-wrap: wrap;
+    }
+    .hero-left > div,
+    .ring-card > div,
+    .item-top {
+      min-width: 0;
+    }
+    .hero-meta,
+    .item-meta {
+      flex-wrap: wrap;
+      overflow-wrap: anywhere;
+    }
+    @container (max-width: 360px) {
+      .header-actions {
+        max-width: 100%;
+      }
+      .hero-banner,
+      .item-top {
+        flex-wrap: wrap;
+      }
+      .hero-title,
+      .item-name {
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+    }
+    @container (max-width: 260px) {
+      .ring-strip,
+      .kpi-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .item-card {
+        align-items: flex-start;
+      }
     }
   `,
 ];

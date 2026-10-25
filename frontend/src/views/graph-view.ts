@@ -562,7 +562,7 @@ export class UitGraphView extends LitElement {
         <path d=${glyph}></path>
       </svg>
       <circle class="status" cx=${r * 0.72} cy=${-r * 0.72} r=${Math.max(4, r * 0.24)}></circle>
-      ${visual.type === "group" ? svg`<text class="badge" x=${r * 0.95} y=${r + 2}>${visual.counts.total}</text>` : nothing}
+      ${visual.type === "group" && !this.showLabels ? svg`<text class="badge" x=${r * 0.95} y=${r + 2}>${visual.counts.total}</text>` : nothing}
       ${this.showLabels ? svg`<text class="label" y=${labelY}>${truncate(title, LABEL_CHARS)}</text>` : nothing}
       ${
         state === "offline"

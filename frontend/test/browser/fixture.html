@@ -12,6 +12,11 @@
         /* Minimal Home Assistant theme so panels are opaque. */
         --card-background-color: #fff;
         --primary-color: #03a9f4;
+        --ha-color-text-secondary: #5e5e5e;
+        --ha-color-fill-primary-quiet-resting: #eff9fe;
+        --ha-color-fill-success-quiet-resting: #e3f9e3;
+        --ha-color-fill-warning-quiet-resting: #fff0e4;
+        --ha-color-fill-danger-quiet-resting: #fff0ef;
         --primary-text-color: #212121;
         --secondary-text-color: #727272;
         --text-primary-color: #fff;
@@ -26,10 +31,27 @@
         overflow: hidden;
         background: white;
       }
-      unifi-insights-topology-card {
+      #frame > * {
         display: block;
         width: 100%;
         height: 100%;
+      }
+      :root[data-theme="dark"] {
+        --card-background-color: #1c1c1c;
+        --primary-text-color: #e1e1e1;
+        --secondary-text-color: #b0b0b0;
+        --ha-color-text-secondary: #b0b0b0;
+        --ha-color-fill-primary-quiet-resting: #11333e;
+        --ha-color-fill-success-quiet-resting: #16351f;
+        --ha-color-fill-warning-quiet-resting: #422d13;
+        --ha-color-fill-danger-quiet-resting: #421f24;
+        --primary-color: #58c5eb;
+        --text-primary-color: #111;
+        --divider-color: rgba(255, 255, 255, 0.2);
+      }
+      :root[data-theme="dark"] body,
+      :root[data-theme="dark"] #frame {
+        background: #1c1c1c;
       }
     </style>
   </head>
@@ -39,9 +61,14 @@
       const params = new URLSearchParams(location.search);
       const frame = document.querySelector("#frame");
       frame.style.width = `${params.get("width") ?? 800}px`;
-      frame.style.height = `${params.get("height") ?? 360}px`;
+      if (params.get("height") !== "auto")
+        frame.style.height = `${params.get("height") ?? 360}px`;
+      const cardName = params.get("card") ?? "topology";
+      const editorMode = params.get("editor") === "1";
+      if (params.get("theme") === "dark")
+        document.documentElement.dataset.theme = "dark";
 
-      const snapshot = await fetch("/test/fixtures/site-topology.json").then(
+      let snapshot = await fetch("/test/fixtures/site-topology.json").then(
         (response) => response.json(),
       );
       const uplink = snapshot.edges.find(
@@ -81,14 +108,24 @@
         );
       }
 
+      if (cardName !== "topology") {
+        const snapshots = await fetch(
+          "/test/fixtures/dashboard-cards.json",
+        ).then((response) => response.json());
+        snapshot = snapshots[cardName];
+        if (!snapshot) throw new Error("Unknown fixture card");
+        if (params.has("status")) snapshot.status = params.get("status");
+      }
       await import("/topology-card.js");
       const listeners = new Map();
       const connection = {
         addEventListener(type, listener) {
-          listeners.set(type, listener);
+          const group = listeners.get(type) ?? new Set();
+          group.add(listener);
+          listeners.set(type, group);
         },
-        removeEventListener(type) {
-          listeners.delete(type);
+        removeEventListener(type, listener) {
+          listeners.get(type)?.delete(listener);
         },
         subscribeMessage(callback) {
           // Lets a test push a live update; same-revision pushes are ignored.
@@ -102,9 +139,12 @@
           return Promise.resolve(async () => undefined);
         },
       };
-      const card = document.createElement("unifi-insights-topology-card");
+      const tag = `unifi-insights-${cardName}-card`;
+      const card = document.createElement(
+        `${tag}${editorMode ? "-editor" : ""}`,
+      );
       card.setConfig({
-        type: "custom:unifi-insights-topology-card",
+        type: `custom:${tag}`,
         entry_id: "entry-1",
         site_id: "site-1",
         clients: params.get("clients") ?? "collapsed",
@@ -152,15 +192,27 @@
             {
               entry_id: "entry-1",
               title: "Browser fixture",
+              camera_count: 6,
               sites: [{ id: "site-1", name: "Home" }],
             },
           ];
         },
       };
       frame.append(card);
-      while (!card.shadowRoot?.querySelector("uit-graph-view")) {
+      while (
+        !card.shadowRoot?.querySelector(
+          editorMode
+            ? cardName === "topology"
+              ? "ha-form"
+              : "select"
+            : cardName === "topology"
+              ? "uit-graph-view"
+              : ".content",
+        )
+      ) {
         await new Promise((resolve) => requestAnimationFrame(resolve));
       }
+      await card.updateComplete;
       window.fixtureCard = card;
       window.fixtureReady = true;
     </script>

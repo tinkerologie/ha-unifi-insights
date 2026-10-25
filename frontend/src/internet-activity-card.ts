@@ -100,14 +100,33 @@ export class UnifiInsightsInternetActivityCard extends BaseDashboardCard {
       windows["1d"] ??
       windows["1h"] ??
       {}) as Record<string, unknown>;
-    const down = Number(selected.download_bytes ?? 0);
-    const up = Number(selected.upload_bytes ?? 0);
-    const total = down + up;
-    const downMb = `${Math.round(down / 1_000_000)} MB`;
-    const upMb = `${Math.round(up / 1_000_000)} MB`;
-    const totalMb = `${Math.round(total / 1_000_000)} MB`;
-    const downPct = total > 0 ? Math.round((down / total) * 100) : 50;
-    const upPct = total > 0 ? 100 - downPct : 50;
+    const validBytes = (value: unknown): number | undefined =>
+      typeof value === "number" && Number.isFinite(value) && value >= 0
+        ? value
+        : undefined;
+    const down = validBytes(selected.download_bytes);
+    const up = validBytes(selected.upload_bytes);
+    const total =
+      down !== undefined && up !== undefined ? down + up : undefined;
+    const asMb = (value: number | undefined) =>
+      value === undefined ? "--" : `${Math.round(value / 1_000_000)} MB`;
+    const compact = (value: number | undefined) =>
+      value === undefined ? "--" : formatBytesCompact(value);
+    const downMb = asMb(down);
+    const upMb = asMb(up);
+    const totalMb = asMb(total);
+    const downPct =
+      total !== undefined && down !== undefined
+        ? total > 0
+          ? Math.round((down / total) * 100)
+          : 0
+        : undefined;
+    const upPct =
+      total !== undefined && up !== undefined
+        ? total > 0
+          ? 100 - (downPct ?? 0)
+          : 0
+        : undefined;
 
     const throughput = (snapshot.throughput ?? {}) as Record<string, unknown>;
     const rxRate = formatBps(throughput.rx_bps);
@@ -122,13 +141,19 @@ export class UnifiInsightsInternetActivityCard extends BaseDashboardCard {
             <div class="hero-left">
               ${iconTemplate(mdiEarth)}
               <div>
-                <div class="hero-title">Live Throughput</div>
+                <div class="hero-title">
+                  ${rxRate && txRate ? "Live Throughput" : "Throughput"}
+                </div>
                 <div class="hero-meta">
-                  ↓ ${rxRate ?? "0 bps"} · ↑ ${txRate ?? "0 bps"}
+                  ↓ ${rxRate ?? "--"} · ↑ ${txRate ?? "--"}
                 </div>
               </div>
             </div>
-            <span class="chip ok"> <span class="status-dot"></span>Live </span>
+            ${rxRate && txRate
+              ? html`<span class="chip ok">
+                  <span class="status-dot"></span>Live
+                </span>`
+              : nothing}
           </div>`
         : nothing}
 
@@ -143,8 +168,10 @@ export class UnifiInsightsInternetActivityCard extends BaseDashboardCard {
             <span>Download</span>
             ${iconTemplate(mdiArrowDownBold)}
           </div>
-          <div class="kpi-value">${formatBytesCompact(down)}</div>
-          <div class="kpi-sub">${downMb} · ${downPct}%</div>
+          <div class="kpi-value">${compact(down)}</div>
+          <div class="kpi-sub">
+            ${downMb} · ${downPct === undefined ? "--" : `${downPct}%`}
+          </div>
         </button>
 
         <button
@@ -157,21 +184,24 @@ export class UnifiInsightsInternetActivityCard extends BaseDashboardCard {
             <span>Upload</span>
             ${iconTemplate(mdiArrowUpBold)}
           </div>
-          <div class="kpi-value">${formatBytesCompact(up)}</div>
-          <div class="kpi-sub">${upMb} · ${upPct}%</div>
+          <div class="kpi-value">${compact(up)}</div>
+          <div class="kpi-sub">
+            ${upMb} · ${upPct === undefined ? "--" : `${upPct}%`}
+          </div>
         </button>
       </div>
 
       <div class="kpi-tile">
         <div class="item-top">
           <span class="kpi-top">Total Traffic (${activeWindow})</span>
-          <span class="item-value">
-            ${formatBytesCompact(total)} (${totalMb})
-          </span>
+          <span class="item-value"> ${compact(total)} (${totalMb}) </span>
         </div>
         <div class="bar-track" aria-hidden="true">
-          <div class="bar-fill" style=${`width: ${downPct}%`}></div>
-          <div class="bar-fill secondary" style=${`width: ${upPct}%`}></div>
+          <div class="bar-fill" style=${`width: ${downPct ?? 0}%`}></div>
+          <div
+            class="bar-fill secondary"
+            style=${`width: ${upPct ?? 0}%`}
+          ></div>
         </div>
       </div>
     `;

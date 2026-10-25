@@ -871,7 +871,7 @@ export class UnifiInsightsTopologyCard extends LitElement {
         padding: 4px 16px 8px;
       }
       details.toolbar > summary {
-        min-height: 38px;
+        min-height: 44px;
         display: inline-flex;
         align-items: center;
         gap: 6px;

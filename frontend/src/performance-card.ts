@@ -41,7 +41,10 @@ export class UnifiInsightsPerformanceCard extends BaseDashboardCard {
       ? (this.snapshot.devices as Record<string, unknown>[])
       : [];
     if (!this.snapshot) return nothing;
-    return html`<span class="chip ok">${devices.length} Devices</span>`;
+    return html`<span
+      class="chip ${this.snapshot.status === "partial" ? "partial" : ""}"
+      >${devices.length} Devices</span
+    >`;
   }
 
   protected renderContent() {
@@ -53,28 +56,34 @@ export class UnifiInsightsPerformanceCard extends BaseDashboardCard {
       ? (snapshot.devices as Record<string, unknown>[])
       : [];
     const cpuValues = devices
-      .map((d) => Number(d.cpu_pct))
-      .filter((n) => Number.isFinite(n) && n >= 0);
+      .map((d) => d.cpu_pct)
+      .filter(
+        (n): n is number =>
+          typeof n === "number" && Number.isFinite(n) && n >= 0,
+      );
     const memValues = devices
-      .map((d) => Number(d.memory_pct))
-      .filter((n) => Number.isFinite(n) && n >= 0);
+      .map((d) => d.memory_pct)
+      .filter(
+        (n): n is number =>
+          typeof n === "number" && Number.isFinite(n) && n >= 0,
+      );
     const avgCpu =
       cpuValues.length > 0
         ? Math.round(cpuValues.reduce((a, b) => a + b, 0) / cpuValues.length)
-        : 0;
+        : undefined;
     const avgMem =
       memValues.length > 0
         ? Math.round(memValues.reduce((a, b) => a + b, 0) / memValues.length)
-        : 0;
+        : undefined;
 
     return html`
       <div class="ring-strip">
         <div class="ring-card">
           <div
             class="ring-gauge"
-            style=${`--pct: ${avgCpu}; --ring-color: var(--uit-${metricTone(avgCpu) === "ok" ? "online" : metricTone(avgCpu) === "warning" ? "warning" : "offline"})`}
+            style=${`--pct: ${avgCpu ?? 0}; --ring-color: var(--uit-${avgCpu === undefined ? "unknown" : metricTone(avgCpu) === "ok" ? "online" : metricTone(avgCpu) === "warning" ? "warning" : "offline"})`}
           >
-            <span>${avgCpu}%</span>
+            <span>${avgCpu === undefined ? "--" : `${avgCpu}%`}</span>
           </div>
           <div>
             <div class="kpi-top">Avg CPU</div>
@@ -84,9 +93,9 @@ export class UnifiInsightsPerformanceCard extends BaseDashboardCard {
         <div class="ring-card">
           <div
             class="ring-gauge"
-            style=${`--pct: ${avgMem}; --ring-color: var(--primary-color)`}
+            style=${`--pct: ${avgMem ?? 0}; --ring-color: var(--primary-color)`}
           >
-            <span>${avgMem}%</span>
+            <span>${avgMem === undefined ? "--" : `${avgMem}%`}</span>
           </div>
           <div>
             <div class="kpi-top">Avg Memory</div>
@@ -95,7 +104,12 @@ export class UnifiInsightsPerformanceCard extends BaseDashboardCard {
         </div>
       </div>
 
-      <div class="list">
+      <div
+        class="list"
+        tabindex="0"
+        role="region"
+        aria-label="Device performance"
+      >
         ${devices.slice(0, 6).map((device) => {
           const name = String(device.name ?? "Device");
           const kind = String(device.kind ?? "other");

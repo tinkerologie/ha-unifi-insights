@@ -7,13 +7,10 @@ export const themeTokens = css`
     --uit-offline: var(--error-color, #db4437);
     --uit-warning: var(--warning-color, #ffa600);
     --uit-unknown: var(--disabled-text-color, #bdbdbd);
-    --uit-focus: var(--primary-color, #03a9f4);
+    --uit-focus: var(--ha-color-focus, var(--primary-color, #03a9f4));
     --uit-line: var(--divider-color, rgba(0, 0, 0, 0.12));
-    color: var(--primary-text-color);
-    font-family: var(
-      --ha-font-family-body,
-      var(--paper-font-body1_-_font-family, sans-serif)
-    );
+    color: var(--ha-color-text-primary, var(--primary-text-color));
+    font-family: var(--ha-font-family-body, sans-serif);
   }
   @media (forced-colors: active) {
     :host {
@@ -43,9 +40,12 @@ export const controlStyles = css`
     gap: 6px;
   }
   button[aria-pressed="true"] {
-    background: var(--primary-color);
+    background: var(
+      --ha-color-fill-primary-quiet-resting,
+      color-mix(in srgb, var(--primary-color) 16%, transparent)
+    );
     border-color: var(--primary-color);
-    color: var(--text-primary-color, #fff);
+    color: var(--ha-color-text-primary, var(--primary-text-color));
   }
   input,
   select {

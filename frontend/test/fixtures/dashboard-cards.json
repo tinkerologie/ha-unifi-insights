@@ -1,0 +1,228 @@
+{
+  "site-health": {
+    "status": "ok",
+    "issues": [],
+    "entry_id": "entry-1",
+    "site_id": "site-1",
+    "site_name": "Home",
+    "revision": "fixture-1",
+    "health": {
+      "level": "healthy"
+    },
+    "gateway": {
+      "name": "Home Gateway",
+      "internet": "online",
+      "uptime_s": 86400
+    },
+    "clients": {
+      "total": 28,
+      "wired": 12,
+      "wireless": 16
+    },
+    "devices": {
+      "switch": {
+        "online": 6,
+        "offline": 0,
+        "unknown": 0
+      }
+    },
+    "freshness": "fresh"
+  },
+  "internet-activity": {
+    "status": "ok",
+    "issues": [],
+    "entry_id": "entry-1",
+    "site_id": "site-1",
+    "site_name": "Home",
+    "revision": "fixture-1",
+    "windows": {
+      "1h": {
+        "download_bytes": 8000000000,
+        "upload_bytes": 2000000000
+      },
+      "1d": {
+        "download_bytes": 8000000000,
+        "upload_bytes": 2000000000
+      },
+      "1w": {
+        "download_bytes": 8000000000,
+        "upload_bytes": 2000000000
+      },
+      "1m": {
+        "download_bytes": 8000000000,
+        "upload_bytes": 2000000000
+      }
+    },
+    "throughput": {
+      "rx_bps": 20000000,
+      "tx_bps": 4000000
+    },
+    "entity_ids": {
+      "download_1h": "sensor.download_1h",
+      "download_1d": "sensor.download_1d",
+      "download_1w": "sensor.download_1w",
+      "download_1m": "sensor.download_1m",
+      "upload_1h": "sensor.upload_1h",
+      "upload_1d": "sensor.upload_1d",
+      "upload_1w": "sensor.upload_1w",
+      "upload_1m": "sensor.upload_1m"
+    }
+  },
+  "performance": {
+    "status": "ok",
+    "issues": [],
+    "entry_id": "entry-1",
+    "site_id": "site-1",
+    "site_name": "Home",
+    "revision": "fixture-1",
+    "devices": [
+      {
+        "name": "Infrastructure device 1",
+        "kind": "switch",
+        "cpu_pct": 20,
+        "memory_pct": 45,
+        "clients": 4
+      },
+      {
+        "name": "Infrastructure device 2",
+        "kind": "switch",
+        "cpu_pct": 21,
+        "memory_pct": 46,
+        "clients": 5
+      },
+      {
+        "name": "Infrastructure device 3",
+        "kind": "switch",
+        "cpu_pct": 22,
+        "memory_pct": 47,
+        "clients": 6
+      },
+      {
+        "name": "Infrastructure device 4",
+        "kind": "switch",
+        "cpu_pct": 23,
+        "memory_pct": 48,
+        "clients": 7
+      },
+      {
+        "name": "Infrastructure device 5",
+        "kind": "switch",
+        "cpu_pct": 24,
+        "memory_pct": 49,
+        "clients": 8
+      },
+      {
+        "name": "Infrastructure device 6",
+        "kind": "switch",
+        "cpu_pct": 25,
+        "memory_pct": 50,
+        "clients": 9
+      }
+    ]
+  },
+  "protect-status": {
+    "status": "ok",
+    "issues": [],
+    "entry_id": "entry-1",
+    "site_id": "site-1",
+    "site_name": "Home",
+    "revision": "fixture-1",
+    "entry_title": "Home",
+    "devices": [
+      {
+        "name": "Camera 1",
+        "kind": "camera",
+        "connected": true,
+        "camera_entity_id": "camera.fixture_1"
+      },
+      {
+        "name": "Camera 2",
+        "kind": "camera",
+        "connected": true,
+        "camera_entity_id": "camera.fixture_2"
+      },
+      {
+        "name": "Camera 3",
+        "kind": "camera",
+        "connected": true,
+        "camera_entity_id": "camera.fixture_3"
+      },
+      {
+        "name": "Camera 4",
+        "kind": "camera",
+        "connected": true,
+        "camera_entity_id": "camera.fixture_4"
+      },
+      {
+        "name": "Camera 5",
+        "kind": "camera",
+        "connected": true,
+        "camera_entity_id": "camera.fixture_5"
+      },
+      {
+        "name": "Camera 6",
+        "kind": "camera",
+        "connected": true,
+        "camera_entity_id": "camera.fixture_6"
+      }
+    ]
+  },
+  "timeline": {
+    "status": "ok",
+    "issues": [],
+    "entry_id": "entry-1",
+    "site_id": "site-1",
+    "site_name": "Home",
+    "revision": "fixture-1",
+    "items": [
+      {
+        "source": {
+          "name": "Camera 1"
+        },
+        "kind": "motion",
+        "severity": "info",
+        "timestamp": "2026-10-25T00:00:00Z"
+      },
+      {
+        "source": {
+          "name": "Camera 2"
+        },
+        "kind": "motion",
+        "severity": "info",
+        "timestamp": "2026-10-25T00:00:00Z"
+      },
+      {
+        "source": {
+          "name": "Camera 3"
+        },
+        "kind": "motion",
+        "severity": "info",
+        "timestamp": "2026-10-25T00:00:00Z"
+      },
+      {
+        "source": {
+          "name": "Camera 4"
+        },
+        "kind": "motion",
+        "severity": "info",
+        "timestamp": "2026-10-25T00:00:00Z"
+      },
+      {
+        "source": {
+          "name": "Camera 5"
+        },
+        "kind": "motion",
+        "severity": "info",
+        "timestamp": "2026-10-25T00:00:00Z"
+      },
+      {
+        "source": {
+          "name": "Camera 6"
+        },
+        "kind": "motion",
+        "severity": "info",
+        "timestamp": "2026-10-25T00:00:00Z"
+      }
+    ]
+  }
+}

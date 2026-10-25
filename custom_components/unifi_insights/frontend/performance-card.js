@@ -1,23 +1,26 @@
-import{Ft as e,K as t,M as n,P as r,S as i,T as a,l as o,n as s,o as c,t as l,u,x as d}from"./chunks/register-dashboard-card-COnrwOmv.js";l({tag:o,editorTag:u,card:class extends s{static editorTag=u;get cardType(){return`custom:${o}`}get sourceCommand(){return e}get subscribeCommand(){return`unifi_insights/performance/subscribe`}get defaultTitle(){return`Device Performance`}get headerIcon(){return t}renderHeaderBadge(){let e=Array.isArray(this.snapshot?.devices)?this.snapshot.devices:[];return this.snapshot?r`<span class="chip ok">${e.length} Devices</span>`:n}renderContent(){let e=this.snapshot;if(!e)return r`<div class="state">No devices</div>`;let t=Array.isArray(e.devices)?e.devices:[],o=t.map(e=>Number(e.cpu_pct)).filter(e=>Number.isFinite(e)&&e>=0),s=t.map(e=>Number(e.memory_pct)).filter(e=>Number.isFinite(e)&&e>=0),c=o.length>0?Math.round(o.reduce((e,t)=>e+t,0)/o.length):0,l=s.length>0?Math.round(s.reduce((e,t)=>e+t,0)/s.length):0;return r`
+import{C as e,F as t,It as n,N as r,b as i,c as a,i as o,n as s,q as c,s as l,t as u,y as d}from"./chunks/register-dashboard-card-ZNmmcAvp.js";u({tag:l,editorTag:a,card:class extends s{static editorTag=a;get cardType(){return`custom:${l}`}get sourceCommand(){return n}get subscribeCommand(){return`unifi_insights/performance/subscribe`}get defaultTitle(){return`Device Performance`}get headerIcon(){return c}renderHeaderBadge(){let e=Array.isArray(this.snapshot?.devices)?this.snapshot.devices:[];return this.snapshot?t`<span
+      class="chip ${this.snapshot.status===`partial`?`partial`:``}"
+      >${e.length} Devices</span
+    >`:r}renderContent(){let n=this.snapshot;if(!n)return t`<div class="state">No devices</div>`;let a=Array.isArray(n.devices)?n.devices:[],o=a.map(e=>e.cpu_pct).filter(e=>typeof e==`number`&&Number.isFinite(e)&&e>=0),s=a.map(e=>e.memory_pct).filter(e=>typeof e==`number`&&Number.isFinite(e)&&e>=0),c=o.length>0?Math.round(o.reduce((e,t)=>e+t,0)/o.length):void 0,l=s.length>0?Math.round(s.reduce((e,t)=>e+t,0)/s.length):void 0;return t`
       <div class="ring-strip">
         <div class="ring-card">
           <div
             class="ring-gauge"
-            style=${`--pct: ${c}; --ring-color: var(--uit-${i(c)===`ok`?`online`:i(c)===`warning`?`warning`:`offline`})`}
+            style=${`--pct: ${c??0}; --ring-color: var(--uit-${c===void 0?`unknown`:i(c)===`ok`?`online`:i(c)===`warning`?`warning`:`offline`})`}
           >
-            <span>${c}%</span>
+            <span>${c===void 0?`--`:`${c}%`}</span>
           </div>
           <div>
             <div class="kpi-top">Avg CPU</div>
-            <div class="kpi-sub">${t.length} Devices</div>
+            <div class="kpi-sub">${a.length} Devices</div>
           </div>
         </div>
         <div class="ring-card">
           <div
             class="ring-gauge"
-            style=${`--pct: ${l}; --ring-color: var(--primary-color)`}
+            style=${`--pct: ${l??0}; --ring-color: var(--primary-color)`}
           >
-            <span>${l}%</span>
+            <span>${l===void 0?`--`:`${l}%`}</span>
           </div>
           <div>
             <div class="kpi-top">Avg Memory</div>
@@ -26,13 +29,18 @@ import{Ft as e,K as t,M as n,P as r,S as i,T as a,l as o,n as s,o as c,t as l,u,
         </div>
       </div>
 
-      <div class="list">
-        ${t.slice(0,6).map(e=>{let t=String(e.name??`Device`),o=String(e.kind??`other`),s=Number(e.cpu_pct),c=e.cpu_pct==null||!Number.isFinite(s)?null:Math.min(100,Math.max(0,Math.round(s))),l=e.memory_pct==null?null:Math.round(Number(e.memory_pct)),u=c==null?`ok`:i(c),f=typeof e.clients==`number`?`${e.clients} clients`:void 0;return r`
+      <div
+        class="list"
+        tabindex="0"
+        role="region"
+        aria-label="Device performance"
+      >
+        ${a.slice(0,6).map(n=>{let a=String(n.name??`Device`),o=String(n.kind??`other`),s=Number(n.cpu_pct),c=n.cpu_pct==null||!Number.isFinite(s)?null:Math.min(100,Math.max(0,Math.round(s))),l=n.memory_pct==null?null:Math.round(Number(n.memory_pct)),u=c==null?`ok`:i(c),f=typeof n.clients==`number`?`${n.clients} clients`:void 0;return t`
             <div class="item-card">
-              <div class="item-icon">${a(d(o))}</div>
+              <div class="item-icon">${e(d(o))}</div>
               <div class="item-body">
                 <div class="item-top">
-                  <span class="item-name">${t}</span>
+                  <span class="item-name">${a}</span>
                   <span class="item-value">
                     ${c==null?`--`:`${c}%`}
                   </span>
@@ -43,12 +51,12 @@ import{Ft as e,K as t,M as n,P as r,S as i,T as a,l as o,n as s,o as c,t as l,u,
                     style=${`width: ${c??0}%`}
                   ></div>
                 </div>
-                ${l!=null||f?r`<div class="item-meta">
-                      ${l==null?n:r`<span>RAM ${l}%</span>`}
-                      ${f?r`<span>· ${f}</span>`:n}
-                    </div>`:n}
+                ${l!=null||f?t`<div class="item-meta">
+                      ${l==null?r:t`<span>RAM ${l}%</span>`}
+                      ${f?t`<span>· ${f}</span>`:r}
+                    </div>`:r}
               </div>
             </div>
           `})}
       </div>
-    `}},editor:class extends c{constructor(){super(o,e)}},name:`UniFi Device Performance`,description:`Infrastructure CPU, memory, PoE, client load, and throughput summary.`});
+    `}},editor:class extends o{constructor(){super(l,n)}},name:`UniFi Device Performance`,description:`Infrastructure CPU, memory, PoE, client load, and throughput summary.`});

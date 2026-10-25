@@ -3,6 +3,18 @@
  * it. (The integration's translations/ folder is backend-only.)
  */
 const en = {
+  "dashboard.loading": "Loading {title}…",
+  "dashboard.error":
+    "Could not load this card. Check the integration and connection.",
+  "dashboard.unavailable":
+    "Data is temporarily unavailable. Check the UniFi Insights integration and connection.",
+  "dashboard.no_protect":
+    "UniFi Protect is not configured for this integration.",
+  "dashboard.partial":
+    "Some data is unavailable or needs attention. Available readings are shown below.",
+  "dashboard.stale":
+    "Updates are delayed. Showing the last available readings.",
+  "dashboard.no_events": "No recent events are available.",
   "card.name": "UniFi Topology",
   "card.description":
     "Interactive network topology of a UniFi site, from UniFi Insights.",

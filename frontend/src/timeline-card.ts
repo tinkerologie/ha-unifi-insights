@@ -16,6 +16,7 @@ import {
 } from "./dashboard-cards-base";
 import { iconTemplate } from "./icons";
 import { registerDashboardCard } from "./register-dashboard-card";
+import { makeLocalize } from "./localize";
 
 export class UnifiInsightsTimelineCard extends BaseDashboardCard {
   static override editorTag = TIMELINE_EDITOR_TAG;
@@ -59,6 +60,11 @@ export class UnifiInsightsTimelineCard extends BaseDashboardCard {
       ? (snapshot.items as Record<string, unknown>[])
       : [];
     if (items.length === 0) {
+      if (snapshot.status !== "ok") {
+        return html`<div class="state">
+          ${makeLocalize(this.hass?.language)("dashboard.no_events")}
+        </div>`;
+      }
       return html`
         <div class="empty-hero">
           <div class="icon-badge">${iconTemplate(mdiCheckCircleOutline)}</div>
@@ -70,7 +76,7 @@ export class UnifiInsightsTimelineCard extends BaseDashboardCard {
       `;
     }
     return html`
-      <div class="list">
+      <div class="list" tabindex="0" role="region" aria-label="Recent events">
         ${items.slice(0, 6).map((item) => {
           const source = (item.source ?? {}) as Record<string, unknown>;
           const kind = String(item.kind ?? "event");
