@@ -146,12 +146,18 @@ set_video_mode:
       selector:
         select:
           options:
-            - "default"
-            - "highFps"
-            - "sport"
-            - "slowShutter"
-            - "lprReflex"
-            - "lprNoneReflex"
+            - label: Normal
+              value: "default"
+            - label: High frame rate
+              value: "highFps"
+            - label: Fast motion
+              value: "sport"
+            - label: Low light
+              value: "slowShutter"
+            - label: License plates (reflective)
+              value: "lprReflex"
+            - label: License plates (non-reflective)
+              value: "lprNoneReflex"
 
 set_mic_volume:
   name: Set Microphone Volume

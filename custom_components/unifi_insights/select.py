@@ -28,8 +28,9 @@ from .const import (
     HDR_MODE_AUTO,
     HDR_MODE_OFF,
     HDR_MODE_ON,
+    VIDEO_MODE_API_TO_OPTION,
     VIDEO_MODE_DEFAULT,
-    VIDEO_MODES,
+    VIDEO_MODE_OPTIONS,
 )
 from .data_transforms import (
     current_chime_ringtone_id,
@@ -262,7 +263,7 @@ class UnifiProtectVideoModeSelect(UnifiProtectEntity, SelectEntity):
 
     _attr_has_entity_name = True
     _attr_translation_key = "video_mode"
-    _attr_options: ClassVar[list[str]] = list(VIDEO_MODES)  # type: ignore[misc]
+    _attr_options: ClassVar[list[str]] = list(VIDEO_MODE_OPTIONS)  # type: ignore[misc]
 
     def __init__(
         self,
@@ -285,13 +286,18 @@ class UnifiProtectVideoModeSelect(UnifiProtectEntity, SelectEntity):
         )
 
         # Set current option
-        self._attr_current_option = camera_data.get("videoMode", VIDEO_MODE_DEFAULT)
+        raw_mode = camera_data.get("videoMode", VIDEO_MODE_DEFAULT)
+        self._attr_current_option = (
+            VIDEO_MODE_API_TO_OPTION.get(raw_mode)
+            if isinstance(raw_mode, str)
+            else None
+        )
 
         # Set attributes
         self._attr_extra_state_attributes = {
             ATTR_CAMERA_ID: self._device_id,
             ATTR_CAMERA_NAME: camera_data.get("name"),
-            ATTR_VIDEO_MODE: self._attr_current_option,
+            ATTR_VIDEO_MODE: raw_mode,
         }
 
     async def async_select_option(self, option: str) -> None:
@@ -299,7 +305,7 @@ class UnifiProtectVideoModeSelect(UnifiProtectEntity, SelectEntity):
         _LOGGER.debug("Setting video mode to %s for camera %s", option, self._device_id)
 
         protect = self.coordinator.require_protect_coordinator()
-        await protect.async_set_video_mode(self._device_id, option)
+        await protect.async_set_video_mode(self._device_id, VIDEO_MODE_OPTIONS[option])
 
 
 class UnifiProtectChimeRingtoneSelect(UnifiProtectEntity, SelectEntity):

@@ -292,14 +292,19 @@ VIDEO_MODE_SPORT: Final = "sport"
 VIDEO_MODE_SLOW_SHUTTER: Final = "slowShutter"
 VIDEO_MODE_LPR_REFLEX: Final = "lprReflex"
 VIDEO_MODE_LPR_NONE_REFLEX: Final = "lprNoneReflex"
-VIDEO_MODES: Final = (
-    VIDEO_MODE_DEFAULT,
-    VIDEO_MODE_HIGH_FPS,
-    VIDEO_MODE_SPORT,
-    VIDEO_MODE_SLOW_SHUTTER,
-    VIDEO_MODE_LPR_REFLEX,
-    VIDEO_MODE_LPR_NONE_REFLEX,
-)
+# Select keys are translatable HA slugs; API values remain unchanged.
+VIDEO_MODE_OPTIONS: Final = {
+    "default": VIDEO_MODE_DEFAULT,
+    "high_fps": VIDEO_MODE_HIGH_FPS,
+    "sport": VIDEO_MODE_SPORT,
+    "slow_shutter": VIDEO_MODE_SLOW_SHUTTER,
+    "lpr_reflex": VIDEO_MODE_LPR_REFLEX,
+    "lpr_none_reflex": VIDEO_MODE_LPR_NONE_REFLEX,
+}
+VIDEO_MODE_API_TO_OPTION: Final = {
+    value: option for option, value in VIDEO_MODE_OPTIONS.items()
+}
+VIDEO_MODES: Final = tuple(VIDEO_MODE_OPTIONS.values())
 
 # Smart detect types
 SMART_DETECT_PERSON: Final = "person"

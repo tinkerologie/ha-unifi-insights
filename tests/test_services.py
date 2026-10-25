@@ -1120,11 +1120,23 @@ def test_protect_ui_selectors_match_service_schemas(
     fields = definitions[service]["fields"]
     selector = fields[field]["selector"]
     if "select" in selector:
-        values = selector["select"]["options"]
+        options = selector["select"]["options"]
+        values = [
+            value["value"] if isinstance(value, dict) else value for value in options
+        ]
     else:
         number = selector["number"]
         values = list(range(number["min"], number["max"] + 1, number["step"]))
     assert values == expected_values
+    if service == "set_video_mode":
+        assert [value["label"] for value in options] == [
+            "Normal",
+            "High frame rate",
+            "Fast motion",
+            "Low light",
+            "License plates (reflective)",
+            "License plates (non-reflective)",
+        ]
     schema = getattr(services, f"{service.upper()}_SCHEMA")
     for value in values:
         payload = {**other_fields, field: value}

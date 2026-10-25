@@ -45,6 +45,21 @@ _STRINGS_JSON = _INTEGRATION_DIR / "strings.json"
 _ICONS_JSON = _INTEGRATION_DIR / "icons.json"
 
 
+def test_video_mode_options_have_readable_native_translations() -> None:
+    """Video Mode uses valid HA state keys with matching English labels."""
+    expected = {
+        "default": "Normal",
+        "high_fps": "High frame rate",
+        "sport": "Fast motion",
+        "slow_shutter": "Low light",
+        "lpr_reflex": "License plates (reflective)",
+        "lpr_none_reflex": "License plates (non-reflective)",
+    }
+    for path in (_STRINGS_JSON, _EN_JSON):
+        strings = json.loads(path.read_text())
+        assert strings["entity"]["select"]["video_mode"]["state"] == expected
+
+
 def test_binary_sensor_camera_and_sensor_translation_keys_present_in_en_json() -> None:
     """Every camera_*/sensor_* binary_sensor translation_key must resolve
     in translations/en.json, matching strings.json.

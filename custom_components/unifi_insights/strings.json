@@ -887,7 +887,15 @@
         "name": "HDR Mode"
       },
       "video_mode": {
-        "name": "Video Mode"
+        "name": "Video Mode",
+        "state": {
+          "default": "Normal",
+          "high_fps": "High frame rate",
+          "sport": "Fast motion",
+          "slow_shutter": "Low light",
+          "lpr_reflex": "License plates (reflective)",
+          "lpr_none_reflex": "License plates (non-reflective)"
+        }
       },
       "ringtone": {
         "name": "Ringtone"

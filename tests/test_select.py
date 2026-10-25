@@ -18,7 +18,6 @@ from custom_components.unifi_insights.const import (
     HDR_MODE_AUTO,
     HDR_MODE_ON,
     VIDEO_MODE_DEFAULT,
-    VIDEO_MODE_HIGH_FPS,
 )
 from custom_components.unifi_insights.select import (
     PARALLEL_UPDATES,
@@ -471,11 +470,21 @@ class TestUnifiProtectVideoModeSelect:
         assert entity._attr_translation_key == "video_mode"
         assert entity._attr_current_option == "default"
         assert VIDEO_MODE_DEFAULT in entity._attr_options
-        assert VIDEO_MODE_HIGH_FPS in entity._attr_options
+        assert "high_fps" in entity._attr_options
 
-    @pytest.mark.parametrize("mode", ["highFps", "lprReflex", "lprNoneReflex"])
+    @pytest.mark.parametrize(
+        ("option", "mode"),
+        [
+            ("default", "default"),
+            ("high_fps", "highFps"),
+            ("sport", "sport"),
+            ("slow_shutter", "slowShutter"),
+            ("lpr_reflex", "lprReflex"),
+            ("lpr_none_reflex", "lprNoneReflex"),
+        ],
+    )
     async def test_async_select_option_success(
-        self, mock_coordinator: MagicMock, mode: str
+        self, mock_coordinator: MagicMock, option: str, mode: str
     ) -> None:
         """Test selecting video mode option successfully."""
         mock_coordinator.data = {
@@ -504,7 +513,7 @@ class TestUnifiProtectVideoModeSelect:
         )
         entity.async_write_ha_state = MagicMock()
 
-        await entity.async_select_option(mode)
+        await entity.async_select_option(option)
 
         protect_owner(mock_coordinator).async_set_video_mode.assert_awaited_once_with(
             "cam1", mode
@@ -513,7 +522,8 @@ class TestUnifiProtectVideoModeSelect:
             mock_coordinator.data, "cameras", "cam1", videoMode=mode
         )
         entity._update_from_data()
-        assert entity._attr_current_option == mode
+        assert entity._attr_current_option == option
+        assert entity.extra_state_attributes["video_mode"] == mode
 
     async def test_async_select_option_error(self, mock_coordinator):
         """Test selecting video mode option with error."""
@@ -550,7 +560,21 @@ class TestUnifiProtectVideoModeSelect:
         entity.async_write_ha_state = MagicMock()
 
         with pytest.raises(HomeAssistantError, match="Unable to set video mode"):
-            await entity.async_select_option("highFps")
+            await entity.async_select_option("high_fps")
+
+    @pytest.mark.parametrize("mode", [None, 123, ["invalid"], "unsupported"])
+    def test_unknown_api_mode_stays_unknown(
+        self, mock_coordinator: MagicMock, mode: object
+    ) -> None:
+        """Malformed or unsupported API values must not become a valid mode."""
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "cameras",
+            {"cam1": {"id": "cam1", "state": "CONNECTED", "videoMode": mode}},
+        )
+        entity = UnifiProtectVideoModeSelect(mock_coordinator, "cam1")
+        assert entity.state is None
+        assert entity.extra_state_attributes["video_mode"] == mode
 
 
 class TestLprVideoModeStates:
@@ -574,12 +598,23 @@ class TestLprVideoModeStates:
         ]
         return mock_protect_client
 
-    @pytest.mark.parametrize("mode", ["lprReflex", "lprNoneReflex"])
+    @pytest.mark.parametrize(
+        ("mode", "option"),
+        [
+            ("default", "default"),
+            ("highFps", "high_fps"),
+            ("sport", "sport"),
+            ("slowShutter", "slow_shutter"),
+            ("lprReflex", "lpr_reflex"),
+            ("lprNoneReflex", "lpr_none_reflex"),
+        ],
+    )
     async def test_lpr_mode_serializes_as_reported(
         self,
         hass: HomeAssistant,
         init_integration: MockConfigEntry,
         mode: str,
+        option: str,
     ) -> None:
         """A documented LPR mode must serialize as its value, never unknown."""
         registry = er.async_get(hass)
@@ -589,15 +624,15 @@ class TestLprVideoModeStates:
         assert entity_id is not None
         state = hass.states.get(entity_id)
         assert state is not None
-        assert state.state == mode
+        assert state.state == option
         assert state.attributes["video_mode"] == mode
         assert state.attributes["options"] == [
             "default",
-            "highFps",
+            "high_fps",
             "sport",
-            "slowShutter",
-            "lprReflex",
-            "lprNoneReflex",
+            "slow_shutter",
+            "lpr_reflex",
+            "lpr_none_reflex",
         ]
 
 

@@ -73,7 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Camera Video Mode selects now show and offer `lprReflex` and `lprNoneReflex` instead of showing `unknown`, and the `set_video_mode` action accepts both modes. Entity IDs, existing mode values and legacy action aliases are unchanged. The options retain Protect's raw values because Hassfest does not allow camelCase translation keys. [#415](https://github.com/tinkerologie/ha-unifi-insights/issues/415)
+- **Breaking:** Camera Video Mode now has readable labels, including both license plate modes, and no longer shows `unknown` for documented Protect modes. Its select keys `highFps`, `slowShutter`, `lprReflex` and `lprNoneReflex` become `high_fps`, `slow_shutter`, `lpr_reflex` and `lpr_none_reflex` so Home Assistant can translate them. Update state comparisons and `select.select_option` calls that use those four values. Entity IDs, the raw `video_mode` attribute, and `unifi_insights.set_video_mode` values and legacy aliases are unchanged; the action editor also shows readable labels. [#415](https://github.com/tinkerologie/ha-unifi-insights/issues/415)
 
 - The topology card keeps client counts visible for root and unconnected groups when labels are enabled, while regular client groups show their count only once. [#413](https://github.com/tinkerologie/ha-unifi-insights/issues/413)
 

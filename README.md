@@ -402,6 +402,19 @@ refer to are not included, and there is no import action.
 
 ### Protect actions
 
+The camera **Video Mode** dropdown uses plain-English labels. Its stored select keys and the values accepted by `unifi_insights.set_video_mode` are listed below. The `video_mode` attribute keeps the raw API value.
+
+| Label                           | Select state / `select.select_option` | `unifi_insights.set_video_mode` value |
+| ------------------------------- | ------------------------------------- | ------------------------------------- |
+| Normal                          | `default`                             | `default`                             |
+| High frame rate                 | `high_fps`                            | `highFps`                             |
+| Fast motion                     | `sport`                               | `sport`                               |
+| Low light                       | `slow_shutter`                        | `slowShutter`                         |
+| License plates (reflective)     | `lpr_reflex`                          | `lprReflex`                           |
+| License plates (non-reflective) | `lpr_none_reflex`                     | `lprNoneReflex`                       |
+
+**Migration:** Update state comparisons and `select.select_option` calls that use `highFps`, `slowShutter`, `lprReflex` or `lprNoneReflex` to the select keys above. Entity IDs and `unifi_insights.set_video_mode` calls are unchanged.
+
 | Action                                      | Description                                                                                            |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `unifi_insights.set_hdr_mode`               | Set a camera's HDR mode (`auto`, `on`, `off`)                                                          |
