@@ -155,9 +155,6 @@ export const dashboardCardStyles = [
       align-items: center;
       gap: var(--ha-space-2, 8px);
     }
-    .error,
-    .chip.critical,
-    .chip.offline,
     .item-icon.offline {
       color: var(--uit-offline);
       background: color-mix(in srgb, var(--uit-offline) 14%, transparent);
@@ -181,19 +178,10 @@ export const dashboardCardStyles = [
       background: color-mix(in srgb, var(--primary-text-color) 8%, transparent);
       color: var(--primary-text-color);
     }
-    .chip.ok,
-    .chip.healthy,
-    .chip.online,
     .item-icon.online,
     .empty-hero .icon-badge {
       background: color-mix(in srgb, var(--uit-online) 16%, transparent);
       color: var(--uit-online);
-    }
-    .chip.warning,
-    .chip.degraded,
-    .chip.partial {
-      background: color-mix(in srgb, var(--uit-warning) 18%, transparent);
-      color: var(--uit-warning);
     }
     .hero-banner {
       padding: 10px 12px;
