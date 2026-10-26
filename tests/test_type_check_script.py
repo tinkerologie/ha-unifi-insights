@@ -93,3 +93,24 @@ def test_pyright_installation_targets_the_selected_interpreter(tmp_path: Path) -
     assert project.trace()[0] == {
         "uv_args": ["pip", "install", "--python", str(python), "pyright"]
     }
+
+
+def test_old_python_stops_before_validation(tmp_path: Path) -> None:
+    project = validation_project(tmp_path)
+    project.interpreter(".venv")
+    project.env["FAKE_OLD_PYTHON"] = "1"
+    result = project.run("type-check")
+    assert result.returncode != 0
+    assert "AssertionError" in result.stderr
+    assert project.trace() == []
+
+
+def test_missing_pyright_without_uv_has_actionable_error(tmp_path: Path) -> None:
+    project = validation_project(tmp_path)
+    project.interpreter(".venv")
+    project.without_uv()
+    project.env["FAKE_MISSING_PYRIGHT"] = "1"
+    result = project.run("type-check")
+    assert result.returncode != 0
+    assert "Install Pyright through ./script/setup/bootstrap" in result.stderr
+    assert project.trace() == []

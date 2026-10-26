@@ -116,3 +116,46 @@ def test_dependency_installation_targets_the_selected_interpreter(
     assert project.trace()[0] == {
         "uv_args": ["pip", "install", "--python", str(python), "tqdm"]
     }
+
+
+def test_dependency_installation_without_uv_uses_selected_python(
+    tmp_path: Path,
+) -> None:
+    project = validation_project(tmp_path)
+    python = project.interpreter(".venv")
+    project.without_uv()
+    project.env["FAKE_MISSING_TQDM"] = "1"
+    result = project.run("hassfest", "--skip-plugins", "")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert project.trace()[0] == {
+        "python": str(python),
+        "args": ["-m", "pip", "install", "tqdm"],
+    }
+
+
+def test_missing_home_assistant_dependencies_stop_before_validation(
+    tmp_path: Path,
+) -> None:
+    project = validation_project(tmp_path)
+    project.interpreter(".venv")
+    project.env["FAKE_MISSING_HA"] = "1"
+    result = project.run("hassfest", "--skip-plugins", "")
+    assert result.returncode != 0
+    assert "Missing required dependencies" in result.stderr
+    assert project.trace() == []
+
+
+@pytest.mark.parametrize("cache", ["fresh", "tag", "dev"])
+def test_dev_core_fetch_paths(tmp_path: Path, cache: str) -> None:
+    project = validation_project(tmp_path)
+    python = project.interpreter(".venv")
+    project.env["HA_VERSION"] = "dev"
+    if cache != "fresh":
+        project.cached_core("dev" if cache == "dev" else "2026.10.2")
+    args = ["--skip-plugins", ""]
+    if cache == "dev":
+        args.append("--update")
+    result = project.run("hassfest", *args)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert project.trace()[-1]["python"] == str(python)
+    assert "Target version: dev" in result.stdout

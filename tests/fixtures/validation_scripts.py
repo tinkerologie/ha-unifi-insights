@@ -20,9 +20,13 @@ if args[:1] == ['-c']:
         sys.exit(1)
     if args[1] == 'import pyright' and os.environ.get('FAKE_MISSING_PYRIGHT') == '1':
         sys.exit(1)
+    if 'import voluptuous' in args[1] and os.environ.get('FAKE_MISSING_HA') == '1':
+        sys.exit(1)
     if 'homeassistant.const' in args[1]:
         print(os.environ.get('FAKE_HA_VERSION', '2026.10.2'))
     elif 'sys.version_info' in args[1]:
+        if os.environ.get('FAKE_OLD_PYTHON') == '1':
+            sys.version_info = (3, 13)
         exec(args[1])
     sys.exit(0)
 with open(os.environ['VALIDATION_TRACE'], 'a') as trace:
@@ -59,6 +63,16 @@ class ValidationProject:
     origin: Path
     user_home: Path
     env: dict[str, str]
+
+    def without_uv(self) -> None:
+        """Expose only script prerequisites, isolating installer fallback tests."""
+        folder = self.root / "bin"
+        folder.mkdir(exist_ok=True)
+        for name in ("bash", "dirname", "git", "mkdir"):
+            executable = shutil.which(name)
+            assert executable is not None
+            (folder / name).symlink_to(executable)
+        self.env["PATH"] = str(folder)
 
     def fake_uv(self) -> None:
         """Record installer arguments without touching any Python environment."""
@@ -106,7 +120,10 @@ class ValidationProject:
         git(cache, "remote", "add", "origin", str(self.origin))
         git(cache, "config", "core.sparseCheckout", "true")
         (cache / ".git/info/sparse-checkout").write_text("/script/\n/homeassistant/\n")
-        git(cache, "fetch", "--depth=1", "origin", "tag", version)
+        if version == "dev":
+            git(cache, "fetch", "--depth=1", "origin", version)
+        else:
+            git(cache, "fetch", "--depth=1", "origin", "tag", version)
         git(cache, "checkout", version)
         return cache
 
