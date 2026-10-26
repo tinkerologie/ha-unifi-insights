@@ -431,7 +431,6 @@ TIMELINE_DEVICE_COLLECTIONS = (
     "link_stations",
     "fobs",
     "viewports",
-    "speakers",
 )
 DEFAULT_HOURS = 6
 DEFAULT_MAX_ITEMS = 10
