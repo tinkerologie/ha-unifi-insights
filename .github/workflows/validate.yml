@@ -34,4 +34,46 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: home-assistant/actions/hassfest@cd6f3635a740c84d8a14f6121a90068b8ece6bf6 # master
+      - name: Check out current Home Assistant validator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: home-assistant/core
+          ref: dev
+          path: .local/ha-core
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /script/
+            /homeassistant/
+            /requirements.txt
+            /requirements_all.txt
+            /requirements_test.txt
+            /requirements_test_pre_commit.txt
+            /pyproject.toml
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: latest
+
+      - name: Validate with official development Hassfest
+        working-directory: .local/ha-core
+        run: |
+          git rev-parse HEAD
+          pipdeptree_pin=$(awk -F'==' '/^pipdeptree==/{print $0}' requirements_test.txt)
+          tqdm_pin=$(awk -F'==' '/^tqdm==/{print $0}' requirements_test.txt)
+          ruff_pin=$(awk -F'==' '/^ruff==/{print $0}' requirements_test_pre_commit.txt)
+          for pin in "$pipdeptree_pin" "$tqdm_pin" "$ruff_pin"; do
+            if [[ ! "$pin" =~ ^(pipdeptree|tqdm|ruff)==[0-9][[:alnum:].+_-]*$ ]]; then
+              echo "::error::Missing or ambiguous Core validator tooling pin: $pin"
+              exit 1
+            fi
+          done
+          uv run --no-project --python 3.14.2 \
+            --with-requirements requirements.txt \
+            --with "$pipdeptree_pin" \
+            --with "$tqdm_pin" \
+            --with "$ruff_pin" \
+            python -m script.hassfest --action validate \
+            --core-path "$GITHUB_WORKSPACE/.local/ha-core" \
+            --integration-path "$GITHUB_WORKSPACE/custom_components/unifi_insights"
