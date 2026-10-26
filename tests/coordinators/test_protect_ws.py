@@ -21,6 +21,22 @@ from custom_components.unifi_insights.coordinators.protect_ws import (
 AT = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
 
 
+@pytest.mark.parametrize("key", ["smartDetectTypes", "smart_detect_types"])
+def test_event_parser_preserves_detection_metadata(key: str) -> None:
+    """The dashboard can read classifications without changing event parsing."""
+    fields = {
+        "id": "e1",
+        "type": "smartDetectZone",
+        "camera": "c1",
+        key: ["person", "animal", "vehicle"],
+    }
+    parsed = ProtectStreams().parse_event_message(
+        {"type": "add", "payload": fields}, received_at=AT
+    )
+    assert isinstance(parsed, EventFrame)
+    assert parsed.fields == fields
+
+
 @pytest.mark.parametrize(
     ("message", "expected"),
     [

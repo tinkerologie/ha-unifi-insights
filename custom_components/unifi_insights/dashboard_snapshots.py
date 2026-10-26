@@ -417,7 +417,22 @@ def build_unavailable_performance(
 
 # --- Event timeline ----------------------------------------------------------
 
-TIMELINE_VERSION = 1
+TIMELINE_VERSION = 2
+TIMELINE_DEVICE_COLLECTIONS = (
+    "cameras",
+    "sensors",
+    "lights",
+    "doorlocks",
+    "alarm_hubs",
+    "chimes",
+    "nvrs",
+    "viewers",
+    "sirens",
+    "link_stations",
+    "fobs",
+    "viewports",
+    "speakers",
+)
 DEFAULT_HOURS = 6
 DEFAULT_MAX_ITEMS = 10
 MAX_ITEMS = 50
@@ -433,6 +448,73 @@ KIND_TO_SEVERITY: dict[str, str] = {
     "sensor_opened": "info",
     "sensor_closed": "info",
 }
+
+
+def _timeline_detection_types(event: dict[str, Any]) -> list[str]:
+    """Read this event's classifications, never a camera's latest detection."""
+    raw = event.get("smartDetectTypes", event.get("smart_detect_types"))
+    if not isinstance(raw, list):
+        return []
+    result: list[str] = []
+    for item in raw:
+        value = item.value if isinstance(item, Enum) else item
+        if isinstance(value, str) and value.strip():
+            result.append(value.strip())
+    return result
+
+
+def _timeline_device_names(
+    protect: dict[str, Any],
+) -> dict[str, list[tuple[str, str | None]]]:
+    """Index names once per snapshot, keeping ambiguous IDs distinguishable."""
+    names: dict[str, list[tuple[str, str | None]]] = {}
+    for collection in TIMELINE_DEVICE_COLLECTIONS:
+        for device_id, record in as_dict(protect.get(collection)).items():
+            if not isinstance(record, dict):
+                continue
+            raw_name = record.get("name")
+            name = raw_name.strip() if isinstance(raw_name, str) else None
+            names.setdefault(str(device_id), []).append((collection, name or None))
+    return names
+
+
+def _timeline_source_name(
+    event: dict[str, Any], names: dict[str, list[tuple[str, str | None]]]
+) -> str:
+    """Resolve an entry-local device reference without confusing event IDs."""
+    fallback_id: str | None = None
+    for key, collection in (
+        ("device", None),
+        ("camera", "cameras"),
+        ("cameraId", "cameras"),
+        ("camera_id", "cameras"),
+        ("sensor", "sensors"),
+        ("sensorId", "sensors"),
+        ("sensor_id", "sensors"),
+        ("deviceId", None),
+        ("device_id", None),
+    ):
+        value = event.get(key)
+        if isinstance(value, dict):
+            value = value.get("id")
+        if isinstance(value, bool) or not isinstance(value, (str, int)):
+            continue
+        device_id = str(value).strip()
+        if not device_id:
+            continue
+        fallback_id = fallback_id or device_id
+        matches = [
+            name
+            for group, name in names.get(device_id, [])
+            if collection is None or group == collection
+        ]
+        if len(matches) == 1 and matches[0]:
+            return matches[0]
+    for key in ("deviceName", "device_name", "name"):
+        name = event.get(key)
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    return fallback_id or "Protect device"
 
 
 def build_timeline_snapshot(
@@ -451,6 +533,7 @@ def build_timeline_snapshot(
 
     protect = as_dict(data.get("protect"))
     events = as_dict(protect.get("events"))
+    device_names = _timeline_device_names(protect)
 
     cutoff = datetime.now(tz=UTC) - timedelta(hours=hours)
     items: list[dict[str, Any]] = []
@@ -472,15 +555,11 @@ def build_timeline_snapshot(
                     continue
 
                 kind = str(event_type)
-                source_name = str(
-                    event_data.get("name")
-                    or event_data.get("deviceName")
-                    or event_data.get("device_id")
-                    or "Protect device"
-                )
+                source_name = _timeline_source_name(event_data, device_names)
                 item = {
                     "id": f"evt:{event_id}",
                     "kind": kind,
+                    "smart_detect_types": _timeline_detection_types(event_data),
                     "category": "security",
                     "severity": KIND_TO_SEVERITY.get(kind, "info"),
                     "timestamp": ts,

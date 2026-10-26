@@ -9,6 +9,26 @@
  */
 
 export const SCHEMA_VERSION = 2;
+
+/** Timeline v2 adds event-local classifications; v1 snapshots omit them. */
+export const TIMELINE_VERSION = 2;
+export interface TimelineSource {
+  id?: string;
+  name?: string;
+  kind?: string;
+}
+export interface TimelineItem {
+  kind?: string;
+  source?: TimelineSource;
+  smart_detect_types?: string[];
+  severity?: string;
+  timestamp?: string;
+}
+export interface TimelineSnapshot {
+  version?: 1 | typeof TIMELINE_VERSION;
+  status?: string;
+  items?: TimelineItem[];
+}
 /** Server-side hard cap on client nodes per site; `max_clients` may ask for fewer. */
 export const MAX_CLIENTS_PER_SITE = 500;
 

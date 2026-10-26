@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import UTC, datetime
+from enum import Enum
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
@@ -368,6 +370,139 @@ def test_build_timeline_snapshot() -> None:
     assert snapshot["status"] == "ok"
     assert snapshot["included"] >= 1
     assert snapshot["items"][0]["category"] == "security"
+
+
+@pytest.mark.parametrize("kind", ["smartDetect", "smartDetectZone", "motion"])
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    [
+        (
+            {"smartDetectTypes": ["person", "animal", "vehicle"]},
+            ["person", "animal", "vehicle"],
+        ),
+        (
+            {"smart_detect_types": ["car", "unknown", "person"]},
+            ["car", "unknown", "person"],
+        ),
+        ({"smartDetectTypes": [], "smart_detect_types": ["person"]}, []),
+        ({"smartDetectTypes": None, "smart_detect_types": ["person"]}, []),
+        ({"smartDetectTypes": "person"}, []),
+        ({"smartDetectTypes": [None, 1, {}, " ", " animal "]}, ["animal"]),
+        ({}, []),
+    ],
+)
+def test_timeline_classifications_are_event_local(
+    kind: str, metadata: dict[str, Any], expected: list[str]
+) -> None:
+    """Keep raw event kinds and classify only from that event's own metadata."""
+    event = {"id": "e1", "camera": "cam", "start": "2100-01-01T00:00:00Z", **metadata}
+    data = {
+        "protect": {
+            "events": {kind: {"e1": event}},
+            "cameras": {
+                "cam": {"name": "Driveway", "lastSmartDetectTypes": ["person"]}
+            },
+        }
+    }
+    before = deepcopy(data)
+    result = build_timeline_snapshot(data, entry_id="entry", site_id="site")
+    item = result["items"][0]
+    assert result["version"] == 2
+    assert item["kind"] == kind
+    assert item["smart_detect_types"] == expected
+    assert item["smart_detect_types"] is not metadata.get("smartDetectTypes")
+    assert item["source"]["name"] == "Driveway"
+    assert item["source"]["id"] == "e1"
+    assert data == before
+
+
+def test_timeline_classification_enum_values() -> None:
+    """String enum values are serialized without enum class prefixes."""
+
+    class Detection(Enum):
+        PERSON = "person"
+        INVALID = 1
+
+    data = {
+        "protect": {
+            "events": {
+                "smartDetectZone": {
+                    "e": {
+                        "start": "2100-01-01T00:00:00Z",
+                        "smartDetectTypes": [Detection.PERSON, Detection.INVALID],
+                    }
+                }
+            }
+        }
+    }
+    result = build_timeline_snapshot(data, entry_id="e", site_id="s")
+    assert result["items"][0]["smart_detect_types"] == ["person"]
+
+
+@pytest.mark.parametrize(
+    "alias",
+    [
+        "device",
+        "camera",
+        "cameraId",
+        "camera_id",
+        "sensor",
+        "sensorId",
+        "sensor_id",
+        "deviceId",
+        "device_id",
+    ],
+)
+@pytest.mark.parametrize("object_ref", [False, True])
+def test_timeline_source_reference_aliases(alias: str, *, object_ref: bool) -> None:
+    """Resolve both scalar and object references from the owning entry only."""
+    collection = "sensors" if alias.startswith("sensor") else "cameras"
+    event = {
+        "start": "2100-01-01T00:00:00Z",
+        alias: {"id": "dev"} if object_ref else "dev",
+        "name": "Generic event",
+    }
+    data = {
+        "protect": {
+            collection: {"dev": {"name": "Friendly device"}},
+            "events": {"motion": {"e": event}},
+        }
+    }
+    result = build_timeline_snapshot(data, entry_id="entry", site_id="site")
+    assert result["items"][0]["source"]["name"] == "Friendly device"
+
+
+@pytest.mark.parametrize(
+    ("event", "expected"),
+    [
+        ({"id": "cam"}, "Protect device"),
+        ({"camera": {"not_id": "cam"}}, "Protect device"),
+        ({"camera": ["cam"]}, "Protect device"),
+        ({"camera": True}, "Protect device"),
+        ({"camera": " "}, "Protect device"),
+        ({"camera": 123}, "123"),
+        ({"camera": "absent"}, "absent"),
+        (
+            {"device": "cam", "deviceName": "Event device", "name": "Event"},
+            "Event device",
+        ),
+        ({"device": "cam", "device_name": "Snake device"}, "Snake device"),
+        ({"device": "cam", "name": "Event"}, "Event"),
+        ({"camera": "cam"}, "Camera"),
+        ({"sensor": "cam"}, "Sensor"),
+    ],
+)
+def test_timeline_source_fallbacks(event: dict[str, Any], expected: str) -> None:
+    """Generic IDs must be unambiguous; an event ID is never a device ID."""
+    data = {
+        "protect": {
+            "cameras": {"cam": {"name": "Camera"}, "bad": None, "blank": {"name": 1}},
+            "sensors": {"cam": {"name": "Sensor"}},
+            "events": {"motion": {"event": {"start": "2100-01-01T00:00:00Z", **event}}},
+        }
+    }
+    result = build_timeline_snapshot(data, entry_id="entry", site_id="site")
+    assert result["items"][0]["source"]["name"] == expected
 
 
 def test_content_revision_and_utc_iso_helpers() -> None:

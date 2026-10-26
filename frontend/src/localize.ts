@@ -3,6 +3,12 @@
  * it. (The integration's translations/ folder is backend-only.)
  */
 const en = {
+  "timeline.person": "Person",
+  "timeline.animal": "Animal",
+  "timeline.car": "Car",
+  "timeline.motion": "Motion",
+  "timeline.doorbell": "Doorbell",
+  "timeline.unknown_object": "Unknown object ({value})",
   "dashboard.loading": "Loading {title}…",
   "dashboard.error":
     "Could not load this card. Check the integration and connection.",

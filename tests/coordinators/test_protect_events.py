@@ -1326,6 +1326,16 @@ def test_smart_detect_with_invalid_types_stores_none() -> None:
     assert result.cache["cameras"]["c1"]["lastSmartDetectTypes"] == []
 
 
+@pytest.mark.parametrize("key", ["smartDetectTypes", "smart_detect_types"])
+def test_cached_event_preserves_classifications(key: str) -> None:
+    """Cache metadata as received, without borrowing a different event's types."""
+    frame = event(
+        "smartDetectZone", "e1", camera="c1", **{key: ["person", "vehicle", "animal"]}
+    )
+    result = run(cache(cameras={"c1": _camera()}), [(0.0, frame)])
+    assert result.cache["events"]["smartDetectZone"]["e1"] == frame.fields
+
+
 def test_end_event_clears_the_latch() -> None:
     """A real end needs no auto-off."""
     result = run(

@@ -179,50 +179,57 @@
         "source": {
           "name": "Camera 1"
         },
-        "kind": "motion",
+        "kind": "smartDetectZone",
         "severity": "info",
-        "timestamp": "2026-10-25T00:00:00Z"
+        "timestamp": "2026-10-25T00:00:00Z",
+        "smart_detect_types": ["person"]
       },
       {
         "source": {
           "name": "Camera 2"
         },
-        "kind": "motion",
+        "kind": "smartDetectZone",
         "severity": "info",
-        "timestamp": "2026-10-25T00:00:00Z"
+        "timestamp": "2026-10-25T00:00:00Z",
+        "smart_detect_types": ["animal"]
       },
       {
         "source": {
           "name": "Camera 3"
         },
-        "kind": "motion",
+        "kind": "smartDetectZone",
         "severity": "info",
-        "timestamp": "2026-10-25T00:00:00Z"
+        "timestamp": "2026-10-25T00:00:00Z",
+        "smart_detect_types": ["vehicle"]
       },
       {
         "source": {
           "name": "Camera 4"
         },
-        "kind": "motion",
+        "kind": "smartDetectZone",
         "severity": "info",
-        "timestamp": "2026-10-25T00:00:00Z"
+        "timestamp": "2026-10-25T00:00:00Z",
+        "smart_detect_types": ["person", "animal", "vehicle", "car"]
       },
       {
         "source": {
           "name": "Camera 5"
         },
-        "kind": "motion",
+        "kind": "smartDetectZone",
         "severity": "info",
-        "timestamp": "2026-10-25T00:00:00Z"
+        "timestamp": "2026-10-25T00:00:00Z",
+        "smart_detect_types": []
       },
       {
         "source": {
           "name": "Camera 6"
         },
-        "kind": "motion",
+        "kind": "smartDetectZone",
         "severity": "info",
-        "timestamp": "2026-10-25T00:00:00Z"
+        "timestamp": "2026-10-25T00:00:00Z",
+        "smart_detect_types": ["unknown", "person"]
       }
-    ]
+    ],
+    "version": 2
   }
 }

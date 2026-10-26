@@ -59,6 +59,22 @@ async function audit(page: Page) {
   expect(violations).toEqual([]);
 }
 
+test("timeline built bundles show readable object classifications", async ({
+  page,
+}) => {
+  const root = await ready(page, "timeline", 320, "auto", "dark");
+  await expect(root.locator(".event-labels").nth(0)).toHaveText(/Person/);
+  await expect(root.locator(".event-labels").nth(1)).toHaveText(/Animal/);
+  await expect(root.locator(".event-labels").nth(2)).toHaveText(/Car/);
+  const mixed = root.locator(".event-labels").nth(3);
+  await expect(mixed.locator(".chip")).toHaveCount(3);
+  await expect(root.locator(".event-labels").nth(4)).toHaveText(/Motion/);
+  await expect(root.locator(".event-labels").nth(5)).toHaveText(
+    /Unknown object \(unknown\)[\s\S]*Person/,
+  );
+  await audit(page);
+});
+
 for (const theme of ["light", "dark"]) {
   for (const width of [320, 800]) {
     for (const name of cards) {

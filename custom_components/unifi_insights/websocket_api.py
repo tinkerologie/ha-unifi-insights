@@ -29,6 +29,7 @@ from homeassistant.util.hass_dict import HassKey
 from .console_identity import async_get_device_entry, resolve_console_namespace
 from .const import DOMAIN, TIMELINE_MAX_HOURS
 from .dashboard_snapshots import (
+    TIMELINE_DEVICE_COLLECTIONS,
     as_dict,
     build_internet_activity_snapshot,
     build_no_protect_snapshot,
@@ -419,7 +420,9 @@ def _runtime_snapshot_inputs(
     clients = data.get("clients")
     network_facts = data.get(NETWORK_FACTS_KEY)
     protect_events = (
-        _protect_collections(data.get("protect"), keys=("events",))
+        _protect_collections(
+            data.get("protect"), keys=("events", *TIMELINE_DEVICE_COLLECTIONS)
+        )
         if payload_type == "timeline"
         else (None,)
     )

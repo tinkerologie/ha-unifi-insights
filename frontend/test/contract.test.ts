@@ -8,6 +8,8 @@ import {
   NODE_KINDS,
   NODE_STATES,
   SCHEMA_VERSION,
+  TIMELINE_VERSION,
+  type TimelineSnapshot,
   TOPOLOGY_STATUSES,
   UNRESOLVED_REASONS,
   parseSnapshot,
@@ -18,6 +20,25 @@ import {
   type TopologyTruncation,
   type TopologyUnresolved,
 } from "../src/contract";
+
+it("supports additive timeline v2 metadata and older snapshots", () => {
+  const snapshots: TimelineSnapshot[] = [
+    { version: 1, status: "ok", items: [{ kind: "motion" }] },
+    {
+      version: TIMELINE_VERSION,
+      status: "ok",
+      items: [
+        { kind: "smartDetectZone", smart_detect_types: ["person", "vehicle"] },
+      ],
+    },
+  ];
+  expect(TIMELINE_VERSION).toBe(2);
+  expect(snapshots[0]!.items![0]!.smart_detect_types).toBeUndefined();
+  expect(snapshots[1]!.items![0]!.smart_detect_types).toEqual([
+    "person",
+    "vehicle",
+  ]);
+});
 
 type FieldSpec =
   | { kind: "string" | "number"; optional?: true }

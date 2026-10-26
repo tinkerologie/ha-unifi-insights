@@ -16,6 +16,67 @@ import { cleanup, fakeHass, settle } from "./helpers";
 
 afterEach(cleanup);
 
+describe("timeline detection labels", () => {
+  it.each([
+    ["smartDetectZone", ["person"], ["Person"]],
+    ["smartDetect", ["animal"], ["Animal"]],
+    ["smartDetectZone", ["vehicle", "car"], ["Car"]],
+    [
+      "smartDetectZone",
+      ["person", "animal", "vehicle", "person", "unknown"],
+      ["Person", "Animal", "Car", "Unknown object (unknown)"],
+    ],
+    ["smartDetectZone", [], ["Motion"]],
+    ["smartDetectZone", undefined, ["Motion"]],
+    ["smartDetectZone", "person", ["Motion"]],
+    ["smartDetectZone", [null, 1, {}, " "], ["Motion"]],
+    ["smartDetectZone", [" animal "], ["Animal"]],
+    [
+      "smartDetectZone",
+      ["<img src=x onerror=alert(1)>"],
+      ["Unknown object (<img src=x onerror=alert(1)>)"],
+    ],
+    ["motion", undefined, ["Motion"]],
+    ["ring", undefined, ["Doorbell"]],
+    ["vehicle", undefined, ["Car"]],
+    ["person", undefined, ["Person"]],
+    ["animal", undefined, ["Animal"]],
+    ["sensor_opened", undefined, ["sensor_opened"]],
+  ])(
+    "renders %s with %j as readable badges",
+    async (kind, metadata, expected) => {
+      const fake = fakeHass();
+      const el = document.createElement(
+        "unifi-insights-timeline-card",
+      ) as UnifiInsightsTimelineCard;
+      el.setConfig({
+        type: "custom:unifi-insights-timeline-card",
+        entry_id: "entry-1",
+        site_id: "site-1",
+      });
+      el.hass = fake.hass;
+      document.body.append(el);
+      await settle(el);
+      fake.subs[0]!.callback({
+        status: "ok",
+        items: [
+          { kind, source: { name: "Driveway" }, smart_detect_types: metadata },
+        ],
+      });
+      await settle(el);
+      const badges = [
+        ...el.shadowRoot!.querySelectorAll(".event-labels .chip"),
+      ];
+      expect(badges.map((b) => b.textContent!.trim())).toEqual(expected);
+      expect(el.shadowRoot!.querySelectorAll("img")).toHaveLength(0);
+      expect(
+        badges.every((b) => b.querySelector('svg[aria-hidden="true"] path')),
+      ).toBe(true);
+      expect(el.shadowRoot!.textContent).toContain("Driveway");
+    },
+  );
+});
+
 describe("dashboard card registration", () => {
   it("registers all five additional dashboard cards once", () => {
     const cards = window.customCards ?? [];
@@ -290,7 +351,7 @@ describe("dashboard card registration", () => {
     } as never);
     await settle(timelineEl);
     expect(timelineEl.shadowRoot?.textContent).toContain("Driveway");
-    expect(timelineEl.shadowRoot?.textContent).toContain("motion");
+    expect(timelineEl.shadowRoot?.textContent).toContain("Motion");
 
     // Test rich visual fields (window tabs, GB/Mbps formatting, uptime, CPU tones)
     fake.subs[0]?.callback({

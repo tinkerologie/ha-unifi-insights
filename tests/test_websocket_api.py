@@ -791,6 +791,49 @@ async def test_timeline_subscribe_pushes_on_a_new_protect_event(
     assert update["event"]["included"] == 1
 
 
+async def test_timeline_camera_only_updates(
+    hass: HomeAssistant, init_integration: MockConfigEntry, hass_ws_client
+) -> None:
+    """Renames, discovery and removal update the existing event's source name."""
+    _seed(init_integration)
+    events = {
+        "smartDetectZone": {
+            "e": {
+                "id": "e",
+                "camera": "c",
+                "smartDetectTypes": ["person"],
+                "start": "2100-01-01T00:00:00Z",
+            }
+        }
+    }
+    _publish(init_integration, protect={"events": events, "cameras": {}})
+    client = await hass_ws_client(hass)
+    await client.send_json(
+        {
+            "id": 502,
+            "type": "unifi_insights/timeline/subscribe",
+            "entry_id": init_integration.entry_id,
+            "site_id": SITE,
+        }
+    )
+    assert (await client.receive_json())["success"]
+    initial = (await client.receive_json())["event"]
+    assert initial["version"] == 2
+    assert initial["items"][0]["smart_detect_types"] == ["person"]
+    previous = initial["revision"]
+    for cameras, expected in [
+        ({"c": {"name": "Driveway"}}, "Driveway"),
+        ({"c": {"name": "Front door"}}, "Front door"),
+        ({}, "c"),
+    ]:
+        _publish(init_integration, protect={"events": events, "cameras": cameras})
+        init_integration.runtime_data.coordinator.async_update_listeners()
+        result = (await client.receive_json())["event"]
+        assert result["items"][0]["source"]["name"] == expected
+        assert result["revision"] != previous
+        previous = result["revision"]
+
+
 async def test_site_health_get_returns_snapshot(
     hass: HomeAssistant, init_integration: MockConfigEntry, hass_ws_client
 ) -> None:
