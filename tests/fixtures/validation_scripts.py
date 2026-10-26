@@ -20,6 +20,8 @@ if args[:1] == ['-c']:
         sys.exit(1)
     if args[1] == 'import pyright' and os.environ.get('FAKE_MISSING_PYRIGHT') == '1':
         sys.exit(1)
+    if args[1] == 'import httpx2' and os.environ.get('FAKE_MISSING_HTTPX2') == '1':
+        sys.exit(1)
     if 'import voluptuous' in args[1] and os.environ.get('FAKE_MISSING_HA') == '1':
         sys.exit(1)
     if 'homeassistant.const' in args[1]:

@@ -3,6 +3,7 @@
   "name": "UniFi Insights",
   "after_dependencies": ["http", "frontend", "lovelace"],
   "bluetooth": [],
+  "categories": ["computers_network.routers_network", "security_safety"],
   "codeowners": ["@ruaan-deysel"],
   "config_flow": true,
   "dependencies": [

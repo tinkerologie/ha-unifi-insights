@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.fixtures.validation_scripts import validation_project
+from tests.fixtures.validation_scripts import git, validation_project
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 @pytest.mark.parametrize("cache", ["fresh", "same-tag", "old-tag", "update"])
 def test_full_hassfest_uses_core_requirements(tmp_path: Path, cache: str) -> None:
     project = validation_project(tmp_path)
+    project.env["HA_VERSION"] = "2026.10.2"
     interpreter = project.interpreter(".local/ha-venv")
     if cache != "fresh":
         core = project.cached_core("2026.10.1" if cache == "old-tag" else "2026.10.2")
@@ -159,3 +160,81 @@ def test_dev_core_fetch_paths(tmp_path: Path, cache: str) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert project.trace()[-1]["python"] == str(python)
     assert "Target version: dev" in result.stdout
+
+
+@pytest.mark.parametrize("cache", ["fresh", "tag", "dev"])
+def test_default_validator_is_dev_independent_of_installed_release(
+    tmp_path: Path, cache: str
+) -> None:
+    project = validation_project(tmp_path)
+    project.interpreter(".venv")
+    project.env["FAKE_HA_VERSION"] = "2026.10.2"
+    if cache != "fresh":
+        project.cached_core("dev" if cache == "dev" else "2026.10.2")
+    result = project.run("hassfest", "--skip-plugins", "")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Target version: dev" in result.stdout
+    assert (
+        git(project.root / ".local/ha-core", "branch", "--show-current").stdout.strip()
+        == "dev"
+    )
+    if cache == "dev":
+        assert "Using cached version dev" in result.stdout
+
+
+def test_dev_update_checks_out_the_fetched_commit(tmp_path: Path) -> None:
+    project = validation_project(tmp_path)
+    project.interpreter(".venv")
+    core = project.cached_core("dev")
+    old_commit = git(core, "rev-parse", "HEAD").stdout
+    (project.origin / "requirements.txt").write_text("core-package==2.0\n")
+    git(project.origin, "add", "requirements.txt")
+    git(project.origin, "commit", "-m", "Update Core fixture")
+    result = project.run("hassfest", "--update", "--skip-plugins", "")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert git(core, "rev-parse", "HEAD").stdout != old_commit
+    assert (
+        git(core, "rev-parse", "HEAD").stdout
+        == git(project.origin, "rev-parse", "HEAD").stdout
+    )
+    assert "core-package==2.0" in (core / "requirements.txt").read_text()
+
+
+@pytest.mark.parametrize("installer", ["uv", "pip"])
+def test_development_dependency_uses_core_constraints(
+    tmp_path: Path, installer: str
+) -> None:
+    project = validation_project(tmp_path)
+    python = project.interpreter(".venv")
+    project.env["FAKE_MISSING_HTTPX2"] = "1"
+    if installer == "uv":
+        project.fake_uv()
+    else:
+        project.without_uv()
+    result = project.run("hassfest", "--skip-plugins", "")
+    assert result.returncode == 0, result.stdout + result.stderr
+    arguments = ["-c", ".local/ha-core/requirements.txt", "httpx2"]
+    if installer == "uv":
+        assert project.trace()[0] == {
+            "uv_args": ["pip", "install", "--python", str(python), *arguments]
+        }
+    else:
+        assert project.trace()[0] == {
+            "python": str(python),
+            "args": ["-m", "pip", "install", *arguments],
+        }
+
+
+def test_release_validator_does_not_install_development_dependencies(
+    tmp_path: Path,
+) -> None:
+    project = validation_project(tmp_path)
+    project.interpreter(".venv")
+    project.env["HA_VERSION"] = "2026.10.2"
+    project.env["FAKE_MISSING_HTTPX2"] = "1"
+    result = project.run("hassfest", "--skip-plugins", "")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(project.trace()) == 1
+    arguments = project.trace()[0]["args"]
+    assert isinstance(arguments, list)
+    assert arguments[:2] == ["-m", "script.hassfest"]

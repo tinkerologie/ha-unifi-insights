@@ -6,19 +6,22 @@
 # using hassfest from the Home Assistant Core repository.
 #
 # On first run, clones HA Core (~27 MB) to .local/ha-core
-# Subsequent runs reuse the cached version (use --update to force an update).
+# Defaults to Core dev so new manifest metadata is validated against current rules.
+# Subsequent runs reuse the cached checkout (use --update to fetch new commits).
+# Set HA_VERSION explicitly to validate against a particular release instead.
 #
 # Usage:
 #   ./script/hassfest [options]
 #
 # Options:
-#   --update             Force update HA Core to match installed version
+#   --update             Fetch the latest commit for the selected Core ref
 #   --skip-plugins LIST  Comma-separated list of plugins to skip
 #                        Default: quality_scale,requirements
 #
 # Examples:
 #   ./script/hassfest               # Use cached version (fast)
-#   ./script/hassfest --update      # Update to match HA version
+#   ./script/hassfest --update      # Update the development validator
+#   HA_VERSION=2026.10.2 ./script/hassfest  # Explicit release compatibility check
 
 set -euo pipefail
 
@@ -36,17 +39,8 @@ HA_CORE_REPO="https://github.com/home-assistant/core.git"
 INTEGRATION_PATH="custom_components/unifi_insights"
 INTEGRATION_ABSOLUTE_PATH="$PWD/$INTEGRATION_PATH"
 
-# Detect Home Assistant version to use
-if [ -n "${HA_VERSION:-}" ]; then
-    # Use version from environment (DevContainer)
-    HA_VERSION_TAG="$HA_VERSION"
-elif [[ -x "$PROJECT_PYTHON" ]]; then
-    # Detect from installed homeassistant package
-    HA_VERSION_TAG=$("$PROJECT_PYTHON" -c "from homeassistant.const import __version__; print(__version__)" 2>/dev/null || echo "dev")
-else
-    # Fallback to dev branch
-    HA_VERSION_TAG="dev"
-fi
+# The validator follows current Core rules independently of the runtime release.
+HA_VERSION_TAG="${HA_VERSION:-dev}"
 
 # Parse arguments
 UPDATE_CORE=false  # Default to no update for speed
@@ -90,7 +84,7 @@ if [ ! -d "$HA_CORE_DIR" ]; then
     # Fetch the specific version (shallow clone + blobless for minimal size)
     if [ "$HA_VERSION_TAG" = "dev" ]; then
         git fetch --depth 1 --filter=blob:none origin dev
-        git checkout dev >/dev/null 2>&1
+        git checkout -B dev FETCH_HEAD >/dev/null 2>&1
     else
         git fetch --depth 1 --filter=blob:none origin tag "$HA_VERSION_TAG"
         git checkout "$HA_VERSION_TAG" >/dev/null 2>&1
@@ -98,9 +92,9 @@ if [ ! -d "$HA_CORE_DIR" ]; then
     cd - >/dev/null
     echo ""
 else
-    # Check if we need to update to match current HA version
+    # Check if the selected ref changed or a refresh was explicitly requested.
     cd "$HA_CORE_DIR"
-    CURRENT_VERSION=$(git describe --tags --exact-match 2>/dev/null || git rev-parse --abbrev-ref HEAD)
+    CURRENT_VERSION=$(git symbolic-ref --quiet --short HEAD || git describe --tags --exact-match 2>/dev/null || git rev-parse HEAD)
     cd - >/dev/null
 
     if [ "$UPDATE_CORE" = true ] || [ "$CURRENT_VERSION" != "$HA_VERSION_TAG" ]; then
@@ -108,7 +102,7 @@ else
         cd "$HA_CORE_DIR"
         if [ "$HA_VERSION_TAG" = "dev" ]; then
             git fetch --depth 1 --filter=blob:none origin dev >/dev/null 2>&1
-            git checkout dev >/dev/null 2>&1
+            git checkout -B dev FETCH_HEAD >/dev/null 2>&1
         else
             git fetch --depth 1 --filter=blob:none origin tag "$HA_VERSION_TAG" >/dev/null 2>&1
             git checkout "$HA_VERSION_TAG" >/dev/null 2>&1
@@ -131,6 +125,16 @@ done
 
 # Check if we have required dependencies
 log_info "Checking dependencies..."
+# Core dev imports httpx2 before loading validator plugins. Keep the runtime HA
+# package intact while adding this validator dependency at Core's own pin.
+if [[ "$HA_VERSION_TAG" == "dev" ]] && ! "$PROJECT_PYTHON" -c "import httpx2" >/dev/null 2>&1; then
+    log_info "Installing development validator dependency: httpx2"
+    if command -v uv >/dev/null 2>&1; then
+        uv pip install --python "$PROJECT_PYTHON" -c "$HA_CORE_DIR/requirements.txt" httpx2
+    else
+        "$PROJECT_PYTHON" -m pip install -c "$HA_CORE_DIR/requirements.txt" httpx2
+    fi
+fi
 if ! "$PROJECT_PYTHON" -c "import tqdm" >/dev/null 2>&1; then
     log_info "Installing hassfest helper dependency: tqdm"
     if command -v uv >/dev/null 2>&1; then

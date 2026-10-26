@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Validation scripts now consistently select the configured Python environment, fail on Pyright warnings and validate custom requirements against Home Assistant Core's own dependency files. Static entity descriptions are frozen and keyword-only, matching current Home Assistant metadata conventions. [#420](https://github.com/tinkerologie/ha-unifi-insights/issues/420)
+- Validation scripts now consistently select the configured Python environment, fail on Pyright warnings and validate custom requirements against Home Assistant Core's own dependency files. Hassfest defaults to the development validator, and the integration declares networking and security categories for current catalog validation. Static entity descriptions are frozen and keyword-only, matching current Home Assistant metadata conventions. [#420](https://github.com/tinkerologie/ha-unifi-insights/issues/420)
 
 ## [2026.10.4] - 2026-10-26
 
