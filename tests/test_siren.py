@@ -44,6 +44,7 @@ from custom_components.unifi_insights.siren import (
     siren_run_end_ms,
     siren_volume_from_level,
 )
+from tests.fixtures.assertions import require_instance, require_not_none
 from tests.fixtures.library_responses import SAMPLE_SIREN
 from tests.fixtures.protect_ws import FakeProtectWebSocket
 
@@ -218,13 +219,13 @@ async def test_siren_entity_unique_id_and_device_linkage(
     entity = er.async_get(hass).async_get(_entity_id(hass))
     assert entity is not None
     assert entity.unique_id == f"{DOMAIN}_siren_siren_1"
-    device = dr.async_get(hass).async_get(entity.device_id)
+    device = dr.async_get(hass).async_get(require_not_none(entity.device_id))
     assert device is not None
     assert device.identifiers == {(DOMAIN, "protect_siren_siren_1")}
     assert (dr.CONNECTION_NETWORK_MAC, dr.format_mac("AABBCC000005")) in (
-        device.connections
+        require_instance(device, dr.DeviceEntry).connections
     )
-    assert device.model == "UP-Siren-PoE"
+    assert require_instance(device, dr.DeviceEntry).model == "UP-Siren-PoE"
     state = hass.states.get(entity.entity_id)
     assert state is not None
     assert state.attributes["friendly_name"] == "Garage Siren"

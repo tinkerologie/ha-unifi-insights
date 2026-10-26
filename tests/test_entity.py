@@ -27,6 +27,12 @@ from custom_components.unifi_insights.entity import (
     is_device_online,
     is_gateway_device,
 )
+from tests.fixtures.assertions import (
+    patch_attribute,
+    require_instance,
+    require_mock,
+    require_not_none,
+)
 from tests.fixtures.facade_data import (
     facade_data,
     frozen,
@@ -436,10 +442,13 @@ class TestUnifiInsightsEntity:
         )
 
         device_info = entity.device_info
-        assert (DOMAIN, "site1_device1") in device_info["identifiers"]
-        assert device_info["manufacturer"] == MANUFACTURER
-        assert device_info["model"] == "USW-24-POE"
-        assert device_info["sw_version"] == "6.5.55"
+        assert (DOMAIN, "site1_device1") in require_not_none(device_info)["identifiers"]
+        assert "manufacturer" in require_not_none(device_info)
+        assert dict(require_not_none(device_info))["manufacturer"] == MANUFACTURER
+        assert "model" in require_not_none(device_info)
+        assert dict(require_not_none(device_info))["model"] == "USW-24-POE"
+        assert "sw_version" in require_not_none(device_info)
+        assert dict(require_not_none(device_info))["sw_version"] == "6.5.55"
 
     async def test_entity_available_online(self, hass: HomeAssistant, mock_coordinator):
         """Test entity is available when device is online."""
@@ -535,7 +544,7 @@ class TestUnifiInsightsEntity:
         assert entity.available is True
 
     async def test_entity_handle_coordinator_update_unavailable_then_recovers(
-        self, hass: HomeAssistant, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator, monkeypatch
     ):
         """Entity un-freezes on _handle_coordinator_update once coordinator recovers."""
         description = EntityDescription(key="test", name="Test")
@@ -545,7 +554,7 @@ class TestUnifiInsightsEntity:
             site_id="site1",
             device_id="device1",  # cached state is ONLINE
         )
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
 
         set_availability(mock_coordinator, device=False)
         entity._handle_coordinator_update()
@@ -567,8 +576,8 @@ class TestUnifiInsightsEntity:
         )
 
         device_data = entity.device_data
-        assert device_data["id"] == "device1"
-        assert device_data["name"] == "Test Switch"
+        assert require_not_none(device_data)["id"] == "device1"
+        assert require_not_none(device_data)["name"] == "Test Switch"
 
     async def test_entity_device_stats(
         self, hass: HomeAssistant, mock_coordinator: MagicMock
@@ -587,7 +596,7 @@ class TestUnifiInsightsEntity:
         )
 
         stats = entity.device_stats
-        assert stats["cpuUtilizationPct"] == 25.5
+        assert require_not_none(stats)["cpuUtilizationPct"] == 25.5
 
     async def test_entity_mac_connection(self, hass: HomeAssistant, mock_coordinator):
         """Test entity includes MAC address connection."""
@@ -601,8 +610,10 @@ class TestUnifiInsightsEntity:
         )
 
         device_info = entity.device_info
-        assert "connections" in device_info
-        connections = device_info["connections"]
+        assert "connections" in require_not_none(device_info)
+        connections = require_instance(
+            dict(require_not_none(device_info))["connections"], set
+        )
         assert (CONNECTION_NETWORK_MAC, "AA:BB:CC:DD:EE:FF") in connections
 
 
@@ -771,7 +782,7 @@ class TestUnifiProtectEntity:
         assert entity.available is True
 
     async def test_protect_entity_handle_coordinator_update_unavailable_then_recovers(
-        self, hass: HomeAssistant, mock_coordinator
+        self, hass: HomeAssistant, mock_coordinator, monkeypatch
     ):
         """Protect entity un-freezes on coordinator update once coordinator recovers."""
         entity = UnifiProtectEntity(
@@ -779,7 +790,7 @@ class TestUnifiProtectEntity:
             device_type=DEVICE_TYPE_CAMERA,
             device_id="camera1",  # cached state is CONNECTED
         )
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
         entity._update_from_data = MagicMock()
 
         set_availability(mock_coordinator, protect=False)
@@ -791,7 +802,7 @@ class TestUnifiProtectEntity:
         assert entity.available is True
 
     async def test_protect_entity_coordinator_update_refreshes_state(
-        self, hass: HomeAssistant, mock_coordinator: MagicMock
+        self, hass: HomeAssistant, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test coordinator updates refresh Protect entity state."""
         entity = UnifiProtectEntity(
@@ -799,7 +810,7 @@ class TestUnifiProtectEntity:
             device_type=DEVICE_TYPE_CAMERA,
             device_id="camera1",
         )
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
         entity._update_from_data = MagicMock()
 
         mock_coordinator.data = with_protect_fields(
@@ -810,10 +821,10 @@ class TestUnifiProtectEntity:
 
         assert entity.available is False
         entity._update_from_data.assert_called_once()
-        entity.async_write_ha_state.assert_called_once()
+        require_mock(entity.async_write_ha_state).assert_called_once()
 
     async def test_protect_entity_coordinator_update_handles_missing_device(
-        self, hass: HomeAssistant, mock_coordinator: MagicMock
+        self, hass: HomeAssistant, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test coordinator updates mark missing Protect devices unavailable."""
         entity = UnifiProtectEntity(
@@ -821,7 +832,7 @@ class TestUnifiProtectEntity:
             device_type=DEVICE_TYPE_CAMERA,
             device_id="camera1",
         )
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
         entity._update_from_data = MagicMock()
 
         mock_coordinator.data = _without_record(
@@ -832,7 +843,7 @@ class TestUnifiProtectEntity:
 
         assert entity.available is False
         entity._update_from_data.assert_not_called()
-        entity.async_write_ha_state.assert_called_once()
+        require_mock(entity.async_write_ha_state).assert_called_once()
 
     async def test_protect_entity_device_data(
         self, hass: HomeAssistant, mock_coordinator
@@ -845,8 +856,8 @@ class TestUnifiProtectEntity:
         )
 
         device_data = entity.device_data
-        assert device_data["id"] == "camera1"
-        assert device_data["name"] == "Front Door"
+        assert require_not_none(device_data)["id"] == "camera1"
+        assert require_not_none(device_data)["name"] == "Front Door"
 
     async def test_protect_entity_device_info(
         self, hass: HomeAssistant, mock_coordinator
@@ -859,7 +870,8 @@ class TestUnifiProtectEntity:
         )
 
         device_info = entity.device_info
-        assert device_info["manufacturer"] == MANUFACTURER
+        assert "manufacturer" in require_not_none(device_info)
+        assert dict(require_not_none(device_info))["manufacturer"] == MANUFACTURER
 
     async def test_protect_entity_light_type(
         self, hass: HomeAssistant, mock_coordinator
@@ -900,7 +912,7 @@ class TestUnifiProtectEntity:
 
         # Should use network device identifiers
         device_info = entity.device_info
-        identifiers = device_info.get("identifiers", set())
+        identifiers = require_not_none(device_info).get("identifiers", set())
         # Should match network device site1_device1
         assert (DOMAIN, "site1_device1") in identifiers
 
@@ -930,7 +942,7 @@ class TestUnifiProtectEntity:
         # Should use network device identifiers - both NVR and network device
         # entities should appear under the same device in HA
         device_info = entity.device_info
-        identifiers = device_info.get("identifiers", set())
+        identifiers = require_not_none(device_info).get("identifiers", set())
         # Should match network device site1_device1
         assert (DOMAIN, "site1_device1") in identifiers
 
@@ -947,7 +959,7 @@ class TestUnifiProtectEntity:
 
         # Should create its own device entry
         device_info = entity.device_info
-        identifiers = device_info.get("identifiers", set())
+        identifiers = require_not_none(device_info).get("identifiers", set())
         assert (DOMAIN, "protect_camera_camera2") in identifiers
 
     async def test_protect_entity_dual_camera_parent(
@@ -987,7 +999,7 @@ class TestUnifiProtectEntity:
 
         # Should use parent camera ID in device identifiers
         device_info = entity.device_info
-        identifiers = device_info.get("identifiers", set())
+        identifiers = require_not_none(device_info).get("identifiers", set())
         # Uses parent ID for grouping
         assert (DOMAIN, "protect_camera_camera_main") in identifiers
 
@@ -1032,7 +1044,9 @@ class TestUnifiProtectEntity:
         # The device name should be stripped of " Package Camera" suffix
         # device_info.name should be "Garage" not "Garage Package Camera"
         device_info = entity.device_info
-        assert "Package Camera" not in device_info.get("name", "")
+        assert "Package Camera" not in require_not_none(
+            require_not_none(device_info).get("name", "")
+        )
 
     async def test_protect_entity_dual_camera_main_name_stripping(
         self, hass: HomeAssistant, mock_coordinator: MagicMock
@@ -1073,8 +1087,10 @@ class TestUnifiProtectEntity:
         # The device name should be stripped of " Main Camera" suffix
         # device_info.name should be "Backyard" not "Backyard Main Camera"
         device_info = entity.device_info
-        assert "Main Camera" not in device_info.get("name", "")
-        assert device_info.get("name") == "Backyard"
+        assert "Main Camera" not in require_not_none(
+            require_not_none(device_info).get("name", "")
+        )
+        assert require_not_none(device_info).get("name") == "Backyard"
 
     async def test_protect_entity_available_non_dict(
         self, hass: HomeAssistant, mock_coordinator: MagicMock
@@ -1150,7 +1166,7 @@ class TestUnifiProtectEntity:
         )
 
         device_info = entity.device_info
-        assert device_info.get("suggested_area") == "Security"
+        assert require_not_none(device_info).get("suggested_area") == "Security"
 
     async def test_protect_entity_suggested_area_light(
         self, hass: HomeAssistant, mock_coordinator
@@ -1164,7 +1180,7 @@ class TestUnifiProtectEntity:
         )
 
         device_info = entity.device_info
-        assert device_info.get("suggested_area") == "Exterior"
+        assert require_not_none(device_info).get("suggested_area") == "Exterior"
 
     async def test_protect_entity_suggested_area_sensor(
         self, hass: HomeAssistant, mock_coordinator
@@ -1177,7 +1193,7 @@ class TestUnifiProtectEntity:
         )
 
         device_info = entity.device_info
-        assert device_info.get("suggested_area") == "Security"
+        assert require_not_none(device_info).get("suggested_area") == "Security"
 
     async def test_protect_entity_empty_mac_in_lookup(
         self, hass: HomeAssistant, mock_coordinator: MagicMock
@@ -1201,7 +1217,7 @@ class TestUnifiProtectEntity:
         )
 
         device_info = entity.device_info
-        identifiers = device_info.get("identifiers", set())
+        identifiers = require_not_none(device_info).get("identifiers", set())
         assert (DOMAIN, "site1_device1") not in identifiers
 
 
@@ -1276,8 +1292,10 @@ class TestUnifiInsightsEntityEdgeCases:
         )
 
         device_info = entity.device_info
-        assert "hw_version" in device_info
-        assert "2 Ports" in device_info["hw_version"]
+        assert "hw_version" in require_not_none(device_info)
+        assert "2 Ports" in require_not_none(
+            require_instance(dict(require_not_none(device_info))["hw_version"], str)
+        )
 
     async def test_entity_with_radio_table(
         self, hass: HomeAssistant, mock_coordinator_with_ports
@@ -1293,9 +1311,13 @@ class TestUnifiInsightsEntityEdgeCases:
         )
 
         device_info = entity.device_info
-        assert "hw_version" in device_info
-        assert "ra0 (ng)" in device_info["hw_version"]
-        assert "rai0 (na)" in device_info["hw_version"]
+        assert "hw_version" in require_not_none(device_info)
+        assert "ra0 (ng)" in require_not_none(
+            require_instance(dict(require_not_none(device_info))["hw_version"], str)
+        )
+        assert "rai0 (na)" in require_not_none(
+            require_instance(dict(require_not_none(device_info))["hw_version"], str)
+        )
 
     async def test_entity_without_name(
         self, hass: HomeAssistant, mock_coordinator_with_ports
@@ -1312,7 +1334,7 @@ class TestUnifiInsightsEntityEdgeCases:
 
         device_info = entity.device_info
         # Should have a name (either from device or fallback)
-        assert "name" in device_info
+        assert "name" in require_not_none(device_info)
 
     async def test_entity_device_data_missing(
         self, hass: HomeAssistant, mock_coordinator_with_ports: MagicMock
@@ -1375,7 +1397,7 @@ class TestUnifiInsightsEntityEdgeCases:
         assert entity.available is False
 
     async def test_entity_handle_coordinator_update(
-        self, hass: HomeAssistant, mock_coordinator_with_ports
+        self, hass: HomeAssistant, mock_coordinator_with_ports, monkeypatch
     ):
         """Test entity _handle_coordinator_update."""
         description = EntityDescription(key="test", name="Test")
@@ -1388,16 +1410,16 @@ class TestUnifiInsightsEntityEdgeCases:
         )
 
         # Mock async_write_ha_state
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
 
         # Call update handler
         entity._handle_coordinator_update()
 
         # Should have called async_write_ha_state
-        entity.async_write_ha_state.assert_called()
+        require_mock(entity.async_write_ha_state).assert_called()
 
     async def test_entity_handle_coordinator_update_missing_device(
-        self, hass: HomeAssistant, mock_coordinator_with_ports: MagicMock
+        self, hass: HomeAssistant, mock_coordinator_with_ports: MagicMock, monkeypatch
     ) -> None:
         """Test entity _handle_coordinator_update with missing device."""
         description = EntityDescription(key="test", name="Test")
@@ -1410,7 +1432,7 @@ class TestUnifiInsightsEntityEdgeCases:
         )
 
         # Mock async_write_ha_state
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
 
         # Remove device from data
         mock_coordinator_with_ports.data = _without_record(
@@ -1422,7 +1444,7 @@ class TestUnifiInsightsEntityEdgeCases:
 
         # Should set available to False
         assert entity.available is False
-        entity.async_write_ha_state.assert_called()
+        require_mock(entity.async_write_ha_state).assert_called()
 
     async def test_entity_suggested_area_switch(
         self, hass: HomeAssistant, mock_coordinator_with_ports
@@ -1438,7 +1460,7 @@ class TestUnifiInsightsEntityEdgeCases:
         )
 
         device_info = entity.device_info
-        assert device_info.get("suggested_area") == "Network"
+        assert require_not_none(device_info).get("suggested_area") == "Network"
 
     async def test_entity_suggested_area_ap(
         self, hass: HomeAssistant, mock_coordinator_with_ports
@@ -1454,7 +1476,7 @@ class TestUnifiInsightsEntityEdgeCases:
         )
 
         device_info = entity.device_info
-        assert device_info.get("suggested_area") == "Network"
+        assert require_not_none(device_info).get("suggested_area") == "Network"
 
     async def test_entity_empty_port_table(
         self, hass: HomeAssistant, mock_coordinator_with_ports: MagicMock
@@ -1485,8 +1507,8 @@ class TestUnifiInsightsEntityEdgeCases:
 
         device_info = entity.device_info
         # hw_version should not include ports if empty
-        hw_version = device_info.get("hw_version", "")
-        assert "Ports" not in hw_version
+        hw_version = require_not_none(device_info).get("hw_version", "")
+        assert "Ports" not in require_not_none(hw_version)
 
     async def test_entity_radio_table_non_dict_entry(
         self, hass: HomeAssistant, mock_coordinator_with_ports: MagicMock
@@ -1520,9 +1542,9 @@ class TestUnifiInsightsEntityEdgeCases:
         )
 
         device_info = entity.device_info
-        hw_version = device_info.get("hw_version", "")
+        hw_version = require_not_none(device_info).get("hw_version", "")
         # Should only include valid radio entry
-        assert "ra0 (ng)" in hw_version
+        assert "ra0 (ng)" in require_not_none(hw_version)
 
     async def test_entity_radio_table_missing_name_or_type(
         self, hass: HomeAssistant, mock_coordinator_with_ports: MagicMock
@@ -1555,7 +1577,7 @@ class TestUnifiInsightsEntityEdgeCases:
         )
 
         device_info = entity.device_info
-        hw_version = device_info.get("hw_version", "")
+        hw_version = require_not_none(device_info).get("hw_version", "")
         assert hw_version == "ra1 (na)"
 
 
@@ -1684,6 +1706,7 @@ def test_protect_entity_without_its_record_uses_defaults() -> None:
     assert entity.device_info is not None
     assert entity.device_info["identifiers"] == {(DOMAIN, "protect_camera_cam1")}
     assert entity.device_info["name"] == "UniFi Camera cam1"
+    assert "model" in entity.device_info
     assert entity.device_info["model"] == "UniFi Camera"
 
 

@@ -75,13 +75,13 @@ def mock_protect_client_flow():
 
 def _make_client_context(
     *,
-    get_hosts: list[dict[str, object]] | None = None,
-    get_hosts_side_effect: Exception | None = None,
-    sites: list[object] | None = None,
-    sites_side_effect: Exception | None = None,
+    get_hosts: object = None,
+    get_hosts_side_effect: object = None,
+    sites: object = None,
+    sites_side_effect: object = None,
     devices: list[object] | None = None,
     devices_side_effect: Exception | None = None,
-    enter_side_effect: Exception | None = None,
+    enter_side_effect: object = None,
 ) -> MagicMock:
     """Create an async context manager mock for UniFiNetworkClient."""
     async_cm = MagicMock()

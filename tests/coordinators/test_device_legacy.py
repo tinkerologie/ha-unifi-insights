@@ -2,7 +2,7 @@
 """Tests for legacy device coordinator methods and rate computation."""
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -51,8 +51,10 @@ class TestMergeLegacyTemperatureData:
 
     def test_mac_address_none(self):
         """Return early if MAC cannot be normalized."""
-        device_dict = {"name": "No MAC"}
-        legacy_devices = {"00:11:22:33:44:55": {"mac": "00:11:22:33:44:55"}}
+        device_dict: dict[str, Any] = {"name": "No MAC"}
+        legacy_devices: dict[str, Any] = {
+            "00:11:22:33:44:55": {"mac": "00:11:22:33:44:55"}
+        }
         UnifiInsightsDeviceCoordinator._merge_legacy_temperature_data(
             device_dict, legacy_devices
         )
@@ -60,8 +62,10 @@ class TestMergeLegacyTemperatureData:
 
     def test_legacy_device_missing_or_no_temp_data(self):
         """Return early if legacy device is missing or has no temperature data."""
-        device_dict = {"mac": "00:11:22:33:44:55"}
-        legacy_devices = {"00:11:22:33:44:55": {"mac": "00:11:22:33:44:55"}}
+        device_dict: dict[str, Any] = {"mac": "00:11:22:33:44:55"}
+        legacy_devices: dict[str, Any] = {
+            "00:11:22:33:44:55": {"mac": "00:11:22:33:44:55"}
+        }
         UnifiInsightsDeviceCoordinator._merge_legacy_temperature_data(
             device_dict, legacy_devices
         )
@@ -69,8 +73,8 @@ class TestMergeLegacyTemperatureData:
 
     def test_fallback_to_camel_case_general_temperature(self):
         """Fall back to generalTemperature when general_temperature is None."""
-        device_dict = {"mac": "00:11:22:33:44:55"}
-        legacy_devices = {
+        device_dict: dict[str, Any] = {"mac": "00:11:22:33:44:55"}
+        legacy_devices: dict[str, Any] = {
             "00:11:22:33:44:55": {
                 "mac": "00:11:22:33:44:55",
                 "generalTemperature": 45.5,
@@ -84,8 +88,8 @@ class TestMergeLegacyTemperatureData:
 
     def test_temperatures_list_and_general_temp(self):
         """Merge both general_temperature and temperatures list."""
-        device_dict = {"mac": "00:11:22:33:44:55"}
-        legacy_devices = {
+        device_dict: dict[str, Any] = {"mac": "00:11:22:33:44:55"}
+        legacy_devices: dict[str, Any] = {
             "00:11:22:33:44:55": {
                 "mac": "00:11:22:33:44:55",
                 "general_temperature": 52.0,
@@ -101,8 +105,8 @@ class TestMergeLegacyTemperatureData:
 
     def test_temperatures_not_a_list(self):
         """Ignore temperatures field if it is not a list."""
-        device_dict = {"mac": "00:11:22:33:44:55"}
-        legacy_devices = {
+        device_dict: dict[str, Any] = {"mac": "00:11:22:33:44:55"}
+        legacy_devices: dict[str, Any] = {
             "00:11:22:33:44:55": {
                 "mac": "00:11:22:33:44:55",
                 "general_temperature": 50.0,
@@ -118,8 +122,8 @@ class TestMergeLegacyTemperatureData:
 
     def test_temperatures_present_without_general_temperature(self):
         """Merge temperatures list when general_temperature is None."""
-        device_dict = {"mac": "00:11:22:33:44:55"}
-        legacy_devices = {
+        device_dict: dict[str, Any] = {"mac": "00:11:22:33:44:55"}
+        legacy_devices: dict[str, Any] = {
             "00:11:22:33:44:55": {
                 "mac": "00:11:22:33:44:55",
                 "temperatures": [{"name": "CPU", "value": 52.0}],
@@ -138,8 +142,10 @@ class TestMergeLegacyPortData:
 
     def test_mac_address_none(self):
         """Return early if device has no valid MAC."""
-        device_dict = {"name": "No MAC"}
-        legacy_devices = {"00:11:22:33:44:55": {"port_table": [{"port_idx": 1}]}}
+        device_dict: dict[str, Any] = {"name": "No MAC"}
+        legacy_devices: dict[str, Any] = {
+            "00:11:22:33:44:55": {"port_table": [{"port_idx": 1}]}
+        }
         UnifiInsightsDeviceCoordinator._merge_legacy_port_data(
             device_dict, legacy_devices
         )
@@ -147,8 +153,8 @@ class TestMergeLegacyPortData:
 
     def test_legacy_device_missing(self):
         """Return early if legacy device not in mapping."""
-        device_dict = {"mac": "00:11:22:33:44:55"}
-        legacy_devices = {}
+        device_dict: dict[str, Any] = {"mac": "00:11:22:33:44:55"}
+        legacy_devices: dict[str, Any] = {}
         UnifiInsightsDeviceCoordinator._merge_legacy_port_data(
             device_dict, legacy_devices
         )
@@ -156,8 +162,8 @@ class TestMergeLegacyPortData:
 
     def test_port_table_not_list_or_empty(self):
         """Return early if port_table is missing, non-list, or empty."""
-        device_dict = {"mac": "00:11:22:33:44:55"}
-        legacy_devices = {"00:11:22:33:44:55": {"port_table": []}}
+        device_dict: dict[str, Any] = {"mac": "00:11:22:33:44:55"}
+        legacy_devices: dict[str, Any] = {"00:11:22:33:44:55": {"port_table": []}}
         UnifiInsightsDeviceCoordinator._merge_legacy_port_data(
             device_dict, legacy_devices
         )
@@ -171,8 +177,8 @@ class TestMergeLegacyPortData:
 
     def test_port_table_non_dict_entry_and_none_normalizer(self):
         """Skip non-dict port entries or entries without port_idx."""
-        device_dict = {"mac": "00:11:22:33:44:55"}
-        legacy_devices = {
+        device_dict: dict[str, Any] = {"mac": "00:11:22:33:44:55"}
+        legacy_devices: dict[str, Any] = {
             "00:11:22:33:44:55": {
                 "port_table": [
                     "not_a_dict",
@@ -190,8 +196,8 @@ class TestMergeLegacyPortData:
 
     def test_all_ports_normalize_to_none(self):
         """If all port entries fail normalization, ports is not set."""
-        device_dict = {"mac": "00:11:22:33:44:55"}
-        legacy_devices = {
+        device_dict: dict[str, Any] = {"mac": "00:11:22:33:44:55"}
+        legacy_devices: dict[str, Any] = {
             "00:11:22:33:44:55": {
                 "port_table": [
                     {"name": "No port_idx 1"},
@@ -210,8 +216,8 @@ class TestMergeLegacyOutletData:
 
     def test_mac_address_none(self):
         """Return early if MAC is None."""
-        device_dict = {"name": "No MAC"}
-        legacy_devices = {"00:11:22:33:44:55": {"outlet_table": []}}
+        device_dict: dict[str, Any] = {"name": "No MAC"}
+        legacy_devices: dict[str, Any] = {"00:11:22:33:44:55": {"outlet_table": []}}
         UnifiInsightsDeviceCoordinator._merge_legacy_outlet_data(
             device_dict, legacy_devices
         )
@@ -219,14 +225,14 @@ class TestMergeLegacyOutletData:
 
     def test_legacy_device_missing(self):
         """Return early if legacy device is missing."""
-        device_dict = {"mac": "00:11:22:33:44:55"}
+        device_dict: dict[str, Any] = {"mac": "00:11:22:33:44:55"}
         UnifiInsightsDeviceCoordinator._merge_legacy_outlet_data(device_dict, {})
         assert "outlet_table" not in device_dict
 
     def test_ac_power_budget_only(self):
         """Merge when only ac_power_budget is present without ac_power_consumption."""
-        device_dict = {"mac": "00:11:22:33:44:55"}
-        legacy_devices = {
+        device_dict: dict[str, Any] = {"mac": "00:11:22:33:44:55"}
+        legacy_devices: dict[str, Any] = {
             "00:11:22:33:44:55": {
                 "_id": "dev123",
                 "mac": "00:11:22:33:44:55",
@@ -242,8 +248,8 @@ class TestMergeLegacyOutletData:
 
     def test_ac_power_consumption_and_budget(self):
         """Merge both ac_power_consumption and ac_power_budget."""
-        device_dict = {"mac": "00:11:22:33:44:55"}
-        legacy_devices = {
+        device_dict: dict[str, Any] = {"mac": "00:11:22:33:44:55"}
+        legacy_devices: dict[str, Any] = {
             "00:11:22:33:44:55": {
                 "_id": "dev123",
                 "mac": "00:11:22:33:44:55",
@@ -261,8 +267,8 @@ class TestMergeLegacyOutletData:
 
     def test_outlets_present_without_outlet_overrides(self):
         """Merge outlet_table when outlet_overrides is absent."""
-        device_dict = {"mac": "00:11:22:33:44:55"}
-        legacy_devices = {
+        device_dict: dict[str, Any] = {"mac": "00:11:22:33:44:55"}
+        legacy_devices: dict[str, Any] = {
             "00:11:22:33:44:55": {
                 "mac": "00:11:22:33:44:55",
                 "outlet_table": [{"index": 1, "name": "Outlet 1", "relay_state": True}],
@@ -276,8 +282,8 @@ class TestMergeLegacyOutletData:
 
     def test_outlets_present_with_outlet_overrides(self):
         """Merge outlet_table and outlet_overrides when both are present."""
-        device_dict = {"mac": "00:11:22:33:44:55"}
-        legacy_devices = {
+        device_dict: dict[str, Any] = {"mac": "00:11:22:33:44:55"}
+        legacy_devices: dict[str, Any] = {
             "00:11:22:33:44:55": {
                 "mac": "00:11:22:33:44:55",
                 "outlet_table": [{"index": 1, "name": "Outlet 1", "relay_state": True}],
@@ -324,7 +330,7 @@ class TestProcessDeviceSiteResolutionAndStats:
         self, mock_device_coordinator
     ):
         """Resolve site_name via internalReference when legacy_site_name is None."""
-        device_dict = {
+        device_dict: dict[str, Any] = {
             "id": "dev1",
             "mac": "00:11:22:33:44:55",
             "state": "ONLINE",
@@ -356,7 +362,7 @@ class TestProcessDeviceSiteResolutionAndStats:
         self, mock_device_coordinator
     ):
         """Resolve site_name via internal_reference when legacy_site_name is None."""
-        device_dict = {
+        device_dict: dict[str, Any] = {
             "id": "dev1",
             "mac": "00:11:22:33:44:55",
             "state": "ONLINE",
@@ -380,7 +386,7 @@ class TestProcessDeviceSiteResolutionAndStats:
 
     async def test_fallback_internal_reference_exception(self, mock_device_coordinator):
         """Catch exception when resolving internal site reference."""
-        device_dict = {
+        device_dict: dict[str, Any] = {
             "id": "dev1",
             "mac": "00:11:22:33:44:55",
             "state": "ONLINE",
@@ -405,7 +411,7 @@ class TestProcessDeviceSiteResolutionAndStats:
 
     async def test_fallback_when_site_obj_not_dict(self, mock_device_coordinator):
         """Resolve site_name via site_id when get_site returns non-dict."""
-        device_dict = {
+        device_dict: dict[str, Any] = {
             "id": "dev1",
             "mac": "00:11:22:33:44:55",
             "state": "ONLINE",

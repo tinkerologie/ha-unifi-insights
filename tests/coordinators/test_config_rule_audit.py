@@ -31,6 +31,7 @@ from custom_components.unifi_insights.coordinators.config_sections import (
     SECTION_OUTCOME_FAILED,
     async_fetch_site_routes,
 )
+from tests.fixtures.assertions import patch_attribute
 from tests.fixtures.coordinator_clients import (
     _create_mock_model,
     _create_mock_network_client,
@@ -273,14 +274,19 @@ async def test_fetch_optional_section_records_outcomes(
 
 
 async def test_empty_2xx_body_reports_no_deletions(
-    coordinator: UnifiInsightsConfigCoordinator,
+    coordinator: UnifiInsightsConfigCoordinator, monkeypatch
 ) -> None:
     """An empty 2xx body is not reported as every rule being deleted."""
     stub_client = MagicMock()
     stub_client.build_legacy_api_path = MagicMock(return_value="/dummy/path")
     envelope = {"data": [{"_id": "pf1", "name": "PF 1", "enabled": True}]}
     stub_client._get = AsyncMock(side_effect=[envelope, None, envelope])
-    coordinator.network_client.port_forwards = PortForwardsEndpoint(stub_client)
+    patch_attribute(
+        monkeypatch,
+        coordinator.network_client,
+        "port_forwards",
+        PortForwardsEndpoint(stub_client),
+    )
 
     await coordinator._async_update_data()
     assert coordinator.data["rule_changes"] == {}

@@ -57,7 +57,9 @@ from custom_components.unifi_insights.switch import (
     _route_kill_switch,
     async_setup_entry,
 )
+from tests.fixtures.assertions import patch_attribute, require_mock, require_not_none
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
+from tests.fixtures.entities import EntityCollector
 from tests.fixtures.facade_data import (
     set_availability,
     with_camera,
@@ -903,7 +905,9 @@ class TestUnifiClientBlockSwitch:
         )
 
         # Should use the uplink device's identifiers
-        assert switch._attr_device_info["identifiers"] == {(DOMAIN, "site1_device1")}
+        assert require_not_none(switch._attr_device_info)["identifiers"] == {
+            (DOMAIN, "site1_device1")
+        }
 
     def test_switch_fallback_no_uplink(self, mock_coordinator: MagicMock) -> None:
         """Test switch creates own device when no uplink."""
@@ -919,8 +923,10 @@ class TestUnifiClientBlockSwitch:
         )
 
         # Should create its own device
-        assert switch._attr_device_info["identifiers"] == {(DOMAIN, "client_client1")}
-        assert switch._attr_device_info["name"] == "Jukebox"
+        assert require_not_none(switch._attr_device_info)["identifiers"] == {
+            (DOMAIN, "client_client1")
+        }
+        assert require_not_none(switch._attr_device_info)["name"] == "Jukebox"
 
     def test_switch_available(self, mock_coordinator: MagicMock) -> None:
         """Test switch availability."""
@@ -1090,8 +1096,12 @@ class TestUnifiWifiSwitch:
             wifi_data=wifi_data,
         )
 
-        assert switch._attr_device_info["identifiers"] == {(DOMAIN, "wifi_wifi1")}
-        assert switch._attr_device_info["name"] == "WiFi: Home Network"
+        assert require_not_none(switch._attr_device_info)["identifiers"] == {
+            (DOMAIN, "wifi_wifi1")
+        }
+        assert (
+            require_not_none(switch._attr_device_info)["name"] == "WiFi: Home Network"
+        )
 
     def test_switch_is_on_when_enabled(self, mock_coordinator) -> None:
         """Test switch is ON when WiFi is enabled."""
@@ -1317,7 +1327,9 @@ class TestUnifiFirewallRuleSwitch:
         assert switch._attr_translation_key == "firewall_rule"
         assert switch._attr_translation_placeholders == {"rule_name": "Block Instagram"}
         assert switch.entity_category == EntityCategory.CONFIG
-        assert switch._attr_device_info["identifiers"] == {(DOMAIN, "site1_gateway1")}
+        assert require_not_none(switch._attr_device_info)["identifiers"] == {
+            (DOMAIN, "site1_gateway1")
+        }
 
     def test_is_on(self, mock_coordinator: MagicMock) -> None:
         """Test firewall switch state mirrors rule enabled state."""
@@ -1359,7 +1371,9 @@ class TestUnifiFirewallRuleSwitch:
         assert switch.icon is None
 
     @pytest.mark.asyncio
-    async def test_turn_on_updates_rule(self, mock_coordinator: MagicMock) -> None:
+    async def test_turn_on_updates_rule(
+        self, mock_coordinator: MagicMock, monkeypatch
+    ) -> None:
         """Test enabling a firewall rule."""
         mock_coordinator.data = _with_record_fields(
             mock_coordinator.data, "firewall_rules", "site1", "rule1", enabled=False
@@ -1367,7 +1381,7 @@ class TestUnifiFirewallRuleSwitch:
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         await switch.async_turn_on()
 
@@ -1376,16 +1390,16 @@ class TestUnifiFirewallRuleSwitch:
             "site1", "rule1", enabled=True
         )
         mock_coordinator.network_client.firewall.update_rule.assert_not_called()
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
         mock_coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_turn_off_updates_rule(self, mock_coordinator) -> None:
+    async def test_turn_off_updates_rule(self, mock_coordinator, monkeypatch) -> None:
         """Test disabling a firewall rule."""
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         await switch.async_turn_off()
 
@@ -1394,7 +1408,7 @@ class TestUnifiFirewallRuleSwitch:
             "site1", "rule1", enabled=False
         )
         mock_coordinator.network_client.firewall.update_rule.assert_not_called()
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
         mock_coordinator.async_request_refresh.assert_not_awaited()
 
     def test_fallback_device_info_without_gateway(
@@ -1409,14 +1423,17 @@ class TestUnifiFirewallRuleSwitch:
             mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
         )
 
-        assert switch._attr_device_info["identifiers"] == {
+        assert require_not_none(switch._attr_device_info)["identifiers"] == {
             (DOMAIN, "firewall_policies_site1")
         }
-        assert switch._attr_device_info["name"] == "Firewall Policies (Default)"
+        assert (
+            require_not_none(switch._attr_device_info)["name"]
+            == "Firewall Policies (Default)"
+        )
 
     @pytest.mark.asyncio
     async def test_turn_on_error_does_not_write_state(
-        self, mock_coordinator: MagicMock
+        self, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test firewall update failures propagate without writing state."""
         config = mock_coordinator.config_coordinator
@@ -1430,12 +1447,12 @@ class TestUnifiFirewallRuleSwitch:
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, FIREWALL_RULE_SWITCH, "site1", "rule1"
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         with pytest.raises(HomeAssistantError, match="Unable to update firewall rule"):
             await switch.async_turn_on()
 
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
         assert (
             mock_coordinator.data["firewall_rules"]["site1"]["rule1"]["enabled"]
             is False
@@ -1645,7 +1662,9 @@ class TestUnifiPolicyBasedRouteSwitch:
             "route_name": "Route via Privado VPN"
         }
         assert switch.entity_category == EntityCategory.CONFIG
-        assert switch._attr_device_info["identifiers"] == {(DOMAIN, "site1_gateway1")}
+        assert require_not_none(switch._attr_device_info)["identifiers"] == {
+            (DOMAIN, "site1_gateway1")
+        }
 
     def test_available_follows_config_refresh(
         self, mock_coordinator: MagicMock
@@ -1743,7 +1762,7 @@ class TestUnifiPolicyBasedRouteSwitch:
 
     @pytest.mark.asyncio
     async def test_turn_off_warns_when_kill_switch_enabled_live_payload(
-        self, mock_coordinator: MagicMock, caplog: pytest.LogCaptureFixture
+        self, mock_coordinator: MagicMock, caplog: pytest.LogCaptureFixture, monkeypatch
     ) -> None:
         """Test disable warning fires for the live ``kill_switch_enabled`` field."""
         mock_coordinator.data = with_rule(
@@ -1761,7 +1780,7 @@ class TestUnifiPolicyBasedRouteSwitch:
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route3"
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         with caplog.at_level(logging.WARNING):
             await switch.async_turn_off()
@@ -1831,7 +1850,7 @@ class TestUnifiPolicyBasedRouteSwitch:
 
     @pytest.mark.asyncio
     async def test_turn_off_warns_for_legacy_shape_through_serialization(
-        self, mock_coordinator: MagicMock, caplog: pytest.LogCaptureFixture
+        self, mock_coordinator: MagicMock, caplog: pytest.LogCaptureFixture, monkeypatch
     ) -> None:
         """Test the disable warning fires for a serialized legacy-shape route."""
         route = PolicyBasedRoute.model_validate(
@@ -1852,7 +1871,7 @@ class TestUnifiPolicyBasedRouteSwitch:
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route4"
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         with caplog.at_level(logging.WARNING):
             await switch.async_turn_off()
@@ -1890,7 +1909,9 @@ class TestUnifiPolicyBasedRouteSwitch:
         assert switch2.icon is None
 
     @pytest.mark.asyncio
-    async def test_turn_on_updates_route(self, mock_coordinator: MagicMock) -> None:
+    async def test_turn_on_updates_route(
+        self, mock_coordinator: MagicMock, monkeypatch
+    ) -> None:
         """Test enabling a policy-based route."""
         mock_coordinator.data = _with_record_fields(
             mock_coordinator.data,
@@ -1902,7 +1923,7 @@ class TestUnifiPolicyBasedRouteSwitch:
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         await switch.async_turn_on()
 
@@ -1911,16 +1932,18 @@ class TestUnifiPolicyBasedRouteSwitch:
             "site1", "route1", enabled=True
         )
         mock_coordinator.network_client.routes.update_route.assert_not_called()
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
         mock_coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_turn_off_updates_route(self, mock_coordinator: MagicMock) -> None:
+    async def test_turn_off_updates_route(
+        self, mock_coordinator: MagicMock, monkeypatch
+    ) -> None:
         """Test disabling a policy-based route."""
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         await switch.async_turn_off()
 
@@ -1929,19 +1952,19 @@ class TestUnifiPolicyBasedRouteSwitch:
             "site1", "route1", enabled=False
         )
         mock_coordinator.network_client.routes.update_route.assert_not_called()
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
         mock_coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_turn_off_warns_when_kill_switch_enabled(
-        self, mock_coordinator: MagicMock, caplog: pytest.LogCaptureFixture
+        self, mock_coordinator: MagicMock, caplog: pytest.LogCaptureFixture, monkeypatch
     ) -> None:
         """Test disabling a route with an active kill switch logs a warning."""
         # route1 has killSwitch=True in the fixture data.
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         with caplog.at_level(logging.WARNING):
             await switch.async_turn_off()
@@ -1950,14 +1973,14 @@ class TestUnifiPolicyBasedRouteSwitch:
 
     @pytest.mark.asyncio
     async def test_turn_off_no_warning_when_kill_switch_disabled(
-        self, mock_coordinator: MagicMock, caplog: pytest.LogCaptureFixture
+        self, mock_coordinator: MagicMock, caplog: pytest.LogCaptureFixture, monkeypatch
     ) -> None:
         """Test disabling a route without a kill switch logs no warning."""
         # route2 has no killSwitch key in the fixture data.
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route2"
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         with caplog.at_level(logging.WARNING):
             await switch.async_turn_off()
@@ -1978,14 +2001,17 @@ class TestUnifiPolicyBasedRouteSwitch:
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
 
-        assert switch._attr_device_info["identifiers"] == {
+        assert require_not_none(switch._attr_device_info)["identifiers"] == {
             (DOMAIN, "policy_based_routes_site1")
         }
-        assert switch._attr_device_info["name"] == "Policy-Based Routes (Default)"
+        assert (
+            require_not_none(switch._attr_device_info)["name"]
+            == "Policy-Based Routes (Default)"
+        )
 
     @pytest.mark.asyncio
     async def test_turn_on_error_does_not_write_state(
-        self, mock_coordinator: MagicMock
+        self, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test route update failures do not write optimistic state."""
         config = mock_coordinator.config_coordinator
@@ -2003,14 +2029,14 @@ class TestUnifiPolicyBasedRouteSwitch:
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         with pytest.raises(
             HomeAssistantError, match="Unable to update policy-based route"
         ):
             await switch.async_turn_on()
 
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
         assert (
             mock_coordinator.data["policy_based_routes"]["site1"]["route1"]["enabled"]
             is False
@@ -2018,7 +2044,7 @@ class TestUnifiPolicyBasedRouteSwitch:
 
     @pytest.mark.asyncio
     async def test_turn_off_error_does_not_write_state(
-        self, mock_coordinator: MagicMock
+        self, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test route disable failures do not write optimistic state."""
         config = mock_coordinator.config_coordinator
@@ -2036,14 +2062,14 @@ class TestUnifiPolicyBasedRouteSwitch:
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, POLICY_BASED_ROUTE_SWITCH, "site1", "route1"
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         with pytest.raises(
             HomeAssistantError, match="Unable to update policy-based route"
         ):
             await switch.async_turn_off()
 
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
         assert (
             mock_coordinator.data["policy_based_routes"]["site1"]["route1"]["enabled"]
             is True
@@ -2258,7 +2284,9 @@ class TestUnifiVpnClientSwitch:
             "vpn_client_name": "Privado VPN"
         }
         assert switch.entity_category == EntityCategory.CONFIG
-        assert switch._attr_device_info["identifiers"] == {(DOMAIN, "site1_gateway1")}
+        assert require_not_none(switch._attr_device_info)["identifiers"] == {
+            (DOMAIN, "site1_gateway1")
+        }
 
     def test_available(self, mock_coordinator: MagicMock) -> None:
         """Test switch availability depends on coordinator and data."""
@@ -2324,7 +2352,7 @@ class TestUnifiVpnClientSwitch:
 
     @pytest.mark.asyncio
     async def test_turn_on_updates_vpn_client(
-        self, mock_coordinator: MagicMock
+        self, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test enabling a VPN client."""
         mock_coordinator.data = _with_record_fields(
@@ -2337,7 +2365,7 @@ class TestUnifiVpnClientSwitch:
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         await switch.async_turn_on()
 
@@ -2346,18 +2374,18 @@ class TestUnifiVpnClientSwitch:
             "site1", "vpn1", enabled=True
         )
         mock_coordinator.network_client.vpn_clients.update_vpn_client.assert_not_called()
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
         mock_coordinator.async_request_refresh.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_turn_off_updates_vpn_client(
-        self, mock_coordinator: MagicMock
+        self, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test disabling a VPN client."""
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         await switch.async_turn_off()
 
@@ -2366,7 +2394,7 @@ class TestUnifiVpnClientSwitch:
             "site1", "vpn1", enabled=False
         )
         mock_coordinator.network_client.vpn_clients.update_vpn_client.assert_not_called()
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
         mock_coordinator.async_request_refresh.assert_not_awaited()
 
     def test_fallback_device_info_without_gateway(
@@ -2381,14 +2409,17 @@ class TestUnifiVpnClientSwitch:
             mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
         )
 
-        assert switch._attr_device_info["identifiers"] == {
+        assert require_not_none(switch._attr_device_info)["identifiers"] == {
             (DOMAIN, "vpn_clients_site1")
         }
-        assert switch._attr_device_info["name"] == "VPN Clients (Default)"
+        assert (
+            require_not_none(switch._attr_device_info)["name"]
+            == "VPN Clients (Default)"
+        )
 
     @pytest.mark.asyncio
     async def test_turn_on_error_does_not_write_state(
-        self, mock_coordinator: MagicMock
+        self, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test VPN client update failures do not write optimistic state."""
         config = mock_coordinator.config_coordinator
@@ -2406,17 +2437,17 @@ class TestUnifiVpnClientSwitch:
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         with pytest.raises(HomeAssistantError, match="Unable to update VPN client"):
             await switch.async_turn_on()
 
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
         assert mock_coordinator.data["vpn_clients"]["site1"]["vpn1"]["enabled"] is False
 
     @pytest.mark.asyncio
     async def test_turn_off_error_does_not_write_state(
-        self, mock_coordinator: MagicMock
+        self, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test VPN client disable failures do not write optimistic state."""
         config = mock_coordinator.config_coordinator
@@ -2434,12 +2465,12 @@ class TestUnifiVpnClientSwitch:
         switch = UnifiInsightsNetworkRuleSwitch(
             mock_coordinator, VPN_CLIENT_SWITCH, "site1", "vpn1"
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         with pytest.raises(HomeAssistantError, match="Unable to update VPN client"):
             await switch.async_turn_off()
 
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
         assert mock_coordinator.data["vpn_clients"]["site1"]["vpn1"]["enabled"] is True
 
     def test_unnamed_vpn_client_switch(self, mock_coordinator: MagicMock) -> None:
@@ -2755,7 +2786,9 @@ class TestUnifiProtectStatusLightSwitch:
         assert attrs[ATTR_STATUS_LIGHT] is True
 
     @pytest.mark.asyncio
-    async def test_async_turn_on_success(self, mock_coordinator: MagicMock) -> None:
+    async def test_async_turn_on_success(
+        self, mock_coordinator: MagicMock, monkeypatch
+    ) -> None:
         """Test turning status light on successfully."""
         mock_coordinator.data = _with_camera_fields(
             mock_coordinator.data, "camera1", ledSettings={"isEnabled": False}
@@ -2765,7 +2798,7 @@ class TestUnifiProtectStatusLightSwitch:
             coordinator=mock_coordinator,
             camera_id="camera1",
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         await switch.async_turn_on()
 
@@ -2781,7 +2814,9 @@ class TestUnifiProtectStatusLightSwitch:
         assert switch._attr_is_on is True
 
     @pytest.mark.asyncio
-    async def test_async_turn_on_error(self, mock_coordinator: MagicMock) -> None:
+    async def test_async_turn_on_error(
+        self, mock_coordinator: MagicMock, monkeypatch
+    ) -> None:
         """Test turning status light on with error."""
         protect_owner(
             mock_coordinator
@@ -2796,21 +2831,23 @@ class TestUnifiProtectStatusLightSwitch:
             coordinator=mock_coordinator,
             camera_id="camera1",
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         with pytest.raises(HomeAssistantError, match="Unable to update camera"):
             await switch.async_turn_on()
 
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_async_turn_off_success(self, mock_coordinator: MagicMock) -> None:
+    async def test_async_turn_off_success(
+        self, mock_coordinator: MagicMock, monkeypatch
+    ) -> None:
         """Test turning status light off successfully."""
         switch = UnifiProtectStatusLightSwitch(
             coordinator=mock_coordinator,
             camera_id="camera1",
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         await switch.async_turn_off()
 
@@ -2826,7 +2863,7 @@ class TestUnifiProtectStatusLightSwitch:
         assert switch._attr_is_on is False
 
     @pytest.mark.asyncio
-    async def test_async_turn_off_error(self, mock_coordinator) -> None:
+    async def test_async_turn_off_error(self, mock_coordinator, monkeypatch) -> None:
         """Test turning status light off with error."""
         protect_owner(
             mock_coordinator
@@ -2838,12 +2875,12 @@ class TestUnifiProtectStatusLightSwitch:
             coordinator=mock_coordinator,
             camera_id="camera1",
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         with pytest.raises(HomeAssistantError, match="Unable to update camera"):
             await switch.async_turn_off()
 
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
 
 
 class TestUnifiProtectHighFPSSwitch:
@@ -2945,13 +2982,15 @@ class TestUnifiProtectHighFPSSwitch:
         assert attrs[ATTR_HIGH_FPS_MODE] is False
 
     @pytest.mark.asyncio
-    async def test_async_turn_on_success(self, mock_coordinator: MagicMock) -> None:
+    async def test_async_turn_on_success(
+        self, mock_coordinator: MagicMock, monkeypatch
+    ) -> None:
         """Test enabling high FPS mode successfully."""
         switch = UnifiProtectHighFPSSwitch(
             coordinator=mock_coordinator,
             camera_id="camera1",
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         await switch.async_turn_on()
 
@@ -2967,7 +3006,7 @@ class TestUnifiProtectHighFPSSwitch:
         assert switch._attr_is_on is True
 
     @pytest.mark.asyncio
-    async def test_async_turn_on_error(self, mock_coordinator) -> None:
+    async def test_async_turn_on_error(self, mock_coordinator, monkeypatch) -> None:
         """Test enabling high FPS mode with error."""
         protect_owner(
             mock_coordinator
@@ -2980,15 +3019,17 @@ class TestUnifiProtectHighFPSSwitch:
             camera_id="camera1",
         )
         switch._attr_is_on = False
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         with pytest.raises(HomeAssistantError, match="Unable to update camera"):
             await switch.async_turn_on()
 
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_async_turn_off_success(self, mock_coordinator: MagicMock) -> None:
+    async def test_async_turn_off_success(
+        self, mock_coordinator: MagicMock, monkeypatch
+    ) -> None:
         """Test disabling high FPS mode successfully."""
         mock_coordinator.data = _with_camera_fields(
             mock_coordinator.data, "camera1", videoMode=VIDEO_MODE_HIGH_FPS
@@ -2998,7 +3039,7 @@ class TestUnifiProtectHighFPSSwitch:
             coordinator=mock_coordinator,
             camera_id="camera1",
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         await switch.async_turn_off()
 
@@ -3014,7 +3055,9 @@ class TestUnifiProtectHighFPSSwitch:
         assert switch._attr_is_on is False
 
     @pytest.mark.asyncio
-    async def test_async_turn_off_error(self, mock_coordinator: MagicMock) -> None:
+    async def test_async_turn_off_error(
+        self, mock_coordinator: MagicMock, monkeypatch
+    ) -> None:
         """Test disabling high FPS mode with error."""
         protect_owner(
             mock_coordinator
@@ -3029,12 +3072,12 @@ class TestUnifiProtectHighFPSSwitch:
             coordinator=mock_coordinator,
             camera_id="camera1",
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         with pytest.raises(HomeAssistantError, match="Unable to update camera"):
             await switch.async_turn_off()
 
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
 
 
 class TestAsyncSetupEntryWithNewSwitches:
@@ -3683,8 +3726,7 @@ class TestUnifiOutletSwitch:
         mock_entry.runtime_data.coordinator = mock_coordinator
         entities = []
 
-        def async_add_entities(new_entities):
-            entities.extend(new_entities)
+        async_add_entities = EntityCollector(entities)
 
         await async_setup_entry(
             MagicMock(),
@@ -3723,8 +3765,7 @@ class TestUnifiOutletSwitch:
         mock_entry.runtime_data.coordinator = mock_coordinator
         entities = []
 
-        def async_add_entities(new_entities):
-            entities.extend(new_entities)
+        async_add_entities = EntityCollector(entities)
 
         await async_setup_entry(
             MagicMock(),
@@ -3804,11 +3845,11 @@ class TestUnifiOutletSwitch:
         assert switch.icon is None
 
         attrs = switch.extra_state_attributes
-        assert attrs["index"] == 1
-        assert attrs["name"] == "Main Server"
-        assert attrs["relay_state"] is True
-        assert attrs["cycle_enabled"] is True
-        assert attrs["outlet_power"] == 150.0
+        assert require_not_none(attrs)["index"] == 1
+        assert require_not_none(attrs)["name"] == "Main Server"
+        assert require_not_none(attrs)["relay_state"] is True
+        assert require_not_none(attrs)["cycle_enabled"] is True
+        assert require_not_none(attrs)["outlet_power"] == 150.0
 
     def test_outlet_switch_unavailable_when_device_coordinator_unavailable(
         self, mock_coordinator: MagicMock
@@ -3829,7 +3870,7 @@ class TestUnifiOutletSwitch:
         assert switch.available is False
 
     @pytest.mark.asyncio
-    async def test_outlet_switch_turn_on(self, mock_coordinator) -> None:
+    async def test_outlet_switch_turn_on(self, mock_coordinator, monkeypatch) -> None:
         """Test turning on the outlet switch."""
         outlet_data = mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][
             1
@@ -3842,7 +3883,7 @@ class TestUnifiOutletSwitch:
             outlet_index=2,
             outlet_data=outlet_data,
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         await switch.async_turn_on()
 
@@ -3850,10 +3891,10 @@ class TestUnifiOutletSwitch:
             "site1", "pdu1", 2, state=True
         )
         mock_coordinator.async_request_refresh.assert_not_awaited()
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_outlet_switch_turn_off(self, mock_coordinator) -> None:
+    async def test_outlet_switch_turn_off(self, mock_coordinator, monkeypatch) -> None:
         """Test turning off the outlet switch."""
         outlet_data = mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][
             0
@@ -3866,7 +3907,7 @@ class TestUnifiOutletSwitch:
             outlet_index=1,
             outlet_data=outlet_data,
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         await switch.async_turn_off()
 
@@ -3874,7 +3915,7 @@ class TestUnifiOutletSwitch:
             "site1", "pdu1", 1, state=False
         )
         mock_coordinator.async_request_refresh.assert_not_awaited()
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
 
     def test_outlet_switch_unavailable_when_device_offline(
         self, mock_coordinator: MagicMock
@@ -3933,8 +3974,8 @@ class TestUnifiOutletSwitch:
             ],
         )
         attrs = switch.extra_state_attributes
-        assert attrs["outlet_voltage"] == 120.0
-        assert attrs["outlet_power_factor"] == 0.99
+        assert require_not_none(attrs)["outlet_voltage"] == 120.0
+        assert require_not_none(attrs)["outlet_power_factor"] == 0.99
 
     @pytest.mark.asyncio
     async def test_outlet_switch_turn_on_failure_no_optimistic_update(
@@ -4092,7 +4133,7 @@ class TestUnifiOutletCycleSwitch:
         assert switch.available is False
 
     @pytest.mark.asyncio
-    async def test_cycle_switch_turn_on(self, mock_coordinator) -> None:
+    async def test_cycle_switch_turn_on(self, mock_coordinator, monkeypatch) -> None:
         """Test turning on the power cycle switch."""
         outlet_data = mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][
             1
@@ -4105,7 +4146,7 @@ class TestUnifiOutletCycleSwitch:
             outlet_index=2,
             outlet_data=outlet_data,
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         await switch.async_turn_on()
 
@@ -4113,10 +4154,10 @@ class TestUnifiOutletCycleSwitch:
             "site1", "pdu1", 2, state=False, cycle_enabled=True
         )
         mock_coordinator.async_request_refresh.assert_not_awaited()
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_cycle_switch_turn_off(self, mock_coordinator) -> None:
+    async def test_cycle_switch_turn_off(self, mock_coordinator, monkeypatch) -> None:
         """Test turning off the power cycle switch."""
         outlet_data = mock_coordinator.data["devices"]["site1"]["pdu1"]["outlet_table"][
             0
@@ -4129,7 +4170,7 @@ class TestUnifiOutletCycleSwitch:
             outlet_index=1,
             outlet_data=outlet_data,
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         await switch.async_turn_off()
 
@@ -4137,11 +4178,11 @@ class TestUnifiOutletCycleSwitch:
             "site1", "pdu1", 1, state=True, cycle_enabled=False
         )
         mock_coordinator.async_request_refresh.assert_not_awaited()
-        switch.async_write_ha_state.assert_not_called()
+        require_mock(switch.async_write_ha_state).assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cycle_switch_does_not_default_relay_on(
-        self, mock_coordinator: MagicMock
+        self, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test toggling power cycling never energizes an unknown relay.
 
@@ -4163,7 +4204,7 @@ class TestUnifiOutletCycleSwitch:
             outlet_index=1,
             outlet_data={"index": 1, "cycle_enabled": False},
         )
-        switch.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, switch, "async_write_ha_state", MagicMock())
 
         await switch.async_turn_on()
 
@@ -4255,7 +4296,7 @@ class TestUnifiOutletCycleSwitch:
                 ],
             },
         )
-        assert switch._get_outlet_data()["outlet_idx"] == 1
+        assert require_not_none(switch._get_outlet_data())["outlet_idx"] == 1
 
         mock_coordinator.data = with_device_fields(
             mock_coordinator.data, "site1", "pdu1", state="OFFLINE"

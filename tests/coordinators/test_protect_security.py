@@ -34,6 +34,11 @@ from custom_components.unifi_insights.coordinators.protect_events import (
     PollCompleted,
 )
 from tests.conftest import set_mock_device_lookup
+from tests.fixtures.assertions import (
+    patch_attribute,
+    require_instance,
+    require_not_none,
+)
 from tests.fixtures.coordinator_clients import (
     _create_mock_network_client,
     _create_mock_protect_client,
@@ -129,16 +134,16 @@ class TestProtectSecurityDeviceFamilies:
     ) -> None:
         """The 30s poll includes the three new families."""
         client = coordinator.protect_client
-        client.fobs.get_all = AsyncMock(
+        require_not_none(client).fobs.get_all = AsyncMock(
             return_value=[Fob.model_validate(SAMPLE_KEYPAD_FOB)]
         )
-        client.link_stations.get_all = AsyncMock(
+        require_not_none(client).link_stations.get_all = AsyncMock(
             return_value=[LinkStation.model_validate(SAMPLE_THREAD_LINK_STATION)]
         )
-        client.alarm_hubs.get_all = AsyncMock(
+        require_not_none(client).alarm_hubs.get_all = AsyncMock(
             return_value=[LinkStation.model_validate(SAMPLE_ALARM_HUB)]
         )
-        client.sirens.get_all = AsyncMock(
+        require_not_none(client).sirens.get_all = AsyncMock(
             return_value=[Siren.model_validate(SAMPLE_SIREN)]
         )
 
@@ -215,7 +220,7 @@ class TestProtectSecurityDeviceFamilies:
         It stopped being an "unsupported endpoint" signal once the family
         answered, so the call opts out and the error warns like any other.
         """
-        endpoint = coordinator.protect_client.link_stations
+        endpoint = require_not_none(coordinator.protect_client).link_stations
         endpoint.get_all = AsyncMock(
             return_value=[LinkStation.model_validate(SAMPLE_THREAD_LINK_STATION)]
         )
@@ -243,7 +248,7 @@ class TestProtectSecurityDeviceFamilies:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """A 400 is a request problem, not a missing endpoint: warn, keep polling."""
-        endpoint = coordinator.protect_client.fobs
+        endpoint = require_not_none(coordinator.protect_client).fobs
         endpoint.get_all = AsyncMock(
             side_effect=UniFiResponseError("API error (status 400)", 400)
         )
@@ -260,7 +265,7 @@ class TestProtectSecurityDeviceFamilies:
         self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """A Protect upgrade is picked up at the next hourly re-probe."""
-        endpoint = coordinator.protect_client.fobs
+        endpoint = require_not_none(coordinator.protect_client).fobs
         endpoint.get_all = AsyncMock(
             side_effect=[
                 UniFiNotFoundError("Not Found", 404),
@@ -289,7 +294,7 @@ class TestProtectSecurityDeviceFamilies:
 
         It goes through the bounded 404 cache path instead, like cameras.
         """
-        endpoint = coordinator.protect_client.alarm_hubs
+        endpoint = require_not_none(coordinator.protect_client).alarm_hubs
         endpoint.get_all = AsyncMock(
             return_value=[LinkStation.model_validate(SAMPLE_ALARM_HUB)]
         )
@@ -310,7 +315,7 @@ class TestProtectSecurityDeviceFamilies:
     ) -> None:
         """Any other error preserves the cache and is logged."""
         coordinator.data["link_stations"] = {"ls1": {"id": "ls1"}}
-        coordinator.protect_client.link_stations.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).link_stations.get_all = AsyncMock(
             side_effect=Exception("500 Internal Server Error")
         )
 
@@ -325,7 +330,7 @@ class TestProtectSecurityDeviceFamilies:
     ) -> None:
         """A device the endpoint dropped on a parse error is not treated as gone."""
         coordinator.data["fobs"] = {"fob_old": {"id": "fob_old"}}
-        endpoint = coordinator.protect_client.fobs
+        endpoint = require_not_none(coordinator.protect_client).fobs
         endpoint.get_all = AsyncMock(
             return_value=[Fob.model_validate(SAMPLE_KEYPAD_FOB)]
         )
@@ -678,7 +683,7 @@ class TestProtectSecurityDeviceFamilies:
         self, coordinator: UnifiInsightsProtectCoordinator, siren: dict[str, Any]
     ) -> dict[str, Any]:
         """Run one siren poll that answers with ``siren`` and return its record."""
-        coordinator.protect_client.sirens.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sirens.get_all = AsyncMock(
             return_value=[Siren.model_validate(siren)]
         )
         await coordinator._fetch_sirens()
@@ -754,7 +759,9 @@ class TestProtectSecurityDeviceFamilies:
         coordinator.data["sirens"] = {"siren_1": self._siren_with_status()}
         coordinator.mark_siren_stopped("siren_1")
 
-        coordinator.protect_client.sirens.get_all = AsyncMock(return_value=[])
+        require_not_none(coordinator.protect_client).sirens.get_all = AsyncMock(
+            return_value=[]
+        )
         coordinator.data["sirens"] = {}
         await coordinator._fetch_sirens()
 
@@ -980,7 +987,12 @@ class TestProtectSecurityDeviceFamilies:
             older_reading=Fob.model_validate(SAMPLE_KEYPAD_FOB),
         )
 
-        assert coordinator.data["fobs"]["fob_1"]["keypadSettings"]["beepVolume"] == 60
+        assert (
+            require_instance(coordinator.data["fobs"]["fob_1"]["keypadSettings"], dict)[
+                "beepVolume"
+            ]
+            == 60
+        )
 
     @pytest.mark.asyncio
     async def test_reconcile_refreshes_sirens_and_notifies_only_on_change(
@@ -991,7 +1003,7 @@ class TestProtectSecurityDeviceFamilies:
         listener = MagicMock()
         coordinator.async_add_listener(listener)
         idle = self._siren_with_status(isActive=False)
-        coordinator.protect_client.sirens.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sirens.get_all = AsyncMock(
             return_value=[Siren.model_validate(idle)]
         )
 
@@ -1141,7 +1153,7 @@ class TestProtectSecurityDeviceFamilies:
             "alarmHubDeviceTamper",
             copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT),
         )
-        coordinator.protect_client.alarm_hubs.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).alarm_hubs.get_all = AsyncMock(
             return_value=[LinkStation.model_validate(SAMPLE_ALARM_HUB)]
         )
 
@@ -1164,7 +1176,7 @@ class TestProtectSecurityDeviceFamilies:
         rest_hub = copy.deepcopy(SAMPLE_ALARM_HUB)
         del rest_hub["alarmHub"]["deviceTamperStatus"]
         coordinator.data["alarm_hubs"] = {"alarm_hub_1": copy.deepcopy(rest_hub)}
-        coordinator.protect_client.alarm_hubs.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).alarm_hubs.get_all = AsyncMock(
             return_value=[LinkStation.model_validate(rest_hub)]
         )
 
@@ -1182,7 +1194,7 @@ class TestProtectSecurityDeviceFamilies:
 
     @pytest.mark.asyncio
     async def test_event_during_in_flight_poll_beats_the_stale_snapshot(
-        self, coordinator: UnifiInsightsProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator, monkeypatch
     ) -> None:
         """A REST snapshot taken before the tamper must not read as clear.
 
@@ -1200,8 +1212,10 @@ class TestProtectSecurityDeviceFamilies:
             )
             return [LinkStation.model_validate(SAMPLE_ALARM_HUB)]  # "restored"
 
-        endpoint = coordinator.protect_client.alarm_hubs
-        endpoint.get_all = get_all_with_tamper_mid_flight
+        endpoint = require_not_none(coordinator.protect_client).alarm_hubs
+        patch_attribute(
+            monkeypatch, endpoint, "get_all", get_all_with_tamper_mid_flight
+        )
         await coordinator._fetch_alarm_hubs()
         hub = coordinator.data["alarm_hubs"]["alarm_hub_1"]
         assert hub["alarmHub"]["deviceTamperStatus"] == "tampered"
@@ -1348,7 +1362,7 @@ class TestProtectSecurityDeviceFamilies:
         event["device"] = "gone"
         send_event(coordinator, "alarmHubDeviceTamper", event)
         assert "gone" in coordinator._events.tamper
-        coordinator.protect_client.alarm_hubs.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).alarm_hubs.get_all = AsyncMock(
             return_value=[LinkStation.model_validate(SAMPLE_ALARM_HUB)]
         )
 
@@ -1384,7 +1398,7 @@ class TestProtectSecurityDeviceFamilies:
         self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """An item the API returns without an id can't be keyed, so it's left out."""
-        coordinator.protect_client.fobs.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).fobs.get_all = AsyncMock(
             return_value=[{"name": "no id"}, Fob.model_validate(SAMPLE_KEYPAD_FOB)]
         )
 

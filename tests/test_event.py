@@ -49,6 +49,8 @@ from custom_components.unifi_insights.event import (
     discover_network_rule_change_events,
 )
 from tests.fixtures.access import DEVICES, DOORS, ENTRY_DATA, _client, _ready
+from tests.fixtures.assertions import patch_attribute, require_mock, require_not_none
+from tests.fixtures.entities import EntityCollector
 from tests.fixtures.facade_data import (
     set_availability,
     with_protect_collection,
@@ -58,10 +60,9 @@ from tests.fixtures.facade_data import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Mapping
 
     from homeassistant.core import HomeAssistant
-    from homeassistant.helpers.entity import Entity
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
     from custom_components.unifi_insights.coordinators.facade import FacadeData
@@ -361,8 +362,8 @@ class TestUnifiProtectDoorbellEventEntity:
             device_id="camera1",
         )
 
-        assert "camera1" in entity._attr_unique_id
-        assert "doorbell" in entity._attr_unique_id
+        assert "camera1" in require_not_none(entity._attr_unique_id)
+        assert "doorbell" in require_not_none(entity._attr_unique_id)
 
     def test_event_types(self, mock_coordinator) -> None:
         """Test event types are set correctly."""
@@ -446,6 +447,7 @@ class TestUnifiProtectDoorbellEventEntity:
 
         device_info = entity._attr_device_info
         assert device_info is not None
+        assert "manufacturer" in device_info
         assert device_info["manufacturer"] == "Ubiquiti Inc."
 
 
@@ -499,8 +501,8 @@ class TestUnifiProtectSmartDetectEventEntity:
             device_id="camera1",
         )
 
-        assert "camera1" in entity._attr_unique_id
-        assert "smart_detect" in entity._attr_unique_id
+        assert "camera1" in require_not_none(entity._attr_unique_id)
+        assert "smart_detect" in require_not_none(entity._attr_unique_id)
 
     def test_event_types(self, mock_coordinator) -> None:
         """Test event types include all smart detect types."""
@@ -588,6 +590,7 @@ class TestUnifiProtectSmartDetectEventEntity:
 
         device_info = entity._attr_device_info
         assert device_info is not None
+        assert "manufacturer" in device_info
         assert device_info["manufacturer"] == "Ubiquiti Inc."
 
 
@@ -640,8 +643,8 @@ class TestUnifiProtectSensorEventEntity:
             device_id="sensor1",
         )
 
-        assert "sensor1" in entity._attr_unique_id
-        assert "event" in entity._attr_unique_id
+        assert "sensor1" in require_not_none(entity._attr_unique_id)
+        assert "event" in require_not_none(entity._attr_unique_id)
 
     def test_event_types(self, mock_coordinator) -> None:
         """Test event types include open and close."""
@@ -726,6 +729,7 @@ class TestUnifiProtectSensorEventEntity:
 
         device_info = entity._attr_device_info
         assert device_info is not None
+        assert "manufacturer" in device_info
         assert device_info["manufacturer"] == "Ubiquiti Inc."
 
 
@@ -1358,11 +1362,7 @@ class TestSensorUpdateNoStatusChange:
 def _collector(added: list[Any]) -> AddEntitiesCallback:
     """Return a platform add callback that appends entities to ``added``."""
 
-    def _add(new_entities: Iterable[Entity], update_before_add: object = None) -> None:
-        """Accept HA's optional update flag while only collecting entities."""
-        added.extend(new_entities)
-
-    return _add
+    return EntityCollector(added)
 
 
 def _entry(hass: Any, data: dict[str, Any] | None = None) -> MockConfigEntry:
@@ -1748,7 +1748,7 @@ def test_identity_and_metadata(rule_audit_coordinator: MagicMock) -> None:
 
 
 def test_existing_changes_are_not_replayed(
-    rule_audit_coordinator: MagicMock,
+    rule_audit_coordinator: MagicMock, monkeypatch
 ) -> None:
     """Changes present before entity creation are treated as history."""
     rule_audit_coordinator.data = with_sections(
@@ -1760,22 +1760,22 @@ def test_existing_changes_are_not_replayed(
     entity = UnifiInsightsNetworkRuleChangeEvent(
         rule_audit_coordinator, "site1", unique_id=_UNIQUE_ID
     )
-    entity._trigger_event = MagicMock()
-    entity.async_write_ha_state = MagicMock()
+    patch_attribute(monkeypatch, entity, "_trigger_event", MagicMock())
+    patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
     entity._handle_coordinator_update()
-    entity._trigger_event.assert_not_called()
-    entity.async_write_ha_state.assert_not_called()
+    require_mock(entity._trigger_event).assert_not_called()
+    require_mock(entity.async_write_ha_state).assert_not_called()
 
 
 def test_each_new_change_fires_once_in_order(
-    rule_audit_coordinator: MagicMock,
+    rule_audit_coordinator: MagicMock, monkeypatch
 ) -> None:
     """New changes fire in sequence order; attributes contain allow-list keys only."""
     entity = UnifiInsightsNetworkRuleChangeEvent(
         rule_audit_coordinator, "site1", unique_id=_UNIQUE_ID
     )
-    entity._trigger_event = MagicMock()
-    entity.async_write_ha_state = MagicMock()
+    patch_attribute(monkeypatch, entity, "_trigger_event", MagicMock())
+    patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
 
     rule_audit_coordinator.data = with_sections(
         rule_audit_coordinator.data,
@@ -1789,18 +1789,18 @@ def test_each_new_change_fires_once_in_order(
     )
     entity._handle_coordinator_update()
 
-    assert entity._trigger_event.call_count == 2
-    calls = entity._trigger_event.call_args_list
+    assert require_mock(entity._trigger_event).call_count == 2
+    calls = require_mock(entity._trigger_event).call_args_list
     assert [c[0][0] for c in calls] == ["added", "deleted"]
     second_payload = calls[1][0][1]
     assert tuple(second_payload) == EVENT_ATTRIBUTE_KEYS
     assert "leaked" not in second_payload
-    assert entity.async_write_ha_state.call_count == 2
+    assert require_mock(entity.async_write_ha_state).call_count == 2
 
     # Subsequent update does not refire already triggered events
     entity._handle_coordinator_update()
-    assert entity._trigger_event.call_count == 2
-    assert entity.async_write_ha_state.call_count == 2
+    assert require_mock(entity._trigger_event).call_count == 2
+    assert require_mock(entity.async_write_ha_state).call_count == 2
 
 
 @pytest.mark.parametrize(
@@ -1813,19 +1813,19 @@ def test_each_new_change_fires_once_in_order(
     ],
 )
 def test_malformed_change_data_fires_nothing(
-    rule_audit_coordinator: MagicMock, rule_changes: Any
+    rule_audit_coordinator: MagicMock, rule_changes: Any, monkeypatch
 ) -> None:
     """Malformed change structures are ignored and fire no events."""
     entity = UnifiInsightsNetworkRuleChangeEvent(
         rule_audit_coordinator, "site1", unique_id=_UNIQUE_ID
     )
-    entity._trigger_event = MagicMock()
-    entity.async_write_ha_state = MagicMock()
+    patch_attribute(monkeypatch, entity, "_trigger_event", MagicMock())
+    patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
     rule_audit_coordinator.data = with_sections(
         rule_audit_coordinator.data, rule_changes=rule_changes
     )
     entity._handle_coordinator_update()
-    entity._trigger_event.assert_not_called()
+    require_mock(entity._trigger_event).assert_not_called()
 
 
 def test_non_dict_coordinator_data_is_tolerated(
@@ -1929,8 +1929,7 @@ async def test_setup_entry_adds_rule_change_event_without_protect(
     )
     added_entities: list[Any] = []
 
-    def _async_add(ents: list[Any]) -> None:
-        added_entities.extend(ents)
+    _async_add = EntityCollector(added_entities)
 
     await async_setup_entry(hass, entry, _async_add)
     assert len(added_entities) == 1
@@ -1975,17 +1974,17 @@ async def test_two_changes_in_one_refresh_are_two_state_changes(
     await hass.async_block_till_done()
 
     states = [e.data["new_state"] for e in events]
-    assert [s.attributes["event_type"] for s in states] == [
+    assert [require_not_none(s).attributes["event_type"] for s in states] == [
         "added",
         "deleted",
     ]
-    assert [s.attributes["rule_id"] for s in states] == ["pf1", "pf2"]
-    t0 = dt_util.parse_datetime(states[0].state)
-    t1 = dt_util.parse_datetime(states[1].state)
+    assert [require_not_none(s).attributes["rule_id"] for s in states] == ["pf1", "pf2"]
+    t0 = dt_util.parse_datetime(require_not_none(states[0]).state)
+    t1 = dt_util.parse_datetime(require_not_none(states[1]).state)
     assert t0 is not None
     assert t1 is not None
     assert t0 <= t1
-    assert "leaked" not in states[1].attributes
+    assert "leaked" not in require_not_none(states[1]).attributes
 
 
 async def test_event_data_coerces_unexpected_value_types(
@@ -2025,14 +2024,16 @@ async def test_event_data_coerces_unexpected_value_types(
 
 
 async def test_unavailable_round_trip_writes_no_new_event(
-    hass: HomeAssistant, rule_audit_coordinator: MagicMock, freezer: Any
+    hass: HomeAssistant, rule_audit_coordinator: MagicMock, freezer: Any, monkeypatch
 ) -> None:
     """An entity becoming unavailable and returning does not fire a new event."""
     freezer.move_to("2026-01-01 00:00:00+00:00")
     entity = UnifiInsightsNetworkRuleChangeEvent(
         rule_audit_coordinator, "site1", unique_id=_UNIQUE_ID
     )
-    entity._trigger_event = MagicMock(wraps=entity._trigger_event)
+    patch_attribute(
+        monkeypatch, entity, "_trigger_event", MagicMock(wraps=entity._trigger_event)
+    )
     platform = MockEntityPlatform(hass, domain="event", platform_name=DOMAIN)
     await platform.async_add_entities([entity])
     await hass.async_block_till_done()
@@ -2057,6 +2058,6 @@ async def test_unavailable_round_trip_writes_no_new_event(
     await hass.async_block_till_done()
 
     states = [e.data["new_state"] for e in events]
-    ts = states[0].state
-    assert [s.state for s in states] == [ts, "unavailable", ts]
-    entity._trigger_event.assert_called_once()
+    ts = require_not_none(states[0]).state
+    assert [require_not_none(s).state for s in states] == [ts, "unavailable", ts]
+    require_mock(entity._trigger_event).assert_called_once()

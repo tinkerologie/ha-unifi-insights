@@ -26,6 +26,7 @@ from custom_components.unifi_insights.const import (
     DOMAIN,
     HDR_MODE_AUTO,
 )
+from tests.fixtures.assertions import require_not_none
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -84,13 +85,13 @@ async def test_config_entry_flow_user_to_local_returned_schema(
     assert isinstance(schema, backend.Schema)
 
     # Valid inputs with default host and ssl verification
-    valid_data = schema({CONF_API_KEY: "super-secret-key"})
+    valid_data = require_not_none(schema)({CONF_API_KEY: "super-secret-key"})
     assert valid_data[CONF_API_KEY] == "super-secret-key"
     assert valid_data[CONF_HOST] == DEFAULT_API_HOST
     assert valid_data[CONF_VERIFY_SSL] is False
 
     # Valid explicit inputs
-    custom_data = schema(
+    custom_data = require_not_none(schema)(
         {
             CONF_API_KEY: "custom-key",
             CONF_HOST: "https://10.0.0.1",
@@ -103,11 +104,11 @@ async def test_config_entry_flow_user_to_local_returned_schema(
 
     # Rejection of missing required key
     with pytest.raises(backend.Invalid):
-        schema({})
+        require_not_none(schema)({})
 
     # Rejection of invalid boolean type
     with pytest.raises(backend.Invalid):
-        schema({CONF_API_KEY: "key", CONF_VERIFY_SSL: "not-a-bool"})
+        require_not_none(schema)({CONF_API_KEY: "key", CONF_VERIFY_SSL: "not-a-bool"})
 
 
 def test_service_schemas_actual_validation() -> None:

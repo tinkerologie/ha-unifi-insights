@@ -27,11 +27,14 @@ cd "$SCRIPT_DIR/.."
 
 # shellcheck source=script/.lib/output.sh
 source "$SCRIPT_DIR/.lib/output.sh"
+source "$SCRIPT_DIR/.lib/python.sh"
+select_project_python "$PWD"
 
 # Configuration
 HA_CORE_DIR=".local/ha-core"
 HA_CORE_REPO="https://github.com/home-assistant/core.git"
 INTEGRATION_PATH="custom_components/unifi_insights"
+INTEGRATION_ABSOLUTE_PATH="$PWD/$INTEGRATION_PATH"
 
 # Activate virtual environment before resolving the target Home Assistant version.
 if [[ -z ${VIRTUAL_ENV:-} ]]; then
@@ -51,9 +54,9 @@ fi
 if [ -n "${HA_VERSION:-}" ]; then
     # Use version from environment (DevContainer)
     HA_VERSION_TAG="$HA_VERSION"
-elif command -v python3 >/dev/null 2>&1; then
+elif [[ -x "$PROJECT_PYTHON" ]]; then
     # Detect from installed homeassistant package
-    HA_VERSION_TAG=$(python3 -c "from homeassistant.const import __version__; print(__version__)" 2>/dev/null || echo "dev")
+    HA_VERSION_TAG=$("$PROJECT_PYTHON" -c "from homeassistant.const import __version__; print(__version__)" 2>/dev/null || echo "dev")
 else
     # Fallback to dev branch
     HA_VERSION_TAG="dev"
@@ -100,10 +103,10 @@ if [ ! -d "$HA_CORE_DIR" ]; then
 
     # Fetch the specific version (shallow clone + blobless for minimal size)
     if [ "$HA_VERSION_TAG" = "dev" ]; then
-        git fetch --depth 1 --filter=blob:none origin dev 2>&1 | grep -E "(Receiving|Resolving|Fetching)" || true
+        git fetch --depth 1 --filter=blob:none origin dev
         git checkout dev >/dev/null 2>&1
     else
-        git fetch --depth 1 --filter=blob:none origin tag "$HA_VERSION_TAG" 2>&1 | grep -E "(Receiving|Resolving|Fetching)" || true
+        git fetch --depth 1 --filter=blob:none origin tag "$HA_VERSION_TAG"
         git checkout "$HA_VERSION_TAG" >/dev/null 2>&1
     fi
     cd - >/dev/null
@@ -130,18 +133,28 @@ else
     fi
 fi
 
+# Older caches at the right tag still need Core's own dependency files.
+git -C "$HA_CORE_DIR" sparse-checkout set --no-cone \
+    /script/ /homeassistant/ /requirements.txt /requirements_all.txt /pyproject.toml
+for required_file in requirements.txt requirements_all.txt homeassistant/package_constraints.txt; do
+    if [[ ! -f "$HA_CORE_DIR/$required_file" ]]; then
+        log_error "Cached Home Assistant Core is missing $required_file"
+        exit 1
+    fi
+done
+
 # Check if we have required dependencies
 log_info "Checking dependencies..."
-if ! python3 -c "import tqdm" >/dev/null 2>&1; then
+if ! "$PROJECT_PYTHON" -c "import tqdm" >/dev/null 2>&1; then
     log_info "Installing hassfest helper dependency: tqdm"
     if command -v uv >/dev/null 2>&1; then
-        uv pip install tqdm
+        uv pip install --python "$PROJECT_PYTHON" tqdm
     else
-        python3 -m pip install tqdm
+        "$PROJECT_PYTHON" -m pip install tqdm
     fi
 fi
 
-if ! python3 -c "import voluptuous, awesomeversion, homeassistant.helpers.config_validation" >/dev/null 2>&1; then
+if ! "$PROJECT_PYTHON" -c "import voluptuous, awesomeversion, homeassistant.helpers.config_validation" >/dev/null 2>&1; then
     log_error "Missing required dependencies (voluptuous, awesomeversion, homeassistant)"
     log_info "Run: ./script/setup/bootstrap"
     exit 1
@@ -152,9 +165,10 @@ export PYTHONPATH="$PWD/$HA_CORE_DIR:${PYTHONPATH:-}"
 
 # Build hassfest command
 HASSFEST_CMD=(
-    python3 -m script.hassfest
+    "$PROJECT_PYTHON" -m script.hassfest
     --action validate
-    --integration-path "$PWD/$INTEGRATION_PATH"
+    --integration-path "$INTEGRATION_ABSOLUTE_PATH"
+    --core-path "$PWD/$HA_CORE_DIR"
 )
 
 # Add skip-plugins if specified

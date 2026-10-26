@@ -33,7 +33,7 @@ from custom_components.unifi_insights.data_transforms import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
 # The time every built snapshot reports as its last update.
 NOW = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
@@ -62,8 +62,13 @@ class FrozenList(list[Any]):
     pop = _readonly
     remove = _readonly
     clear = _readonly
-    sort = _readonly
     reverse = _readonly
+
+    def sort(
+        self, *, key: Callable[[Any], Any] | None = None, reverse: bool = False
+    ) -> NoReturn:
+        """Reject sorting with the same callable signature as list.sort."""
+        self._readonly(key=key, reverse=reverse)
 
     def __copy__(self) -> FrozenList:
         """Return a shallow copy."""
@@ -283,7 +288,7 @@ def with_rule(
     kind: str,
     site_id: str,
     rule_id: str,
-    record: Mapping[str, Any],
+    record: object,
 ) -> FacadeData:
     """Return ``data`` with a rule of section ``kind`` added or replaced."""
     return with_sections(
@@ -295,7 +300,7 @@ def with_protect_device(
     data: Mapping[str, Any],
     collection: str,
     device_id: str,
-    record: Mapping[str, Any],
+    record: object,
 ) -> FacadeData:
     """Return ``data`` with a Protect device of ``collection`` added or replaced."""
     return with_sections(
@@ -327,9 +332,7 @@ def with_protect_collection(
     )
 
 
-def with_camera(
-    data: Mapping[str, Any], camera_id: str, record: Mapping[str, Any]
-) -> FacadeData:
+def with_camera(data: Mapping[str, Any], camera_id: str, record: object) -> FacadeData:
     """Return ``data`` with a Protect camera added or replaced."""
     return with_protect_device(data, "cameras", camera_id, record)
 

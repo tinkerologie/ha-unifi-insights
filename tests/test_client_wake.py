@@ -32,6 +32,7 @@ from custom_components.unifi_insights.coordinators.device import (
 from custom_components.unifi_insights.coordinators.facade import (
     UnifiInsightsFacadeCoordinator,
 )
+from tests.fixtures.assertions import patch_attribute, require_mock, require_not_none
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -384,6 +385,7 @@ def facade(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
     mock_sub_coordinators: tuple[MagicMock, MagicMock, MagicMock, MagicMock],
+    monkeypatch,
 ) -> UnifiInsightsFacadeCoordinator:
     """Create a facade coordinator fixture for wake tests."""
     config_coord, device_coord, protect_coord, innerspace_coord = mock_sub_coordinators
@@ -410,7 +412,7 @@ def facade(
         protect_coordinator=protect_coord,
         innerspace_coordinator=innerspace_coord,
     )
-    coord.data = {"clients": {}}
+    patch_attribute(monkeypatch, coord, "data", {"clients": {}})
     return coord
 
 
@@ -450,7 +452,9 @@ async def test_async_wake_client_sends_packet_with_broadcast_for_online_client(
         "mac": mac,
         "broadcast_address": "10.0.0.255",
     }
-    device.network_client.clients.get_historical_legacy.assert_not_awaited()
+    require_mock(
+        device.network_client.clients.get_historical_legacy
+    ).assert_not_awaited()
 
 
 async def test_async_wake_client_uses_history_network_for_offline_client(
@@ -562,8 +566,11 @@ async def test_async_wake_client_skips_sites_without_a_verified_name(
 ) -> None:
     """Sites without verified legacy site name are skipped without failing."""
     mac = "00:11:22:33:44:55"
-    device.config_coordinator.get_site_ids.return_value = ["site1", "site2"]
-    device.config_coordinator.get_site.side_effect = lambda s: (
+    require_mock(device.config_coordinator.get_site_ids).return_value = [
+        "site1",
+        "site2",
+    ]
+    require_mock(device.config_coordinator.get_site).side_effect = lambda s: (
         None if s == "site1" else {"internalReference": "site2_ref"}
     )
     calls = async_mock_service(hass, "wake_on_lan", "send_magic_packet")
@@ -668,8 +675,12 @@ async def test_async_get_wake_history_merges_sites_and_ignores_failures(
     freezer.move_to("2026-10-09T12:00:00Z")
     now = 1_791_547_200.0  # epoch corresponding to fixed time
 
-    facade._config_coordinator.get_site_ids.return_value = ["site1", "site2", "site3"]
-    facade._config_coordinator.get_site.side_effect = lambda s: {
+    require_mock(facade._config_coordinator.get_site_ids).return_value = [
+        "site1",
+        "site2",
+        "site3",
+    ]
+    require_mock(facade._config_coordinator.get_site).side_effect = lambda s: {
         "internalReference": f"{s}_ref"
     }
 
@@ -710,7 +721,9 @@ async def test_async_get_wake_history_merges_sites_and_ignores_failures(
         msg = "API failure"
         raise UniFiResponseError(msg, status_code=500)
 
-    facade.network_client.clients.get_historical_legacy.side_effect = get_history
+    require_mock(
+        facade.network_client.clients.get_historical_legacy
+    ).side_effect = get_history
 
     history = await facade.async_get_wake_history()
 
@@ -725,7 +738,7 @@ async def test_async_get_wake_history_is_empty_without_sites(
     facade: UnifiInsightsFacadeCoordinator,
 ) -> None:
     """async_get_wake_history returns empty dict when no sites configured."""
-    facade._config_coordinator.get_site_ids.return_value = []
+    require_mock(facade._config_coordinator.get_site_ids).return_value = []
     assert await facade.async_get_wake_history() == {}
 
 
@@ -735,7 +748,7 @@ async def test_async_get_wake_history_keeps_any_age_name_only_for_enabled_button
     """Enabled Wake rows use old names; new buttons retain the recent-wired rule."""
     freezer.move_to("2026-10-09T12:00:00Z")
     mac = "00:11:22:33:44:55"
-    facade.network_client.clients.get_historical_legacy.return_value = [
+    require_mock(facade.network_client.clients.get_historical_legacy).return_value = [
         {
             "mac": mac,
             "is_wired": True,
@@ -769,7 +782,9 @@ async def test_async_wake_client_error_uses_hostname_after_blank_name(
         pytest.raises(HomeAssistantError) as exc,
     ):
         await device.async_wake_client(mac)
-    assert exc.value.translation_placeholders["client_name"] == "Host PC"
+    assert (
+        require_not_none(exc.value.translation_placeholders)["client_name"] == "Host PC"
+    )
 
 
 async def test_async_wake_client_error_uses_supplied_client_name(
@@ -786,7 +801,10 @@ async def test_async_wake_client_error_uses_supplied_client_name(
         pytest.raises(HomeAssistantError) as exc,
     ):
         await device.async_wake_client("00:11:22:33:44:55", client_name="Saved PC")
-    assert exc.value.translation_placeholders["client_name"] == "Saved PC"
+    assert (
+        require_not_none(exc.value.translation_placeholders)["client_name"]
+        == "Saved PC"
+    )
     assert "Saved PC" in str(exc.value)
 
 
@@ -853,7 +871,7 @@ async def test_async_wake_client_skips_lookup_when_sub_coordinator_failed(
 
     assert len(calls) == 1
     assert calls[0].data == {"mac": mac}
-    device.network_client.networks.get_legacy_all.assert_not_awaited()
+    require_mock(device.network_client.networks.get_legacy_all).assert_not_awaited()
 
 
 def test_select_wake_history_30_day_boundary() -> None:
@@ -896,8 +914,11 @@ async def test_async_wake_client_press_path_site_name_from_internal_reference_on
     """Press path resolves legacy site name from internalReference only."""
     mac = "00:11:22:33:44:55"
     device.data = {"clients": {}}
-    device.config_coordinator.get_site_ids.return_value = ["site1", "site2"]
-    device.config_coordinator.get_site.side_effect = lambda s: (
+    require_mock(device.config_coordinator.get_site_ids).return_value = [
+        "site1",
+        "site2",
+    ]
+    require_mock(device.config_coordinator.get_site).side_effect = lambda s: (
         {"internalReference": "alpha"} if s == "site1" else {}
     )
     device.network_client.networks.get_legacy_all = AsyncMock(return_value=[])
@@ -920,8 +941,11 @@ async def test_async_wake_client_online_queries_only_own_site(
     device.data = {
         "clients": {"site1": {"c1": {"macAddress": mac, "ipAddress": "10.0.0.50"}}}
     }
-    device.config_coordinator.get_site_ids.return_value = ["site1", "site2"]
-    device.config_coordinator.get_site.side_effect = lambda s: {
+    require_mock(device.config_coordinator.get_site_ids).return_value = [
+        "site1",
+        "site2",
+    ]
+    require_mock(device.config_coordinator.get_site).side_effect = lambda s: {
         "internalReference": f"{s}_ref"
     }
     device.network_client.networks.get_legacy_all = AsyncMock(return_value=[])

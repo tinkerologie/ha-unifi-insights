@@ -31,6 +31,7 @@ from custom_components.unifi_insights.const import (
     DEVICE_TYPE_SENSOR,
 )
 from custom_components.unifi_insights.data_transforms import NetworkPortFacts
+from tests.fixtures.entities import EntityCollector
 from tests.fixtures.facade_data import (
     with_camera,
     with_device_fields,
@@ -827,8 +828,7 @@ class TestAsyncSetupEntry:
         mock_coordinator.async_add_listener = listeners.append
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
         mock_coordinator.data = with_protect_collection(
@@ -861,8 +861,7 @@ class TestAsyncSetupEntry:
         """Test that setup entry creates binary sensors."""
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -874,8 +873,7 @@ class TestAsyncSetupEntry:
         """Test that setup creates device binary sensors."""
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -906,8 +904,7 @@ class TestAsyncSetupEntry:
         )
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -925,8 +922,7 @@ class TestAsyncSetupEntry:
         """Test that setup creates protect binary sensors."""
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -943,8 +939,7 @@ class TestAsyncSetupEntry:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -1023,8 +1018,7 @@ class TestWanLinkBinarySensor:
         """Each merged WAN link gets its own connectivity sensor."""
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -1053,8 +1047,7 @@ class TestWanLinkBinarySensor:
         """Rediscovery on later coordinator updates adds no duplicates."""
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
         listener = mock_coordinator.async_add_listener.call_args[0][0]
@@ -1119,8 +1112,7 @@ class TestWanLinkBinarySensor:
         )
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -1203,8 +1195,7 @@ class TestSiteToSiteVpnBinarySensor:
     async def _setup(self, hass, mock_config_entry) -> list:
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
         return [
@@ -1540,8 +1531,7 @@ class TestSetupSkipsNonDoorbellCameraSensors:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, config_entry, add_entities)
 
@@ -1621,8 +1611,7 @@ class TestSetupSkipsNonDoorbellCameraSensors:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, config_entry, add_entities)
 
@@ -1674,8 +1663,7 @@ class TestSetupSkipsNonDoorbellCameraSensors:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, config_entry, add_entities)
 
@@ -1734,8 +1722,7 @@ class TestSetupSkipsNonDoorbellCameraSensors:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, config_entry, add_entities)
 
@@ -1974,8 +1961,7 @@ class TestUnifiPortBinarySensor:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, config_entry, add_entities)
 
@@ -2022,8 +2008,7 @@ class TestUnifiPortBinarySensor:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, config_entry, add_entities)
 
@@ -2093,8 +2078,7 @@ class TestProtectBinarySensorCapabilityFiltering:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, config_entry, add_entities)
 
@@ -2118,8 +2102,7 @@ class TestProtectBinarySensorCapabilityFiltering:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, config_entry, add_entities)
 
@@ -2143,8 +2126,7 @@ class TestProtectBinarySensorCapabilityFiltering:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, config_entry, add_entities)
 
@@ -2168,8 +2150,7 @@ class TestProtectBinarySensorCapabilityFiltering:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, config_entry, add_entities)
 

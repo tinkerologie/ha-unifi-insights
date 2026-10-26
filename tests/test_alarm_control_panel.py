@@ -45,6 +45,7 @@ from custom_components.unifi_insights.alarm_control_panel import (
     async_setup_entry,
 )
 from custom_components.unifi_insights.const import DOMAIN
+from tests.fixtures.assertions import require_instance, require_not_none
 from tests.fixtures.facade_data import (
     facade_data,
     set_availability,
@@ -336,11 +337,11 @@ async def test_one_panel_per_nvr_unique_id_and_device(
     assert entity is not None
     assert entity.unique_id == UNIQUE_ID
     assert entity.translation_key == "nvr_alarm"
-    device = dr.async_get(hass).async_get(entity.device_id)
+    device = dr.async_get(hass).async_get(require_not_none(entity.device_id))
     assert device is not None
     assert device.identifiers == {(DOMAIN, "protect_nvr_nvr_1")}
     assert (dr.CONNECTION_NETWORK_MAC, dr.format_mac("AABBCC0000AA")) in (
-        device.connections
+        require_instance(device, dr.DeviceEntry).connections
     )
     nvr_sensors = [
         sensor

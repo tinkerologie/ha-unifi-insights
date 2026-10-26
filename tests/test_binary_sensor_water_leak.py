@@ -15,6 +15,8 @@ from custom_components.unifi_insights.binary_sensor import (
     _water_leak_channel_count,
     async_setup_entry,
 )
+from tests.fixtures.assertions import require_not_none
+from tests.fixtures.entities import EntityCollector
 from tests.fixtures.facade_data import (
     with_protect_fields,
 )
@@ -173,9 +175,7 @@ class TestWaterLeakEntityCreation:
         config_entry.runtime_data.coordinator = mock_coordinator
 
         added: list = []
-        await async_setup_entry(
-            hass, config_entry, lambda ents, **kw: added.extend(ents)
-        )
+        await async_setup_entry(hass, config_entry, EntityCollector(added))
 
         by_key = {
             e.entity_description.key: e
@@ -212,9 +212,7 @@ class TestWaterLeakEntityCreation:
         config_entry.runtime_data.coordinator = mock_coordinator
 
         added: list = []
-        await async_setup_entry(
-            hass, config_entry, lambda ents, **kw: added.extend(ents)
-        )
+        await async_setup_entry(hass, config_entry, EntityCollector(added))
         external = next(
             e
             for e in added
@@ -224,6 +222,6 @@ class TestWaterLeakEntityCreation:
 
         assert external.is_on is True
         attrs = external.extra_state_attributes
-        assert attrs["leak_detected"] is False
-        assert attrs["external_leak_detected"] is True
-        assert attrs["external_leak_detected_at"] == 1758600000000
+        assert require_not_none(attrs)["leak_detected"] is False
+        assert require_not_none(attrs)["external_leak_detected"] is True
+        assert require_not_none(attrs)["external_leak_detected_at"] == 1758600000000

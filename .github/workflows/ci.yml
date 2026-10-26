@@ -55,6 +55,9 @@ jobs:
           echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
           uv pip install . ".[dev]" homeassistant
 
+      - name: Check Python types without errors or warnings
+        run: ./script/type-check
+
       - name: Run tests and generate coverage report
         run: |
           pytest --cov --cov-branch --cov-report=xml

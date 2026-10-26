@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable, Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, TypeIs, cast
 
 from homeassistant.components.sensor import (
     EntityCategory,
@@ -145,8 +145,8 @@ PARALLEL_UPDATES = 0
 _NO_STATS: Final = object()
 
 
-@dataclass
-class UnifiInsightsSensorEntityDescription(SensorEntityDescription):  # type: ignore[misc]
+@dataclass(frozen=True, kw_only=True)
+class UnifiInsightsSensorEntityDescription(SensorEntityDescription):
     """Class describing UniFi Insights sensor entities."""
 
     value_fn: Callable[[dict[str, Any]], StateType] | None = None
@@ -157,8 +157,8 @@ class UnifiInsightsSensorEntityDescription(SensorEntityDescription):  # type: ig
     required_feature: str | None = None
 
 
-@dataclass
-class UnifiProtectSensorEntityDescription(SensorEntityDescription):  # type: ignore[misc]
+@dataclass(frozen=True, kw_only=True)
+class UnifiProtectSensorEntityDescription(SensorEntityDescription):
     """Class describing UniFi Protect sensor entities."""
 
     value_fn: Callable[[dict[str, Any]], StateType] | None = None
@@ -1298,13 +1298,20 @@ def _is_owned_port_sensor(
     return False
 
 
+def _is_carrier_fabric_sensor_entry(
+    entry: UnifiInsightsConfigEntry | CarrierFabricConfigEntry,
+) -> TypeIs[CarrierFabricConfigEntry]:
+    """Narrow the sensor entry through its existing runtime-data discriminator."""
+    return isinstance(entry.runtime_data, CarrierFabricData)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: UnifiInsightsConfigEntry | CarrierFabricConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up sensors for UniFi Insights integration."""
-    if isinstance(config_entry.runtime_data, CarrierFabricData):
+    if _is_carrier_fabric_sensor_entry(config_entry):
         await async_setup_carrier_fabric_sensors(hass, config_entry, async_add_entities)
         return
 
@@ -2680,10 +2687,8 @@ def _arm_control_attributes(data: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-@dataclass(kw_only=True)
-class UnifiProtectSecuritySensorEntityDescription(  # type: ignore[misc]
-    UnifiProtectSensorEntityDescription
-):
+@dataclass(frozen=True, kw_only=True)
+class UnifiProtectSecuritySensorEntityDescription(UnifiProtectSensorEntityDescription):
     """Describes a sensor of a Protect security device."""
 
     device_types: tuple[str, ...]
@@ -2773,13 +2778,17 @@ class UnifiVoucherSensorEntityDescription(SensorEntityDescription):
     attrs_fn: Callable[[Any, str], dict[str, Any]] | None = None
 
 
-def _get_latest_record(data: Mapping[str, Any], site_id: str) -> dict[str, Any] | None:
+def _get_latest_record(
+    data: Mapping[str, Any] | None, site_id: str
+) -> dict[str, Any] | None:
     """Safely return latest voucher record for a site."""
+    if data is None:
+        return None
     record = latest_voucher(data, site_id)
     return dict(record) if record is not None else None
 
 
-def _latest_code_value(data: Mapping[str, Any], site_id: str) -> StateType:
+def _latest_code_value(data: Mapping[str, Any] | None, site_id: str) -> StateType:
     """Return latest voucher code as string, or None."""
     record = _get_latest_record(data, site_id)
     if record is None:
@@ -2788,7 +2797,9 @@ def _latest_code_value(data: Mapping[str, Any], site_id: str) -> StateType:
     return str(code) if code is not None else None
 
 
-def _latest_expiration_value(data: Mapping[str, Any], site_id: str) -> datetime | None:
+def _latest_expiration_value(
+    data: Mapping[str, Any] | None, site_id: str
+) -> datetime | None:
     """Return latest voucher expiration datetime, or None."""
     record = _get_latest_record(data, site_id)
     if record is None:
@@ -2808,7 +2819,7 @@ def _active_vouchers_value(data: object, site_id: str) -> int:
     return count_active_vouchers(site_vouchers)
 
 
-def _latest_attributes(data: Mapping[str, Any], site_id: str) -> dict[str, Any]:
+def _latest_attributes(data: Mapping[str, Any] | None, site_id: str) -> dict[str, Any]:
     """Return attributes of the latest generated voucher."""
     record = _get_latest_record(data, site_id)
     if record is None:
@@ -2954,10 +2965,8 @@ def discover_voucher_sensors(
 # Site-level historical internet activity sensors for UniFi Insights.
 
 
-@dataclass
-class UnifiSiteInternetActivitySensorEntityDescription(  # type: ignore[misc]
-    SensorEntityDescription
-):
+@dataclass(frozen=True, kw_only=True)
+class UnifiSiteInternetActivitySensorEntityDescription(SensorEntityDescription):
     """Class describing UniFi site-level internet activity sensor entities."""
 
     window: str = "1h"

@@ -18,6 +18,8 @@ cd "$SCRIPT_DIR/.."
 
 # shellcheck source=script/.lib/output.sh
 source "$SCRIPT_DIR/.lib/output.sh"
+source "$SCRIPT_DIR/.lib/python.sh"
+select_project_python "$PWD"
 
 "$SCRIPT_DIR/type-check"
 echo ""

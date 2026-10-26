@@ -307,7 +307,7 @@ class UnifiAccessEmergencySwitch(UnifiAccessEntity, SwitchEntity):
         """Create the switch for one emergency mode on the console device."""
         super().__init__(coordinator)
         # One of EMERGENCY_MODES, which the discovery passes in as its keys.
-        self._mode = cast("EmergencyMode", mode)
+        self._mode: EmergencyMode = cast("EmergencyMode", mode)
         self._attr_translation_key = f"access_emergency_{mode}"
         self._attr_unique_id = access_unique_id(self._namespace, "emergency", mode)
         self._attr_device_info = console_device_info(self._namespace)

@@ -40,6 +40,7 @@ from custom_components.unifi_insights.service_targets import (
     _resolve_network_client_id,
     _resolve_network_device_id,
 )
+from tests.fixtures.assertions import require_not_none
 from tests.fixtures.mobility_responses import (
     BRANCH_ROUTER_ID,
     DEVICE_SUMMARIES,
@@ -358,7 +359,9 @@ async def test_disabling_client_tracking_keeps_the_router_tracker(
     entity = registry.async_get(entity_id)
     assert entity is not None
     assert entity.name == "Fleet van"
-    assert hass.states.get(entity_id).attributes["latitude"] == 37.7749
+    assert (
+        require_not_none(hass.states.get(entity_id)).attributes["latitude"] == 37.7749
+    )
 
 
 async def test_router_entities_never_reference_a_missing_workspace(

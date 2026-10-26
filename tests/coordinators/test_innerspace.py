@@ -63,35 +63,41 @@ class TestUnifiInsightsInnerSpaceCoordinator:
             project=InnerSpaceProjectIdentity(id="proj-1"),
         )
         mock_innerspace_client.list_floor_plans.return_value = [
-            InnerSpaceFloorPlan(
-                id="fp-1",
-                name="First Floor",
-                floor_number=1,
-                site_id="default",
-                ppm=20.0,
+            InnerSpaceFloorPlan.model_validate(
+                {
+                    "id": "fp-1",
+                    "name": "First Floor",
+                    "floor_number": 1,
+                    "site_id": "default",
+                    "ppm": 20.0,
+                }
             )
         ]
         mock_innerspace_client.list_access_points.return_value = [
-            InnerSpaceAccessPoint(
-                id="ap-1",
-                name="Office AP",
-                model="U6-Pro",
-                mac="AA:BB:CC:DD:EE:FF",
-                floor_plan_id="fp-1",
-                x=10.0,
-                y=20.0,
-                status="online",
+            InnerSpaceAccessPoint.model_validate(
+                {
+                    "id": "ap-1",
+                    "name": "Office AP",
+                    "model": "U6-Pro",
+                    "mac": "AA:BB:CC:DD:EE:FF",
+                    "floor_plan_id": "fp-1",
+                    "x": 10.0,
+                    "y": 20.0,
+                    "status": "online",
+                }
             )
         ]
         mock_innerspace_client.list_switches.return_value = [
-            InnerSpaceSwitch(
-                id="sw-1",
-                name="Office SW",
-                model="USW-24",
-                floor_plan_id="fp-1",
-                x=5.0,
-                y=15.0,
-                status="online",
+            InnerSpaceSwitch.model_validate(
+                {
+                    "id": "sw-1",
+                    "name": "Office SW",
+                    "model": "USW-24",
+                    "floor_plan_id": "fp-1",
+                    "x": 5.0,
+                    "y": 15.0,
+                    "status": "online",
+                }
             )
         ]
         mock_innerspace_client.list_inventory.return_value = [
@@ -163,10 +169,12 @@ class TestUnifiInsightsInnerSpaceCoordinator:
 
         def plans(*ids: str) -> list[InnerSpaceFloorPlan]:
             return [
-                InnerSpaceFloorPlan(
-                    id=plan_id,
-                    name=plan_id,
-                    image_url=f"/v1/assets/{plan_id}/plan.png",
+                InnerSpaceFloorPlan.model_validate(
+                    {
+                        "id": plan_id,
+                        "name": plan_id,
+                        "image_url": f"/v1/assets/{plan_id}/plan.png",
+                    }
                 )
                 for plan_id in ids
             ]
@@ -225,8 +233,8 @@ class TestUnifiInsightsInnerSpaceCoordinator:
             project=InnerSpaceProjectIdentity(id="proj-1"),
         )
         mock_innerspace_client.list_floor_plans.return_value = [
-            InnerSpaceFloorPlan(
-                id="fp-1", name="fp-1", image_url="/v1/assets/fp-1/plan.png"
+            InnerSpaceFloorPlan.model_validate(
+                {"id": "fp-1", "name": "fp-1", "image_url": "/v1/assets/fp-1/plan.png"}
             )
         ]
         coord = UnifiInsightsInnerSpaceCoordinator(
@@ -273,15 +281,17 @@ class TestUnifiInsightsInnerSpaceCoordinator:
         real_client.list_floor_plans = AsyncMock(return_value=[])
         real_client.list_access_points = AsyncMock(
             return_value=[
-                InnerSpaceAccessPoint(
-                    id="ap-1",
-                    name="Office AP",
-                    model="U6-Pro",
-                    mac="AA:BB:CC:DD:EE:FF",
-                    floor_plan_id="fp-1",
-                    x=10.0,
-                    y=20.0,
-                    status="online",
+                InnerSpaceAccessPoint.model_validate(
+                    {
+                        "id": "ap-1",
+                        "name": "Office AP",
+                        "model": "U6-Pro",
+                        "mac": "AA:BB:CC:DD:EE:FF",
+                        "floor_plan_id": "fp-1",
+                        "x": 10.0,
+                        "y": 20.0,
+                        "status": "online",
+                    }
                 )
             ]
         )

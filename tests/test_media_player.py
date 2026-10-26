@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -29,13 +29,18 @@ from custom_components.unifi_insights.media_player import (
     UnifiProtectCameraSpeaker,
     async_setup_entry,
 )
+from tests.fixtures.assertions import require_instance, require_not_none
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
+from tests.fixtures.entities import EntityCollector
 from tests.fixtures.facade_data import (
     set_availability,
     with_protect_collection,
     with_protect_device,
     with_protect_fields,
 )
+
+if TYPE_CHECKING:
+    from homeassistant.helpers.entity import Entity
 
 
 class TestParallelUpdates:
@@ -138,16 +143,18 @@ class TestAsyncSetupEntry:
             },
         )
 
-        entities: list[UnifiProtectCameraSpeaker] = []
+        entities: list[Entity] = []
 
-        def add_entities(new_entities: list[UnifiProtectCameraSpeaker]) -> None:
-            entities.extend(new_entities)
+        add_entities = EntityCollector(entities)
 
         await async_setup_entry(hass, mock_entry, add_entities)
 
         # Should only create entities for the 3 supported cameras
         assert len(entities) == 3
-        camera_ids = {entity._device_id for entity in entities}
+        camera_ids = {
+            require_instance(entity, UnifiProtectCameraSpeaker)._device_id
+            for entity in entities
+        }
         assert camera_ids == {"cam_top", "cam_nested", "cam_removable"}
 
     @pytest.mark.asyncio
@@ -222,14 +229,16 @@ class TestAsyncSetupEntry:
             },
         )
 
-        entities: list[UnifiProtectCameraSpeaker] = []
+        entities: list[Entity] = []
 
-        def add_entities(new_entities: list[UnifiProtectCameraSpeaker]) -> None:
-            entities.extend(new_entities)
+        add_entities = EntityCollector(entities)
 
         await async_setup_entry(hass, mock_entry, add_entities)
         assert len(entities) == 1
-        assert entities[0]._device_id == "cam1"
+        assert (
+            require_instance(entities[0], UnifiProtectCameraSpeaker)._device_id
+            == "cam1"
+        )
 
         # Listener was registered with async_on_unload
         mock_coordinator.async_add_listener.assert_called_once()
@@ -251,7 +260,9 @@ class TestAsyncSetupEntry:
         listener()
 
         assert len(entities) == 2
-        assert {e._device_id for e in entities} == {"cam1", "cam2"}
+        assert {
+            require_instance(e, UnifiProtectCameraSpeaker)._device_id for e in entities
+        } == {"cam1", "cam2"}
 
         # Running listener again with same data must not add duplicates
         listener()
@@ -525,7 +536,7 @@ class TestUnifiProtectCameraSpeaker:
         ).async_start_camera_talkback.assert_called_once_with(
             "cam1", "http://127.0.0.1:8123/local/audio.mp3"
         )
-        await entity._completion_task
+        await require_not_none(entity._completion_task)
 
     @pytest.mark.asyncio
     async def test_play_media_source_non_audio_rejected(
@@ -604,7 +615,7 @@ class TestUnifiProtectCameraSpeaker:
         old_stream.stop.assert_called_once()
         assert entity._current_stream is new_stream
         completion_event.set()
-        await entity._completion_task
+        await require_not_none(entity._completion_task)
 
     @pytest.mark.asyncio
     async def test_play_media_start_failure(
@@ -698,7 +709,7 @@ class TestUnifiProtectCameraSpeaker:
                 media_id="http://media.local/error.mp3",
             )
 
-        await entity._completion_task
+        await require_not_none(entity._completion_task)
         assert entity._current_stream is None
         assert entity.state == MediaPlayerState.IDLE
 

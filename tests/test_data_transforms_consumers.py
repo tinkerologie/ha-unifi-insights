@@ -235,15 +235,15 @@ def test_site_grouping_uses_the_published_gateway() -> None:
         "stats": {SITE: {}},
     }
     raw_info = build_site_device_info(data, SITE)
-    data = _published(data)
+    snapshot = _published(data)
     with _no_rebuild():
-        assert build_site_device_info(data, SITE) == raw_info
+        assert build_site_device_info(snapshot, SITE) == raw_info
     assert raw_info == {"identifiers": {(DOMAIN, f"{SITE}_udm")}}
 
-    data = without_sections(
-        with_sections(data, devices={SITE: {"sw1": _switch()}}), NETWORK_FACTS_KEY
+    snapshot = without_sections(
+        with_sections(snapshot, devices={SITE: {"sw1": _switch()}}), NETWORK_FACTS_KEY
     )
-    assert build_site_device_info(data, SITE)["identifiers"] == {
+    assert build_site_device_info(snapshot, SITE)["identifiers"] == {
         (DOMAIN, f"site_{SITE}")
     }
 

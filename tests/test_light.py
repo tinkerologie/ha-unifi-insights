@@ -27,6 +27,7 @@ from custom_components.unifi_insights.light import (
     UnifiProtectLight,
     async_setup_entry,
 )
+from tests.fixtures.assertions import patch_attribute, require_mock, require_not_none
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
 from tests.fixtures.facade_data import (
     with_protect_collection,
@@ -265,7 +266,9 @@ class TestUnifiProtectLight:
         assert light._attr_has_entity_name is True
         assert light._attr_name is None
         assert light._attr_color_mode == ColorMode.BRIGHTNESS
-        assert ColorMode.BRIGHTNESS in light._attr_supported_color_modes
+        assert require_not_none(ColorMode.BRIGHTNESS) in require_not_none(
+            light._attr_supported_color_modes
+        )
         assert light._attr_entity_category is None
 
     def test_update_from_data_connected(self, mock_coordinator: MagicMock) -> None:
@@ -380,13 +383,15 @@ class TestUnifiProtectLight:
         assert light._attr_brightness is None
 
     @pytest.mark.asyncio
-    async def test_async_turn_on(self, mock_coordinator: MagicMock) -> None:
+    async def test_async_turn_on(
+        self, mock_coordinator: MagicMock, monkeypatch
+    ) -> None:
         """Test turning light on."""
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
             light_id="light1",
         )
-        light.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, light, "async_write_ha_state", MagicMock())
 
         await light.async_turn_on()
 
@@ -406,14 +411,14 @@ class TestUnifiProtectLight:
 
     @pytest.mark.asyncio
     async def test_async_turn_on_with_brightness(
-        self, mock_coordinator: MagicMock
+        self, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test turning light on with specific brightness."""
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
             light_id="light1",
         )
-        light.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, light, "async_write_ha_state", MagicMock())
 
         await light.async_turn_on(**{ATTR_BRIGHTNESS: 128})
 
@@ -432,14 +437,14 @@ class TestUnifiProtectLight:
 
     @pytest.mark.asyncio
     async def test_async_turn_on_with_full_brightness(
-        self, mock_coordinator: MagicMock
+        self, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test turning light on with full brightness."""
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
             light_id="light1",
         )
-        light.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, light, "async_write_ha_state", MagicMock())
 
         await light.async_turn_on(**{ATTR_BRIGHTNESS: 255})
 
@@ -451,13 +456,15 @@ class TestUnifiProtectLight:
         )
 
     @pytest.mark.asyncio
-    async def test_async_turn_off(self, mock_coordinator: MagicMock) -> None:
+    async def test_async_turn_off(
+        self, mock_coordinator: MagicMock, monkeypatch
+    ) -> None:
         """Test turning light off."""
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
             light_id="light1",
         )
-        light.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, light, "async_write_ha_state", MagicMock())
 
         await light.async_turn_off()
 
@@ -476,14 +483,14 @@ class TestUnifiProtectLight:
 
     @pytest.mark.asyncio
     async def test_async_turn_off_with_kwargs(
-        self, mock_coordinator: MagicMock
+        self, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test turning light off ignores extra kwargs."""
         light = UnifiProtectLight(
             coordinator=mock_coordinator,
             light_id="light1",
         )
-        light.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, light, "async_write_ha_state", MagicMock())
 
         await light.async_turn_off(some_extra_kwarg="value")
 
@@ -493,7 +500,9 @@ class TestUnifiProtectLight:
         )
 
     @pytest.mark.asyncio
-    async def test_async_turn_on_error(self, mock_coordinator: MagicMock) -> None:
+    async def test_async_turn_on_error(
+        self, mock_coordinator: MagicMock, monkeypatch
+    ) -> None:
         """Test turning light on surfaces Home Assistant errors."""
         protect_owner(
             mock_coordinator
@@ -505,15 +514,17 @@ class TestUnifiProtectLight:
             coordinator=mock_coordinator,
             light_id="light1",
         )
-        light.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, light, "async_write_ha_state", MagicMock())
 
         with pytest.raises(HomeAssistantError, match="Unable to set mode for light"):
             await light.async_turn_on()
 
-        light.async_write_ha_state.assert_not_called()
+        require_mock(light.async_write_ha_state).assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_async_turn_off_error(self, mock_coordinator: MagicMock) -> None:
+    async def test_async_turn_off_error(
+        self, mock_coordinator: MagicMock, monkeypatch
+    ) -> None:
         """Test turning light off surfaces Home Assistant errors."""
         protect_owner(
             mock_coordinator
@@ -525,12 +536,12 @@ class TestUnifiProtectLight:
             coordinator=mock_coordinator,
             light_id="light1",
         )
-        light.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, light, "async_write_ha_state", MagicMock())
 
         with pytest.raises(HomeAssistantError, match="Unable to set mode for light"):
             await light.async_turn_off()
 
-        light.async_write_ha_state.assert_not_called()
+        require_mock(light.async_write_ha_state).assert_not_called()
 
     def test_missing_light_data(self, mock_coordinator: MagicMock) -> None:
         """Test handling missing light data."""
@@ -569,6 +580,10 @@ class TestUnifiProtectLight:
 
 class TestProtectLightWrites:
     """Light writes call the Protect owner; brightness reads map from ledLevel."""
+
+    @pytest.fixture(autouse=True)
+    def state_writer_patcher(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._state_patcher = monkeypatch
 
     @pytest.mark.asyncio
     async def test_light_turn_on_and_off_call_the_owner(self) -> None:
@@ -614,7 +629,7 @@ class TestProtectLightWrites:
             }
         }
         light = UnifiProtectLight(coordinator, "light1")
-        light.async_write_ha_state = MagicMock()
+        patch_attribute(self._state_patcher, light, "async_write_ha_state", MagicMock())
         return coordinator, protect_owner(coordinator), light
 
     @pytest.mark.asyncio

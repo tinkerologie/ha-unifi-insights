@@ -74,6 +74,8 @@ from custom_components.unifi_insights.sensor import (
     SITE_INTERNET_ACTIVITY_SENSOR_TYPES,
     VOUCHER_SENSOR_TYPES,
 )
+from tests.fixtures.assertions import require_not_none
+from tests.fixtures.entities import EntityCollector
 from tests.fixtures.facade_data import with_client, with_protect_device, with_sections
 
 if TYPE_CHECKING:
@@ -83,7 +85,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 
-def _entry(hass, namespace="console_a", entry_id="entry_a"):
+def _entry(hass, namespace: str | None = "console_a", entry_id="entry_a"):
     """Register a synthetic config entry with a canonical stored console identity."""
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -132,8 +134,9 @@ def test_namespace_uses_only_stored_console(hass):
         entry, data={CONF_API_KEY: "key", "host": "host", "console_name": "Display"}
     )
     assert resolve_console_namespace(entry) is None
+    invalid_namespace: dict[str, Any] = {"value": None}
     with pytest.raises(ValueError, match="validated console namespace"):
-        build_site_unique_id(None, "site_shared", "key")
+        build_site_unique_id(invalid_namespace["value"], "site_shared", "key")
     assert build_legacy_site_unique_id("site_shared", "key") == "site_shared_key"
 
 
@@ -416,7 +419,7 @@ async def test_missing_lookup_record_is_not_claimed():
         assert (
             async_migrate_site_entity(
                 MagicMock(),
-                SimpleNamespace(entry_id="entry"),
+                MockConfigEntry(domain=DOMAIN, entry_id="entry"),
                 "sensor",
                 "console",
                 "site",
@@ -819,7 +822,7 @@ async def test_ambiguous_owned_candidate_skips_and_is_retried(
     mock_coordinator.async_add_listener.side_effect = lambda listener: (
         callbacks.append(listener) or (lambda: None)
     )
-    await sensor_platform.async_setup_entry(hass, entry, added.extend)
+    await sensor_platform.async_setup_entry(hass, entry, EntityCollector(added))
     assert added == []
     assert entity_registry.async_get(row.entity_id).unique_id == unique_id
     assert (
@@ -1098,9 +1101,13 @@ async def test_platform_discovery_never_claims_disabled_foreign_targets(
         mock_coordinator.data, "site_shared", "synthetic_client", {"type": "WIRED"}
     )
     assert entities[0].native_value == 1
-    assert entity_registry.async_get(legacy.entity_id).unique_id == legacy.unique_id
+    assert (
+        require_not_none(entity_registry.async_get(legacy.entity_id)).unique_id
+        == legacy.unique_id
+    )
     assert all(
-        entity_registry.async_get(row.entity_id).config_entry_id == other.entry_id
+        require_not_none(entity_registry.async_get(row.entity_id)).config_entry_id
+        == other.entry_id
         for row in foreign
     )
 
@@ -1309,7 +1316,10 @@ async def test_rekey_disappearing_row_does_not_prevent_other_restoration(
         pytest.raises(RuntimeError, match="disappearing"),
     ):
         async_rekey_site_entities(hass, entry, "new")
-    assert entity_registry.async_get(rows[0].entity_id).unique_id == rows[0].unique_id
+    assert (
+        require_not_none(entity_registry.async_get(rows[0].entity_id)).unique_id
+        == rows[0].unique_id
+    )
     assert entity_registry.async_get(rows[1].entity_id) is None
     assert count == 3
     assert "Unable to fully roll back" in caplog.text
@@ -1357,7 +1367,10 @@ async def test_compensation_never_takes_over_interfering_registry_rows(
         _row(entity_registry, other, "sensor", last.unique_id, last.translation_key)
     protected = attr.asdict(entity_registry.async_get(last.entity_id))
     assert not async_restore_site_entity_identities(hass, entry, updates)
-    assert entity_registry.async_get(rows[0].entity_id).unique_id == rows[0].unique_id
+    assert (
+        require_not_none(entity_registry.async_get(rows[0].entity_id)).unique_id
+        == rows[0].unique_id
+    )
     assert attr.asdict(entity_registry.async_get(last.entity_id)) == protected
     assert "Unable to fully roll back" in caplog.text
 
@@ -1485,7 +1498,9 @@ async def test_native_entry_update_failure_compensates_both_state_owners(
         updates += 1
         if updates == 1:
             assert all(
-                entity_registry.async_get(row.entity_id).unique_id.startswith(namespace)
+                require_not_none(
+                    entity_registry.async_get(row.entity_id)
+                ).unique_id.startswith(namespace)
                 for row in rows
             )
             if failure == "before_update":
@@ -1544,7 +1559,7 @@ async def test_native_entry_update_failure_compensates_both_state_owners(
         )
         await hass.async_block_till_done()
     assert result["type"] == FlowResultType.FORM
-    assert result["errors"]["base"] == "unknown"
+    assert require_not_none(result["errors"])["base"] == "unknown"
     assert dict(entry.data) == previous_data
     assert entry.unique_id == previous_unique_id
     assert manager.async_entry_for_domain_unique_id(DOMAIN, namespace) is None
@@ -1609,7 +1624,10 @@ async def test_entry_compensation_does_not_claim_an_occupied_original_identity(
         is foreign
     )
     assert entry.unique_id == "new"
-    assert entity_registry.async_get(row.entity_id).unique_id == row.unique_id
+    assert (
+        require_not_none(entity_registry.async_get(row.entity_id)).unique_id
+        == row.unique_id
+    )
     assert "Cannot safely restore the saved connection identity" in caplog.text
 
 
@@ -1753,7 +1771,7 @@ async def test_local_reauth_keeps_pending_credential_namespace_conflict_guard(
             flow["flow_id"], user_input={CONF_API_KEY: "CONSOLE_A"}
         )
     assert result["type"] == FlowResultType.FORM
-    assert result["errors"]["base"] == "site_entity_identity_conflict"
+    assert require_not_none(result["errors"])["base"] == "site_entity_identity_conflict"
     assert dict(entry.data) == before
     assert entity_registry.async_get(row.entity_id) == row
 
@@ -1914,7 +1932,10 @@ async def test_local_reconfigure_clears_credential_based_current_identity(
         assert entry.data[CONF_CONSOLE_ID] == entry.unique_id == discovered
     else:
         assert result["type"] == FlowResultType.FORM
-        assert result["errors"]["base"] == "site_entity_identity_conflict"
+        assert (
+            require_not_none(result["errors"])["base"]
+            == "site_entity_identity_conflict"
+        )
         assert dict(entry.data) == previous_data
         assert entry.unique_id == previous_unique_id
     assert attr.asdict(entity_registry.async_get(row.entity_id)) == before
@@ -2101,7 +2122,7 @@ async def test_local_reconfigure_promotes_host_namespace_with_native_preservatio
             assert result["reason"] == "already_configured"
         else:
             assert result["type"] == FlowResultType.FORM
-            assert result["errors"]["base"] == (
+            assert require_not_none(result["errors"])["base"] == (
                 "site_entity_identity_conflict"
                 if outcome == "target_conflict"
                 else "unknown"
@@ -2144,7 +2165,9 @@ async def test_local_reconfigure_compares_normalized_hardware_addresses(
         entry,
         "sensor",
         build_site_unique_id(
-            normalize_console_namespace(stored), "site_shared", "site_total_clients"
+            require_not_none(normalize_console_namespace(stored)),
+            "site_shared",
+            "site_total_clients",
         ),
         "site_total_clients",
     )
@@ -2186,8 +2209,8 @@ async def test_local_reconfigure_compares_normalized_hardware_addresses(
     else:
         assert result["reason"] == "reconfigure_successful"
         assert entry.data[CONF_CONSOLE_ID] == entry.unique_id == discovered
-        assert entity_registry.async_get(
-            row.entity_id
+        assert require_not_none(
+            entity_registry.async_get(row.entity_id)
         ).unique_id == build_site_unique_id(
             discovered, "site_shared", "site_total_clients"
         )
@@ -2353,9 +2376,9 @@ async def test_affected_entities_retain_registry_identities_after_setup(
             assert entity.unique_id == row.unique_id
             assert hass.states.get(row.entity_id) is not None
             current = entity_registry.async_get(row.entity_id)
-            assert current.unique_id == row.unique_id
-            assert current.entity_id == row.entity_id
-            assert current.id == row.id
+            assert require_not_none(current).unique_id == row.unique_id
+            assert require_not_none(current).entity_id == row.entity_id
+            assert require_not_none(current).id == row.id
 
         sfp = platforms["binary_sensor"].entities[
             entity_registry.async_get_entity_id(

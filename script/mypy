@@ -8,15 +8,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
-if [[ -x "$PWD/.venv/bin/python" ]]; then
-    MYPY_PYTHON="$PWD/.venv/bin/python"
-elif [[ -x "$PWD/.local/ha-venv/bin/python" ]]; then
-    MYPY_PYTHON="$PWD/.local/ha-venv/bin/python"
-elif [[ -n "${VIRTUAL_ENV:-}" && -x "$VIRTUAL_ENV/bin/python" ]]; then
-    MYPY_PYTHON="$VIRTUAL_ENV/bin/python"
-else
-    echo "Project environment unavailable. Run ./script/setup/bootstrap." >&2
-    exit 1
-fi
-
-exec "$MYPY_PYTHON" -m mypy custom_components/unifi_insights
+source "$SCRIPT_DIR/.lib/python.sh"
+select_project_python "$PWD"
+exec "$PROJECT_PYTHON" -m mypy custom_components/unifi_insights

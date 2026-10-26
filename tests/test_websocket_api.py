@@ -8,9 +8,8 @@ import itertools
 import json
 import logging
 from datetime import UTC, datetime
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
-from unittest.mock import Mock, patch
+from typing import TYPE_CHECKING, Any, Literal
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from homeassistant.config_entries import ConfigEntryState
@@ -60,6 +59,7 @@ from custom_components.unifi_insights.websocket_api import (
     ws_topology_sources,
     ws_topology_subscribe,
 )
+from tests.fixtures.assertions import require_not_none
 from tests.fixtures.facade_data import with_sections
 
 if TYPE_CHECKING:
@@ -929,7 +929,8 @@ async def test_internet_activity_get_namespaces_shared_site_registry_rows(
         assert snapshot["entity_ids"] == owned_ids
         assert snapshot["windows"]["1h"]["download_bytes"] == index * 1000
         assert all(
-            entity_registry.async_get(entity_id).config_entry_id == entry.entry_id
+            require_not_none(entity_registry.async_get(entity_id)).config_entry_id
+            == entry.entry_id
             for entity_id in snapshot["entity_ids"].values()
         )
         snapshots.append(snapshot)
@@ -956,8 +957,8 @@ async def test_generic_internet_activity_payload_preserves_candidate_ownership(
     hass: HomeAssistant,
     internet_activity_entries: list[MockConfigEntry],
     entity_registry: er.EntityRegistry,
-    legacy_owner: str | None,
-    target_owner: str,
+    legacy_owner: Literal["own", "foreign"] | None,
+    target_owner: Literal["own", "foreign"],
     *,
     expected_candidate: str | None,
 ) -> None:
@@ -996,7 +997,8 @@ async def test_generic_internet_activity_payload_preserves_candidate_ownership(
     assert snapshot["entity_ids"] == expected
     assert dict(entity_registry.entities) == registry_before
     assert all(
-        entity_registry.async_get(entity_id).config_entry_id == entries["own"].entry_id
+        require_not_none(entity_registry.async_get(entity_id)).config_entry_id
+        == entries["own"].entry_id
         for entity_id in snapshot["entity_ids"].values()
     )
 
@@ -2070,7 +2072,7 @@ async def test_node_details_client_on_standalone_device(
         identifiers=tracker.device_info["identifiers"],
     )
     registered = _register_tracker(
-        hass, init_integration, tracker.unique_id, device_id=device.id
+        hass, init_integration, require_not_none(tracker.unique_id), device_id=device.id
     )
     client = await hass_ws_client(hass)
     nodes = (await _snapshot(client, init_integration))["nodes"]
@@ -2101,7 +2103,10 @@ async def test_node_details_grouped_client_tracker_has_no_device(
         identifiers=tracker.device_info["identifiers"],
     )
     registered = _register_tracker(
-        hass, init_integration, tracker.unique_id, device_id=ap_device.id
+        hass,
+        init_integration,
+        require_not_none(tracker.unique_id),
+        device_id=ap_device.id,
     )
     client = await hass_ws_client(hass)
 
@@ -2305,7 +2310,7 @@ async def test_node_details_checks_membership_of_every_device_lookup(
 
 def test_device_in_entry_compares_the_owning_entry() -> None:
     """A device belongs to the entry that owns it."""
-    device = SimpleNamespace(config_entry_id="entry-a")
+    device = MagicMock(spec=dr.DeviceEntry, config_entry_id="entry-a")
 
     assert _device_in_entry(device, "entry-a")
     assert not _device_in_entry(device, "entry-b")
@@ -2852,7 +2857,7 @@ async def test_subscriptions_rebuild_when_only_network_facts_change(
             init_integration,
             **{
                 NETWORK_FACTS_KEY: {
-                    **data[NETWORK_FACTS_KEY],
+                    **require_not_none(data[NETWORK_FACTS_KEY]),
                     SITE: build_site_network_facts(data["devices"][SITE], {}),
                 }
             },

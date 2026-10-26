@@ -23,6 +23,7 @@ from custom_components.unifi_insights.switch import (
     async_setup_entry,
     discover_network_rule_switches,
 )
+from tests.fixtures.assertions import require_instance
 from tests.fixtures.command_owners import autospec_command_owners
 from tests.fixtures.facade_data import (
     facade_data,
@@ -119,7 +120,10 @@ def test_discovery_skips_malformed_sites_records_and_non_bool_enabled(
     entities = discover_network_rule_switches(mock_coordinator, known_keys)
     pf_entities = [e for e in entities if e.entity_description.key == "port_forward"]
     assert len(pf_entities) == 1
-    assert pf_entities[0]._rule_id == "valid_rule"
+    assert (
+        require_instance(pf_entities[0], UnifiInsightsNetworkRuleSwitch)._rule_id
+        == "valid_rule"
+    )
 
 
 @pytest.mark.asyncio
@@ -521,7 +525,10 @@ def test_discovery_hides_predefined_nat_rules(
     entities = discover_network_rule_switches(mock_coordinator, known_keys)
     nat_entities = [e for e in entities if e.entity_description.key == "nat_rule"]
     assert len(nat_entities) == 2
-    assert {e._rule_id for e in nat_entities} == {"r4", "r5"}
+    assert {
+        require_instance(e, UnifiInsightsNetworkRuleSwitch)._rule_id
+        for e in nat_entities
+    } == {"r4", "r5"}
     assert STATIC_ROUTE_SWITCH.is_hidden_fn is None
 
 

@@ -46,6 +46,7 @@ from custom_components.unifi_insights.services import (
     async_unload_services,
 )
 from tests.conftest import _create_mock_protect_client
+from tests.fixtures.assertions import require_not_none
 from tests.fixtures.facade_data import with_protect_collection, without_sections
 from tests.fixtures.library_responses import SAMPLE_DOORBELL_CAMERA, SAMPLE_PUBLIC_CHIME
 
@@ -213,7 +214,7 @@ async def test_ids_are_sorted_and_deduplicated(
     )
     ring_a = _ring(hass)
     ring_b = _ring(hass, "doorbell_cam_b")
-    device_b = er.async_get(hass).async_get(ring_b).device_id
+    device_b = require_not_none(er.async_get(hass).async_get(ring_b)).device_id
 
     await _call(
         hass,
@@ -230,10 +231,10 @@ async def test_doorbell_device_expands_to_its_ring_sensor(
     """A doorbell's device pairs it. Its other entities are skipped quietly."""
     await _setup(hass, mock_config_entry, protect_client)
     registry = er.async_get(hass)
-    device_id = registry.async_get(_ring(hass)).device_id
+    device_id = require_not_none(registry.async_get(_ring(hass))).device_id
     siblings = [
         entry
-        for entry in er.async_entries_for_device(registry, device_id)
+        for entry in er.async_entries_for_device(registry, require_not_none(device_id))
         if entry.entity_id != _ring(hass)
     ]
     assert siblings, "the device must hold entities other than the ring sensor"
@@ -457,8 +458,8 @@ async def test_chime_can_be_picked_by_device_like_core(
         "button", DOMAIN, f"{DOMAIN}_chime_chime_1_play"
     )
     assert chime_button is not None
-    device_id = registry.async_get(chime_button).device_id
-    device = dr.async_get(hass).async_get(device_id)
+    device_id = require_not_none(registry.async_get(chime_button)).device_id
+    device = dr.async_get(hass).async_get(require_not_none(device_id))
     assert device is not None
     assert device.identifiers == {(DOMAIN, "protect_chime_chime_1")}
 
@@ -612,7 +613,7 @@ async def test_lookalike_camera_reached_through_its_device_is_skipped(
 ) -> None:
     """Picked only by device, it leaves the selection with no doorbell."""
     lookalike = await _setup_with_a_lookalike(hass, mock_config_entry, protect_client)
-    device_id = er.async_get(hass).async_get(lookalike).device_id
+    device_id = require_not_none(er.async_get(hass).async_get(lookalike)).device_id
 
     with pytest.raises(ServiceValidationError) as err:
         await _call(hass, chime_id="chime_1", doorbells={"device_id": device_id})

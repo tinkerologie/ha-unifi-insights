@@ -88,8 +88,8 @@ _LOGGER = logging.getLogger(__name__)
 PARALLEL_UPDATES = 1
 
 
-@dataclass
-class UnifiInsightsButtonEntityDescription(ButtonEntityDescription):  # type: ignore[misc]
+@dataclass(frozen=True, kw_only=True)
+class UnifiInsightsButtonEntityDescription(ButtonEntityDescription):
     """Class describing UniFi Insights button entities."""
 
 
@@ -688,7 +688,7 @@ class UnifiClientWakeButton(
         coordinator: UnifiInsightsFacadeCoordinator,
         mac: str,
         *,
-        site_id: str,
+        site_id: str | None,
         fallback_name: str | None = None,
         device_info: DeviceInfo | None = None,
     ) -> None:
@@ -723,7 +723,7 @@ class UnifiClientWakeButton(
         )
         self._client_name = client_name
         self._attr_translation_placeholders = {"client_name": client_name}
-        self.__dict__.pop("name", None)
+        vars(self).pop("name", None)
         if self.hass is not None:
             self.async_write_ha_state()
 

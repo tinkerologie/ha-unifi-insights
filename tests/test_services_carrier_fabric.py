@@ -38,6 +38,7 @@ from custom_components.unifi_insights.services import (
     async_unload_services,
 )
 from tests.conftest import device_config_entry_ids
+from tests.fixtures.assertions import require_not_none
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -109,7 +110,7 @@ async def setup_carrier_services(hass, mock_carrier_client):
     # 3. Organisation device (Carrier Fabric entry, not a subscriber)
     org_device = dev_reg.async_get_or_create(
         config_entry_id=carrier_entry.entry_id,
-        identifiers={(DOMAIN, carrier_entry.unique_id)},
+        identifiers={(DOMAIN, require_not_none(carrier_entry.unique_id))},
         name="Carrier Fabric Org",
     )
 

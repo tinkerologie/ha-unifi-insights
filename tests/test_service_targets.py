@@ -171,7 +171,7 @@ class Reg:
 class Case:
     """A routing table case: consoles, registry records, call data, outcome."""
 
-    consoles: dict[str, dict[str, Any]]
+    consoles: dict[str, Any]
     data: dict[str, Any]
     expect: tuple[Any, ...] | str
     placeholders: dict[str, str] | None = None

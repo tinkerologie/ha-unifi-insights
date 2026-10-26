@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from custom_components.unifi_insights.coordinators.protect_events import (
         Effect,
         Family,
+        GuardedFamily,
         ReconcilerInput,
         RestOutcome,
     )
@@ -627,7 +628,7 @@ def test_preservation_copies_rest_records_it_changes() -> None:
     ],
 )
 def test_answer_requested_before_a_frame_is_dropped(
-    family: Family, frame: dict[str, Any], rest: dict[str, Any], message: str
+    family: GuardedFamily, frame: dict[str, Any], rest: dict[str, Any], message: str
 ) -> None:
     """A frame that lands while the request is out beats the older answer."""
     record_id = rest["id"]

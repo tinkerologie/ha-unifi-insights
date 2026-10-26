@@ -51,6 +51,12 @@ from custom_components.unifi_insights.data_transforms import (
     site_record,
     site_section_available,
 )
+from tests.fixtures.assertions import (
+    patch_attribute,
+    require_instance,
+    require_mock,
+    require_not_none,
+)
 from tests.fixtures.command_owners import SITE_ID
 from tests.fixtures.coordinator_clients import (
     _create_mock_network_client,
@@ -833,13 +839,17 @@ class TestUnifiFacadeCoordinator:
         """
         facade_coordinator._config_coordinator.async_refresh = AsyncMock()
         facade_coordinator._device_coordinator.async_refresh = AsyncMock()
-        facade_coordinator._protect_coordinator.async_refresh = AsyncMock()
+        require_not_none(
+            facade_coordinator._protect_coordinator
+        ).async_refresh = AsyncMock()
 
         await facade_coordinator.async_request_refresh()
 
         facade_coordinator._config_coordinator.async_refresh.assert_called_once()
         facade_coordinator._device_coordinator.async_refresh.assert_called_once()
-        facade_coordinator._protect_coordinator.async_refresh.assert_called_once()
+        require_mock(
+            require_not_none(facade_coordinator._protect_coordinator).async_refresh
+        ).assert_called_once()
 
     @pytest.mark.asyncio
     async def test_async_refresh_or_raise_is_quiet_when_children_succeed(
@@ -858,8 +868,8 @@ class TestUnifiFacadeCoordinator:
             facade_coordinator._device_coordinator,
             facade_coordinator._protect_coordinator,
         ):
-            child.async_refresh = AsyncMock()
-            child.last_update_success = True
+            require_not_none(child).async_refresh = AsyncMock()
+            require_not_none(child).last_update_success = True
 
         await facade_coordinator.async_refresh_or_raise()
 
@@ -881,8 +891,8 @@ class TestUnifiFacadeCoordinator:
             facade_coordinator._device_coordinator,
             facade_coordinator._protect_coordinator,
         ):
-            child.async_refresh = AsyncMock()
-            child.last_update_success = True
+            require_not_none(child).async_refresh = AsyncMock()
+            require_not_none(child).last_update_success = True
 
         facade_coordinator._device_coordinator.last_update_success = False
         facade_coordinator._device_coordinator.last_exception = OSError("console down")
@@ -903,12 +913,12 @@ class TestUnifiFacadeCoordinator:
             facade_coordinator._device_coordinator,
             facade_coordinator._protect_coordinator,
         ):
-            child.async_refresh = AsyncMock()
-            child.last_update_success = True
+            require_not_none(child).async_refresh = AsyncMock()
+            require_not_none(child).last_update_success = True
 
-        facade_coordinator._protect_coordinator.async_refresh = AsyncMock(
-            side_effect=RuntimeError("boom")
-        )
+        require_not_none(
+            facade_coordinator._protect_coordinator
+        ).async_refresh = AsyncMock(side_effect=RuntimeError("boom"))
 
         with pytest.raises(HomeAssistantError) as err:
             await facade_coordinator.async_refresh_or_raise()
@@ -930,8 +940,8 @@ class TestUnifiFacadeCoordinator:
             facade_coordinator._device_coordinator,
             facade_coordinator._protect_coordinator,
         ):
-            child.async_refresh = AsyncMock()
-            child.last_update_success = True
+            require_not_none(child).async_refresh = AsyncMock()
+            require_not_none(child).last_update_success = True
 
         facade_coordinator._device_coordinator.async_refresh = AsyncMock(
             side_effect=asyncio.CancelledError
@@ -950,14 +960,20 @@ class TestUnifiFacadeCoordinator:
             facade_coordinator._device_coordinator,
             facade_coordinator._protect_coordinator,
         ):
-            child.async_refresh = AsyncMock()
-            child.last_update_success = True
+            require_not_none(child).async_refresh = AsyncMock()
+            require_not_none(child).last_update_success = True
 
         await facade_coordinator.async_refresh_or_raise(include_protect=False)
 
-        facade_coordinator._config_coordinator.async_refresh.assert_called_once()
-        facade_coordinator._device_coordinator.async_refresh.assert_called_once()
-        facade_coordinator._protect_coordinator.async_refresh.assert_not_called()
+        require_mock(
+            facade_coordinator._config_coordinator.async_refresh
+        ).assert_called_once()
+        require_mock(
+            facade_coordinator._device_coordinator.async_refresh
+        ).assert_called_once()
+        require_mock(
+            require_not_none(facade_coordinator._protect_coordinator).async_refresh
+        ).assert_not_called()
 
     @pytest.mark.asyncio
     async def test_async_refresh_or_raise_without_protect_console(
@@ -973,7 +989,9 @@ class TestUnifiFacadeCoordinator:
 
         await facade_coordinator_no_protect.async_refresh_or_raise()
 
-        facade_coordinator_no_protect._config_coordinator.async_refresh.assert_called_once()
+        require_mock(
+            facade_coordinator_no_protect._config_coordinator.async_refresh
+        ).assert_called_once()
 
     @pytest.mark.asyncio
     async def test_async_request_refresh_no_protect(
@@ -1026,18 +1044,26 @@ class TestUnifiFacadeCoordinator:
             side_effect=_fake_refresh
         )
         facade_coordinator._device_coordinator.async_refresh = AsyncMock()
-        facade_coordinator._protect_coordinator.async_refresh = AsyncMock()
+        require_not_none(
+            facade_coordinator._protect_coordinator
+        ).async_refresh = AsyncMock()
         # The debounced path must not be used for this explicit,
         # user-triggered refresh - assert it's never touched.
         facade_coordinator._config_coordinator.async_request_refresh = AsyncMock()
         facade_coordinator._device_coordinator.async_request_refresh = AsyncMock()
-        facade_coordinator._protect_coordinator.async_request_refresh = AsyncMock()
+        require_not_none(
+            facade_coordinator._protect_coordinator
+        ).async_request_refresh = AsyncMock()
 
         await facade_coordinator.async_request_refresh()
 
         facade_coordinator._config_coordinator.async_request_refresh.assert_not_called()
         facade_coordinator._device_coordinator.async_request_refresh.assert_not_called()
-        facade_coordinator._protect_coordinator.async_request_refresh.assert_not_called()
+        require_mock(
+            require_not_none(
+                facade_coordinator._protect_coordinator
+            ).async_request_refresh
+        ).assert_not_called()
 
         # The aggregated data must reflect what the (mocked) genuine
         # refresh produced, proving the call actually waited for it.
@@ -1260,11 +1286,11 @@ class TestUnifiFacadeCoordinator:
 
     @pytest.mark.asyncio
     async def test_async_export_network_rules_without_a_config_entry(
-        self, facade_coordinator: UnifiInsightsFacadeCoordinator
+        self, facade_coordinator: UnifiInsightsFacadeCoordinator, monkeypatch
     ) -> None:
         """Without a config entry the console identity is exported as unknown."""
         facade_coordinator._config_coordinator.data = {"sites": {}}
-        facade_coordinator.config_entry = None
+        patch_attribute(monkeypatch, facade_coordinator, "config_entry", None)
 
         with patch(
             "custom_components.unifi_insights.coordinators.facade."
@@ -1652,8 +1678,10 @@ def test_facade_data_is_frozen_all_the_way_down() -> None:
     record = data["devices"]["site1"]["dev1"]
 
     for write in (
-        lambda: data.__setitem__("devices", {}),
-        lambda: data["devices"].__setitem__("site2", {}),
+        lambda: require_instance(data, ReadOnlyDict).__setitem__("devices", {}),
+        lambda: require_instance(data["devices"], ReadOnlyDict).__setitem__(
+            "site2", {}
+        ),
         lambda: record.__setitem__("name", "x"),
         lambda: record["ports"].append(2),
         lambda: record["ports"].__setitem__(0, 2),
@@ -1752,12 +1780,10 @@ def test_with_network_device_republishes_published_facts() -> None:
     unpublished = with_network_device(facade_data(), "site1", "gw", device)
     assert unpublished[NETWORK_FACTS_KEY] is None
 
-    published = facade_data(
-        **{NETWORK_FACTS_KEY: {"site0": build_site_network_facts({}, {})}}
-    )
+    published = facade_data(network_facts={"site0": build_site_network_facts({}, {})})
     data = with_network_device(published, "site1", "gw", device)
 
-    assert set(data[NETWORK_FACTS_KEY]) == {"site0", "site1"}
+    assert set(require_not_none(data[NETWORK_FACTS_KEY])) == {"site0", "site1"}
     facts = device_facts(data, "site1", "gw")
     assert facts is not None
     assert facts.online_state == "online"
@@ -1885,4 +1911,4 @@ def test_with_sections_freezes_the_sections_it_replaces() -> None:
     with pytest.raises(RuntimeError):
         data["devices"]["site1"]["d1"]["ports"].append(2)
     with pytest.raises(RuntimeError):
-        data["devices"]["site1"]["d2"] = {}
+        require_instance(data["devices"]["site1"], ReadOnlyDict)["d2"] = {}

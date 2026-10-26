@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Validation scripts now consistently select the configured Python environment, fail on Pyright warnings and validate custom requirements against Home Assistant Core's own dependency files. Static entity descriptions are frozen and keyword-only, matching current Home Assistant metadata conventions. [#420](https://github.com/tinkerologie/ha-unifi-insights/issues/420)
+
 ## [2026.10.4] - 2026-10-26
 
 ### Fixed

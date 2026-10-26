@@ -28,6 +28,7 @@ from custom_components.unifi_insights.coordinators.protect import (
     STALE_EVENT_TIMEOUT,
     UnifiInsightsProtectCoordinator,
 )
+from tests.fixtures.assertions import require_not_none
 from tests.fixtures.coordinator_clients import (
     _create_mock_model,
     _create_mock_network_client,
@@ -159,7 +160,7 @@ async def test_door_frame_during_a_sensor_poll_beats_the_older_rest_reading(
     """A door that opens while the poll is out stays open; REST answers older."""
     coordinator, feed = protect
     gate = _Gate([_sensor(opened=False, changed_at=1000)])
-    coordinator.protect_client.sensors.get_all = gate
+    require_not_none(coordinator.protect_client).sensors.get_all = gate
 
     await _while_in_flight(
         gate,
@@ -178,7 +179,7 @@ async def test_a_door_frame_during_the_poll_wins_even_over_a_later_timestamp(
     """The frame landed while the request was out, so REST predates it."""
     coordinator, feed = protect
     gate = _Gate([_sensor(opened=False, changed_at=2500)])
-    coordinator.protect_client.sensors.get_all = gate
+    require_not_none(coordinator.protect_client).sensors.get_all = gate
 
     await _while_in_flight(
         gate,
@@ -200,7 +201,7 @@ async def test_a_newer_rest_reading_beats_an_earlier_door_frame(
     assert coordinator.data["sensors"]["sensor1"]["isOpened"] is True
     await asyncio.sleep(0.01)
 
-    coordinator.protect_client.sensors.get_all = AsyncMock(
+    require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
         return_value=[_sensor(opened=False, changed_at=3000)]
     )
     await coordinator.async_refresh_sensors()
@@ -217,7 +218,7 @@ async def test_a_siren_frame_during_a_poll_beats_the_polls_older_answer(
     """The siren frame that lands mid-poll is newer than the poll's answer."""
     coordinator, feed = protect
     gate = _Gate([_siren(active=False)])
-    coordinator.protect_client.sirens.get_all = gate
+    require_not_none(coordinator.protect_client).sirens.get_all = gate
 
     await _while_in_flight(
         gate,
@@ -247,7 +248,7 @@ async def test_a_siren_stopped_during_a_poll_stays_off_until_a_new_run(
         sirenStatus={"isActive": True, "activatedAt": ACTIVATED_AT},
     )
     still_running = _Gate([_siren(active=True)])
-    coordinator.protect_client.sirens.get_all = still_running
+    require_not_none(coordinator.protect_client).sirens.get_all = still_running
 
     await _while_in_flight(
         still_running,
@@ -257,14 +258,14 @@ async def test_a_siren_stopped_during_a_poll_stays_off_until_a_new_run(
     assert coordinator.data["sirens"]["siren_1"]["sirenStatus"]["isActive"] is False
 
     # The same stale reading on the next poll is still the stopped run.
-    coordinator.protect_client.sirens.get_all = AsyncMock(
+    require_not_none(coordinator.protect_client).sirens.get_all = AsyncMock(
         return_value=[_siren(active=True)]
     )
     await coordinator.async_refresh()
     assert coordinator.data["sirens"]["siren_1"]["sirenStatus"]["isActive"] is False
 
     # A later run is believed.
-    coordinator.protect_client.sirens.get_all = AsyncMock(
+    require_not_none(coordinator.protect_client).sirens.get_all = AsyncMock(
         return_value=[_siren(active=True, activated_at=ACTIVATED_AT + 60_000)]
     )
     await coordinator.async_refresh()
@@ -289,7 +290,9 @@ async def test_a_camera_is_removed_only_after_it_misses_several_polls(
     other = _create_mock_model(
         {"id": "camera2", "name": "Back Door", "state": "CONNECTED"}
     )
-    coordinator.protect_client.cameras.get_all = AsyncMock(return_value=[other])
+    require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
+        return_value=[other]
+    )
 
     def registered() -> bool:
         return (

@@ -45,6 +45,7 @@ from custom_components.unifi_insights.coordinators.protect_events import (
     SensorTracking,
 )
 from tests.conftest import set_mock_device_lookup
+from tests.fixtures.assertions import patch_attribute, require_not_none
 from tests.fixtures.protect_ws import send_device
 
 if TYPE_CHECKING:
@@ -182,7 +183,7 @@ class TestRapidTransitionsPreservation:
 
     @pytest.mark.asyncio
     async def test_rapid_transitions_interleaved_with_rest_preserve_latest(
-        self, coordinator: UnifiInsightsProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator, monkeypatch
     ) -> None:
         """WS open->close->open during an in-flight REST fetch keeps the latest."""
         coordinator.data["sensors"] = {
@@ -209,7 +210,12 @@ class TestRapidTransitionsPreservation:
                 )
             ]
 
-        coordinator.protect_client.sensors.get_all = delayed_sensors_fetch
+        patch_attribute(
+            monkeypatch,
+            require_not_none(coordinator.protect_client).sensors,
+            "get_all",
+            delayed_sensors_fetch,
+        )
 
         fetch_task = asyncio.create_task(coordinator._fetch_sensors())
         await asyncio.sleep(0.01)
@@ -305,7 +311,7 @@ class TestIndependentSensorRecovery:
 
     @pytest.mark.asyncio
     async def test_refresh_coalescing_single_in_flight_request(
-        self, coordinator: UnifiInsightsProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator, monkeypatch
     ) -> None:
         """Overlapping sensor refresh calls never run two REST fetches
         concurrently, and a waiter's request is coalesced into exactly one
@@ -342,7 +348,12 @@ class TestIndependentSensorRecovery:
                 )
             ]
 
-        coordinator.protect_client.sensors.get_all = slow_get_all
+        patch_attribute(
+            monkeypatch,
+            require_not_none(coordinator.protect_client).sensors,
+            "get_all",
+            slow_get_all,
+        )
 
         # Start first refresh task; it becomes the owner and blocks in the
         # fetch on fetch_gate.
@@ -375,7 +386,7 @@ class TestIndependentSensorRecovery:
 
     @pytest.mark.asyncio
     async def test_waiter_reraises_error_when_raise_on_error_true(
-        self, coordinator: UnifiInsightsProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator, monkeypatch
     ) -> None:
         """A waiter awaiting an in-flight owner fetch must see the owner's
         error re-raised when raise_on_error=True.
@@ -391,7 +402,7 @@ class TestIndependentSensorRecovery:
         # raises immediately instead of being absorbed (see
         # `test_transient_fetch_errors_preserve_cache`), which keeps this
         # test to a single gated fetch.
-        coordinator.protect_client.sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
             side_effect=UniFiConnectionError("Connection lost")
         )
         for _ in range(MAX_CONSECUTIVE_EMPTY_FETCHES):
@@ -404,7 +415,12 @@ class TestIndependentSensorRecovery:
             msg = "Connection lost"
             raise UniFiConnectionError(msg)
 
-        coordinator.protect_client.sensors.get_all = slow_failing_fetch
+        patch_attribute(
+            monkeypatch,
+            require_not_none(coordinator.protect_client).sensors,
+            "get_all",
+            slow_failing_fetch,
+        )
 
         # Owner: becomes the in-flight fetch, blocks on fetch_gate.
         owner_task = asyncio.create_task(coordinator.async_refresh_sensors())
@@ -509,7 +525,7 @@ class TestProtectNewerDoorStates:
 
     @pytest.mark.asyncio
     async def test_in_flight_websocket_update_not_overwritten_by_older_rest(
-        self, coordinator: UnifiInsightsProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator, monkeypatch
     ) -> None:
         """A WebSocket push during in-flight REST fetch must win over REST."""
         # Initial cached state: door is closed
@@ -540,7 +556,12 @@ class TestProtectNewerDoorStates:
                 )
             ]
 
-        coordinator.protect_client.sensors.get_all = delayed_sensors_fetch
+        patch_attribute(
+            monkeypatch,
+            require_not_none(coordinator.protect_client).sensors,
+            "get_all",
+            delayed_sensors_fetch,
+        )
 
         # 1. Start REST fetch
         fetch_task = asyncio.create_task(coordinator._fetch_sensors())
@@ -570,7 +591,7 @@ class TestProtectNewerDoorStates:
 
     @pytest.mark.asyncio
     async def test_ws_recency_wins_when_ws_frame_has_no_timestamp(
-        self, coordinator: UnifiInsightsProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator, monkeypatch
     ) -> None:
         """Branch 1 (WS-recency) must win even when the WS frame carries no
         `openStatusChangedAt` at all - and REST's own timestamp is
@@ -614,7 +635,12 @@ class TestProtectNewerDoorStates:
                 )
             ]
 
-        coordinator.protect_client.sensors.get_all = delayed_sensors_fetch
+        patch_attribute(
+            monkeypatch,
+            require_not_none(coordinator.protect_client).sensors,
+            "get_all",
+            delayed_sensors_fetch,
+        )
 
         # 1. Start REST fetch
         fetch_task = asyncio.create_task(coordinator._fetch_sensors())
@@ -663,7 +689,7 @@ class TestProtectNewerDoorStates:
             }
         }
 
-        coordinator.protect_client.sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
             return_value=[
                 _create_mock_model(
                     {
@@ -704,7 +730,7 @@ class TestProtectNewerDoorStates:
         )
         await asyncio.sleep(0.001)
 
-        coordinator.protect_client.sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
             return_value=[
                 _create_mock_model(
                     {
@@ -732,7 +758,7 @@ class TestProtectNewerDoorStates:
             "sensor1": {"id": "sensor1", "name": "Front Door", "isOpened": True}
         }
 
-        coordinator.protect_client.sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
             side_effect=UniFiConnectionError("Connection lost")
         )
 
@@ -771,7 +797,7 @@ class TestProtectNewerDoorStates:
         where it must reach `config_entry.async_start_reauth` rather than
         vanishing as an unhandled background-task traceback.
         """
-        coordinator.protect_client.sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
             side_effect=UniFiAuthenticationError("Invalid credentials")
         )
 
@@ -796,7 +822,7 @@ class TestProtectNewerDoorStates:
         to reauth via `config_entry.async_start_reauth`, not vanish as an
         unhandled background-task traceback (finding 5, WS-reconnect path).
         """
-        coordinator.protect_client.sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
             side_effect=UniFiAuthenticationError("Invalid credentials")
         )
 
@@ -819,7 +845,7 @@ class TestGateStampDiscriminatesFrameContent:
 
     @pytest.mark.asyncio
     async def test_telemetry_only_frame_does_not_stamp_or_suppress_rest(
-        self, coordinator: UnifiInsightsProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator, monkeypatch
     ) -> None:
         """A temperature-only WS frame must not gate-stamp any group."""
         coordinator.data["sensors"] = {
@@ -846,7 +872,12 @@ class TestGateStampDiscriminatesFrameContent:
                 )
             ]
 
-        coordinator.protect_client.sensors.get_all = delayed_sensors_fetch
+        patch_attribute(
+            monkeypatch,
+            require_not_none(coordinator.protect_client).sensors,
+            "get_all",
+            delayed_sensors_fetch,
+        )
 
         fetch_task = asyncio.create_task(coordinator._fetch_sensors())
         await asyncio.sleep(0.01)
@@ -876,7 +907,7 @@ class TestGateStampDiscriminatesFrameContent:
 
     @pytest.mark.asyncio
     async def test_motion_only_frame_does_not_suppress_newer_rest_door_transition(
-        self, coordinator: UnifiInsightsProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator, monkeypatch
     ) -> None:
         """Round-4 review finding 5 regression guard.
 
@@ -916,7 +947,12 @@ class TestGateStampDiscriminatesFrameContent:
                 )
             ]
 
-        coordinator.protect_client.sensors.get_all = delayed_sensors_fetch
+        patch_attribute(
+            monkeypatch,
+            require_not_none(coordinator.protect_client).sensors,
+            "get_all",
+            delayed_sensors_fetch,
+        )
 
         fetch_task = asyncio.create_task(coordinator._fetch_sensors())
         await asyncio.sleep(0.01)
@@ -954,7 +990,7 @@ class TestDoorStatePreservationIsBounded:
 
     @pytest.mark.asyncio
     async def test_bounded_when_rest_omits_timestamp(
-        self, coordinator: UnifiInsightsProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator, monkeypatch
     ) -> None:
         """REST never reporting a timestamp must not wedge the door forever."""
         coordinator.data["sensors"] = {
@@ -973,7 +1009,12 @@ class TestDoorStatePreservationIsBounded:
                 )
             ]
 
-        coordinator.protect_client.sensors.get_all = rest_without_timestamp
+        patch_attribute(
+            monkeypatch,
+            require_not_none(coordinator.protect_client).sensors,
+            "get_all",
+            rest_without_timestamp,
+        )
 
         for _ in range(10):
             await coordinator._fetch_sensors()
@@ -987,7 +1028,7 @@ class TestDoorStatePreservationIsBounded:
 
     @pytest.mark.asyncio
     async def test_bounded_when_cached_timestamp_always_compares_newer(
-        self, coordinator: UnifiInsightsProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator, monkeypatch
     ) -> None:
         """A REST timestamp stuck below the cache must not wedge forever."""
         coordinator.data["sensors"] = {
@@ -1012,7 +1053,12 @@ class TestDoorStatePreservationIsBounded:
                 )
             ]
 
-        coordinator.protect_client.sensors.get_all = rest_stuck_below_cache
+        patch_attribute(
+            monkeypatch,
+            require_not_none(coordinator.protect_client).sensors,
+            "get_all",
+            rest_stuck_below_cache,
+        )
 
         for _ in range(10):
             await coordinator._fetch_sensors()
@@ -1026,7 +1072,7 @@ class TestDoorStatePreservationIsBounded:
 
     @pytest.mark.asyncio
     async def test_preserve_count_resets_when_rest_wins_normally(
-        self, coordinator: UnifiInsightsProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator, monkeypatch
     ) -> None:
         """A genuine REST win resets the bounded-preservation counter."""
         coordinator.data["sensors"] = {
@@ -1051,14 +1097,19 @@ class TestDoorStatePreservationIsBounded:
                 )
             ]
 
-        coordinator.protect_client.sensors.get_all = rest_always_older
+        patch_attribute(
+            monkeypatch,
+            require_not_none(coordinator.protect_client).sensors,
+            "get_all",
+            rest_always_older,
+        )
         await coordinator._fetch_sensors()
         await coordinator._fetch_sensors()
         assert coordinator._events.sensors["sensor1"].ts_preserve_polls == 2
 
         # REST reports a genuinely newer timestamp: it wins and the
         # bounded-preservation counter resets to zero.
-        coordinator.protect_client.sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
             return_value=[
                 _create_mock_model(
                     {
@@ -1076,7 +1127,7 @@ class TestDoorStatePreservationIsBounded:
 
     @pytest.mark.asyncio
     async def test_ws_recency_cap_latches_instead_of_oscillating(
-        self, coordinator: UnifiInsightsProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator, monkeypatch
     ) -> None:
         """Round-4 review finding 6: a sustained WS-recency condition must
 
@@ -1127,7 +1178,12 @@ class TestDoorStatePreservationIsBounded:
                 await rest_gate.wait()
                 return await rest_reports_closed()
 
-            coordinator.protect_client.sensors.get_all = delayed
+            patch_attribute(
+                monkeypatch,
+                require_not_none(coordinator.protect_client).sensors,
+                "get_all",
+                delayed,
+            )
             fetch_task = asyncio.create_task(coordinator._fetch_sensors())
             await asyncio.sleep(0.01)
             send_device(
@@ -1182,7 +1238,12 @@ class TestDoorStatePreservationIsBounded:
                 )
             ]
 
-        coordinator.protect_client.sensors.get_all = rest_reports_open
+        patch_attribute(
+            monkeypatch,
+            require_not_none(coordinator.protect_client).sensors,
+            "get_all",
+            rest_reports_open,
+        )
         await coordinator._fetch_sensors()
         await coordinator._fetch_sensors()
         assert coordinator.data["sensors"]["sensor1"]["isOpened"] is True
@@ -1195,6 +1256,7 @@ class TestDoorStatePreservationIsBounded:
         self,
         coordinator: UnifiInsightsProtectCoordinator,
         caplog: pytest.LogCaptureFixture,
+        monkeypatch,
     ) -> None:
         """Round-4 review finding 4: a sensor stuck at the door-state
 
@@ -1227,7 +1289,12 @@ class TestDoorStatePreservationIsBounded:
                 )
             ]
 
-        coordinator.protect_client.sensors.get_all = rest_fixed_older
+        patch_attribute(
+            monkeypatch,
+            require_not_none(coordinator.protect_client).sensors,
+            "get_all",
+            rest_fixed_older,
+        )
 
         # First cap-hit: WARNING. (REST always reporting the same older
         # timestamp is self-resolving after one cap-trip - see
@@ -1297,7 +1364,7 @@ class TestTimestampNormalization:
             }
         }
 
-        coordinator.protect_client.sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
             return_value=[
                 _create_mock_model(
                     {
@@ -1341,7 +1408,7 @@ class TestTimestampNormalization:
             }
         }
 
-        coordinator.protect_client.sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
             return_value=[
                 _create_mock_model(
                     {
@@ -1381,7 +1448,7 @@ class TestTimestampNormalization:
             }
         }
 
-        coordinator.protect_client.sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
             return_value=[
                 _create_mock_model(
                     {
@@ -1415,21 +1482,29 @@ class TestSensorModelTimestampCoercion:
         assert sensor.open_status_changed_at == 1_700_000_000_000
 
     def test_iso_string_is_coerced_to_int_millis(self) -> None:
-        sensor = Sensor(
-            id="s1", mac="aa:bb", openStatusChangedAt="2023-11-14T22:13:20+00:00"
+        sensor = Sensor.model_validate(
+            {
+                "id": "s1",
+                "mac": "aa:bb",
+                "openStatusChangedAt": "2023-11-14T22:13:20+00:00",
+            }
         )
         assert isinstance(sensor.open_status_changed_at, int)
         assert sensor.open_status_changed_at == 1_700_000_000_000
 
     def test_datetime_is_coerced_to_int_millis(self) -> None:
         dt = datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC)
-        sensor = Sensor(id="s1", mac="aa:bb", motionDetectedAt=dt)
+        sensor = Sensor.model_validate(
+            {"id": "s1", "mac": "aa:bb", "motionDetectedAt": dt}
+        )
         assert isinstance(sensor.motion_detected_at, int)
         assert sensor.motion_detected_at == 1_700_000_000_000
 
     def test_naive_datetime_is_assumed_utc(self) -> None:
         dt = datetime(2023, 11, 14, 22, 13, 20)  # noqa: DTZ001 - naive on purpose
-        sensor = Sensor(id="s1", mac="aa:bb", openStatusChangedAt=dt)
+        sensor = Sensor.model_validate(
+            {"id": "s1", "mac": "aa:bb", "openStatusChangedAt": dt}
+        )
         assert sensor.open_status_changed_at == 1_700_000_000_000
 
     def test_unparseable_string_does_not_raise_validation_error(self) -> None:
@@ -1439,7 +1514,9 @@ class TestSensorModelTimestampCoercion:
         which propagates out of `sensors.get_all()` and drops this sensor
         from the whole fetch - strictly worse than a missing timestamp.
         """
-        sensor = Sensor(id="s1", mac="aa:bb", openStatusChangedAt="not-a-timestamp")
+        sensor = Sensor.model_validate(
+            {"id": "s1", "mac": "aa:bb", "openStatusChangedAt": "not-a-timestamp"}
+        )
         assert sensor.open_status_changed_at is None
 
     def test_none_passes_through(self) -> None:
@@ -1462,7 +1539,7 @@ class TestBoundedEscalationPropagatesOnMainPoll:
         self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """After the escalation boundary, `_async_update_data` must raise."""
-        coordinator.protect_client.sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
             side_effect=UniFiConnectionError("Connection lost")
         )
 
@@ -1483,7 +1560,7 @@ class TestBoundedEscalationPropagatesOnMainPoll:
         ConfigEntryAuthFailed (triggering reauth), not get relabeled as
         UpdateFailed by `_async_update_data`'s generic exception handler.
         """
-        coordinator.protect_client.sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
             side_effect=UniFiAuthenticationError("Invalid credentials")
         )
 
@@ -1501,7 +1578,7 @@ class TestReconnectStormBounded:
 
     @pytest.mark.asyncio
     async def test_refresh_loop_caps_iterations_under_sustained_pending(
-        self, coordinator: UnifiInsightsProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator, monkeypatch
     ) -> None:
         """The owner loop must stop even if a caller keeps re-marking pending."""
         call_count = 0
@@ -1515,7 +1592,12 @@ class TestReconnectStormBounded:
                 coordinator._sensor_refresh_pending = True
             return [_create_mock_model({"id": "sensor1", "isOpened": False})]
 
-        coordinator.protect_client.sensors.get_all = instant_get_all
+        patch_attribute(
+            monkeypatch,
+            require_not_none(coordinator.protect_client).sensors,
+            "get_all",
+            instant_get_all,
+        )
 
         await coordinator.async_refresh_sensors()
 
@@ -1526,7 +1608,10 @@ class TestReconnectStormBounded:
 
     @pytest.mark.asyncio
     async def test_flapping_devices_reconnect_is_debounced(
-        self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator
+        self,
+        hass: HomeAssistant,
+        coordinator: UnifiInsightsProtectCoordinator,
+        monkeypatch,
     ) -> None:
         """A flapping devices stream must not trigger unbounded REST calls."""
         call_count = 0
@@ -1536,7 +1621,12 @@ class TestReconnectStormBounded:
             call_count += 1
             return [_create_mock_model({"id": "sensor1", "isOpened": False})]
 
-        coordinator.protect_client.sensors.get_all = fast_get_all
+        patch_attribute(
+            monkeypatch,
+            require_not_none(coordinator.protect_client).sensors,
+            "get_all",
+            fast_get_all,
+        )
         coordinator._sensor_reconnect_debouncer.cooldown = 0.02
 
         # 20 rapid devices-stream reconnects, as during a flapping WS
@@ -1634,7 +1724,7 @@ class TestRefreshWaiterPaths:
 
     @pytest.mark.asyncio
     async def test_waiter_propagates_auth_failure_from_in_flight_fetch(
-        self, coordinator: UnifiInsightsProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator, monkeypatch
     ) -> None:
         """An auth failure must reach a waiter, not be swallowed as a blip.
 
@@ -1650,7 +1740,12 @@ class TestRefreshWaiterPaths:
             msg = "Invalid credentials"
             raise UniFiAuthenticationError(msg)
 
-        coordinator.protect_client.sensors.get_all = slow_auth_failure
+        patch_attribute(
+            monkeypatch,
+            require_not_none(coordinator.protect_client).sensors,
+            "get_all",
+            slow_auth_failure,
+        )
 
         owner_task = asyncio.create_task(coordinator.async_refresh_sensors())
         await asyncio.sleep(0)
@@ -1666,7 +1761,7 @@ class TestRefreshWaiterPaths:
 
     @pytest.mark.asyncio
     async def test_waiter_with_notify_false_does_not_notify_listeners(
-        self, coordinator: UnifiInsightsProtectCoordinator
+        self, coordinator: UnifiInsightsProtectCoordinator, monkeypatch
     ) -> None:
         """`notify=False` must hold on the waiter branch too.
 
@@ -1680,7 +1775,12 @@ class TestRefreshWaiterPaths:
             await fetch_gate.wait()
             return []
 
-        coordinator.protect_client.sensors.get_all = slow_fetch
+        patch_attribute(
+            monkeypatch,
+            require_not_none(coordinator.protect_client).sensors,
+            "get_all",
+            slow_fetch,
+        )
 
         with patch.object(coordinator, "async_update_listeners") as notify_mock:
             owner_task = asyncio.create_task(

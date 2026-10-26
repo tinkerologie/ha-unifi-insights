@@ -31,6 +31,12 @@ from custom_components.unifi_insights.image import (
     async_setup_entry,
 )
 from custom_components.unifi_insights.innerspace_transforms import strip_url_query
+from tests.fixtures.assertions import (
+    patch_attribute,
+    require_instance,
+    require_not_none,
+)
+from tests.fixtures.entities import EntityCallback, EntityCollector
 from tests.fixtures.facade_data import (
     frozen,
     set_availability,
@@ -41,7 +47,7 @@ from tests.fixtures.facade_data import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from homeassistant.core import Event, HomeAssistant
+    from homeassistant.core import Event, EventStateChangedData, HomeAssistant
 
     from custom_components.unifi_insights.coordinators.facade import FacadeData
 
@@ -192,7 +198,7 @@ class TestUnifiWifiQrCodeImage:
         assert entity.has_entity_name is True
         assert getattr(entity, "_attr_name", None) is None
         assert entity._attr_content_type == "image/png"
-        assert entity._attr_device_info["name"] == "WiFi: TestNet"
+        assert require_not_none(entity._attr_device_info)["name"] == "WiFi: TestNet"
 
     def test_available_with_payload(
         self, hass: HomeAssistant, mock_coordinator: MagicMock
@@ -289,8 +295,10 @@ def _record_state_changes(hass: HomeAssistant) -> list[str]:
     states: list[str] = []
 
     @callback
-    def _record(event: Event) -> None:
-        states.append(event.data["new_state"].state)
+    def _record(event: Event[EventStateChangedData]) -> None:
+        state = event.data["new_state"]
+        if state is not None:
+            states.append(state.state)
 
     hass.bus.async_listen(EVENT_STATE_CHANGED, _record)
     return states
@@ -298,6 +306,10 @@ def _record_state_changes(hass: HomeAssistant) -> list[str]:
 
 class TestUnifiFloorPlanImage:
     """Tests for the UnifiFloorPlanImage entity."""
+
+    @pytest.fixture(autouse=True)
+    def state_writer_patcher(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._state_patcher = monkeypatch
 
     @pytest.fixture
     def innerspace_coordinator(self) -> MagicMock:
@@ -349,7 +361,9 @@ class TestUnifiFloorPlanImage:
         # Not added to hass here: stub the state writer. Tests that assert the
         # written state use `_add_entity` instead.
         entity.hass = hass
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(
+            self._state_patcher, entity, "async_write_ha_state", MagicMock()
+        )
         return entity
 
     async def _add_entity(
@@ -378,11 +392,12 @@ class TestUnifiFloorPlanImage:
         assert entity.has_entity_name is True
         assert entity.translation_key == "floor_plan"
         assert entity.content_type == "image/png"
-        assert entity.device_info["name"] == "Ground Floor"
-        assert entity.device_info["identifiers"] == {
+        assert require_not_none(entity.device_info)["name"] == "Ground Floor"
+        assert require_not_none(entity.device_info)["identifiers"] == {
             (DOMAIN, "innerspace_floor_plan_fp-1")
         }
-        assert entity.device_info["model"] == "Floor Plan"
+        assert "model" in require_not_none(entity.device_info)
+        assert dict(require_not_none(entity.device_info))["model"] == "Floor Plan"
 
         attrs = entity.extra_state_attributes
         assert attrs["floor_plan_id"] == "fp-1"
@@ -506,7 +521,7 @@ class TestUnifiFloorPlanImage:
             assert entity.available is False
 
             entity._handle_coordinator_update()
-            await entity._retry_task
+            await require_not_none(entity._retry_task)
             assert entity.available is False
 
             # The retry already re-fetched: a view request does not fetch again
@@ -529,7 +544,7 @@ class TestUnifiFloorPlanImage:
         """Failed fetch -> written unavailable; update -> retry -> written available."""
         entity = await self._add_entity(hass, innerspace_coordinator, "fp-1")
         entity_id = entity.entity_id
-        assert hass.states.get(entity_id).state != STATE_UNAVAILABLE
+        assert require_not_none(hass.states.get(entity_id)).state != STATE_UNAVAILABLE
 
         written = _record_state_changes(hass)
 
@@ -538,17 +553,17 @@ class TestUnifiFloorPlanImage:
         )
         assert await entity.async_image() is None
         # The failed fetch itself is written; no coordinator update needed
-        assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
+        assert require_not_none(hass.states.get(entity_id)).state == STATE_UNAVAILABLE
 
         innerspace_coordinator.async_get_floor_plan_image = AsyncMock(
             return_value=(b"recovered_png_bytes", "image/jpeg")
         )
         entity._handle_coordinator_update()
         # The update must not clear the failure before the retry has a result
-        assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
+        assert require_not_none(hass.states.get(entity_id)).state == STATE_UNAVAILABLE
 
-        await entity._retry_task
-        assert hass.states.get(entity_id).state != STATE_UNAVAILABLE
+        await require_not_none(entity._retry_task)
+        assert require_not_none(hass.states.get(entity_id)).state != STATE_UNAVAILABLE
         assert written[0] == STATE_UNAVAILABLE
         assert STATE_UNAVAILABLE not in written[1:]
         assert entity.available is True
@@ -648,12 +663,17 @@ class TestUnifiFloorPlanImage:
 
         with caplog.at_level(logging.DEBUG):
             assert await entity.async_image() is None
-            assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
+            assert (
+                require_not_none(hass.states.get(entity_id)).state == STATE_UNAVAILABLE
+            )
 
             for _ in range(3):
                 entity._handle_coordinator_update()
-                await entity._retry_task
-                assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
+                await require_not_none(entity._retry_task)
+                assert (
+                    require_not_none(hass.states.get(entity_id)).state
+                    == STATE_UNAVAILABLE
+                )
                 # Views do not hit the controller while the failure stands
                 assert await entity.async_image() is None
 
@@ -703,7 +723,7 @@ class TestUnifiFloorPlanImage:
         )
         entity._handle_coordinator_update()
         await asyncio.sleep(0)
-        assert first.cancelled()
+        assert require_not_none(first).cancelled()
         assert entity._retry_task is None
         assert entity._fetch_failed is False
 
@@ -720,7 +740,7 @@ class TestUnifiFloorPlanImage:
         await asyncio.sleep(0)
         await entity.async_remove()
         await asyncio.sleep(0)
-        assert pending.cancelled()
+        assert require_instance(pending, asyncio.Task).cancelled()
         assert entity._retry_task is None
 
     @pytest.mark.asyncio
@@ -750,7 +770,7 @@ class TestUnifiFloorPlanImage:
 
             # Coordinator update retries in the background: re-parses, skips log
             entity._handle_coordinator_update()
-            await entity._retry_task
+            await require_not_none(entity._retry_task)
 
             assert await entity.async_image() is None
             assert entity.available is False
@@ -811,7 +831,9 @@ class TestUnifiFloorPlanImage:
 
         assert entity._cached_bytes is None
         assert entity._cached_image_url is None
-        assert entity._attr_image_last_updated >= initial_ts
+        assert require_not_none(entity._attr_image_last_updated) >= require_not_none(
+            initial_ts
+        )
 
         # Subsequent update without url change does not bump timestamp
         entity._cached_image_url = (
@@ -907,7 +929,7 @@ class TestUnifiFloorPlanImage:
         mock_entry = MagicMock()
         mock_entry.data = {"console_id": "console"}
         mock_entry.runtime_data.coordinator = innerspace_coordinator
-        await async_setup_entry(hass, mock_entry, add_entities)
+        await async_setup_entry(hass, mock_entry, EntityCallback(add_entities))
         await hass.async_block_till_done()
 
         def device_identifiers() -> set[tuple[str, str]]:
@@ -1054,9 +1076,9 @@ class TestUnifiVoucherQrCodeImage:
         assert entity.translation_key == "voucher_qr_code"
         assert entity.content_type == "image/png"
         assert entity.available is True
-        assert ("unifi_insights", "site_default") in entity.device_info.get(
-            "identifiers", set()
-        )
+        assert ("unifi_insights", "site_default") in require_not_none(
+            entity.device_info
+        ).get("identifiers", set())
 
     @pytest.mark.asyncio
     async def test_image_rendering_and_caching(
@@ -1118,8 +1140,7 @@ class TestUnifiVoucherQrCodeImage:
 
         added_entities: list = []
 
-        def async_add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        async_add_entities = EntityCollector(added_entities)
 
         listeners = []
         mock_coordinator.async_add_listener = listeners.append
@@ -1363,7 +1384,9 @@ class TestUnifiVoucherQrCodeImage:
         )
         with patch.object(entity, "async_write_ha_state"):
             entity._handle_coordinator_update()
-        assert entity.image_last_updated > initial_ts
+        assert require_not_none(entity.image_last_updated) > require_not_none(
+            initial_ts
+        )
         img3 = await entity.async_image()
         assert img3 is not None
         assert img3 != img1

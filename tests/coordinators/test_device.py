@@ -72,6 +72,12 @@ from tests.conftest import (
     device_config_entry_ids,
     get_device_by_identifier,
 )
+from tests.fixtures.assertions import (
+    patch_attribute,
+    require_instance,
+    require_mock,
+    require_not_none,
+)
 from tests.fixtures.command_owners import (
     PDU_ID,
     SITE_ID,
@@ -749,7 +755,7 @@ class TestSequentialOutletWrites:
         assert controller.relay()[2] is False
 
     async def test_overlapping_writes_run_one_after_the_other(
-        self, seeded_owners: SeededOwners
+        self, seeded_owners: SeededOwners, monkeypatch
     ) -> None:
         """A second command waits and is built from the first command's array."""
         controller = _FakePduController()
@@ -764,7 +770,7 @@ class TestSequentialOutletWrites:
             await release.wait()
             controller.apply(json_data["outlet_overrides"])
 
-        endpoint._client._put = slow_put
+        patch_attribute(monkeypatch, endpoint._client, "_put", slow_put)
         first = asyncio.create_task(
             device.async_set_outlet_state(SITE_ID, PDU_ID, 1, state=False)
         )
@@ -921,7 +927,7 @@ class TestSequentialOutletWrites:
             )
 
     async def test_poll_mid_write_publishes_sent_overrides(
-        self, seeded_owners: SeededOwners
+        self, seeded_owners: SeededOwners, monkeypatch
     ) -> None:
         """A poll during PUT must not replace the payload used for publication."""
         controller = _FakePduController()
@@ -937,7 +943,7 @@ class TestSequentialOutletWrites:
             polled_site = {**devices[SITE_ID], PDU_ID: polled_pdu}
             device.data = {**device.data, "devices": {**devices, SITE_ID: polled_site}}
 
-        endpoint._client._put = put
+        patch_attribute(monkeypatch, endpoint._client, "_put", put)
         await device.async_set_outlet_state(SITE_ID, PDU_ID, 1, state=False)
 
         assert (
@@ -2601,7 +2607,7 @@ class TestUnifiDeviceCoordinator:
     ) -> None:
         """Real refreshes log one outage, one recovery, then re-arm."""
         caplog.set_level(logging.INFO)
-        coordinator.network_client.devices.get_all.side_effect = error
+        require_mock(coordinator.network_client.devices.get_all).side_effect = error
         for _ in range(4):
             await coordinator.async_refresh()
             assert not coordinator.last_update_success
@@ -2609,12 +2615,12 @@ class TestUnifiDeviceCoordinator:
         assert [
             r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
         ] == [outage]
-        coordinator.network_client.devices.get_all.side_effect = None
+        require_mock(coordinator.network_client.devices.get_all).side_effect = None
         await coordinator.async_refresh()
         assert coordinator.last_update_success
         recovery = f"Fetching {DOMAIN}_device data recovered"
         assert caplog.messages.count(recovery) == 1
-        coordinator.network_client.devices.get_all.side_effect = error
+        require_mock(coordinator.network_client.devices.get_all).side_effect = error
         await coordinator.async_refresh()
         assert [
             r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
@@ -2628,7 +2634,9 @@ class TestUnifiDeviceCoordinator:
         """Each site reports fallback once, recovery once, and a new outage."""
         caplog.set_level(logging.DEBUG)
         endpoint = coordinator.network_client.devices
-        endpoint.get_all.side_effect = UniFiResponseError("offline", status_code=502)
+        require_mock(endpoint.get_all).side_effect = UniFiResponseError(
+            "offline", status_code=502
+        )
         endpoint.get_legacy_site_devices = AsyncMock(
             return_value=[{"_id": "legacy1", "mac": "AA:BB:CC:DD:EE:FF"}]
         )
@@ -2653,7 +2661,7 @@ class TestUnifiDeviceCoordinator:
             and "for site site2 (v1 endpoint unavailable)" in r.getMessage()
             for r in caplog.records
         )
-        endpoint.get_all.side_effect = None
+        require_mock(endpoint.get_all).side_effect = None
         for _ in range(2):
             await coordinator._process_site("default", legacy_site_name="default")
         assert caplog.messages.count(recovery) == 1
@@ -2662,7 +2670,9 @@ class TestUnifiDeviceCoordinator:
             == logging.INFO
         )
 
-        endpoint.get_all.side_effect = UniFiResponseError("offline", status_code=502)
+        require_mock(endpoint.get_all).side_effect = UniFiResponseError(
+            "offline", status_code=502
+        )
         for _ in range(2):
             await coordinator._process_site("default", legacy_site_name="default")
         assert (
@@ -2965,7 +2975,9 @@ class TestUnifiDeviceCoordinator:
         with pytest.raises(UniFiResponseError):
             await coordinator._process_site("default", legacy_site_name="default")
 
-        coordinator.network_client.devices.get_legacy_site_devices.assert_not_awaited()
+        require_mock(
+            coordinator.network_client.devices.get_legacy_site_devices
+        ).assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_process_site_clients_5xx_raises_without_fallback(
@@ -3228,7 +3240,9 @@ class TestUnifiDeviceCoordinator:
 
         result = await coordinator._async_update_data()
 
-        coordinator.network_client.devices.get_statistics.assert_not_awaited()
+        require_mock(
+            coordinator.network_client.devices.get_statistics
+        ).assert_not_awaited()
         coordinator.network_client.devices.get_port_metrics.assert_awaited_once()
         assert mac in result["devices"]["default"]
         stats = result["stats"]["default"][mac]
@@ -3509,7 +3523,9 @@ class TestUnifiDeviceCoordinator:
 
         assert "device1" in result["devices"]["default"]
         coordinator.network_client.devices.get_legacy_site_devices.assert_not_called()
-        coordinator.network_client.sites.get_legacy_all.assert_not_called()
+        require_mock(
+            coordinator.network_client.sites.get_legacy_all
+        ).assert_not_called()
 
     @pytest.mark.asyncio
     async def test_refresh_reads_the_published_legacy_site_mapping(
@@ -3523,10 +3539,12 @@ class TestUnifiDeviceCoordinator:
 
         await coordinator._async_update_data()
 
-        coordinator.network_client.sites.get_legacy_all.assert_not_called()
-        coordinator.network_client.devices.get_legacy_site_devices.assert_awaited_with(
-            "renamed"
-        )
+        require_mock(
+            coordinator.network_client.sites.get_legacy_all
+        ).assert_not_called()
+        require_mock(
+            coordinator.network_client.devices.get_legacy_site_devices
+        ).assert_awaited_with("renamed")
 
     @pytest.mark.asyncio
     async def test_stats_reuse_is_capped(
@@ -3734,7 +3752,7 @@ class TestUnifiDeviceCoordinator:
     ):
         """A genuinely removed device is removed only after N consecutive polls."""
         dev_reg = dr.async_get(hass)
-        coordinator.config_entry.add_to_hass(hass)
+        require_instance(coordinator.config_entry, MockConfigEntry).add_to_hass(hass)
         entry_id = coordinator.config_entry.entry_id
         id1 = (DOMAIN, "default_device1")
         id2 = (DOMAIN, "default_device2")
@@ -3892,7 +3910,7 @@ class TestUnifiDeviceCoordinator:
         """A flip from v1 to legacy fallback removes no devices
         even if identifiers differ."""
         dev_reg = dr.async_get(hass)
-        coordinator.config_entry.add_to_hass(hass)
+        require_instance(coordinator.config_entry, MockConfigEntry).add_to_hass(hass)
         entry_id = coordinator.config_entry.entry_id
         dev_id = (DOMAIN, "default_old_dev")
         dev = dev_reg.async_get_or_create(
@@ -3939,7 +3957,7 @@ class TestUnifiDeviceCoordinator:
         """A flip from legacy fallback back to v1 removes no devices
         even if identifiers differ."""
         dev_reg = dr.async_get(hass)
-        coordinator.config_entry.add_to_hass(hass)
+        require_instance(coordinator.config_entry, MockConfigEntry).add_to_hass(hass)
         entry_id = coordinator.config_entry.entry_id
         dev_id = (DOMAIN, "default_old_dev")
         dev = dev_reg.async_get_or_create(
@@ -4780,8 +4798,8 @@ class TestUnifiDeviceCoordinator:
         v1 = copy.deepcopy(SAMPLE_PDU_DEVICE)
         v1["id"] = "pdu-v1-uuid"
         devices = coordinator.network_client.devices
-        devices.get_all.return_value = [v1]
-        devices.get_legacy_site_devices.return_value = [
+        require_mock(devices.get_all).return_value = [v1]
+        require_mock(devices.get_legacy_site_devices).return_value = [
             copy.deepcopy(COMPLETE_OUTLET_DEVICE)
         ]
         await coordinator.async_refresh()
@@ -4797,9 +4815,9 @@ class TestUnifiDeviceCoordinator:
 
         devices.set_outlet_state.assert_awaited_once()
         call_args = devices.set_outlet_state.await_args
-        assert call_args.args[1] == COMPLETE_OUTLET_DEVICE["_id"]
-        assert call_args.args[2] == 1
-        assert call_args.kwargs["state"] is False
+        assert require_not_none(call_args).args[1] == COMPLETE_OUTLET_DEVICE["_id"]
+        assert require_not_none(call_args).args[2] == 1
+        assert require_not_none(call_args).kwargs["state"] is False
 
     def test_get_device_non_dict_value(
         self, coordinator: UnifiInsightsDeviceCoordinator
@@ -5085,7 +5103,9 @@ class TestUnifiDeviceCoordinator:
         """A failing legacy call keeps the last WAN links for a few polls."""
         # Real models dump a fresh dict per poll; the shared fixture dict
         # would otherwise carry reused WAN links into later polls.
-        for model in coordinator.network_client.devices.get_all.return_value:
+        for model in require_mock(
+            coordinator.network_client.devices.get_all
+        ).return_value:
             dumped = model.model_dump.return_value
             model.model_dump = MagicMock(
                 side_effect=lambda *_a, d=dumped, **_k: dict(d)
@@ -5279,7 +5299,9 @@ class TestUnifiDeviceCoordinator:
         self, coordinator: UnifiInsightsDeviceCoordinator
     ) -> None:
         """A failing legacy call keeps the last storage mounts for a few polls."""
-        for model in coordinator.network_client.devices.get_all.return_value:
+        for model in require_mock(
+            coordinator.network_client.devices.get_all
+        ).return_value:
             dumped = model.model_dump.return_value
             model.model_dump = MagicMock(
                 side_effect=lambda *_a, d=dumped, **_k: dict(d)

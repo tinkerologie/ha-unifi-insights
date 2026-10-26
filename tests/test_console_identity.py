@@ -49,8 +49,10 @@ from custom_components.unifi_insights.coordinators.protect import (
 )
 from custom_components.unifi_insights.probe import ProbeResult, ProbeStatus
 from tests.conftest import device_config_entry_ids, get_device_by_identifier
+from tests.fixtures.assertions import require_not_none
 
 if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigFlowContext
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers import (
         device_registry as dr,
@@ -1671,7 +1673,10 @@ async def test_console_identity_final_branch_coverage(
             },
         )
         assert result["type"] == FlowResultType.FORM
-        assert result["errors"].get(CONF_CONSOLE_ID) == "invalid_console_id"
+        assert (
+            require_not_none(result["errors"]).get(CONF_CONSOLE_ID)
+            == "invalid_console_id"
+        )
 
 
 async def test_async_setup_entry_handles_malformed_coordinator_data(
@@ -1963,7 +1968,7 @@ async def test_local_no_mac_flow_keeps_shared_site_consoles_distinct(
     identities = []
     for index in ("a", "b"):
         host = f"https://Console{index.upper()}.Example.Invalid"
-        context = {"source": source}
+        context: ConfigFlowContext = {"source": source}
         if source == "reconfigure":
             stored_key = f"synthetic_old_key_{index}"
             entry = MockConfigEntry(

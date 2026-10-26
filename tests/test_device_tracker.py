@@ -26,6 +26,7 @@ from custom_components.unifi_insights.device_tracker import (
     _partition_connected_clients,
     async_setup_entry,
 )
+from tests.fixtures.assertions import patch_attribute, require_mock
 from tests.fixtures.facade_data import (
     facade_data,
     frozen,
@@ -97,7 +98,7 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_tracking_disabled(
-        self, hass: HomeAssistant, mock_coordinator: MagicMock
+        self, hass: HomeAssistant, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test setup when client tracking is disabled (default)."""
         mock_coordinator.data = _with_site_clients(
@@ -122,7 +123,7 @@ class TestAsyncSetupEntry:
         mock_entry.options = {}
 
         # Initialize tracked clients set
-        hass.data = {}
+        patch_attribute(monkeypatch, hass, "data", {})
 
         async_add_entities = MagicMock()
 
@@ -154,7 +155,7 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_with_clients(
-        self, hass: HomeAssistant, mock_coordinator: MagicMock
+        self, hass: HomeAssistant, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test setup with clients present and tracking enabled (wired client)."""
         mock_coordinator.data = _with_site_clients(
@@ -182,7 +183,7 @@ class TestAsyncSetupEntry:
         mock_entry.options = {"track_wired_clients": True}
 
         # Initialize tracked clients set
-        hass.data = {}
+        patch_attribute(monkeypatch, hass, "data", {})
 
         async_add_entities = MagicMock()
 
@@ -195,7 +196,7 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_wifi_only_skips_wired(
-        self, hass: HomeAssistant, mock_coordinator: MagicMock
+        self, hass: HomeAssistant, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test setup with WiFi tracking only skips wired clients."""
         mock_coordinator.data = _with_site_clients(
@@ -228,7 +229,7 @@ class TestAsyncSetupEntry:
         mock_entry.options = {"track_wifi_clients": True, "track_wired_clients": False}
 
         # Initialize tracked clients set
-        hass.data = {}
+        patch_attribute(monkeypatch, hass, "data", {})
 
         async_add_entities = MagicMock()
 
@@ -242,7 +243,7 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_wired_only_skips_wifi(
-        self, hass: HomeAssistant, mock_coordinator: MagicMock
+        self, hass: HomeAssistant, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test setup with wired tracking only skips WiFi clients."""
         mock_coordinator.data = _with_site_clients(
@@ -275,7 +276,7 @@ class TestAsyncSetupEntry:
         mock_entry.options = {"track_wifi_clients": False, "track_wired_clients": True}
 
         # Initialize tracked clients set
-        hass.data = {}
+        patch_attribute(monkeypatch, hass, "data", {})
 
         async_add_entities = MagicMock()
 
@@ -289,7 +290,7 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_both_client_types(
-        self, hass: HomeAssistant, mock_coordinator: MagicMock
+        self, hass: HomeAssistant, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test setup with both client types tracking enabled."""
         mock_coordinator.data = _with_site_clients(
@@ -322,7 +323,7 @@ class TestAsyncSetupEntry:
         mock_entry.options = {"track_wifi_clients": True, "track_wired_clients": True}
 
         # Initialize tracked clients set
-        hass.data = {}
+        patch_attribute(monkeypatch, hass, "data", {})
 
         async_add_entities = MagicMock()
 
@@ -335,7 +336,7 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_old_option_migration(
-        self, hass: HomeAssistant, mock_coordinator: MagicMock
+        self, hass: HomeAssistant, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test setup migrates old track_clients option to new options."""
         mock_coordinator.data = _with_site_clients(
@@ -368,7 +369,7 @@ class TestAsyncSetupEntry:
         mock_entry.options = {"track_clients": True}
 
         # Initialize tracked clients set
-        hass.data = {}
+        patch_attribute(monkeypatch, hass, "data", {})
 
         async_add_entities = MagicMock()
 
@@ -381,7 +382,7 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_multiple_sites(
-        self, hass: HomeAssistant, mock_coordinator: MagicMock
+        self, hass: HomeAssistant, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test setup with clients from multiple sites and tracking enabled."""
         mock_coordinator.data = with_sections(
@@ -427,7 +428,7 @@ class TestAsyncSetupEntry:
         mock_entry.options = {"track_wifi_clients": True, "track_wired_clients": True}
 
         # Initialize tracked clients set
-        hass.data = {}
+        patch_attribute(monkeypatch, hass, "data", {})
 
         async_add_entities = MagicMock()
 
@@ -927,7 +928,7 @@ class TestUnifiClientTrackerEdgeCases:
         assert tracker.extra_state_attributes == {}
 
     async def test_setup_skips_clients_without_mac(
-        self, hass: HomeAssistant, mock_coordinator: MagicMock
+        self, hass: HomeAssistant, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Clients without a MAC cannot be identified and are not tracked."""
         mock_coordinator.data = _with_site_clients(
@@ -950,7 +951,7 @@ class TestUnifiClientTrackerEdgeCases:
         mock_entry.async_on_unload = MagicMock()
         mock_entry.options = {"track_wired_clients": True}
 
-        hass.data = {}
+        patch_attribute(monkeypatch, hass, "data", {})
         async_add_entities = MagicMock()
 
         await async_setup_entry(hass, mock_entry, async_add_entities)
@@ -958,7 +959,9 @@ class TestUnifiClientTrackerEdgeCases:
         # No MAC means no stable identity, so no tracker is created.
         async_add_entities.assert_not_called()
 
-    async def test_async_added_to_hass(self, mock_coordinator, hass) -> None:
+    async def test_async_added_to_hass(
+        self, mock_coordinator, hass, monkeypatch
+    ) -> None:
         """Test async_added_to_hass registers listener."""
         mock_coordinator.async_add_listener = MagicMock(return_value=MagicMock())
 
@@ -971,14 +974,18 @@ class TestUnifiClientTrackerEdgeCases:
 
         # Create a mock async_on_remove
         remove_callbacks = []
-        tracker.async_on_remove = remove_callbacks.append
+        patch_attribute(
+            monkeypatch, tracker, "async_on_remove", remove_callbacks.append
+        )
 
         await tracker.async_added_to_hass()
 
         # Verify listener was added
         mock_coordinator.async_add_listener.assert_called_once()
 
-    def test_handle_coordinator_update(self, mock_coordinator, hass) -> None:
+    def test_handle_coordinator_update(
+        self, mock_coordinator, hass, monkeypatch
+    ) -> None:
         """Test _handle_coordinator_update writes state."""
         tracker = UnifiClientTracker(
             coordinator=mock_coordinator,
@@ -988,11 +995,11 @@ class TestUnifiClientTrackerEdgeCases:
         tracker.hass = hass
 
         # Mock async_write_ha_state
-        tracker.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, tracker, "async_write_ha_state", MagicMock())
 
         tracker._handle_coordinator_update()
 
-        tracker.async_write_ha_state.assert_called_once()
+        require_mock(tracker.async_write_ha_state).assert_called_once()
 
     def test_get_client_data_with_invalid_non_dict_entry(
         self, mock_coordinator: MagicMock

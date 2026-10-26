@@ -30,6 +30,7 @@ from custom_components.unifi_insights.const import (
     CONNECTION_TYPE_REMOTE,
     DOMAIN,
 )
+from tests.fixtures.assertions import require_not_none
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -61,11 +62,11 @@ def mock_protect_client_flow():
 
 def _make_client_context(
     *,
-    get_hosts: list[dict[str, object]] | None = None,
-    get_hosts_side_effect: Exception | None = None,
-    sites: list[object] | None = None,
-    sites_side_effect: Exception | None = None,
-    enter_side_effect: Exception | None = None,
+    get_hosts: object = None,
+    get_hosts_side_effect: object = None,
+    sites: object = None,
+    sites_side_effect: object = None,
+    enter_side_effect: object = None,
 ) -> MagicMock:
     """Create an async context manager mock for UniFiNetworkClient."""
     async_cm = MagicMock()
@@ -1824,7 +1825,7 @@ async def test_options_flow_hides_site_picker_for_single_site(
 
     result = await hass.config_entries.options.async_init(mock_config_entry.entry_id)
 
-    assert CONF_SITE_IDS not in result["data_schema"].schema
+    assert CONF_SITE_IDS not in require_not_none(result["data_schema"]).schema
 
 
 async def test_options_flow_filters_sites(
@@ -1836,7 +1837,7 @@ async def test_options_flow_filters_sites(
     _attach_sites(mock_config_entry, {"default": "Default", "site2": "Branch"})
 
     result = await hass.config_entries.options.async_init(mock_config_entry.entry_id)
-    assert CONF_SITE_IDS in result["data_schema"].schema
+    assert CONF_SITE_IDS in require_not_none(result["data_schema"]).schema
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
@@ -1916,7 +1917,7 @@ async def test_options_flow_lists_saved_site_that_vanished(
 
     result = await hass.config_entries.options.async_init(mock_config_entry.entry_id)
 
-    selector = result["data_schema"].schema[CONF_SITE_IDS]
+    selector = require_not_none(result["data_schema"]).schema[CONF_SITE_IDS]
     values = [option["value"] for option in selector.config["options"]]
     assert values == ["default", "gone"]
 
@@ -1932,7 +1933,7 @@ async def test_options_flow_keeps_site_filter_when_sites_unknown(
     )
 
     result = await hass.config_entries.options.async_init(mock_config_entry.entry_id)
-    assert CONF_SITE_IDS not in result["data_schema"].schema
+    assert CONF_SITE_IDS not in require_not_none(result["data_schema"]).schema
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
@@ -1999,7 +2000,7 @@ def _protect_context(*, cameras: object = None, nvr: object = None) -> MagicMock
     return async_cm
 
 
-async def _submit_local_flow(hass: HomeAssistant) -> dict:
+async def _submit_local_flow(hass: HomeAssistant) -> config_entries.ConfigFlowResult:
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
@@ -2127,7 +2128,7 @@ async def test_local_flow_camera_free_nvr_creates_entry(hass: HomeAssistant) -> 
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
 
-async def _submit_remote_flow(hass: HomeAssistant) -> dict:
+async def _submit_remote_flow(hass: HomeAssistant) -> config_entries.ConfigFlowResult:
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )

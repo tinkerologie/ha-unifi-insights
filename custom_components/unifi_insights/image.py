@@ -166,7 +166,7 @@ class UnifiWifiQrCodeImage(
         wifi_id: str,
     ) -> None:
         """Initialize the WiFi QR code image."""
-        CoordinatorEntity.__init__(self, coordinator)
+        super().__init__(coordinator)
         ImageEntity.__init__(self, hass)
         self.hass = hass
         self._site_id = site_id
@@ -248,7 +248,7 @@ class UnifiFloorPlanImage(
         plan_id: str,
     ) -> None:
         """Initialize the floor plan image entity."""
-        CoordinatorEntity.__init__(self, coordinator)
+        super().__init__(coordinator)
         ImageEntity.__init__(self, hass)
         self._plan_id = plan_id
         self._attr_unique_id = f"innerspace_floor_plan_{plan_id}"

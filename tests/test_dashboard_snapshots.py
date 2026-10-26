@@ -50,6 +50,7 @@ from custom_components.unifi_insights.data_transforms import (
     get_site_gateway_id,
 )
 from custom_components.unifi_insights.topology import build_site_topology
+from tests.fixtures.assertions import require_not_none
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -231,7 +232,8 @@ async def test_internet_activity_snapshot_namespaces_shared_site_registry_rows(
         assert snapshot["entity_ids"] == owned_ids
         assert snapshot["windows"]["1h"]["download_bytes"] == index * 1000
         assert all(
-            entity_registry.async_get(entity_id).config_entry_id == entry.entry_id
+            require_not_none(entity_registry.async_get(entity_id)).config_entry_id
+            == entry.entry_id
             for entity_id in snapshot["entity_ids"].values()
         )
         assert dict(entity_registry.entities) == registry_before
@@ -311,7 +313,8 @@ async def test_internet_activity_snapshot_preserves_candidate_ownership(
     assert snapshot["entity_ids"] == expected
     assert dict(entity_registry.entities) == registry_before
     assert all(
-        entity_registry.async_get(entity_id).config_entry_id == entries["own"].entry_id
+        require_not_none(entity_registry.async_get(entity_id)).config_entry_id
+        == entries["own"].entry_id
         for entity_id in snapshot["entity_ids"].values()
     )
 
@@ -375,9 +378,9 @@ def test_content_revision_and_utc_iso_helpers() -> None:
     assert len(rev1) == 16
 
     now = datetime.now(tz=UTC)
-    assert utc_iso(now).endswith("Z")
-    assert utc_iso(int(now.timestamp())).endswith("Z")
-    assert utc_iso(int(now.timestamp() * 1000)).endswith("Z")
+    assert require_not_none(utc_iso(now)).endswith("Z")
+    assert require_not_none(utc_iso(int(now.timestamp()))).endswith("Z")
+    assert require_not_none(utc_iso(int(now.timestamp() * 1000))).endswith("Z")
     assert utc_iso("2026-01-01T00:00:00Z") == "2026-01-01T00:00:00Z"
     assert utc_iso("2026-01-01T00:00:00+00:00") == "2026-01-01T00:00:00Z"
     assert utc_iso("") is None

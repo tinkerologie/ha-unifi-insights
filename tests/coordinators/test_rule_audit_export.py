@@ -107,7 +107,9 @@ def _lister(client: MagicMock, rule_type: str) -> AsyncMock:
     return lister
 
 
-async def _build(client: MagicMock, **kwargs: Any) -> dict[str, Any]:
+async def _build(
+    client: UniFiNetworkClient | MagicMock, **kwargs: Any
+) -> dict[str, Any]:
     options: dict[str, Any] = {"site_ids": None, "rule_types": None}
     options.update(kwargs)
     return await async_build_rule_export(

@@ -13,6 +13,7 @@ from custom_components.unifi_insights.update import (
     UnifiNetworkDeviceUpdate,
     async_setup_entry,
 )
+from tests.fixtures.assertions import patch_attribute, require_mock, require_not_none
 from tests.fixtures.facade_data import (
     set_availability,
     with_device_fields,
@@ -228,8 +229,8 @@ class TestUnifiNetworkDeviceUpdate:
             device_id="device1",
         )
 
-        assert "device1" in entity._attr_unique_id
-        assert "update" in entity._attr_unique_id
+        assert "device1" in require_not_none(entity._attr_unique_id)
+        assert "update" in require_not_none(entity._attr_unique_id)
 
     def test_installed_version(self, mock_coordinator: MagicMock) -> None:
         """Test installed version property."""
@@ -461,7 +462,9 @@ class TestNetworkDeviceUpdateEdgeCases:
         mock_coordinator.async_add_listener.assert_called_once()
         entity.async_on_remove.assert_called_once_with("remove_callback")
 
-    def test_handle_coordinator_update(self, mock_coordinator: MagicMock) -> None:
+    def test_handle_coordinator_update(
+        self, mock_coordinator: MagicMock, monkeypatch
+    ) -> None:
         """Test _handle_coordinator_update method."""
         entity = UnifiNetworkDeviceUpdate(
             coordinator=mock_coordinator,
@@ -470,11 +473,11 @@ class TestNetworkDeviceUpdateEdgeCases:
         )
 
         # Mock async_write_ha_state
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
 
         entity._handle_coordinator_update()
 
-        entity.async_write_ha_state.assert_called_once()
+        require_mock(entity.async_write_ha_state).assert_called_once()
 
     def test_latest_version_update_available_no_version_and_no_installed(
         self, mock_coordinator: MagicMock

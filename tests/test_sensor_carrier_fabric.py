@@ -32,6 +32,7 @@ from custom_components.unifi_insights.sensor import (
     reconcile_subscriber_registry,
 )
 from tests.conftest import device_config_entry_ids, get_device_by_identifier
+from tests.fixtures.entities import EntityCallback, EntityCollector
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -156,10 +157,9 @@ async def test_carrier_fabric_aggregate_sensors(
     """Test creation, values, and attributes of organisation aggregate sensors."""
     added_entities = []
 
-    def mock_add_entities(entities):
-        added_entities.extend(entities)
+    mock_add_entities = EntityCollector(added_entities)
 
-    await async_setup_entry(hass, carrier_entry, mock_add_entities)
+    await async_setup_entry(hass, carrier_entry, EntityCallback(mock_add_entities))
 
     # 7 aggregate sensors + 2 plan sensors = 9 entities (track_subscribers is False)
     assert len(added_entities) == 9
@@ -209,7 +209,7 @@ async def test_carrier_fabric_plan_sensors(
 ):
     """Test per-plan subscriber count sensors."""
     added_entities = []
-    await async_setup_entry(hass, carrier_entry, added_entities.extend)
+    await async_setup_entry(hass, carrier_entry, EntityCollector(added_entities))
 
     plan_sensors = [
         e
@@ -257,7 +257,7 @@ async def test_carrier_fabric_subscriber_sensors_opt_in(
     )
 
     added_entities = []
-    await async_setup_entry(hass, carrier_entry, added_entities.extend)
+    await async_setup_entry(hass, carrier_entry, EntityCollector(added_entities))
 
     state_sensors = [
         e
@@ -382,7 +382,7 @@ async def test_carrier_fabric_track_subscribers_disabled_reconciliation(
     )
 
     added_entities = []
-    await async_setup_entry(hass, carrier_entry, added_entities.extend)
+    await async_setup_entry(hass, carrier_entry, EntityCollector(added_entities))
 
     # Verify subscriber entity was removed
     assert (
@@ -491,7 +491,7 @@ async def test_reconcile_does_not_touch_another_entrys_subscriber_device(
     hass.config_entries.async_update_entry(
         carrier_entry, options={CONF_TRACK_SUBSCRIBERS: False}
     )
-    await async_setup_entry(hass, carrier_entry, lambda entities: None)
+    await async_setup_entry(hass, carrier_entry, EntityCollector([]))
     await hass.async_block_till_done()
 
     our_device = get_device_by_identifier(dev_reg, identifier, carrier_entry.entry_id)
@@ -646,7 +646,7 @@ async def test_carrier_fabric_dynamic_discovery(
     def mock_add_entities(entities):
         added_batches.append(entities)
 
-    await async_setup_entry(hass, carrier_entry, mock_add_entities)
+    await async_setup_entry(hass, carrier_entry, EntityCallback(mock_add_entities))
     assert len(added_batches) == 1  # Initial batch
 
     # Simulate coordinator update with new plan and new subscriber
@@ -688,7 +688,7 @@ async def test_carrier_fabric_refresh_without_new_resources_adds_nothing(
     )
 
     added_batches = []
-    await async_setup_entry(hass, carrier_entry, added_batches.append)
+    await async_setup_entry(hass, carrier_entry, EntityCallback(added_batches.append))
     assert len(added_batches) == 1
 
     # Same plans and subscribers as at setup.
@@ -832,7 +832,7 @@ async def test_carrier_fabric_sensor_defensive_fallbacks(
 async def _setup_and_register(hass, entry) -> list:
     """Set up the sensors and register their devices as the platform would."""
     added: list = []
-    await async_setup_entry(hass, entry, added.extend)
+    await async_setup_entry(hass, entry, EntityCollector(added))
     _register_devices(hass, entry, added)
     return added
 
@@ -874,7 +874,7 @@ async def test_subscriber_devices_link_to_the_organisation_device(hass, carrier_
     assert _org_devices(hass, carrier_entry) == []
 
     added: list = []
-    await async_setup_entry(hass, carrier_entry, added.extend)
+    await async_setup_entry(hass, carrier_entry, EntityCollector(added))
 
     # Registered by setup itself, before any entity's device is created.
     (org_device,) = _org_devices(hass, carrier_entry)
@@ -900,7 +900,7 @@ async def test_organisation_device_falls_back_to_the_entry_id(
     )
 
     added: list = []
-    await async_setup_entry(hass, carrier_entry, added.extend)
+    await async_setup_entry(hass, carrier_entry, EntityCollector(added))
     _register_devices(hass, carrier_entry, added)
 
     org_device = get_device_by_identifier(
@@ -978,7 +978,7 @@ async def test_subscriber_found_later_links_to_the_organisation_device(
     def add(entities) -> None:
         _register_devices(hass, carrier_entry, entities)
 
-    await async_setup_entry(hass, carrier_entry, add)
+    await async_setup_entry(hass, carrier_entry, EntityCallback(add))
     mock_carrier_coordinator.data["subscribers"]["sub_4"] = {
         "id": "sub_4",
         "name": "Late Subscriber",

@@ -593,7 +593,9 @@ def build_site_network_facts(devices: Any, stats: Any) -> SiteNetworkFacts:
         for device_id, device in device_map.items()
         if isinstance(device, Mapping)
     ]
-    kinds = {key: device_kind(device) for key, _, device in records}
+    kinds: dict[str, NetworkDeviceKind] = {
+        key: device_kind(device) for key, _, device in records
+    }
     gateway_id = next((key for key in kinds if kinds[key] == "gateway"), None)
     facts: dict[str, NetworkDeviceFacts] = {}
     for key, device_id, device in records:
@@ -1258,9 +1260,9 @@ def normalize_nvr_storage(nvr: Mapping[str, Any]) -> UnifiInsightsStorageTelemet
         percent = round(float(value), 1)
     healthy = next(
         (
-            value
+            health_value
             for info in [*nested, storage]
-            if isinstance(value := info.get("healthy"), bool)
+            if isinstance(health_value := info.get("healthy"), bool)
         ),
         None,
     )
@@ -1334,7 +1336,7 @@ class VoucherSettings:
     """Per-site settings held in Home Assistant for voucher generation."""
 
     duration_minutes: int = 480
-    guest_limit: int = 1
+    guest_limit: int | float = 1
     download_limit_mbps: float = 0.0
     upload_limit_mbps: float = 0.0
     data_limit_mb: int = 0
@@ -1399,9 +1401,9 @@ def voucher_to_record(voucher: object) -> dict[str, Any] | None:
     """Convert a voucher model or dict to an internal record dict."""
     if isinstance(voucher, Mapping):
         rec = dict(voucher)
-    elif hasattr(voucher, "model_dump") and callable(voucher.model_dump):
+    elif callable(dump := getattr(voucher, "model_dump", None)):
         try:
-            dumped = voucher.model_dump(by_alias=True)
+            dumped = dump(by_alias=True)
         except Exception:
             return None
         if isinstance(dumped, dict):
@@ -1502,7 +1504,7 @@ def latest_voucher_qr_payload(
 
 
 def refresh_latest_voucher(
-    record: Mapping[str, Any], inventory: Mapping[str, Any]
+    record: Mapping[str, Any], inventory: Mapping[str, Any] | None
 ) -> dict[str, Any]:
     """Refresh latest voucher record from polled inventory if present."""
     voucher_id = record.get("id")

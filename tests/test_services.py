@@ -87,6 +87,7 @@ from custom_components.unifi_insights.services import (
     async_setup_services,
     async_unload_services,
 )
+from tests.fixtures.assertions import require_mock
 from tests.fixtures.command_owners import autospec_command_owners
 
 if TYPE_CHECKING:
@@ -570,7 +571,7 @@ async def test_handler_runs_the_resolved_owner_command(
             if owner is result.config_commands
             else result.config_commands
         )
-        assert other.mock_calls == []
+        assert require_mock(other).mock_calls == []
 
 
 @pytest.mark.usefixtures("services_ready")
@@ -739,7 +740,7 @@ async def test_refresh_runs_every_selected_console(
         await hass.services.async_call(DOMAIN, SERVICE_REFRESH_DATA, {}, blocking=True)
 
     for target in targets:
-        assert target.facade_commands.mock_calls == [
+        assert require_mock(target.facade_commands).mock_calls == [
             call.async_refresh_or_raise(include_protect=include_protect)
         ]
 
@@ -751,9 +752,9 @@ async def test_refresh_failure_names_only_the_failed_consoles(
     """One failing console does not stop the others; its error text stays in the log."""
     targets = tuple(_refresh_target(title) for title in ("Office", "Garage", "Attic"))
     for target in targets[::2]:
-        target.facade_commands.async_refresh_or_raise.side_effect = HomeAssistantError(
-            f"secret API text from {target.title}"
-        )
+        require_mock(
+            target.facade_commands.async_refresh_or_raise
+        ).side_effect = HomeAssistantError(f"secret API text from {target.title}")
     selection = RefreshSelection(targets=targets, site_id="s1", include_protect=False)
 
     with (
@@ -768,7 +769,9 @@ async def test_refresh_failure_names_only_the_failed_consoles(
     assert raised.value.translation_placeholders == {"targets": "Office, Attic"}
     assert "secret" not in str(raised.value)
     assert "secret API text from Attic" in caplog.text
-    targets[1].facade_commands.async_refresh_or_raise.assert_awaited_once()
+    require_mock(
+        targets[1].facade_commands.async_refresh_or_raise
+    ).assert_awaited_once()
 
 
 def _removal_console(title: str, *site_ids: str) -> NetworkConsoleTarget:
@@ -792,11 +795,13 @@ async def test_remove_clients_forgets_per_console_and_site(hass: HomeAssistant) 
     office = _removal_console("Office", "default", "lab")
     garage = _removal_console("Garage", "default")
     empty = _removal_console("Empty")
-    office.facade_commands.async_get_historical_clients.side_effect = [
+    require_mock(office.facade_commands.async_get_historical_clients).side_effect = [
         [_STALE],
         [_NAMED],
     ]
-    garage.facade_commands.async_get_historical_clients.return_value = [_STALE]
+    require_mock(garage.facade_commands.async_get_historical_clients).return_value = [
+        _STALE
+    ]
 
     with patch(
         f"{_SERVICES}.resolve_network_consoles_call",
@@ -806,17 +811,21 @@ async def test_remove_clients_forgets_per_console_and_site(hass: HomeAssistant) 
             DOMAIN, SERVICE_REMOVE_CLIENTS, {}, blocking=True
         )
 
-    assert office.facade_commands.mock_calls == [
+    assert require_mock(office.facade_commands).mock_calls == [
         call.async_get_historical_clients("default"),
         call.async_get_historical_clients("lab"),
     ]
-    assert office.device_commands.mock_calls == [
+    assert require_mock(office.device_commands).mock_calls == [
         call.async_forget_clients_batch("default", ["aa:bb:cc:dd:ee:01"])
     ]
-    assert garage.device_commands.mock_calls == [
+    assert require_mock(garage.device_commands).mock_calls == [
         call.async_forget_clients_batch("default", ["aa:bb:cc:dd:ee:01"])
     ]
-    assert empty.facade_commands.mock_calls == empty.device_commands.mock_calls == []
+    assert (
+        require_mock(empty.facade_commands).mock_calls
+        == require_mock(empty.device_commands).mock_calls
+        == []
+    )
 
 
 @pytest.mark.usefixtures("services_ready")
@@ -831,9 +840,11 @@ async def test_remove_clients_reports_failed_sites_without_raw_errors(
         if console.title in failing:
             errors[console.title] = HomeAssistantError(f"secret text {console.title}")
             reader = console.facade_commands.async_get_historical_clients
-            reader.side_effect = errors[console.title]
+            require_mock(reader).side_effect = errors[console.title]
         else:
-            console.facade_commands.async_get_historical_clients.return_value = [_STALE]
+            require_mock(
+                console.facade_commands.async_get_historical_clients
+            ).return_value = [_STALE]
 
     with (
         patch(f"{_SERVICES}.resolve_network_consoles_call", return_value=consoles),
@@ -853,7 +864,9 @@ async def test_remove_clients_reports_failed_sites_without_raw_errors(
     expected_cause = errors["Garage"] if len(failing) == 1 else None
     assert raised.value.__cause__ is expected_cause
     if len(failing) == 1:
-        consoles[0].device_commands.async_forget_clients_batch.assert_awaited_once()
+        require_mock(
+            consoles[0].device_commands.async_forget_clients_batch
+        ).assert_awaited_once()
 
 
 # --- Responses and translated handler errors --------------------------------
@@ -1192,12 +1205,14 @@ async def test_single_target_actions_are_the_actions_with_a_nested_target(
 ) -> None:
     """Every action whose schema takes a nested target is a single-target action."""
     registered = hass.services.async_services_for_domain(DOMAIN)
-    with_target = {
-        name
-        for name, service in registered.items()
-        if service.schema is not None
-        and any(str(key) == "target" for key in service.schema.schema)
-    }
+    with_target = set()
+    for name, service in registered.items():
+        schema = service.schema
+        if schema is None:
+            continue
+        assert isinstance(schema, vol.Schema)
+        if any(str(key) == "target" for key in schema.schema):
+            with_target.add(name)
     assert with_target == set(_SINGLE_TARGET_ACTIONS)
 
 

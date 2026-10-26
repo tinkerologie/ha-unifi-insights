@@ -917,7 +917,7 @@ def _apply_device_frame(run: _Run, frame: DeviceFrame) -> bool:
 
 def _stamp_sensor_groups(run: _Run, sensor_id: str, fields: Mapping[str, Any]) -> None:
     """Stamp WebSocket recency for each state group the frame carries."""
-    groups = [
+    groups: list[Group] = [
         group
         for group, group_fields in _PRESERVED_SENSOR_STATE_FIELD_GROUPS.items()
         if not group_fields.isdisjoint(fields)

@@ -34,7 +34,9 @@ from custom_components.unifi_insights.select import (
     require_observed_ringtone,
     resolve_liveview_id,
 )
+from tests.fixtures.assertions import patch_attribute, require_mock, require_not_none
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
+from tests.fixtures.entities import EntityCollector
 from tests.fixtures.facade_data import with_protect_collection, with_protect_fields
 
 if TYPE_CHECKING:
@@ -68,8 +70,7 @@ class TestAsyncSetupEntry:
 
         entities = []
 
-        def add_entities(new_entities, **kwargs):
-            entities.extend(new_entities)
+        add_entities = EntityCollector(entities)
 
         await async_setup_entry(MagicMock(), mock_config_entry, add_entities)
         assert len(entities) == 0
@@ -103,8 +104,7 @@ class TestAsyncSetupEntry:
 
         entities = []
 
-        def add_entities(new_entities, **kwargs):
-            entities.extend(new_entities)
+        add_entities = EntityCollector(entities)
 
         await async_setup_entry(MagicMock(), mock_config_entry, add_entities)
         # Should create 2 entities per camera (HDR mode + video mode)
@@ -139,8 +139,7 @@ class TestAsyncSetupEntry:
 
         entities = []
 
-        def add_entities(new_entities, **kwargs):
-            entities.extend(new_entities)
+        add_entities = EntityCollector(entities)
 
         await async_setup_entry(MagicMock(), mock_config_entry, add_entities)
         # Should create 3 entities (HDR + video + PTZ preset)
@@ -174,8 +173,7 @@ class TestAsyncSetupEntry:
 
         entities = []
 
-        def add_entities(new_entities, **kwargs):
-            entities.extend(new_entities)
+        add_entities = EntityCollector(entities)
 
         await async_setup_entry(MagicMock(), mock_config_entry, add_entities)
         assert len(entities) == 1
@@ -211,8 +209,7 @@ class TestAsyncSetupEntry:
 
         entities = []
 
-        def add_entities(new_entities, **kwargs):
-            entities.extend(new_entities)
+        add_entities = EntityCollector(entities)
 
         await async_setup_entry(MagicMock(), mock_config_entry, add_entities)
         assert len(entities) == 1
@@ -257,8 +254,7 @@ class TestAsyncSetupEntry:
 
         entities = []
 
-        def add_entities(new_entities, **kwargs):
-            entities.extend(new_entities)
+        add_entities = EntityCollector(entities)
 
         await async_setup_entry(MagicMock(), mock_config_entry, add_entities)
         listener = mock_coordinator.async_add_listener.call_args[0][0]
@@ -358,7 +354,7 @@ class TestUnifiProtectHDRModeSelect:
         assert entity._attr_current_option == "on"
 
     async def test_async_select_option_success(
-        self, mock_coordinator: MagicMock
+        self, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test selecting HDR mode option successfully."""
         mock_coordinator.data = {
@@ -385,7 +381,7 @@ class TestUnifiProtectHDRModeSelect:
             coordinator=mock_coordinator,
             camera_id="cam1",
         )
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
 
         await entity.async_select_option("on")
 
@@ -399,7 +395,7 @@ class TestUnifiProtectHDRModeSelect:
         entity._update_from_data()
         assert entity._attr_current_option == "on"
 
-    async def test_async_select_option_error(self, mock_coordinator):
+    async def test_async_select_option_error(self, mock_coordinator, monkeypatch):
         """Test selecting HDR mode option with error."""
         mock_coordinator.data = {
             "sites": {},
@@ -431,7 +427,7 @@ class TestUnifiProtectHDRModeSelect:
             coordinator=mock_coordinator,
             camera_id="cam1",
         )
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
 
         with pytest.raises(HomeAssistantError, match="Unable to set HDR mode"):
             await entity.async_select_option("on")
@@ -494,7 +490,7 @@ class TestUnifiProtectVideoModeSelect:
         ],
     )
     async def test_async_select_option_success(
-        self, mock_coordinator: MagicMock, option: str, mode: str
+        self, mock_coordinator: MagicMock, option: str, mode: str, monkeypatch
     ) -> None:
         """Test selecting video mode option successfully."""
         mock_coordinator.data = {
@@ -521,7 +517,7 @@ class TestUnifiProtectVideoModeSelect:
             coordinator=mock_coordinator,
             camera_id="cam1",
         )
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
 
         await entity.async_select_option(option)
 
@@ -533,9 +529,9 @@ class TestUnifiProtectVideoModeSelect:
         )
         entity._update_from_data()
         assert entity._attr_current_option == option
-        assert entity.extra_state_attributes["video_mode"] == mode
+        assert require_not_none(entity.extra_state_attributes)["video_mode"] == mode
 
-    async def test_async_select_option_error(self, mock_coordinator):
+    async def test_async_select_option_error(self, mock_coordinator, monkeypatch):
         """Test selecting video mode option with error."""
         mock_coordinator.data = {
             "sites": {},
@@ -567,7 +563,7 @@ class TestUnifiProtectVideoModeSelect:
             coordinator=mock_coordinator,
             camera_id="cam1",
         )
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
 
         with pytest.raises(HomeAssistantError, match="Unable to set video mode"):
             await entity.async_select_option("high_fps")
@@ -586,7 +582,7 @@ class TestUnifiProtectVideoModeSelect:
         )
         entity = UnifiProtectVideoModeSelect(mock_coordinator, "cam1")
         assert entity.state is None
-        assert entity.extra_state_attributes["video_mode"] == mode
+        assert require_not_none(entity.extra_state_attributes)["video_mode"] == mode
 
     def test_missing_api_mode_uses_default(self, mock_coordinator: MagicMock) -> None:
         """An omitted API field retains the established default fallback."""
@@ -597,7 +593,9 @@ class TestUnifiProtectVideoModeSelect:
         )
         entity = UnifiProtectVideoModeSelect(mock_coordinator, "cam1")
         assert entity.state == "default"
-        assert entity.extra_state_attributes["video_mode"] == "default"
+        assert (
+            require_not_none(entity.extra_state_attributes)["video_mode"] == "default"
+        )
 
 
 class TestLprVideoModeStates:
@@ -891,7 +889,7 @@ class TestUnifiProtectChimeRingtoneSelect:
         assert entity.options == []
 
     async def test_async_select_option_error(
-        self, ringtone_coordinator: MagicMock
+        self, ringtone_coordinator: MagicMock, monkeypatch
     ) -> None:
         """A failed write leaves state unchanged and propagates the API error."""
         protect_owner(
@@ -902,11 +900,11 @@ class TestUnifiProtectChimeRingtoneSelect:
         entity = UnifiProtectChimeRingtoneSelect(
             coordinator=ringtone_coordinator, chime_id="chime1"
         )
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
         with pytest.raises(HomeAssistantError, match="Unable to set ringtone"):
             await entity.async_select_option("tone-1")
         assert entity._attr_current_option == "tone-2"
-        entity.async_write_ha_state.assert_not_called()
+        require_mock(entity.async_write_ha_state).assert_not_called()
 
     async def test_invalid_option_sends_nothing(
         self, ringtone_coordinator: MagicMock
@@ -967,7 +965,7 @@ class TestUnifiProtectPTZPresetSelect:
         assert "0" in entity._attr_options
 
     async def test_async_select_option_success(
-        self, mock_coordinator: MagicMock
+        self, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test selecting PTZ preset option successfully."""
         mock_coordinator.data = {
@@ -995,7 +993,7 @@ class TestUnifiProtectPTZPresetSelect:
             coordinator=mock_coordinator,
             camera_id="cam1",
         )
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
 
         await entity.async_select_option("3")
 
@@ -1003,7 +1001,7 @@ class TestUnifiProtectPTZPresetSelect:
         protect.async_move_ptz_to_preset.assert_awaited_once_with("cam1", 3)
         assert entity._attr_current_option == "3"
 
-    async def test_async_select_option_error(self, mock_coordinator):
+    async def test_async_select_option_error(self, mock_coordinator, monkeypatch):
         """Test selecting PTZ preset option with error."""
         mock_coordinator.data = {
             "sites": {},
@@ -1036,7 +1034,7 @@ class TestUnifiProtectPTZPresetSelect:
             coordinator=mock_coordinator,
             camera_id="cam1",
         )
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
 
         with pytest.raises(HomeAssistantError, match="Unable to move camera"):
             await entity.async_select_option("3")
@@ -1115,7 +1113,7 @@ class TestUnifiProtectViewerLiveviewSelect:
         assert entity._attr_current_option is None
 
     async def test_async_select_option_success(
-        self, mock_coordinator: MagicMock
+        self, mock_coordinator: MagicMock, monkeypatch
     ) -> None:
         """Test selecting liveview option successfully."""
         mock_coordinator.data = {
@@ -1145,7 +1143,7 @@ class TestUnifiProtectViewerLiveviewSelect:
             coordinator=mock_coordinator,
             viewer_id="viewer1",
         )
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
 
         await entity.async_select_option("All Cameras")
 
@@ -1159,7 +1157,7 @@ class TestUnifiProtectViewerLiveviewSelect:
         entity._update_from_data()
         assert entity._attr_current_option == "All Cameras"
 
-    async def test_async_select_option_error(self, mock_coordinator):
+    async def test_async_select_option_error(self, mock_coordinator, monkeypatch):
         """Test selecting liveview option with error."""
         mock_coordinator.data = {
             "sites": {},
@@ -1194,12 +1192,14 @@ class TestUnifiProtectViewerLiveviewSelect:
             coordinator=mock_coordinator,
             viewer_id="viewer1",
         )
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
 
         with pytest.raises(HomeAssistantError, match="Unable to update viewer"):
             await entity.async_select_option("All Cameras")
 
-    async def test_async_select_option_liveview_not_found(self, mock_coordinator):
+    async def test_async_select_option_liveview_not_found(
+        self, mock_coordinator, monkeypatch
+    ):
         """Test selecting liveview that doesn't exist."""
         mock_coordinator.data = {
             "sites": {},
@@ -1224,7 +1224,7 @@ class TestUnifiProtectViewerLiveviewSelect:
             coordinator=mock_coordinator,
             viewer_id="viewer1",
         )
-        entity.async_write_ha_state = MagicMock()
+        patch_attribute(monkeypatch, entity, "async_write_ha_state", MagicMock())
 
         with pytest.raises(ServiceValidationError, match="Liveview not found") as err:
             await entity.async_select_option("NonExistent")

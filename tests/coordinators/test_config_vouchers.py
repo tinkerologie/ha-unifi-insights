@@ -53,6 +53,7 @@ from custom_components.unifi_insights.data_transforms import (
     count_active_vouchers,
 )
 from custom_components.unifi_insights.image import UnifiVoucherQrCodeImage
+from tests.fixtures.assertions import patch_attribute, require_mock, require_not_none
 from tests.fixtures.command_owners import SITE_ID
 from tests.fixtures.coordinator_clients import (
     _create_mock_model,
@@ -395,12 +396,13 @@ def _assert_credential_absent(
 async def test_root_validation_error_does_not_log_credential(
     voucher_flow: tuple[UnifiInsightsConfigCoordinator, UnifiInsightsFacadeCoordinator],
     caplog: pytest.LogCaptureFixture,
+    monkeypatch,
 ) -> None:
     """A root model error stays private through HTTP, endpoint and command."""
     config, _ = voucher_flow
     code = "1234567890"
     client = _voucher_transport([{"vouchers": [code]}])
-    config.network_client.vouchers = client.vouchers
+    patch_attribute(monkeypatch, config.network_client, "vouchers", client.vouchers)
     with caplog.at_level(logging.DEBUG), pytest.raises(HomeAssistantError) as caught:
         await config.async_generate_voucher(
             "site1", name="Home Assistant", time_limit_minutes=480
@@ -420,6 +422,7 @@ async def test_root_validation_error_does_not_log_credential(
 async def test_root_validation_error_does_not_log_credential_polling(
     voucher_flow: tuple[UnifiInsightsConfigCoordinator, UnifiInsightsFacadeCoordinator],
     caplog: pytest.LogCaptureFixture,
+    monkeypatch,
 ) -> None:
     """A malformed root voucher preserves inventory without logging its code."""
     config, _ = voucher_flow
@@ -428,7 +431,7 @@ async def test_root_validation_error_does_not_log_credential_polling(
     config.data["vouchers"]["site1"] = prior
     code = "1234567890"
     client = _voucher_transport([{"data": [code], "totalCount": 1}])
-    config.network_client.vouchers = client.vouchers
+    patch_attribute(monkeypatch, config.network_client, "vouchers", client.vouchers)
     with caplog.at_level(logging.DEBUG):
         await config.async_refresh_vouchers("site1")
     _assert_credential_absent(caplog, code)
@@ -443,6 +446,7 @@ async def test_numeric_code_does_not_log_credential(
     caplog: pytest.LogCaptureFixture,
     method: str,
     code: object,
+    monkeypatch,
 ) -> None:
     """Invalid numeric and composite credential values stay private in DEBUG."""
     config, _ = voucher_flow
@@ -451,7 +455,7 @@ async def test_numeric_code_does_not_log_credential(
     client = _voucher_transport(
         [{"data": [body], "totalCount": 1} if method == "GET" else {"vouchers": [body]}]
     )
-    config.network_client.vouchers = client.vouchers
+    patch_attribute(monkeypatch, config.network_client, "vouchers", client.vouchers)
     with caplog.at_level(logging.DEBUG):
         if method == "GET":
             await config.async_refresh_vouchers("site1")
@@ -482,11 +486,12 @@ async def test_malformed_voucher_body_does_not_log_credential(
     caplog: pytest.LogCaptureFixture,
     method: str,
     body: Any,
+    monkeypatch,
 ) -> None:
     """Malformed envelopes stay private through real transport and endpoint calls."""
     config, _ = voucher_flow
     client = _voucher_transport([body])
-    config.network_client.vouchers = client.vouchers
+    patch_attribute(monkeypatch, config.network_client, "vouchers", client.vouchers)
     with caplog.at_level(logging.DEBUG):
         if method == "GET":
             await client.vouchers.get_all_pages("site1")
@@ -523,6 +528,7 @@ async def test_partial_overlap_is_incomplete(caplog: pytest.LogCaptureFixture) -
 async def test_partial_overlap_is_incomplete_coordinator(
     voucher_flow: tuple[UnifiInsightsConfigCoordinator, UnifiInsightsFacadeCoordinator],
     caplog: pytest.LogCaptureFixture,
+    monkeypatch,
 ) -> None:
     """Incomplete transport results keep the prior inventory and isolate failure."""
     config, _ = voucher_flow
@@ -530,7 +536,7 @@ async def test_partial_overlap_is_incomplete_coordinator(
     prior = {"old": {"id": "old", "code": "old-synthetic-code"}}
     config.data["vouchers"]["site1"] = prior
     client = _voucher_transport(_overlapping_pages() * 2)
-    config.network_client.vouchers = client.vouchers
+    patch_attribute(monkeypatch, config.network_client, "vouchers", client.vouchers)
     with caplog.at_level(logging.DEBUG):
         await config.async_refresh()
     assert config.data["vouchers"]["site1"] == prior
@@ -558,7 +564,7 @@ async def test_real_model_refresh_does_not_redisplay_expired_qr(
             "expiresAt": "2026-10-09T12:00:00Z",
         }
     )
-    config.network_client.vouchers.get_all_pages.return_value = [known]
+    require_mock(config.network_client.vouchers.get_all_pages).return_value = [known]
     await config.async_refresh()
     config.data = {
         **config.data,
@@ -595,7 +601,9 @@ async def test_real_model_refresh_does_not_redisplay_expired_qr(
                 omitted.model_dump(by_alias=True, exclude_none=False)["expiresAt"]
                 is None
             )
-            config.network_client.vouchers.get_all_pages.return_value = [omitted]
+            require_mock(config.network_client.vouchers.get_all_pages).return_value = [
+                omitted
+            ]
             await config.async_refresh_vouchers("site1")
             assert image.available is False
             assert await image.async_image() is None
@@ -642,7 +650,7 @@ async def test_voucher_inventory_skips_records_without_id(
 ) -> None:
     """Voucher records lacking an id are not stored in the inventory."""
     config, _ = voucher_flow
-    config.network_client.vouchers.get_all_pages.return_value = [
+    require_mock(config.network_client.vouchers.get_all_pages).return_value = [
         _create_mock_model({"id": "v1", "code": "1234567890"}),
         _create_mock_model({"code": "0987654321"}),
         _create_mock_model({"id": "", "code": "1111111111"}),
@@ -771,10 +779,15 @@ class TestConfigCoordinatorVouchers:
             entry=entry,
         )
         result = await coordinator._async_update_data()
-        assert coordinator.network_client.vouchers.get_all_pages.await_count == 2
+        assert (
+            require_mock(coordinator.network_client.vouchers.get_all_pages).await_count
+            == 2
+        )
         polled_sites = [
             c.args[0]
-            for c in coordinator.network_client.vouchers.get_all_pages.await_args_list
+            for c in require_mock(
+                coordinator.network_client.vouchers.get_all_pages
+            ).await_args_list
         ]
         assert polled_sites == ["default", "site2"]
         assert "vouchers" in result
@@ -912,9 +925,9 @@ class TestConfigCoordinatorVouchers:
         await coordinator.async_refresh_vouchers("default")
 
         assert coordinator.network_client.vouchers.get_all_pages.await_count == 1
-        assert coordinator.network_client.vouchers.get_all_pages.await_args[0] == (
-            "default",
-        )
+        assert require_not_none(
+            coordinator.network_client.vouchers.get_all_pages.await_args
+        )[0] == ("default",)
         assert "v-new" in coordinator.data["vouchers"]["default"]
         listener.assert_called_once()
 
@@ -1048,7 +1061,7 @@ class TestConfigGenerateVoucher:
     ) -> None:
         """Test async_generate_voucher with rate limits and usage limits."""
         config = seeded_owners.config
-        config.network_client.vouchers.create.return_value = []
+        require_mock(config.network_client.vouchers.create).return_value = []
         await config.async_generate_voucher(
             site_id=SITE_ID,
             name="VIP Guest",
@@ -1058,7 +1071,7 @@ class TestConfigGenerateVoucher:
             rx_rate_limit_kbps=2000,
             data_usage_limit_mbytes=500,
         )
-        config.network_client.vouchers.create.assert_awaited_once_with(
+        require_mock(config.network_client.vouchers.create).assert_awaited_once_with(
             SITE_ID,
             name="VIP Guest",
             time_limit_minutes=120,
@@ -1073,14 +1086,14 @@ class TestConfigGenerateVoucher:
     ) -> None:
         """Test async_generate_voucher without optional limits."""
         config = seeded_owners.config
-        config.network_client.vouchers.create.return_value = []
+        require_mock(config.network_client.vouchers.create).return_value = []
         await config.async_generate_voucher(
             site_id=SITE_ID,
             name="Standard Guest",
             time_limit_minutes=60,
             count=1,
         )
-        config.network_client.vouchers.create.assert_awaited_once_with(
+        require_mock(config.network_client.vouchers.create).assert_awaited_once_with(
             SITE_ID,
             name="Standard Guest",
             time_limit_minutes=60,
@@ -1092,7 +1105,7 @@ class TestConfigGenerateVoucher:
     ) -> None:
         """Test async_generate_voucher passes authorized_guest_limit to create."""
         config = seeded_owners.config
-        config.network_client.vouchers.create.return_value = []
+        require_mock(config.network_client.vouchers.create).return_value = []
         await config.async_generate_voucher(
             site_id=SITE_ID,
             name="Guest",
@@ -1100,7 +1113,7 @@ class TestConfigGenerateVoucher:
             count=1,
             authorized_guest_limit=2,
         )
-        config.network_client.vouchers.create.assert_awaited_once_with(
+        require_mock(config.network_client.vouchers.create).assert_awaited_once_with(
             SITE_ID,
             name="Guest",
             time_limit_minutes=60,
@@ -1114,7 +1127,7 @@ class TestConfigGenerateVoucher:
         """Test async_generate_voucher returns created vouchers and records latest."""
         config, facade = seeded_owners.config, seeded_owners.facade
         v1 = _voucher("v1", "1111111111", "G1")
-        config.network_client.vouchers.create.return_value = [v1]
+        require_mock(config.network_client.vouchers.create).return_value = [v1]
         result1 = await config.async_generate_voucher(
             site_id=SITE_ID, name="G1", time_limit_minutes=60
         )
@@ -1122,7 +1135,7 @@ class TestConfigGenerateVoucher:
         assert facade.data["latest_vouchers"][SITE_ID]["id"] == "v1"
 
         v2 = _voucher("v2", "2222222222", "G2")
-        config.network_client.vouchers.create.return_value = [v2]
+        require_mock(config.network_client.vouchers.create).return_value = [v2]
         result2 = await config.async_generate_voucher(
             site_id=SITE_ID, name="G2", time_limit_minutes=60
         )
@@ -1134,7 +1147,7 @@ class TestConfigGenerateVoucher:
     ) -> None:
         """When multiple vouchers are created, the last one is recorded as latest."""
         config = seeded_owners.config
-        config.network_client.vouchers.create.return_value = [
+        require_mock(config.network_client.vouchers.create).return_value = [
             _voucher("v1", "1111111111", "Batch"),
             _voucher("v2", "2222222222", "Batch"),
         ]
@@ -1148,7 +1161,7 @@ class TestConfigGenerateVoucher:
     ) -> None:
         """Unusable result (MagicMock) does not record latest voucher."""
         config = seeded_owners.config
-        config.network_client.vouchers.create.return_value = MagicMock()
+        require_mock(config.network_client.vouchers.create).return_value = MagicMock()
         result = await config.async_generate_voucher(
             site_id=SITE_ID, name="Unusable", time_limit_minutes=60
         )
@@ -1161,14 +1174,14 @@ class TestConfigGenerateVoucher:
         """Creating a voucher triggers targeted refresh for that site."""
         config = seeded_owners.config
         get_all_pages = config.network_client.vouchers.get_all_pages
-        get_all_pages.reset_mock()
-        config.network_client.vouchers.create.return_value = [
+        require_mock(get_all_pages).reset_mock()
+        require_mock(config.network_client.vouchers.create).return_value = [
             _voucher("v1", "1111111111", "G1")
         ]
         await config.async_generate_voucher(
             site_id=SITE_ID, name="G1", time_limit_minutes=60
         )
-        get_all_pages.assert_awaited_once_with(SITE_ID)
+        require_mock(get_all_pages).assert_awaited_once_with(SITE_ID)
 
     async def test_generate_voucher_survives_refresh_failure(
         self,
@@ -1178,7 +1191,7 @@ class TestConfigGenerateVoucher:
         """Targeted refresh failure still succeeds without voucher code in log."""
         config = seeded_owners.config
         v = _voucher("v1", "1111111111", "G1")
-        config.network_client.vouchers.create.return_value = [v]
+        require_mock(config.network_client.vouchers.create).return_value = [v]
         with (
             patch.object(
                 config,
@@ -1205,7 +1218,9 @@ class TestConfigGenerateVoucher:
         with pytest.raises(UniFiResponseError) as validation_info:
             parse_record(Voucher, {"code": synthetic_code}, "Voucher")
         config = seeded_owners.config
-        config.network_client.vouchers.create.side_effect = validation_info.value
+        require_mock(
+            config.network_client.vouchers.create
+        ).side_effect = validation_info.value
         with (
             caplog.at_level("DEBUG"),
             pytest.raises(HomeAssistantError),
@@ -1262,9 +1277,9 @@ class TestConfigGenerateVoucher:
     ) -> None:
         """A targeted voucher refresh auth failure starts reauth and notifies."""
         config, facade = seeded_owners.config, seeded_owners.facade
-        config.network_client.vouchers.get_all_pages.side_effect = (
-            UniFiAuthenticationError("Revoked", status_code=401)
-        )
+        require_mock(
+            config.network_client.vouchers.get_all_pages
+        ).side_effect = UniFiAuthenticationError("Revoked", status_code=401)
         listener = MagicMock()
         facade.async_add_listener(listener)
 
@@ -1314,15 +1329,15 @@ class TestConfigGenerateVoucher:
         """API failure raises HomeAssistantError and does not call refresh."""
         config = seeded_owners.config
         get_all_pages = config.network_client.vouchers.get_all_pages
-        get_all_pages.reset_mock()
-        config.network_client.vouchers.create.side_effect = RuntimeError(
+        require_mock(get_all_pages).reset_mock()
+        require_mock(config.network_client.vouchers.create).side_effect = RuntimeError(
             "Network failure"
         )
         with pytest.raises(HomeAssistantError, match="Unable to generate voucher"):
             await config.async_generate_voucher(
                 site_id=SITE_ID, name="G1", time_limit_minutes=60
             )
-        get_all_pages.assert_not_awaited()
+        require_mock(get_all_pages).assert_not_awaited()
         assert config.data["latest_vouchers"] == {}
 
     async def test_delete_voucher_refreshes_and_clears_matching_latest(
@@ -1332,12 +1347,12 @@ class TestConfigGenerateVoucher:
         config = seeded_owners.config
         _seed_latest(config, SITE_ID, {"id": "v1", "code": "1111111111"})
         get_all_pages = config.network_client.vouchers.get_all_pages
-        get_all_pages.reset_mock()
-        config.network_client.vouchers.delete.return_value = True
+        require_mock(get_all_pages).reset_mock()
+        require_mock(config.network_client.vouchers.delete).return_value = True
         await config.async_delete_voucher(SITE_ID, "v1")
         assert SITE_ID not in config.data["latest_vouchers"]
         assert SITE_ID not in seeded_owners.facade.data["latest_vouchers"]
-        get_all_pages.assert_awaited_once_with(SITE_ID)
+        require_mock(get_all_pages).assert_awaited_once_with(SITE_ID)
 
     async def test_delete_voucher_keeps_latest_of_other_voucher(
         self, seeded_owners: SeededOwners
@@ -1346,11 +1361,11 @@ class TestConfigGenerateVoucher:
         config = seeded_owners.config
         _seed_latest(config, SITE_ID, {"id": "v2", "code": "2222222222"})
         get_all_pages = config.network_client.vouchers.get_all_pages
-        get_all_pages.reset_mock()
-        config.network_client.vouchers.delete.return_value = True
+        require_mock(get_all_pages).reset_mock()
+        require_mock(config.network_client.vouchers.delete).return_value = True
         await config.async_delete_voucher(SITE_ID, "v1")
         assert config.data["latest_vouchers"][SITE_ID]["id"] == "v2"
-        get_all_pages.assert_awaited_once_with(SITE_ID)
+        require_mock(get_all_pages).assert_awaited_once_with(SITE_ID)
 
     async def test_latest_voucher_is_refreshed_from_inventory(
         self, seeded_owners: SeededOwners
@@ -1359,7 +1374,7 @@ class TestConfigGenerateVoucher:
         config, facade = seeded_owners.config, seeded_owners.facade
         _seed_latest(config, SITE_ID, {"id": "v1", "code": "1111111111"})
         # A dict passes _model_to_dict unchanged, keeping the string timestamp.
-        config.network_client.vouchers.get_all_pages.return_value = [
+        require_mock(config.network_client.vouchers.get_all_pages).return_value = [
             {
                 "id": "v1",
                 "code": "1111111111",
@@ -1378,7 +1393,7 @@ class TestConfigGenerateVoucher:
         """Latest voucher is kept in memory even if missing from polled inventory."""
         config, facade = seeded_owners.config, seeded_owners.facade
         _seed_latest(config, SITE_ID, {"id": "v1", "code": "1111111111"})
-        config.network_client.vouchers.get_all_pages.return_value = []
+        require_mock(config.network_client.vouchers.get_all_pages).return_value = []
         await config.async_refresh()
         assert config.data["vouchers"][SITE_ID] == {}
         assert facade.data["latest_vouchers"][SITE_ID]["id"] == "v1"
@@ -1405,7 +1420,7 @@ class TestConfigGenerateVoucher:
     async def test_async_generate_voucher(self, seeded_owners: SeededOwners) -> None:
         """Test async_generate_voucher delegates correctly."""
         config = seeded_owners.config
-        config.network_client.vouchers.create.return_value = []
+        require_mock(config.network_client.vouchers.create).return_value = []
         await config.async_generate_voucher(
             SITE_ID,
             count=5,
@@ -1415,7 +1430,7 @@ class TestConfigGenerateVoucher:
             data_usage_limit_mbytes=500,
             name="test",
         )
-        config.network_client.vouchers.create.assert_called_once_with(
+        require_mock(config.network_client.vouchers.create).assert_called_once_with(
             SITE_ID,
             count=5,
             time_limit_minutes=60,
@@ -1429,7 +1444,7 @@ class TestConfigGenerateVoucher:
         """Test async_delete_voucher delegates correctly."""
         config = seeded_owners.config
         await config.async_delete_voucher(SITE_ID, "voucher1")
-        config.network_client.vouchers.delete.assert_called_once_with(
+        require_mock(config.network_client.vouchers.delete).assert_called_once_with(
             SITE_ID, "voucher1"
         )
 
@@ -1475,7 +1490,7 @@ class TestConfigVoucherState:
         old_root = config.data
         old_latest = config.data["latest_vouchers"]
         old_snapshot = facade.data
-        config.network_client.vouchers.create.return_value = [
+        require_mock(config.network_client.vouchers.create).return_value = [
             _voucher("v1", "1111111111")
         ]
 

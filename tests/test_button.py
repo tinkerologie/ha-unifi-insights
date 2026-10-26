@@ -53,7 +53,9 @@ from custom_components.unifi_insights.data_transforms import (
     device_ports,
     get_port_label,
 )
+from tests.fixtures.assertions import require_not_none
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
+from tests.fixtures.entities import EntityCollector
 from tests.fixtures.facade_data import (
     set_availability,
     with_client,
@@ -673,8 +675,7 @@ class TestAsyncSetupEntry:
         """Test that setup entry creates buttons."""
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -686,8 +687,7 @@ class TestAsyncSetupEntry:
         """Test that setup creates device restart buttons."""
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -702,8 +702,7 @@ class TestAsyncSetupEntry:
         """Test that setup creates chime play buttons."""
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -718,8 +717,7 @@ class TestAsyncSetupEntry:
         """Test that setup creates PTZ patrol buttons."""
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -740,8 +738,7 @@ class TestAsyncSetupEntry:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -780,8 +777,7 @@ class TestAsyncSetupEntry:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -791,8 +787,7 @@ class TestAsyncSetupEntry:
         """Re-running discovery with unchanged data skips already-known buttons."""
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
         listener = mock_coordinator.async_add_listener.call_args[0][0]
@@ -870,8 +865,7 @@ class TestAsyncSetupEntry:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
         listener = mock_coordinator.async_add_listener.call_args[0][0]
@@ -902,8 +896,7 @@ class TestAsyncSetupEntry:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -1126,8 +1119,7 @@ class TestAsyncSetupEntryWithClients:
         """Test that setup creates client reconnect buttons."""
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -1143,8 +1135,7 @@ class TestAsyncSetupEntryWithClients:
         """Test client button uses name when available."""
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -1163,8 +1154,7 @@ class TestAsyncSetupEntryWithClients:
         """Test client button uses hostname when name not available."""
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -1187,8 +1177,7 @@ class TestAsyncSetupEntryWithClients:
         """Test client button uses MAC when name and hostname not available."""
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -1557,8 +1546,7 @@ class TestSetupEntryPoeButtons:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         await async_setup_entry(hass, mock_entry, add_entities)
 
@@ -1626,11 +1614,11 @@ class TestSetupEntryPoeButtons:
         }
         port1 = get_device_port(data, "site1", "dev1", 1)
         assert port1 == {"idx": 1, "poe": {"enabled": True}}
-        assert port_can_be_power_cycled(port1) is True
+        assert port_can_be_power_cycled(require_not_none(port1)) is True
 
         port2 = get_device_port(data, "site1", "dev1", 2)
         assert port2 == {"idx": 2, "poe": {"enabled": False}}
-        assert port_can_be_power_cycled(port2) is False
+        assert port_can_be_power_cycled(require_not_none(port2)) is False
 
         assert get_device_port(data, "site1", "dev1", 3) is None
 
@@ -1682,8 +1670,7 @@ class TestSetupEntryPoeButtons:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         listeners = []
         mock_coordinator.async_add_listener = listeners.append
@@ -1804,8 +1791,7 @@ class TestGenerateVoucherButton:
 
         added_entities: list = []
 
-        def add_entities(new_entities, **kwargs):
-            added_entities.extend(new_entities)
+        add_entities = EntityCollector(added_entities)
 
         listeners = []
         mock_coordinator.async_add_listener = listeners.append
@@ -1960,7 +1946,9 @@ class TestUnifiClientWakeButton:
         assert button.translation_placeholders == {"client_name": mac}
         assert button.device_info is not None
         assert button.device_info["identifiers"] == {(DOMAIN, "site_site1")}
+        assert "manufacturer" in button.device_info
         assert button.device_info["manufacturer"] == MANUFACTURER
+        assert "model" in button.device_info
         assert button.device_info["model"] == "UniFi Site"
 
     def test_wake_button_without_site_does_not_attach_a_device(
@@ -2008,7 +1996,9 @@ class TestUnifiClientWakeButton:
         assert btn_site.device_info is not None
         assert btn_site.device_info["identifiers"] == {(DOMAIN, "site_site1")}
         assert btn_site.device_info["name"] == "UniFi Site (Home Site)"
+        assert "manufacturer" in btn_site.device_info
         assert btn_site.device_info["manufacturer"] == MANUFACTURER
+        assert "model" in btn_site.device_info
         assert btn_site.device_info["model"] == "UniFi Site"
 
     def test_wake_button_device_info_never_contains_client_identifier(
@@ -2031,13 +2021,13 @@ class TestUnifiClientWakeButton:
             "clients": {"site1": {"c1": {"macAddress": mac, "name": "Workstation"}}},
         }
         btn_gw = UnifiClientWakeButton(coordinator, mac, site_id="site1")
-        for _, identifier in btn_gw.device_info["identifiers"]:
+        for _, identifier in require_not_none(btn_gw.device_info)["identifiers"]:
             assert not identifier.startswith("client_")
 
         # Offline unseeded client
         coordinator.data = {"devices": {}, "clients": {}}
         btn_offline = UnifiClientWakeButton(coordinator, mac, site_id="site1")
-        for _, identifier in btn_offline.device_info["identifiers"]:
+        for _, identifier in require_not_none(btn_offline.device_info)["identifiers"]:
             assert not identifier.startswith("client_")
 
     def test_wake_button_translation_placeholders_live_history_and_mac_only(
@@ -2253,15 +2243,15 @@ async def test_buttons_publish_device_coordinator_availability(
     # Enabling a disabled entity reloads the entry; read its live facade.
     facade = mock_config_entry.runtime_data.coordinator
     device = facade._device_coordinator
-    assert hass.states.get(entity_id).state != "unavailable"
+    assert require_not_none(hass.states.get(entity_id)).state != "unavailable"
     mock_network_client.devices.get_all.side_effect = UniFiConnectionError("offline")
     await device.async_refresh()
     await hass.async_block_till_done()
-    assert hass.states.get(entity_id).state == "unavailable"
+    assert require_not_none(hass.states.get(entity_id)).state == "unavailable"
     mock_network_client.devices.get_all.side_effect = None
     await device.async_refresh()
     await hass.async_block_till_done()
-    assert hass.states.get(entity_id).state != "unavailable"
+    assert require_not_none(hass.states.get(entity_id)).state != "unavailable"
     assert await hass.config_entries.async_unload(mock_config_entry.entry_id)
     await hass.async_block_till_done()
     assert not facade._listeners
@@ -2310,11 +2300,13 @@ class TestWakeButtonSetup:
         )
         assert entity_id is not None
         row = registry.async_get(entity_id)
-        assert row.disabled_by is er.RegistryEntryDisabler.INTEGRATION
-        assert row.original_name == "Wake Gaming PC"
-        assert row.device_id is not None
-        device = dr.async_get(hass).async_get(row.device_id)
-        assert device.identifiers == {(DOMAIN, "site1_gateway")}
+        assert require_not_none(row).disabled_by is er.RegistryEntryDisabler.INTEGRATION
+        assert require_not_none(row).original_name == "Wake Gaming PC"
+        assert require_not_none(row).device_id is not None
+        device = dr.async_get(hass).async_get(
+            require_not_none(require_not_none(row).device_id)
+        )
+        assert require_not_none(device).identifiers == {(DOMAIN, "site1_gateway")}
         assert hass.states.get(entity_id) is None
         registry.async_update_entity(entity_id, disabled_by=None)
         mock_network_client.clients.get_all.return_value = []
@@ -2331,7 +2323,10 @@ class TestWakeButtonSetup:
         state = hass.states.get(entity_id)
         assert state is not None
         assert state.attributes["friendly_name"] == "Home Gateway Wake Old PC"
-        assert registry.async_get(entity_id).device_id == device.id
+        assert (
+            require_not_none(registry.async_get(entity_id)).device_id
+            == require_not_none(device).id
+        )
 
     async def test_wake_history_seed_cancelled_on_entry_unload(
         self, hass: HomeAssistant, init_integration: MockConfigEntry
@@ -2349,7 +2344,7 @@ class TestWakeButtonSetup:
             return {}
 
         entry.runtime_data.coordinator.async_get_wake_history = pending_history
-        await async_setup_entry(hass, entry, lambda entities: None)
+        await async_setup_entry(hass, entry, EntityCollector([]))
         await started.wait()
         assert await hass.config_entries.async_unload(entry.entry_id)
         assert cancelled.is_set()
@@ -2418,11 +2413,11 @@ class TestWakeButtonSetup:
             original_name=registry_name,
         )
         added: list = []
-        await async_setup_entry(hass, entry, added.extend)
+        await async_setup_entry(hass, entry, EntityCollector(added))
         wakes = [e for e in added if isinstance(e, UnifiClientWakeButton)]
         assert len(wakes) == 1
         button = wakes[0]
-        assert button.device_info["identifiers"] == (
+        assert require_not_none(button.device_info)["identifiers"] == (
             device.identifiers if existing_device else {(DOMAIN, "site_site1")}
         )
         saved_name = "Registry PC" if registry_name == "Wake Registry PC" else mac
@@ -2431,7 +2426,10 @@ class TestWakeButtonSetup:
         coordinator.device_coordinator.async_wake_client.assert_awaited_once_with(
             mac, client_name=saved_name
         )
-        assert er.async_get(hass).async_get(row.entity_id).disabled_by is None
+        assert (
+            require_not_none(er.async_get(hass).async_get(row.entity_id)).disabled_by
+            is None
+        )
         await started.wait()
         proceed.set()
         await hass.async_block_till_done(wait_background_tasks=True)
@@ -2471,7 +2469,7 @@ class TestWakeButtonSetup:
         entry.runtime_data = MagicMock(coordinator=coordinator)
 
         added: list = []
-        await async_setup_entry(hass, entry, lambda ents, **kw: added.extend(ents))
+        await async_setup_entry(hass, entry, EntityCollector(added))
 
         wake_buttons = [e for e in added if isinstance(e, UnifiClientWakeButton)]
         assert len(wake_buttons) == 1
@@ -2507,7 +2505,7 @@ class TestWakeButtonSetup:
         listeners = []
         coordinator.async_add_listener = listeners.append
 
-        await async_setup_entry(hass, entry, lambda ents, **kw: added.extend(ents))
+        await async_setup_entry(hass, entry, EntityCollector(added))
 
         wake_buttons = [e for e in added if isinstance(e, UnifiClientWakeButton)]
         assert len(wake_buttons) == 1
@@ -2546,7 +2544,7 @@ class TestWakeButtonSetup:
         listeners = []
         coordinator.async_add_listener = listeners.append
 
-        await async_setup_entry(hass, entry, lambda ents, **kw: added.extend(ents))
+        await async_setup_entry(hass, entry, EntityCollector(added))
 
         wake_buttons = [e for e in added if isinstance(e, UnifiClientWakeButton)]
         assert len(wake_buttons) == 0
@@ -2591,7 +2589,7 @@ class TestWakeButtonSetup:
         )
 
         added: list = []
-        await async_setup_entry(hass, entry, lambda ents, **kw: added.extend(ents))
+        await async_setup_entry(hass, entry, EntityCollector(added))
 
         # No live entity created for unseeded offline client
         wake_buttons = [e for e in added if isinstance(e, UnifiClientWakeButton)]
@@ -2632,7 +2630,7 @@ class TestWakeButtonSetup:
         )
 
         added: list = []
-        await async_setup_entry(hass, entry, lambda ents, **kw: added.extend(ents))
+        await async_setup_entry(hass, entry, EntityCollector(added))
 
         wake_buttons = [e for e in added if isinstance(e, UnifiClientWakeButton)]
         assert len(wake_buttons) == 1
@@ -2664,7 +2662,7 @@ class TestWakeButtonSetup:
         entry.runtime_data = MagicMock(coordinator=coordinator)
 
         added: list = []
-        await async_setup_entry(hass, entry, lambda ents, **kw: added.extend(ents))
+        await async_setup_entry(hass, entry, EntityCollector(added))
 
         wake_buttons = [e for e in added if isinstance(e, UnifiClientWakeButton)]
         assert len(wake_buttons) == 1
@@ -2709,7 +2707,7 @@ class TestWakeButtonSetup:
         )
 
         added: list = []
-        await async_setup_entry(hass, entry, lambda ents, **kw: added.extend(ents))
+        await async_setup_entry(hass, entry, EntityCollector(added))
 
         wake_buttons = [e for e in added if isinstance(e, UnifiClientWakeButton)]
         assert len(wake_buttons) == 1
@@ -2739,7 +2737,7 @@ class TestWakeButtonSetup:
         entry.runtime_data = MagicMock(coordinator=coordinator)
 
         added: list = []
-        await async_setup_entry(hass, entry, lambda ents, **kw: added.extend(ents))
+        await async_setup_entry(hass, entry, EntityCollector(added))
 
         wake_buttons = [e for e in added if isinstance(e, UnifiClientWakeButton)]
         assert len(wake_buttons) == 1
@@ -2761,7 +2759,7 @@ class TestWakeButtonSetup:
         entry.runtime_data = MagicMock(coordinator=coordinator)
 
         added: list = []
-        await async_setup_entry(hass, entry, lambda ents, **kw: added.extend(ents))
+        await async_setup_entry(hass, entry, EntityCollector(added))
 
         wake_buttons = [e for e in added if isinstance(e, UnifiClientWakeButton)]
         assert len(wake_buttons) == 0
@@ -2802,7 +2800,7 @@ class TestWakeButtonSetup:
         )
 
         added: list = []
-        await async_setup_entry(hass, entry, lambda ents, **kw: added.extend(ents))
+        await async_setup_entry(hass, entry, EntityCollector(added))
 
         assert ent_reg.async_get(r_wake.entity_id) is None
         assert ent_reg.async_get(r_reconnect.entity_id) is None
@@ -2828,7 +2826,7 @@ class TestWakeButtonSetup:
         entry.runtime_data = MagicMock(coordinator=coordinator)
 
         added: list = []
-        await async_setup_entry(hass, entry, lambda ents, **kw: added.extend(ents))
+        await async_setup_entry(hass, entry, EntityCollector(added))
 
         coordinator.async_get_wake_history.assert_not_awaited()
 
@@ -2944,7 +2942,7 @@ class TestWakeButtonSetup:
             )
 
         added: list = []
-        await async_setup_entry(hass, entry, lambda ents, **kw: added.extend(ents))
+        await async_setup_entry(hass, entry, EntityCollector(added))
 
         # At synchronous setup time: only mac_connected is added
         wake_ids = [e.unique_id for e in added if isinstance(e, UnifiClientWakeButton)]
@@ -2999,7 +2997,7 @@ class TestWakeButtonSetup:
         added: list = []
         # Run setup with a 1-second timeout to prove setup does NOT block on the seed
         async with asyncio.timeout(1):
-            await async_setup_entry(hass, entry, lambda ents, **kw: added.extend(ents))
+            await async_setup_entry(hass, entry, EntityCollector(added))
 
         wake_buttons = [e for e in added if isinstance(e, UnifiClientWakeButton)]
         assert len(wake_buttons) == 0

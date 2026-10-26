@@ -33,6 +33,8 @@ from custom_components.unifi_insights.sensor import UnifiProtectSensor
 from custom_components.unifi_insights.sensor import (
     async_setup_entry as setup_sensors,
 )
+from tests.fixtures.assertions import require_not_none
+from tests.fixtures.entities import EntityCallback, EntityCollector
 from tests.fixtures.facade_data import (
     set_availability,
     with_protect_collection,
@@ -235,7 +237,7 @@ def test_explicit_storage_model_serialization() -> None:
     assert StorageInfo().healthy is None
     for invalid in ("false", 0):
         with pytest.raises(ValidationError):
-            StorageInfo(healthy=invalid)
+            StorageInfo.model_validate({"healthy": invalid})
     for invalid in (True, "100"):
         nvr = NVR.model_validate({"id": "nvr1", "storageInfo": {"usedSize": invalid}})
         assert normalize_nvr_storage(nvr.model_dump(by_alias=True)).used_bytes is None
@@ -360,7 +362,7 @@ def _assert_entity_snapshot_parity(
         assert entity.unique_id == f"unifi_insights_nvr_nvr1_{key}"
         assert entity.entity_description.device_class == BinarySensorDeviceClass.PROBLEM
         assert entity.entity_description.entity_category == EntityCategory.DIAGNOSTIC
-        assert entity.device_info["identifiers"] == {
+        assert require_not_none(entity.device_info)["identifiers"] == {
             ("unifi_insights", "protect_nvr_nvr1")
         }
     snapshot = build_protect_snapshot(
@@ -387,15 +389,17 @@ async def test_conditional_discovery_and_availability(
     mock_config_entry.runtime_data = MagicMock(coordinator=mock_coordinator)
     binaries: list = []
     capacities: list = []
-    await setup_binary_sensors(hass, mock_config_entry, binaries.extend)
+    await setup_binary_sensors(hass, mock_config_entry, EntityCollector(binaries))
     binary_listener = mock_coordinator.async_add_listener.call_args[0][0]
     await setup_sensors(
         hass,
         mock_config_entry,
-        lambda entities: capacities.extend(
-            e
-            for e in entities
-            if (isinstance(e, UnifiProtectSensor) and e._device_type == "nvr")
+        EntityCallback(
+            lambda entities: capacities.extend(
+                e
+                for e in entities
+                if isinstance(e, UnifiProtectSensor) and e._device_type == "nvr"
+            )
         ),
     )
     sensor_listener = mock_coordinator.async_add_listener.call_args[0][0]
@@ -432,7 +436,7 @@ async def test_conditional_discovery_and_availability(
     assert used.unique_id == "unifi_insights_nvr_nvr1_storage_used"
     assert used.native_value == 0
     assert used.native_unit_of_measurement == UnitOfInformation.GIGABYTES
-    assert used.extra_state_attributes["storage_used"] == 0
+    assert require_not_none(used.extra_state_attributes)["storage_used"] == 0
     mock_coordinator.data = with_protect_device(
         mock_coordinator.data, "nvrs", "nvr1", {"id": "nvr1", "name": "Recorder"}
     )
@@ -481,7 +485,7 @@ async def test_malformed_nvr_inventory_waits_for_valid_discovery(
     mock_config_entry.runtime_data = MagicMock(coordinator=mock_coordinator)
     binaries: list = []
 
-    await setup_binary_sensors(hass, mock_config_entry, binaries.extend)
+    await setup_binary_sensors(hass, mock_config_entry, EntityCollector(binaries))
     discover = mock_coordinator.async_add_listener.call_args[0][0]
     discover()
     assert not binaries
@@ -542,7 +546,7 @@ async def test_malformed_protect_data_waits_for_valid_discovery(
     mock_config_entry.runtime_data = MagicMock(coordinator=mock_coordinator)
     binaries: list = []
 
-    await setup_binary_sensors(hass, mock_config_entry, binaries.extend)
+    await setup_binary_sensors(hass, mock_config_entry, EntityCollector(binaries))
     discover = mock_coordinator.async_add_listener.call_args[0][0]
     discover()
     assert not [

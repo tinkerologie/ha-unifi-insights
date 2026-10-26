@@ -9,6 +9,7 @@ record the snapshot does not hold.
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from unittest.mock import DEFAULT, AsyncMock, MagicMock, patch
@@ -30,6 +31,7 @@ from custom_components.unifi_insights import (
     siren,
     switch,
 )
+from tests.fixtures.assertions import require_mock
 from tests.fixtures.facade_data import (
     facade_data,
     with_protect_device,
@@ -297,7 +299,10 @@ async def _discover(
         task.close()
     )
     names = dict.fromkeys((case.entity_class, *case.patched), DEFAULT)
-    with patch.multiple(case.module, **names) as doubles:
+    with ExitStack() as stack:
+        doubles = {
+            name: stack.enter_context(patch.object(case.module, name)) for name in names
+        }
         if "discover_network_rule_change_events" in doubles:
             doubles["discover_network_rule_change_events"].return_value = []
         await case.module.async_setup_entry(hass, entry, MagicMock())
@@ -556,8 +561,8 @@ async def test_select_options_need_their_protect_collection(variant: Variant) ->
 
     assert ringtone_err.value.translation_key == "ringtone_not_found"
     assert liveview_err.value.translation_key == "liveview_not_found"
-    chime.coordinator.require_protect_coordinator.assert_not_called()
-    viewer.coordinator.require_protect_coordinator.assert_not_called()
+    require_mock(chime.coordinator.require_protect_coordinator).assert_not_called()
+    require_mock(viewer.coordinator.require_protect_coordinator).assert_not_called()
 
 
 @pytest.mark.parametrize(

@@ -250,8 +250,8 @@ def _is_external_leak_detected(sensor_data: dict[str, Any]) -> bool:
     )
 
 
-@dataclass
-class UnifiInsightsBinarySensorEntityDescription(BinarySensorEntityDescription):  # type: ignore[misc]
+@dataclass(frozen=True, kw_only=True)
+class UnifiInsightsBinarySensorEntityDescription(BinarySensorEntityDescription):
     """Class describing UniFi Insights binary sensor entities."""
 
     value_fn: Callable[[dict[str, Any]], bool | None] | None = None
@@ -1223,8 +1223,8 @@ def _thread_problem_attributes(data: dict[str, Any]) -> dict[str, Any]:
     return present_attributes(**{ATTR_THREAD_ERROR_REASON: network.get("errorReason")})
 
 
-@dataclass(kw_only=True)
-class UnifiProtectSecurityBinarySensorEntityDescription(  # type: ignore[misc]
+@dataclass(frozen=True, kw_only=True)
+class UnifiProtectSecurityBinarySensorEntityDescription(
     UnifiInsightsBinarySensorEntityDescription
 ):
     """Describes a binary sensor of a Protect security device."""

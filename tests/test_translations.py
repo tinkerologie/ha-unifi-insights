@@ -15,7 +15,7 @@ import json
 import re
 from pathlib import Path
 from string import Formatter
-from typing import Any, Final, cast
+from typing import Any, Final
 
 import pytest
 import yaml
@@ -962,7 +962,12 @@ def _dict_placeholders(node: ast.expr | None) -> _Placeholders | None:
     if isinstance(node, ast.Dict) and all(
         isinstance(k, ast.Constant) and isinstance(k.value, str) for k in node.keys
     ):
-        return (frozenset(cast("ast.Constant", k).value for k in node.keys),)
+        keys: set[str] = set()
+        for key in node.keys:
+            assert isinstance(key, ast.Constant)
+            assert isinstance(key.value, str)
+            keys.add(key.value)
+        return (frozenset(keys),)
     if isinstance(node, ast.IfExp):
         body, orelse = _dict_placeholders(node.body), _dict_placeholders(node.orelse)
         return None if body is None or orelse is None else body + orelse

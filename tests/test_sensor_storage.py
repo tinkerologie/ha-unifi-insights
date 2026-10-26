@@ -32,6 +32,8 @@ from custom_components.unifi_insights.sensor import (
     UnifiStorageSensor,
     discover_storage_sensors,
 )
+from tests.fixtures.assertions import require_instance
+from tests.fixtures.entities import EntityCollector
 from tests.fixtures.facade_data import (
     facade_data,
     set_availability,
@@ -160,7 +162,7 @@ def test_discover_storage_sensors_creates_three_per_mount(
     known_keys: set[tuple[Any, ...]] = set()
 
     entities = discover_storage_sensors(
-        mock_coordinator, "site1", "udm", device_data, known_keys
+        mock_coordinator, "site1", "udm", dict(device_data), known_keys
     )
     assert len(entities) == 9
 
@@ -180,7 +182,7 @@ def test_discover_storage_sensors_creates_three_per_mount(
     # Calling again adds none
     assert (
         discover_storage_sensors(
-            mock_coordinator, "site1", "udm", device_data, known_keys
+            mock_coordinator, "site1", "udm", dict(device_data), known_keys
         )
         == []
     )
@@ -198,7 +200,7 @@ def test_discover_storage_sensors_creates_three_per_mount(
     )
     device_data = _publish_udm(mock_coordinator, udm)
     new_entities = discover_storage_sensors(
-        mock_coordinator, "site1", "udm", device_data, known_keys
+        mock_coordinator, "site1", "udm", dict(device_data), known_keys
     )
     assert len(new_entities) == 3
     assert {e.unique_id for e in new_entities} == {
@@ -225,7 +227,7 @@ def test_discover_storage_sensors_ignores_devices_without_mounts(
     known_keys: set[tuple[Any, ...]] = set()
     assert (
         discover_storage_sensors(
-            mock_coordinator, "site1", "udm", device_data, known_keys
+            mock_coordinator, "site1", "udm", dict(device_data), known_keys
         )
         == []
     )
@@ -238,9 +240,11 @@ def test_sensor_names_use_console_label_with_path_fallback(
     device_data = mock_coordinator.data["devices"]["site1"]["udm"]
     known_keys: set[tuple[Any, ...]] = set()
     entities = discover_storage_sensors(
-        mock_coordinator, "site1", "udm", device_data, known_keys
+        mock_coordinator, "site1", "udm", dict(device_data), known_keys
     )
-    by_mount = {e._mount_point: e for e in entities}
+    by_mount = {
+        require_instance(e, UnifiStorageSensor)._mount_point: e for e in entities
+    }
     assert by_mount["/data"].translation_placeholders == {"mount_name": "eMMC"}
     assert by_mount["/persistent"].translation_placeholders == {"mount_name": "Backup"}
     assert by_mount["/" + "tmp"].translation_placeholders == {"mount_name": "Temporary"}
@@ -299,7 +303,13 @@ def test_registry_enabled_defaults(mock_coordinator: MagicMock) -> None:
     entities = discover_storage_sensors(
         mock_coordinator, "site1", "udm", device_data, set()
     )
-    by_key = {(e._mount_point, e.entity_description.key): e for e in entities}
+    by_key = {
+        (
+            require_instance(e, UnifiStorageSensor)._mount_point,
+            e.entity_description.key,
+        ): e
+        for e in entities
+    }
 
     # /data (persistent): percentage True, used False, total False
     assert by_key[("/data", "used_percent")].entity_registry_enabled_default is True
@@ -327,7 +337,13 @@ def test_sensor_values_match_live_shape(mock_coordinator: MagicMock) -> None:
     entities = discover_storage_sensors(
         mock_coordinator, "site1", "udm", device_data, set()
     )
-    by_key = {(e._mount_point, e.entity_description.key): e for e in entities}
+    by_key = {
+        (
+            require_instance(e, UnifiStorageSensor)._mount_point,
+            e.entity_description.key,
+        ): e
+        for e in entities
+    }
 
     assert by_key[("/data", "used_percent")].native_value == 41.0
     assert by_key[("/data", "used")].native_value == 1700257792
@@ -351,17 +367,20 @@ def test_sensor_unknown_vs_unavailable(mock_coordinator: MagicMock) -> None:
     used_sensor = next(
         e
         for e in entities
-        if e._mount_point == "/data" and e.entity_description.key == "used"
+        if require_instance(e, UnifiStorageSensor)._mount_point == "/data"
+        and e.entity_description.key == "used"
     )
     pct_sensor = next(
         e
         for e in entities
-        if e._mount_point == "/data" and e.entity_description.key == "used_percent"
+        if require_instance(e, UnifiStorageSensor)._mount_point == "/data"
+        and e.entity_description.key == "used_percent"
     )
     total_sensor = next(
         e
         for e in entities
-        if e._mount_point == "/data" and e.entity_description.key == "total"
+        if require_instance(e, UnifiStorageSensor)._mount_point == "/data"
+        and e.entity_description.key == "total"
     )
 
     udm = _udm_record()
@@ -405,7 +424,11 @@ def test_sensor_attributes(mock_coordinator: MagicMock) -> None:
     entities = discover_storage_sensors(
         mock_coordinator, "site1", "udm", device_data, set()
     )
-    data_sensor = next(e for e in entities if e._mount_point == "/data")
+    data_sensor = next(
+        e
+        for e in entities
+        if require_instance(e, UnifiStorageSensor)._mount_point == "/data"
+    )
     assert data_sensor.extra_state_attributes == {
         "mount_point": "/data",
         "storage_type": "eMMC",
@@ -483,7 +506,7 @@ def test_binary_sensor_availability_and_discovery(
 
     # Discovered for UDM
     sensors = discover_storage_binary_sensors(
-        mock_coordinator, "site1", "udm", device_data, known_keys
+        mock_coordinator, "site1", "udm", dict(device_data), known_keys
     )
     assert len(sensors) == 1
     binary = sensors[0]
@@ -493,7 +516,7 @@ def test_binary_sensor_availability_and_discovery(
     # Not created twice
     assert (
         discover_storage_binary_sensors(
-            mock_coordinator, "site1", "udm", device_data, known_keys
+            mock_coordinator, "site1", "udm", dict(device_data), known_keys
         )
         == []
     )
@@ -581,8 +604,7 @@ async def test_sensor_setup_entry_creates_storage_sensors(
     """Test sensor async_setup_entry creates 9 UnifiStorageSensor instances."""
     added_entities: list[Any] = []
 
-    def add_entities(new_entities: list[Any], **kwargs: Any) -> None:
-        added_entities.extend(new_entities)
+    add_entities = EntityCollector(added_entities)
 
     await sensor.async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -603,8 +625,7 @@ async def test_sensor_setup_entry_adds_late_mounts(
     """Test coordinator listener discovers late mounts that appear in later polls."""
     added_entities: list[Any] = []
 
-    def add_entities(new_entities: list[Any], **kwargs: Any) -> None:
-        added_entities.extend(new_entities)
+    add_entities = EntityCollector(added_entities)
 
     await sensor.async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -653,8 +674,7 @@ async def test_binary_sensor_setup_entry_creates_nearly_full(
     )
     added_entities: list[Any] = []
 
-    def add_entities(new_entities: list[Any], **kwargs: Any) -> None:
-        added_entities.extend(new_entities)
+    add_entities = EntityCollector(added_entities)
 
     await binary_sensor.async_setup_entry(hass, mock_config_entry, add_entities)
 
@@ -677,12 +697,12 @@ async def test_existing_fixtures_unchanged(
     added_binary_sensors: list[Any] = []
 
     await sensor.async_setup_entry(
-        hass, mock_config_entry, lambda entities, **k: added_sensors.extend(entities)
+        hass, mock_config_entry, EntityCollector(added_sensors)
     )
     await binary_sensor.async_setup_entry(
         hass,
         mock_config_entry,
-        lambda entities, **k: added_binary_sensors.extend(entities),
+        EntityCollector(added_binary_sensors),
     )
 
     assert not any(isinstance(e, UnifiStorageSensor) for e in added_sensors)

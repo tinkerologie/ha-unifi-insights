@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Final, TypeAlias, TypeIs
 
 import homeassistant.helpers.config_validation as cv
 from homeassistant.config_entries import ConfigEntry
@@ -388,6 +388,16 @@ async def _async_setup_carrier_fabric_entry(
     return True
 
 
+def _is_carrier_fabric_entry(
+    entry: UnifiInsightsConfigEntry | CarrierFabricConfigEntry,
+) -> TypeIs[CarrierFabricConfigEntry]:
+    """Narrow the entry using the same connection discriminator as setup."""
+    return bool(
+        entry.data.get(CONF_CONNECTION_TYPE, CONNECTION_TYPE_LOCAL)
+        == CONNECTION_TYPE_CARRIER_FABRIC
+    )
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: UnifiInsightsConfigEntry | CarrierFabricConfigEntry
 ) -> bool:
@@ -396,10 +406,8 @@ async def async_setup_entry(
 
     # Determine connection type (default to local for backward compatibility)
     connection_type = entry.data.get(CONF_CONNECTION_TYPE, CONNECTION_TYPE_LOCAL)
-    if connection_type == CONNECTION_TYPE_CARRIER_FABRIC:
-        return await _async_setup_carrier_fabric_entry(
-            hass, cast("CarrierFabricConfigEntry", entry)
-        )
+    if _is_carrier_fabric_entry(entry):
+        return await _async_setup_carrier_fabric_entry(hass, entry)
 
     is_local = connection_type == CONNECTION_TYPE_LOCAL
 
@@ -685,7 +693,7 @@ async def async_setup_entry(
     if is_local and entry.data.get(CONF_ACCESS_TOKEN):
         access_client, access_coordinator = await _async_setup_access(
             hass,
-            cast("UnifiInsightsConfigEntry", entry),
+            entry,
             websession,
             verify_ssl=verify_ssl,
         )
