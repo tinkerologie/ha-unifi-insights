@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -16,17 +17,9 @@ REPO = Path(__file__).resolve().parents[2]
 PYTHON_TOOL = """import json, os, pathlib, sys
 args = sys.argv[1:]
 if args[:1] == ['-c']:
-    if args[1] == 'import tqdm' and os.environ.get('FAKE_MISSING_TQDM') == '1':
-        sys.exit(1)
     if args[1] == 'import pyright' and os.environ.get('FAKE_MISSING_PYRIGHT') == '1':
         sys.exit(1)
-    if args[1] == 'import httpx2' and os.environ.get('FAKE_MISSING_HTTPX2') == '1':
-        sys.exit(1)
-    if 'import voluptuous' in args[1] and os.environ.get('FAKE_MISSING_HA') == '1':
-        sys.exit(1)
-    if 'homeassistant.const' in args[1]:
-        print(os.environ.get('FAKE_HA_VERSION', '2026.10.2'))
-    elif 'sys.version_info' in args[1]:
+    if 'sys.version_info' in args[1]:
         if os.environ.get('FAKE_OLD_PYTHON') == '1':
             sys.version_info = (3, 13)
         exec(args[1])
@@ -35,6 +28,7 @@ with open(os.environ['VALIDATION_TRACE'], 'a') as trace:
     trace.write(json.dumps({'python': sys.argv[0], 'args': args}) + '\\n')
 if args[:2] == ['-m', 'script.hassfest']:
     import runpy
+    sys.path.insert(0, os.getcwd())
     runpy.run_module('script.hassfest', run_name='__main__')
     core = pathlib.Path(args[args.index('--core-path')+1])
     integration = pathlib.Path(args[args.index('--integration-path')+1])
@@ -70,6 +64,7 @@ class ValidationProject:
         """Expose only script prerequisites, isolating installer fallback tests."""
         folder = self.root / "bin"
         folder.mkdir(exist_ok=True)
+        (folder / "uv").unlink(missing_ok=True)
         for name in ("bash", "dirname", "git", "mkdir"):
             executable = shutil.which(name)
             assert executable is not None
@@ -77,14 +72,26 @@ class ValidationProject:
         self.env["PATH"] = str(folder)
 
     def fake_uv(self) -> None:
-        """Record installer arguments without touching any Python environment."""
+        """Instrument installs and isolated runs without changing real environments."""
+        validator_python = self.interpreter(".uv-cache/hassfest")
         command = self.root / "bin/uv"
-        command.parent.mkdir()
+        command.parent.mkdir(exist_ok=True)
         command.write_text(
             f"#!{sys.executable}\n"
-            "import json, os, sys\n"
+            "import json, os, subprocess, sys\n"
+            "args = sys.argv[1:]\n"
+            "record = {'uv_args': args}\n"
+            "if args[:1] == ['run']:\n"
+            "    record['environment'] = {key: os.environ.get(key) for key in "
+            "('VIRTUAL_ENV', 'PYTHONPATH', 'PYTHONHOME')}\n"
             "with open(os.environ['VALIDATION_TRACE'], 'a') as trace:\n"
-            "    trace.write(json.dumps({'uv_args': sys.argv[1:]}) + '\\n')\n"
+            "    trace.write(json.dumps(record) + '\\n')\n"
+            "if os.environ.get('FAKE_UV_STATUS'):\n"
+            "    sys.exit(int(os.environ['FAKE_UV_STATUS']))\n"
+            "if args[:1] == ['run']:\n"
+            "    start = args.index('python') + 1\n"
+            f"    sys.exit(subprocess.run([{str(validator_python)!r}, *args[start:]], "
+            "check=False).returncode)\n"
         )
         command.chmod(0o755)
         self.env["PATH"] = str(command.parent) + os.pathsep + self.env["PATH"]
@@ -122,7 +129,7 @@ class ValidationProject:
         git(cache, "remote", "add", "origin", str(self.origin))
         git(cache, "config", "core.sparseCheckout", "true")
         (cache / ".git/info/sparse-checkout").write_text("/script/\n/homeassistant/\n")
-        if version == "dev":
+        if version == "dev" or re.fullmatch(r"[a-f0-9]{40}", version):
             git(cache, "fetch", "--depth=1", "origin", version)
         else:
             git(cache, "fetch", "--depth=1", "origin", "tag", version)
@@ -131,7 +138,10 @@ class ValidationProject:
 
 
 def validation_project(
-    tmp_path: Path, *, missing: str | None = None
+    tmp_path: Path,
+    *,
+    missing: str | None = None,
+    contents: dict[str, str] | None = None,
 ) -> ValidationProject:
     root = tmp_path / "project with spaces"
     root.mkdir()
@@ -142,8 +152,11 @@ def validation_project(
     origin = tmp_path / "local core origin"
     origin.mkdir()
     for name, content in {
+        ".gitignore": "__pycache__/\n*.py[cod]\n",
         "requirements.txt": "core-package==1.0\n",
         "requirements_all.txt": "core-package==1.0\n",
+        "requirements_test.txt": "pipdeptree==1.0\ntqdm==2.0\n",
+        "requirements_test_pre_commit.txt": "ruff==3.0\n",
         "pyproject.toml": "[project]\nname='core-fixture'\n",
         "homeassistant/package_constraints.txt": "core-package==1.0\n",
         "script/hassfest/__main__.py": "# Synthetic validator package\n",
@@ -152,7 +165,7 @@ def validation_project(
             continue
         path = origin / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+        path.write_text((contents or {}).get(name, content))
     git(origin, "init", "--initial-branch=dev")
     git(origin, "config", "user.name", "Validation fixture")
     git(origin, "config", "user.email", "fixture@example.invalid")
@@ -162,7 +175,12 @@ def validation_project(
         git(origin, "tag", version)
     wrapper = root / "script/hassfest"
     wrapper.write_text(
-        wrapper.read_text().replace(
+        re.sub(
+            r'^HASSFEST_CORE_REF="[a-f0-9]{40}"$',
+            f'HASSFEST_CORE_REF="{git(origin, "rev-parse", "HEAD").stdout.strip()}"',
+            wrapper.read_text(),
+            flags=re.MULTILINE,
+        ).replace(
             'HA_CORE_REPO="https://github.com/home-assistant/core.git"',
             "HA_CORE_REPO=" + shlex.quote(str(origin)),
         )
@@ -170,7 +188,7 @@ def validation_project(
     user_home = tmp_path / "fixture user home"
     user_home.mkdir()
     env = dict(os.environ)
-    for name in ("VIRTUAL_ENV", "HA_VERSION", "PYTHONPATH"):
+    for name in ("VIRTUAL_ENV", "HA_VERSION", "PYTHONPATH", "PYTHONHOME"):
         env.pop(name, None)
     env["HOME"] = str(user_home)
     env["VALIDATION_TRACE"] = str(tmp_path / "tool-invocations.jsonl")

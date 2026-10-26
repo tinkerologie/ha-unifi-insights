@@ -1,49 +1,31 @@
 #!/bin/bash
 
-# script/hassfest: Run Home Assistant hassfest validation
+# Validate with reviewed Home Assistant Core source in an isolated uv environment.
+# The default revision and Python are shared by local checks and CI. Updating the
+# pin is a reviewed source change; --update only re-fetches the selected revision.
+# HA_VERSION is an explicit compatibility override, never an automatic upgrade.
 #
-# Validates the integration against Home Assistant's official validation rules
-# using hassfest from the Home Assistant Core repository.
-#
-# On first run, clones HA Core (~27 MB) to .local/ha-core
-# Defaults to Core dev so new manifest metadata is validated against current rules.
-# Subsequent runs reuse the cached checkout (use --update to fetch new commits).
-# Set HA_VERSION explicitly to validate against a particular release instead.
-#
-# Usage:
-#   ./script/hassfest [options]
-#
-# Options:
-#   --update             Fetch the latest commit for the selected Core ref
-#   --skip-plugins LIST  Comma-separated list of plugins to skip
-#                        Default: quality_scale,requirements
-#
-# Examples:
-#   ./script/hassfest               # Use cached version (fast)
-#   ./script/hassfest --update      # Update the development validator
-#   HA_VERSION=2026.10.2 ./script/hassfest  # Explicit release compatibility check
+# Usage: ./script/hassfest [--update] [--skip-plugins LIST] [hassfest arguments]
+# Default skipped plugins: quality_scale,requirements
+# Full validation: ./script/hassfest --skip-plugins ""
+# Release probe: HA_VERSION=2026.10.2 ./script/hassfest --skip-plugins ""
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
-
 # shellcheck source=script/.lib/output.sh
 source "$SCRIPT_DIR/.lib/output.sh"
-source "$SCRIPT_DIR/.lib/python.sh"
-select_project_python "$PWD"
 
-# Configuration
+# Validator, dependency inputs and Dockerfile inspected; full plugins validated.
+# https://github.com/home-assistant/core/commit/01c488a2c71b00a68a1f61b72023ea03c6ed0699
+HASSFEST_CORE_REF="01c488a2c71b00a68a1f61b72023ea03c6ed0699"
+HASSFEST_PYTHON_VERSION="3.14.2"
 HA_CORE_DIR=".local/ha-core"
 HA_CORE_REPO="https://github.com/home-assistant/core.git"
-INTEGRATION_PATH="custom_components/unifi_insights"
-INTEGRATION_ABSOLUTE_PATH="$PWD/$INTEGRATION_PATH"
-
-# The validator follows current Core rules independently of the runtime release.
-HA_VERSION_TAG="${HA_VERSION:-dev}"
-
-# Parse arguments
-UPDATE_CORE=false  # Default to no update for speed
+HA_VERSION_TAG="${HA_VERSION:-$HASSFEST_CORE_REF}"
+INTEGRATION_ABSOLUTE_PATH="$PWD/custom_components/unifi_insights"
+UPDATE_CORE=false
 SKIP_PLUGINS="quality_scale,requirements"
 
 while [[ $# -gt 0 ]]; do
@@ -53,130 +35,109 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --skip-plugins)
+            if [[ $# -lt 2 ]]; then
+                log_error "--skip-plugins requires a list (use an empty string for all plugins)"
+                exit 1
+            fi
             SKIP_PLUGINS="$2"
             shift 2
             ;;
-        *)
-            # Pass unknown args to hassfest
-            break
-            ;;
+        *) break ;;
     esac
 done
 
-log_header "Home Assistant hassfest validation"
-log_info "Target version: $HA_VERSION_TAG"
-
-# Check if HA Core is already cloned
-if [ ! -d "$HA_CORE_DIR" ]; then
-    log_info "Cloning Home Assistant Core (sparse checkout, ~5 MB)..."
-
-    # Initialize sparse checkout to only get script/ directory
-    mkdir -p "$HA_CORE_DIR"
-    cd "$HA_CORE_DIR"
-    git init >/dev/null 2>&1
-    git remote add origin "$HA_CORE_REPO"
-    git config core.sparseCheckout true
-
-    # Only checkout script/ and homeassistant/ directories (needed for hassfest)
-    echo "script/" > .git/info/sparse-checkout
-    echo "homeassistant/" >> .git/info/sparse-checkout
-
-    # Fetch the specific version (shallow clone + blobless for minimal size)
-    if [ "$HA_VERSION_TAG" = "dev" ]; then
-        git fetch --depth 1 --filter=blob:none origin dev
-        git checkout -B dev FETCH_HEAD >/dev/null 2>&1
-    else
-        git fetch --depth 1 --filter=blob:none origin tag "$HA_VERSION_TAG"
-        git checkout "$HA_VERSION_TAG" >/dev/null 2>&1
-    fi
-    cd - >/dev/null
-    echo ""
-else
-    # Check if the selected ref changed or a refresh was explicitly requested.
-    cd "$HA_CORE_DIR"
-    CURRENT_VERSION=$(git symbolic-ref --quiet --short HEAD || git describe --tags --exact-match 2>/dev/null || git rev-parse HEAD)
-    cd - >/dev/null
-
-    if [ "$UPDATE_CORE" = true ] || [ "$CURRENT_VERSION" != "$HA_VERSION_TAG" ]; then
-        log_info "Updating to version $HA_VERSION_TAG..."
-        cd "$HA_CORE_DIR"
-        if [ "$HA_VERSION_TAG" = "dev" ]; then
-            git fetch --depth 1 --filter=blob:none origin dev >/dev/null 2>&1
-            git checkout -B dev FETCH_HEAD >/dev/null 2>&1
-        else
-            git fetch --depth 1 --filter=blob:none origin tag "$HA_VERSION_TAG" >/dev/null 2>&1
-            git checkout "$HA_VERSION_TAG" >/dev/null 2>&1
-        fi
-        cd - >/dev/null
-    else
-        log_info "Using cached version $CURRENT_VERSION"
-    fi
+if ! command -v uv >/dev/null 2>&1; then
+    log_error "uv is required for isolated Hassfest validation"
+    log_info "Run: ./script/setup/bootstrap"
+    exit 1
 fi
 
-# Older caches at the right tag still need Core's own dependency files.
+log_header "Home Assistant hassfest validation"
+log_info "Target revision: $HA_VERSION_TAG"
+
+if [[ ! -d "$HA_CORE_DIR" ]]; then
+    mkdir -p "$HA_CORE_DIR"
+    git -C "$HA_CORE_DIR" init >/dev/null 2>&1
+    git -C "$HA_CORE_DIR" remote add origin "$HA_CORE_REPO"
+    git -C "$HA_CORE_DIR" config core.sparseCheckout true
+    echo "/script/" > "$HA_CORE_DIR/.git/info/sparse-checkout"
+    echo "/homeassistant/" >> "$HA_CORE_DIR/.git/info/sparse-checkout"
+fi
+
+CORE_PATH="$(cd "$HA_CORE_DIR" && pwd -P)"
+# Never let Git discover the parent project if a cache directory is incomplete.
+if [[ "$(git -C "$HA_CORE_DIR" rev-parse --show-toplevel 2>/dev/null)" != "$CORE_PATH" ]]; then
+    log_error "Invalid Home Assistant Core cache: $CORE_PATH"
+    exit 1
+fi
+# Sparse checkouts still read the pinned .gitignore from the index, so generated
+# Python bytecode is ignored while actual local source changes remain rejected.
+if [[ -n "$(git -C "$HA_CORE_DIR" status --porcelain --untracked-files=all)" ]]; then
+    log_error "Home Assistant Core cache contains local changes; use a clean checkout"
+    exit 1
+fi
+
+CURRENT_REVISION=$(git -C "$HA_CORE_DIR" rev-parse --verify HEAD 2>/dev/null || true)
+CACHED_REVISION=$(git -C "$HA_CORE_DIR" rev-parse --verify "$HA_VERSION_TAG^{commit}" 2>/dev/null || true)
+if [[ "$UPDATE_CORE" == true || -z "$CACHED_REVISION" || "$CURRENT_REVISION" != "$CACHED_REVISION" ]]; then
+    log_info "Fetching selected revision $HA_VERSION_TAG..."
+    git -C "$HA_CORE_DIR" fetch --depth 1 --filter=blob:none origin "$HA_VERSION_TAG"
+    git -C "$HA_CORE_DIR" checkout --detach FETCH_HEAD >/dev/null 2>&1
+fi
+
+CURRENT_REVISION=$(git -C "$HA_CORE_DIR" rev-parse HEAD)
+if [[ "$HA_VERSION_TAG" =~ ^[a-f0-9]{40}$ && "$CURRENT_REVISION" != "$HA_VERSION_TAG" ]]; then
+    log_error "Core cache does not match the selected commit"
+    exit 1
+fi
+log_info "Validator commit: $CURRENT_REVISION"
+
+# Repair old sparse caches before reading either validation or dependency inputs.
 git -C "$HA_CORE_DIR" sparse-checkout set --no-cone \
-    /script/ /homeassistant/ /requirements.txt /requirements_all.txt /pyproject.toml
-for required_file in requirements.txt requirements_all.txt homeassistant/package_constraints.txt; do
+    /script/ /homeassistant/ /requirements.txt /requirements_all.txt \
+    /requirements_test.txt /requirements_test_pre_commit.txt /pyproject.toml
+for required_file in requirements.txt requirements_all.txt requirements_test.txt \
+    requirements_test_pre_commit.txt homeassistant/package_constraints.txt \
+    script/hassfest/__main__.py; do
     if [[ ! -f "$HA_CORE_DIR/$required_file" ]]; then
         log_error "Cached Home Assistant Core is missing $required_file"
         exit 1
     fi
 done
 
-# Check if we have required dependencies
-log_info "Checking dependencies..."
-# Core dev imports httpx2 before loading validator plugins. Keep the runtime HA
-# package intact while adding this validator dependency at Core's own pin.
-if [[ "$HA_VERSION_TAG" == "dev" ]] && ! "$PROJECT_PYTHON" -c "import httpx2" >/dev/null 2>&1; then
-    log_info "Installing development validator dependency: httpx2"
-    if command -v uv >/dev/null 2>&1; then
-        uv pip install --python "$PROJECT_PYTHON" -c "$HA_CORE_DIR/requirements.txt" httpx2
-    else
-        "$PROJECT_PYTHON" -m pip install -c "$HA_CORE_DIR/requirements.txt" httpx2
-    fi
-fi
-if ! "$PROJECT_PYTHON" -c "import tqdm" >/dev/null 2>&1; then
-    log_info "Installing hassfest helper dependency: tqdm"
-    if command -v uv >/dev/null 2>&1; then
-        uv pip install --python "$PROJECT_PYTHON" tqdm
-    else
-        "$PROJECT_PYTHON" -m pip install tqdm
-    fi
-fi
-
-if ! "$PROJECT_PYTHON" -c "import voluptuous, awesomeversion, homeassistant.helpers.config_validation" >/dev/null 2>&1; then
-    log_error "Missing required dependencies (voluptuous, awesomeversion, homeassistant)"
-    log_info "Run: ./script/setup/bootstrap"
-    exit 1
-fi
-
-# Export PYTHONPATH to include HA Core
-export PYTHONPATH="$PWD/$HA_CORE_DIR:${PYTHONPATH:-}"
-
-# Build hassfest command
-HASSFEST_CMD=(
-    "$PROJECT_PYTHON" -m script.hassfest
-    --action validate
-    --integration-path "$INTEGRATION_ABSOLUTE_PATH"
-    --core-path "$PWD/$HA_CORE_DIR"
+# Match the tooling pins used by this checkout's official Hassfest Dockerfile.
+TOOL_PINS=(
+    "$(awk -F'==' '/^pipdeptree==/{print $0}' "$CORE_PATH/requirements_test.txt")"
+    "$(awk -F'==' '/^tqdm==/{print $0}' "$CORE_PATH/requirements_test.txt")"
+    "$(awk -F'==' '/^ruff==/{print $0}' "$CORE_PATH/requirements_test_pre_commit.txt")"
 )
+for pin in "${TOOL_PINS[@]}"; do
+    if [[ ! "$pin" =~ ^(pipdeptree|tqdm|ruff)==[0-9][[:alnum:].+_-]*$ ]]; then
+        log_error "Missing or ambiguous Core validator tooling pin: $pin"
+        exit 1
+    fi
+done
 
-# Add skip-plugins if specified
-if [ -n "$SKIP_PLUGINS" ]; then
+HASSFEST_CMD=(uv run --isolated --no-project --python "$HASSFEST_PYTHON_VERSION"
+    --with-requirements "$CORE_PATH/requirements.txt")
+for pin in "${TOOL_PINS[@]}"; do
+    HASSFEST_CMD+=(--with "$pin")
+done
+HASSFEST_CMD+=(python -m script.hassfest --action validate
+    --integration-path "$INTEGRATION_ABSOLUTE_PATH" --core-path "$CORE_PATH")
+if [[ -n "$SKIP_PLUGINS" ]]; then
     HASSFEST_CMD+=(--skip-plugins "$SKIP_PLUGINS")
 fi
-
-# Add remaining arguments
 HASSFEST_CMD+=("$@")
 
-# Run hassfest
-log_info "Running hassfest validation..."
-echo ""
-if "${HASSFEST_CMD[@]}"; then
-    echo ""
+log_info "Running isolated Hassfest with Python $HASSFEST_PYTHON_VERSION..."
+if (
+    unset VIRTUAL_ENV PYTHONPATH PYTHONHOME
+    cd "$CORE_PATH" || exit 1
+    "${HASSFEST_CMD[@]}"
+); then
     log_success "Hassfest validation passed"
 else
-    echo ""
     log_error "Hassfest validation failed"
     exit 1
 fi
