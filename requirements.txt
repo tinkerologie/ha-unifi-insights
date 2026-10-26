@@ -1,5 +1,5 @@
 colorlog==6.12.0
 homeassistant>=2026.10.2
-pip>=26.2.1
-ruff==0.17.1
+pip>=26.2.2
+ruff==0.17.2
 unifi-official-api[talkback]==3.0.0
