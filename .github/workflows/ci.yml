@@ -35,8 +35,15 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          # The Azure archive can stall for minutes before falling back.
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
+            /etc/apt/sources.list.d/*.sources /etc/apt/apt-mirrors.txt; do
+            if [[ -f "$source" ]]; then
+              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' "$source"
+            fi
+          done
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
             ffmpeg \
             libturbojpeg
 
@@ -110,7 +117,15 @@ jobs:
         run: npm run build
 
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+        run: |
+          # Playwright installs system dependencies through the same apt mirror.
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
+            /etc/apt/sources.list.d/*.sources /etc/apt/apt-mirrors.txt; do
+            if [[ -f "$source" ]]; then
+              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' "$source"
+            fi
+          done
+          npx playwright install --with-deps chromium
 
       - name: Browser regression tests
         run: npm run test:browser
