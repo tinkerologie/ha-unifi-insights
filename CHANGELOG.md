@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Dependency auto-merge now runs only for Dependabot-initiated updates; maintainer repairs use manual review and merging without bypassing bot signature verification. [#427](https://github.com/tinkerologie/ha-unifi-insights/issues/427)
 - Updated Vite to 8.3.5 and synchronized the committed dashboard bundles with its reproducible build output. [#427](https://github.com/tinkerologie/ha-unifi-insights/issues/427)
 - Validation scripts now consistently select the configured Python environment, fail on Pyright warnings and validate custom requirements against Home Assistant Core's own dependency files. Local and CI Hassfest share a reviewed development commit and pinned Python in an isolated environment, and the integration declares networking and security categories for current catalog validation. Static entity descriptions are frozen and keyword-only, matching current Home Assistant metadata conventions. [#420](https://github.com/tinkerologie/ha-unifi-insights/issues/420)
 - The Event Timeline now shows Person, Animal and Car for Protect smart detections, with distinct icons and readable fallback labels. Events use cached camera/device names and refresh when those names change. [#419](https://github.com/tinkerologie/ha-unifi-insights/issues/419)

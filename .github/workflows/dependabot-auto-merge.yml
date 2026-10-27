@@ -13,7 +13,12 @@ permissions: {}
 jobs:
   auto-merge:
     name: Auto-merge
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    # Maintainer repairs require manual merging; the helper still verifies bot signatures.
+    if: >-
+      ${{
+        github.event.pull_request.user.login == 'dependabot[bot]' &&
+        github.actor == 'dependabot[bot]'
+      }}
     uses: tinkerologie/.github/.github/workflows/dependabot-auto-merge.yml@8b5a48edcfc57a283ca85244a572e16ebd539571 # v1.6.0
     permissions:
       contents: write # merge the pull request
