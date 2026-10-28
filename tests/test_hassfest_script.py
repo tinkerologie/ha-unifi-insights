@@ -292,13 +292,12 @@ def test_ci_uses_canonical_full_validator_command() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "has_package", [True, False], ids=["2026.11+", "before-2026.11"]
-)
+@pytest.mark.parametrize("core", ["2026.11+", "before-2026.11"])
 def test_validator_package_is_installed_only_when_core_ships_it(
-    tmp_path: Path, has_package: bool
+    tmp_path: Path, core: str
 ) -> None:
     """Core 2026.11 moved the validator into packages/hassfest; older Cores lack it."""
+    has_package = core == "2026.11+"
     contents = (
         {"packages/hassfest/pyproject.toml": "[project]\nname='hassfest'\n"}
         if has_package
