@@ -80,9 +80,18 @@ If you installed UniFi Insights with HACS before you upgraded to Home Assistant 
 
 ### Manual installation
 
-1. Download the latest release from the [Releases page](https://github.com/tinkerologie/ha-unifi-insights/releases).
-2. Copy the `custom_components/unifi_insights` folder into your Home Assistant `custom_components` folder.
+1. Download `unifi_insights.zip` from the latest release on the [Releases page](https://github.com/tinkerologie/ha-unifi-insights/releases).
+2. Create the folder `config/custom_components/unifi_insights/` and extract the zip into it. `manifest.json` must end up directly in that folder.
 3. Restart Home Assistant.
+
+Each release since the first one that ships `unifi_insights.zip` carries the zip, a `SHA256SUMS` file and a signed build provenance attestation. The Marketplace and HACS install the same zip, and the download count they show starts with that first release. To check that a zip you downloaded is the one the release workflow built:
+
+```bash
+gh attestation verify unifi_insights.zip -R tinkerologie/ha-unifi-insights
+sha256sum -c SHA256SUMS
+```
+
+Keep `SHA256SUMS` in the same folder as the zip. On macOS, use `shasum -a 256 -c SHA256SUMS`.
 
 ## Configuration
 

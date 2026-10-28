@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Releases now ship the integration as `unifi_insights.zip`, with a `SHA256SUMS` file and a signed build provenance attestation. `hacs.json` sets `zip_release`, so the Marketplace and HACS install the zip and show a download count from the first release that carries it. `script/build_release_zip.py` builds the zip reproducibly from `SOURCE_DATE_EPOCH`, every pull request checks that two builds match byte for byte, and the release workflow uploads the assets to a draft before it publishes, so it works with immutable releases. The README describes manual installation from the zip and how to verify it.
 - The CI test job installs the TurboJPEG library on both Ubuntu 24.04 and 26.04 runners. Ubuntu 26.04 renamed the package from `libturbojpeg` to `libturbojpeg0`, so the job now picks whichever name the runner provides and logs it. [#431](https://github.com/tinkerologie/ha-unifi-insights/issues/431)
 - Dependency auto-merge now runs only for Dependabot-initiated updates; maintainer repairs use manual review and merging without bypassing bot signature verification. [#427](https://github.com/tinkerologie/ha-unifi-insights/issues/427)
 - Updated Vite to 8.3.5 and synchronized the committed dashboard bundles with its reproducible build output. [#427](https://github.com/tinkerologie/ha-unifi-insights/issues/427)

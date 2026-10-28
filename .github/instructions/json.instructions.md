@@ -19,7 +19,7 @@ applyTo: "**/*.json"
 - `manifest.json` — Integration metadata (domain, version, requirements, etc.)
 - `strings.json` — Translatable UI strings
 - `icons.json` — Custom entity icons (MDI icon references)
-- `hacs.json` — Repository metadata for the Home Assistant Marketplace (2026.11+) and HACS. The Marketplace checks `homeassistant` for each release.
+- `hacs.json` — Repository metadata for the Home Assistant Marketplace (2026.11+) and HACS. The Marketplace checks `homeassistant` for each release. `zip_release: true` with `filename: "unifi_insights.zip"` makes the Marketplace and HACS install the release asset that `script/build_release_zip.py` builds in `.github/workflows/release.yml`; keep both keys and the asset name in sync.
 
 ## Validation
 
