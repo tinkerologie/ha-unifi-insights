@@ -25,6 +25,7 @@ from .fixtures.command_owners import (
     async_shutdown_owners,
     build_seeded_owners,
 )
+from .fixtures.deprecations import HANDLER as DEPRECATION_REPORTS
 from .fixtures.facade_data import facade_data
 
 if TYPE_CHECKING:
@@ -217,6 +218,21 @@ def _create_mock_innerspace_client() -> MagicMock:
     client.validate_connection = AsyncMock(return_value=True)
     client.close = AsyncMock()
     return client
+
+
+@pytest.fixture(autouse=True)
+def fail_on_ha_deprecation_reports() -> Generator[None]:
+    """Fail when Home Assistant logs deprecated use by this integration.
+
+    Reports logged while modules were imported surface on the first test.
+    """
+    yield
+    if reports := DEPRECATION_REPORTS.pop_reports():
+        pytest.fail(
+            "Home Assistant reported deprecated use by unifi_insights:\n"
+            + "\n".join(reports),
+            pytrace=False,
+        )
 
 
 @pytest.fixture(autouse=True)

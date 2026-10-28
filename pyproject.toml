@@ -54,6 +54,13 @@ addopts = [
     "--cov-report=xml",
     "--cov-fail-under=95",
 ]
+# Deprecation warnings attributed to the integration's own modules are errors.
+# The module field is a regex matched from the start of the warning's module, so
+# it covers every submodule; third-party deprecations keep the default action.
+filterwarnings = [
+    'error::DeprecationWarning:custom_components\.unifi_insights(\.|$)',
+    'error::PendingDeprecationWarning:custom_components\.unifi_insights(\.|$)',
+]
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",
