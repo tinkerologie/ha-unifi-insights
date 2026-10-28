@@ -3,5 +3,7 @@
   "render_readme": true,
   "country": [],
   "homeassistant": "2026.9.0",
-  "hacs": "2.0.5"
+  "hacs": "2.0.5",
+  "zip_release": true,
+  "filename": "unifi_insights.zip"
 }

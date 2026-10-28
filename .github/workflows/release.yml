@@ -14,7 +14,9 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     permissions:
-      contents: write # create the GitHub release and tag
+      contents: write # create the GitHub release and tag, upload assets
+      id-token: write # mint the OIDC token that signs the attestation
+      attestations: write # store the build provenance attestation
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -39,14 +41,43 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create release
+      - name: Build release zip
+        if: steps.tag_check.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          # Timestamps come from the release commit, so the tag rebuilds byte-identically.
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$GITHUB_SHA")
+          export SOURCE_DATE_EPOCH
+          python3 script/build_release_zip.py --output-dir dist --version "$TAG"
+          (cd dist && sha256sum -c SHA256SUMS)
+
+      - name: Attest build provenance
+        if: steps.tag_check.outputs.exists == 'false'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/unifi_insights.zip
+
+      - name: Create draft release with assets
         if: steps.tag_check.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
           REPO: ${{ github.repository }}
         run: |
+          # Immutable releases lock assets on publish, so upload to a draft first.
           gh release create "$TAG" \
+            --draft \
+            --target "$GITHUB_SHA" \
             --title "$TAG" \
             --notes "See [CHANGELOG.md](https://github.com/$REPO/blob/main/CHANGELOG.md) for full details on what's changed in this release." \
+            dist/unifi_insights.zip \
+            dist/SHA256SUMS \
             CHANGELOG.md
+
+      - name: Publish release
+        if: steps.tag_check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh release edit "$TAG" --draft=false

@@ -27,6 +27,35 @@ jobs:
         with:
           category: integration
 
+  release-zip:
+    name: Release zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build twice and check the HACS layout
+        run: |
+          VERSION=$(jq -r '.version' custom_components/unifi_insights/manifest.json)
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          export SOURCE_DATE_EPOCH
+          python3 script/build_release_zip.py --output-dir dist/a --version "v${VERSION}"
+          python3 script/build_release_zip.py --output-dir dist/b --version "v${VERSION}"
+          cmp dist/a/unifi_insights.zip dist/b/unifi_insights.zip
+          (cd dist/a && sha256sum -c SHA256SUMS)
+          python3 -c 'import sys, zipfile; print(*zipfile.ZipFile(sys.argv[1]).namelist(), sep="\n")' \
+            dist/a/unifi_insights.zip > dist/zip-files.txt
+          grep -qx 'manifest.json' dist/zip-files.txt
+          if grep -E '(^|/)__pycache__/|\.py[co]$' dist/zip-files.txt; then
+            echo "::error::Bytecode found in the release zip"
+            exit 1
+          fi
+          (cd custom_components/unifi_insights \
+            && find . -type f ! -path '*/__pycache__/*' ! -name '*.py[co]' ! -path '*/.*' \
+            | sed 's|^\./||' | LC_ALL=C sort) > dist/package-files.txt
+          LC_ALL=C sort dist/zip-files.txt | diff -u dist/package-files.txt -
+
   validate:
     name: Hassfest
     runs-on: ubuntu-latest
