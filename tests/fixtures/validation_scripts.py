@@ -151,7 +151,7 @@ def validation_project(
     (root / "requirements.txt").write_text("unifi-official-api[talkback]==3.0.0\n")
     origin = tmp_path / "local core origin"
     origin.mkdir()
-    for name, content in {
+    core_files = {
         ".gitignore": "__pycache__/\n*.py[cod]\n",
         "requirements.txt": "core-package==1.0\n",
         "requirements_all.txt": "core-package==1.0\n",
@@ -160,12 +160,14 @@ def validation_project(
         "pyproject.toml": "[project]\nname='core-fixture'\n",
         "homeassistant/package_constraints.txt": "core-package==1.0\n",
         "script/hassfest/__main__.py": "# Synthetic validator package\n",
-    }.items():
+    }
+    # ``contents`` replaces a default file or adds one the Core fixture lacks.
+    for name, content in {**core_files, **(contents or {})}.items():
         if name == missing:
             continue
         path = origin / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text((contents or {}).get(name, content))
+        path.write_text(content)
     git(origin, "init", "--initial-branch=dev")
     git(origin, "config", "user.name", "Validation fixture")
     git(origin, "config", "user.email", "fixture@example.invalid")
