@@ -84,7 +84,7 @@ If you installed UniFi Insights with HACS before you upgraded to Home Assistant 
 2. Create the folder `config/custom_components/unifi_insights/` and extract the zip into it. `manifest.json` must end up directly in that folder.
 3. Restart Home Assistant.
 
-Each release since the first one that ships `unifi_insights.zip` carries the zip, a `SHA256SUMS` file and a signed build provenance attestation. The Marketplace and HACS install the same zip, and the download count they show starts with that first release. To check that a zip you downloaded is the one the release workflow built:
+Each release since the first one that ships `unifi_insights.zip` carries the zip, a `SHA256SUMS` file and a signed build provenance attestation. The Marketplace and HACS install the same zip. The "Downloaded N times" figure they show is the download count of the latest release's zip, so it starts again with each release. To check that a zip you downloaded is the one the release workflow built:
 
 ```bash
 gh attestation verify unifi_insights.zip -R tinkerologie/ha-unifi-insights
