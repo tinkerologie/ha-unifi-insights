@@ -283,3 +283,26 @@ def test_cli(
     out_dir = str(tmp_path / "x")
     assert release_zip.main(["--output-dir", out_dir, "--version", "0.0.0"]) == 1
     assert "does not match" in capsys.readouterr().err
+
+
+def test_tracked_hidden_files_are_skipped(release_zip: Any, tmp_path: Path) -> None:
+    """Dotfiles stay out of the zip even when Git tracks them."""
+    package = _fake_package(tmp_path, files={".gitkeep": "", "brand/.hidden": ""})
+    zip_path = release_zip.build_release(
+        tmp_path / "out", package_dir=package, environ={}
+    )
+    with zipfile.ZipFile(zip_path) as archive:
+        assert not [n for n in archive.namelist() if "/." in f"/{n}"]
+
+
+def test_entries_outside_the_zip_root_fail(release_zip: Any, tmp_path: Path) -> None:
+    """A nested custom_components/ folder would not install as an integration."""
+    package = _fake_package(tmp_path)
+    names = [
+        "__init__.py",
+        "custom_components/unifi_insights/sensor.py",
+        "manifest.json",
+        "translations/en.json",
+    ]
+    with pytest.raises(release_zip.ReleaseZipError, match="not at the zip root"):
+        release_zip.check_members(package, names)
