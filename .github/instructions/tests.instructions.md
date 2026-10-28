@@ -46,3 +46,16 @@ pytest --cov-report=xml && python script/check_coverage_per_file.py coverage.xml
   - Check `device_entry.area_id` (never `device_entry.suggested_area`, which was removed in HA 2026.9).
 - When asserting service action errors:
   - Verify `pytest.raises(ServiceValidationError)` or `pytest.raises(HomeAssistantError)` and assert `err.value.translation_domain == DOMAIN` and `err.value.translation_key == "..."`.
+
+## Deprecations and Upcoming Home Assistant Releases
+
+- **Current release (blocking):** the normal test run fails on deprecated use by the integration.
+  - `pyproject.toml` `filterwarnings` turns `DeprecationWarning` and `PendingDeprecationWarning` attributed to `custom_components.unifi_insights` modules into errors. Third-party deprecations keep the default action.
+  - Home Assistant logs, rather than warns, when an integration uses a deprecated API (`homeassistant.helpers.frame.report_usage`, `DeprecatedConstant`, `deprecated_class`, `deprecated_function`). `tests/fixtures/deprecations.py` collects those log lines when they name `unifi_insights`, and the autouse `fail_on_ha_deprecation_reports` fixture fails the test that logged one. `tests/__init__.py` installs the handler early, so reports logged during import surface on the first test. The `pytest-homeassistant-custom-component` harness has no built-in check for this.
+  - Fix the reported call in production code; do not silence the check. A test that triggers a report on purpose must drain it with `DEPRECATION_REPORTS.pop_reports()`.
+- **Next release (early warning, non-blocking):** `.github/workflows/ha-next.yml` runs weekly, on demand, and on PRs that touch `pyproject.toml`, `requirements*.txt` or `manifest.json`. It installs the newest Home Assistant on PyPI, beta included, then runs `python script/import_smoke.py`, the test suite (only when a matching `pytest-homeassistant-custom-component` release exists) and `HA_VERSION=<version> ./script/hassfest --skip-plugins ""`.
+- **When ha-next fails:** open the run linked from the `ha-next` issue and read the job summary.
+  - Import smoke or test failure: the release removed or deprecated an API the integration uses. Reproduce it with `uv pip install "homeassistant==<version>" "unifi-official-api[talkback]==<pin>" segno numpy PyTurboJPEG` in a scratch venv and `python script/import_smoke.py`, then fix it with an import or API that also works on the minimum supported Home Assistant.
+  - Install failure: the release needs a newer Python or conflicts with a pinned dependency; check `requires-python` and the pins in `pyproject.toml`.
+  - Hassfest failure: run the same command locally; a new validator rule or a changed Core layout may need a `script/hassfest` change.
+  - The next passing scheduled or manual run on `main` closes the issue.

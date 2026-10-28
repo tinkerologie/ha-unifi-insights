@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Releases now ship the integration as `unifi_insights.zip`, with a `SHA256SUMS` file and a signed build provenance attestation. `hacs.json` sets `zip_release`, so from the next release the Marketplace and HACS install the zip and show how many times the latest release's zip was downloaded. After that release, choosing an older release (one without the zip) in the Marketplace or HACS can fail to download. `script/build_release_zip.py` builds the zip reproducibly from `SOURCE_DATE_EPOCH`, every pull request checks that two builds match byte for byte, and the release workflow uploads the assets to a draft before it publishes, so it works with immutable releases. The README describes manual installation from the zip and how to verify it. [#434](https://github.com/tinkerologie/ha-unifi-insights/issues/434)
+- Tests now fail on deprecated use by the integration in the current Home Assistant: deprecation warnings raised from its modules are errors, and so are Home Assistant's own deprecation reports (`report_usage`, deprecated constants, classes and functions) that name `unifi_insights`. A new weekly HA Next workflow runs an import smoke test, the test suite and Hassfest against the newest Home Assistant, beta included. It never blocks merges and opens or closes one `ha-next` issue instead. `script/hassfest` supports Home Assistant 2026.11's packaged validator.
 - The CI test job installs the TurboJPEG library on both Ubuntu 24.04 and 26.04 runners. Ubuntu 26.04 renamed the package from `libturbojpeg` to `libturbojpeg0`, so the job now picks whichever name the runner provides and logs it. [#431](https://github.com/tinkerologie/ha-unifi-insights/issues/431)
 - Dependency auto-merge now runs only for Dependabot-initiated updates; maintainer repairs use manual review and merging without bypassing bot signature verification. [#427](https://github.com/tinkerologie/ha-unifi-insights/issues/427)
 - Updated Vite to 8.3.5 and synchronized the committed dashboard bundles with its reproducible build output. [#427](https://github.com/tinkerologie/ha-unifi-insights/issues/427)
@@ -18,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Removing a stale device no longer logs a Home Assistant deprecation warning. The integration removed it with `device_registry.async_update_device(remove_config_entry_id=...)`, which Home Assistant deprecates and will stop supporting in 2027.8; it now calls `async_remove_device`. A device belongs to a single config entry, so the result is the same.
 - The integration loads on Home Assistant 2026.11. The sensor platform now imports `EntityCategory` from `homeassistant.const`. Home Assistant 2026.11 drops the unofficial copy in `homeassistant.components.sensor`, so the old import failed with an `ImportError`. [#429](https://github.com/tinkerologie/ha-unifi-insights/issues/429)
 
 ## [2026.10.4] - 2026-10-26
