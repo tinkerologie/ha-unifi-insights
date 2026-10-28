@@ -17,13 +17,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Release
+  build:
+    name: Build and attest
     runs-on: ubuntu-latest
     permissions:
-      contents: write # create the GitHub release and tag, upload assets
+      contents: read # check out the release commit
       id-token: write # mint the OIDC token that signs the attestation
       attestations: write # store the build provenance attestation
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      exists: ${{ steps.tag_check.outputs.exists }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -57,7 +60,6 @@ jobs:
           SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$GITHUB_SHA")
           export SOURCE_DATE_EPOCH
           python3 script/build_release_zip.py --output-dir dist --version "$TAG"
-          (cd dist && sha256sum -c SHA256SUMS)
 
       - name: Attest build provenance
         if: steps.tag_check.outputs.exists == 'false'
@@ -65,11 +67,49 @@ jobs:
         with:
           subject-path: dist/unifi_insights.zip
 
-      - name: Create draft release with assets
+      - name: Upload release assets
         if: steps.tag_check.outputs.exists == 'false'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish
+    needs: build
+    if: needs.build.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the draft, upload assets, publish the release and tag
+      attestations: read # verify the attestation before publishing
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download release assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Verify checksum and provenance
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.version.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          (cd dist && sha256sum -c SHA256SUMS)
+          # The same command the README gives users, pinned to this workflow.
+          gh attestation verify dist/unifi_insights.zip --repo "$REPO" \
+            --signer-workflow "$REPO/.github/workflows/release.yml"
+
+      - name: Create draft release with assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build.outputs.tag }}
           REPO: ${{ github.repository }}
         run: |
           # A rerun after a failed publish finds the earlier run's draft for
@@ -89,8 +129,16 @@ jobs:
             CHANGELOG.md
 
       - name: Publish release
-        if: steps.tag_check.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.version.outputs.tag }}
+          TAG: ${{ needs.build.outputs.tag }}
         run: gh release edit "$TAG" --draft=false
+
+      - name: Verify the immutable release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          # Fails when release immutability is off, so the setting can't lapse unnoticed.
+          gh release verify "$TAG"
+          gh release verify-asset "$TAG" dist/unifi_insights.zip
