@@ -381,9 +381,8 @@ class TestProtectSecurityDeviceFamilies:
             for _ in range(MAX_CONSECUTIVE_MISSING_POLLS + 1):
                 coordinator._apply(PollCompleted())
 
-            mock_registry.return_value.async_update_device.assert_called_once_with(
-                device_id="registry_dev1",
-                remove_config_entry_id=coordinator.config_entry.entry_id,
+            mock_registry.return_value.async_remove_device.assert_called_once_with(
+                "registry_dev1"
             )
 
     # -- WebSocket device frames ------------------------------------------

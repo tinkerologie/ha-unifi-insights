@@ -1693,7 +1693,7 @@ class TestSensorTrackerCleanup:
             for _ in range(MAX_CONSECUTIVE_MISSING_POLLS + 1):
                 coordinator._apply(PollCompleted())
 
-            mock_registry.return_value.async_update_device.assert_called()
+            mock_registry.return_value.async_remove_device.assert_called()
 
         assert "sensor_gone" not in coordinator._events.sensors
 

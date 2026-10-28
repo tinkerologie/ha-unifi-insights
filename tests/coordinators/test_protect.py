@@ -2012,7 +2012,7 @@ class TestUnifiProtectCoordinator:
             _poll_completed(coordinator, MAX_CONSECUTIVE_MISSING_POLLS + 1)
 
             # camera2 should be marked for removal
-            mock_registry.return_value.async_update_device.assert_called()
+            mock_registry.return_value.async_remove_device.assert_called()
 
     def test_websocket_construction_does_not_start_task(
         self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
@@ -2781,7 +2781,7 @@ class TestUnifiProtectCoordinator:
             _poll_completed(coordinator, MAX_CONSECUTIVE_MISSING_POLLS + 1)
 
             # No device updates should happen (nothing found)
-            mock_registry.return_value.async_update_device.assert_not_called()
+            mock_registry.return_value.async_remove_device.assert_not_called()
             assert mock_device_lookup_method(
                 mock_registry.return_value, coordinator.config_entry.entry_id
             ).called
@@ -2967,7 +2967,7 @@ class TestUnifiProtectCoordinator:
         ) as mock_registry:
             set_mock_device_lookup(mock_registry.return_value, MagicMock())
             _poll_completed(coordinator)
-            mock_registry.return_value.async_update_device.assert_not_called()
+            mock_registry.return_value.async_remove_device.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_fetch_nvr_missing_id_clears_cache_after_max_consecutive(
@@ -3270,7 +3270,7 @@ class TestUnifiProtectCoordinator:
             mock_device = MagicMock()
             set_mock_device_lookup(mock_registry.return_value, mock_device)
             _poll_completed(coordinator)
-            mock_registry.return_value.async_update_device.assert_not_called()
+            mock_registry.return_value.async_remove_device.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_missing_device_removes_device_after_max_consecutive_empty(
@@ -3297,7 +3297,7 @@ class TestUnifiProtectCoordinator:
             set_mock_device_lookup(mock_registry.return_value, mock_device)
             # Removal waits out the MAX_CONSECUTIVE_MISSING_POLLS grace window.
             _poll_completed(coordinator, MAX_CONSECUTIVE_MISSING_POLLS + 1)
-            mock_registry.return_value.async_update_device.assert_called()
+            mock_registry.return_value.async_remove_device.assert_called()
 
     @pytest.mark.asyncio
     async def test_fetch_cameras_preserves_camera_skipped_by_validation(
@@ -3338,7 +3338,7 @@ class TestUnifiProtectCoordinator:
                 _poll_completed(coordinator)
 
             assert "camera2" in coordinator.data["cameras"]
-            mock_registry.return_value.async_update_device.assert_not_called()
+            mock_registry.return_value.async_remove_device.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_fetch_cameras_still_refreshes_data_when_result_incomplete(
@@ -3442,7 +3442,7 @@ class TestUnifiProtectCoordinator:
             set_mock_device_lookup(mock_registry.return_value, MagicMock())
             _poll_completed(coordinator, MAX_CONSECUTIVE_MISSING_POLLS)
 
-            mock_registry.return_value.async_update_device.assert_not_called()
+            mock_registry.return_value.async_remove_device.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_missing_device_removes_device_after_sustained_absence(
@@ -3465,9 +3465,8 @@ class TestUnifiProtectCoordinator:
             set_mock_device_lookup(mock_registry.return_value, mock_device)
             _poll_completed(coordinator, MAX_CONSECUTIVE_MISSING_POLLS + 1)
 
-            mock_registry.return_value.async_update_device.assert_called_once_with(
-                device_id="registry_id_cam2",
-                remove_config_entry_id=coordinator.config_entry.entry_id,
+            mock_registry.return_value.async_remove_device.assert_called_once_with(
+                "registry_id_cam2"
             )
 
     @pytest.mark.asyncio
@@ -3499,7 +3498,7 @@ class TestUnifiProtectCoordinator:
             coordinator.data["cameras"] = {"cam1": {"id": "cam1"}}
             _poll_completed(coordinator, MAX_CONSECUTIVE_MISSING_POLLS)
 
-            mock_registry.return_value.async_update_device.assert_not_called()
+            mock_registry.return_value.async_remove_device.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_fetch_nvr_error(self, coordinator: UnifiInsightsProtectCoordinator):

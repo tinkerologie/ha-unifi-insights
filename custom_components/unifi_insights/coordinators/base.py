@@ -178,10 +178,10 @@ class UnifiInsightsBaseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _remove_stale_device(self, *identifiers: str) -> bool:
         """
-        Detach a device the console no longer reports from this config entry.
+        Remove a device the console no longer reports from this config entry.
 
         Each identifier is tried in order, and the first device registered
-        under it in this entry is detached. Returns whether a device was found.
+        under it in this entry is removed. Returns whether a device was found.
         Callers decide when a device counts as stale.
         """
         device_registry = dr.async_get(self.hass)
@@ -192,10 +192,9 @@ class UnifiInsightsBaseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if device is None:
                 continue
             _LOGGER.info("%s: removing stale device %s", self.name, identifier)
-            device_registry.async_update_device(
-                device_id=device.id,
-                remove_config_entry_id=self.config_entry.entry_id,
-            )
+            # A device belongs to exactly one config entry (HA 2026.10+), so
+            # remove it outright; remove_config_entry_id is deprecated.
+            device_registry.async_remove_device(device.id)
             return True
         return False
 

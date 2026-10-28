@@ -4717,12 +4717,10 @@ class TestUnifiDeviceCoordinator:
             await owners.device.async_refresh()
 
             with patch.object(
-                dev_reg, "async_update_device", wraps=dev_reg.async_update_device
-            ) as mock_update:
+                dev_reg, "async_remove_device", wraps=dev_reg.async_remove_device
+            ) as mock_remove:
                 await owners.device.async_refresh()
-                mock_update.assert_called_once()
-                call_kwargs = mock_update.call_args.kwargs
-                assert call_kwargs["remove_config_entry_id"] == entry_id
+                mock_remove.assert_called_once()
 
             check_sw = get_device_by_identifier(
                 dev_reg, (DOMAIN, f"{SITE_ID}_switch_v1_id"), entry_id
