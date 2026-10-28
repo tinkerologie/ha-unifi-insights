@@ -65,6 +65,12 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           REPO: ${{ github.repository }}
         run: |
+          # A rerun after a failed publish finds the earlier run's draft for
+          # this tag (the tag itself only exists once a release is published):
+          # delete it so the rerun starts from one clean draft.
+          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)" = "true" ]; then
+            gh release delete "$TAG" --yes
+          fi
           # Immutable releases lock assets on publish, so upload to a draft first.
           gh release create "$TAG" \
             --draft \
