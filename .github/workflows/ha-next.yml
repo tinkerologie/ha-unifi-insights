@@ -1,0 +1,267 @@
+name: HA Next
+
+# Early warning for the next Home Assistant release. Runs the integration against
+# the newest Home Assistant on PyPI, beta included, so removals and deprecations
+# show up before the release ships. It never blocks a merge: the job continues on
+# error, and scheduled or manual runs on main open (or close) one issue labelled
+# ha-next instead.
+on:
+  schedule:
+    - cron: 0 3 * * 1
+      timezone: Australia/Brisbane
+  workflow_dispatch:
+    inputs:
+      ha_version:
+        description: Home Assistant version to test (blank for the newest, beta included)
+        required: false
+        default: ""
+  pull_request:
+    paths:
+      - pyproject.toml
+      - requirements*.txt
+      - custom_components/unifi_insights/manifest.json
+      - script/import_smoke.py
+      - .github/workflows/ha-next.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ha-next:
+    name: Next Home Assistant
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    outputs:
+      ha_version: ${{ steps.resolve.outputs.ha_version }}
+      status: ${{ steps.summary.outputs.status }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install system dependencies
+        run: |
+          # The Azure archive can stall for minutes before falling back.
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
+            /etc/apt/sources.list.d/*.sources /etc/apt/apt-mirrors.txt; do
+            if [[ -f "$source" ]]; then
+              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' "$source"
+            fi
+          done
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          # Ubuntu 24.04 provides libturbojpeg; 26.04 renamed it to libturbojpeg0.
+          turbojpeg=libturbojpeg
+          if apt-cache policy libturbojpeg0 | awk '/Candidate:/ && $2 != "(none)" { found = 1 } END { exit !found }'; then
+            turbojpeg=libturbojpeg0
+          fi
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+            ffmpeg \
+            "$turbojpeg"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: latest
+          enable-cache: true
+
+      - name: Set up Python
+        run: |
+          uv python install 3.14.2
+          uv venv --python 3.14.2
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Resolve Home Assistant version
+        id: resolve
+        env:
+          REQUESTED_VERSION: ${{ inputs.ha_version }}
+        run: |
+          if [[ -n "${REQUESTED_VERSION:-}" ]]; then
+            if [[ ! "$REQUESTED_VERSION" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]; then
+              echo "::error::Invalid Home Assistant version: $REQUESTED_VERSION"
+              exit 1
+            fi
+            ha_version="$REQUESTED_VERSION"
+          else
+            # Newest non-yanked release, pre-releases included; when no beta is
+            # out this is the latest stable release.
+            ha_version=$(curl -fsSL --retry 3 https://pypi.org/pypi/homeassistant/json |
+              uv run --no-project --with packaging python -c '
+          import json, sys
+          from packaging.version import Version
+          releases = json.load(sys.stdin)["releases"]
+          print(max(
+              (v for v, files in releases.items()
+               if files and not all(f.get("yanked") for f in files)),
+              key=Version,
+          ))
+          ')
+          fi
+          echo "Home Assistant $ha_version"
+          echo "ha_version=$ha_version" >> "$GITHUB_OUTPUT"
+
+      - name: Install Home Assistant and the test harness
+        id: install
+        env:
+          HA_VERSION: ${{ steps.resolve.outputs.ha_version }}
+        run: |
+          # pytest-homeassistant-custom-component pins one Home Assistant version
+          # and often lags a beta by days. Without a match, run only the import
+          # smoke test.
+          if uv pip install . ".[dev]" "homeassistant==$HA_VERSION"; then
+            echo "harness=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No pytest-homeassistant-custom-component release installs with Home Assistant $HA_VERSION; running the import smoke test only"
+            echo "harness=false" >> "$GITHUB_OUTPUT"
+            uv pip install . "homeassistant==$HA_VERSION" segno numpy PyTurboJPEG
+          fi
+          python -c "from homeassistant.const import __version__; print('Installed Home Assistant', __version__)"
+
+      - name: Import every module and check for deprecations
+        id: smoke
+        continue-on-error: true
+        run: python script/import_smoke.py
+
+      - name: Run tests with deprecation checks
+        id: tests
+        if: steps.install.outputs.harness == 'true'
+        continue-on-error: true
+        run: pytest --no-cov -q
+
+      - name: Validate with Hassfest from the same release
+        id: hassfest
+        continue-on-error: true
+        env:
+          HA_VERSION: ${{ steps.resolve.outputs.ha_version }}
+        run: ./script/hassfest --skip-plugins ""
+
+      - name: Summarize
+        id: summary
+        if: always()
+        env:
+          HA_VERSION: ${{ steps.resolve.outputs.ha_version }}
+          INSTALL: ${{ steps.install.outcome }}
+          HARNESS: ${{ steps.install.outputs.harness }}
+          SMOKE: ${{ steps.smoke.outcome }}
+          TESTS: ${{ steps.tests.outcome }}
+          HASSFEST: ${{ steps.hassfest.outcome }}
+        run: |
+          status=success
+          for outcome in "$INSTALL" "$SMOKE" "$TESTS" "$HASSFEST"; do
+            if [[ "$outcome" != success && "$outcome" != skipped ]]; then
+              status=failure
+            fi
+          done
+          if [[ "$HARNESS" == true ]]; then
+            tests="$TESTS"
+          else
+            tests="skipped: no pytest-homeassistant-custom-component for this version"
+          fi
+          {
+            echo "## Home Assistant ${HA_VERSION:-unresolved}"
+            echo
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| Install | ${INSTALL:-not run} |"
+            echo "| Import smoke | ${SMOKE:-not run} |"
+            echo "| Tests | ${tests:-not run} |"
+            echo "| Hassfest | ${HASSFEST:-not run} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if [[ "$status" == failure ]]; then
+            echo "::error::Home Assistant ${HA_VERSION:-unresolved} breaks or deprecates something the integration uses"
+            exit 1
+          fi
+
+  report:
+    name: Report
+    needs: ha-next
+    if: ${{ always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write # open, update and close the ha-next issue
+    steps:
+      - name: Open, update or close the ha-next issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          HA_VERSION: ${{ needs.ha-next.outputs.ha_version }}
+          STATUS: ${{ needs.ha-next.outputs.status }}
+        with:
+          script: |
+            const label = "ha-next";
+            const { owner, repo } = context.repo;
+            const version = process.env.HA_VERSION || "unresolved";
+            // No status means the job stopped before its summary step.
+            const failed = process.env.STATUS !== "success";
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner,
+              repo,
+              labels: label,
+              state: "open",
+              per_page: 20,
+            });
+            const issue = open.find((item) => !item.pull_request);
+
+            if (!failed) {
+              if (issue) {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  body: `Home Assistant ${version} passes again: ${runUrl}`,
+                });
+                await github.rest.issues.update({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  state: "closed",
+                  state_reason: "completed",
+                });
+              }
+              return;
+            }
+
+            const body = [
+              `The HA Next workflow failed against Home Assistant ${version}.`,
+              "",
+              `Run log: ${runUrl}`,
+              "",
+              "See the run summary for which check failed (install, import smoke, tests or Hassfest),",
+              "and the deprecation section of `.github/instructions/tests.instructions.md` for what to do.",
+            ].join("\n");
+
+            if (issue) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issue.number,
+                body,
+              });
+              return;
+            }
+
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: label });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.issues.createLabel({
+                owner,
+                repo,
+                name: label,
+                color: "fbca04",
+                description: "Breakage or deprecation in the next Home Assistant release",
+              });
+            }
+            await github.rest.issues.create({
+              owner,
+              repo,
+              title: "Upcoming Home Assistant release breaks or deprecates something we use",
+              labels: [label],
+              body,
+            });

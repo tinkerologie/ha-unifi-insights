@@ -94,7 +94,7 @@ log_info "Validator commit: $CURRENT_REVISION"
 
 # Repair old sparse caches before reading either validation or dependency inputs.
 git -C "$HA_CORE_DIR" sparse-checkout set --no-cone \
-    /script/ /homeassistant/ /requirements.txt /requirements_all.txt \
+    /script/ /homeassistant/ /packages/hassfest/ /requirements.txt /requirements_all.txt \
     /requirements_test.txt /requirements_test_pre_commit.txt /pyproject.toml
 for required_file in requirements.txt requirements_all.txt requirements_test.txt \
     requirements_test_pre_commit.txt homeassistant/package_constraints.txt \
@@ -123,6 +123,11 @@ HASSFEST_CMD=(uv run --isolated --no-project --python "$HASSFEST_PYTHON_VERSION"
 for pin in "${TOOL_PINS[@]}"; do
     HASSFEST_CMD+=(--with "$pin")
 done
+# Home Assistant 2026.11 moved the validator core into packages/hassfest, which
+# script/hassfest imports; older revisions do not have it.
+if [[ -f "$CORE_PATH/packages/hassfest/pyproject.toml" ]]; then
+    HASSFEST_CMD+=(--with-editable "$CORE_PATH/packages/hassfest")
+fi
 HASSFEST_CMD+=(python -m script.hassfest --action validate
     --integration-path "$INTEGRATION_ABSOLUTE_PATH" --core-path "$CORE_PATH")
 if [[ -n "$SKIP_PLUGINS" ]]; then
