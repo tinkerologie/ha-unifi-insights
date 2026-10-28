@@ -9,6 +9,13 @@ on:
 permissions:
   contents: read # jobs request only what they need
 
+# One release run at a time, never cancelled: the tag comes from manifest.json
+# inside the job, so runs are serialised as a whole. A run must not delete or
+# publish a draft another run is still filling.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     name: Release
