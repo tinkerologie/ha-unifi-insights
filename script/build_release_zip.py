@@ -6,7 +6,11 @@ The zip holds the contents of ``custom_components/unifi_insights/`` at its root
 (``manifest.json`` at the top level), which HACS and the Marketplace extract into
 ``config/custom_components/unifi_insights/``. ``SHA256SUMS`` is written next to it.
 
-The same source tree always builds a byte-identical zip: entries are sorted, every
+Only files Git tracks are packaged, so local leftovers never ship. The file list is
+checked before anything is written: the files the integration needs to load are
+present and every relative import in the frontend bundles resolves inside the zip.
+
+The same commit always builds a byte-identical zip: entries are sorted, every
 timestamp comes from ``SOURCE_DATE_EPOCH`` (the release commit's time in CI), and
 permissions and compression settings are fixed.
 
@@ -21,7 +25,10 @@ from collections.abc import Iterator, Sequence
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import posixpath
+import re
+import subprocess
 import sys
 import time
 import zipfile
@@ -33,8 +40,12 @@ CHECKSUMS_NAME = "SHA256SUMS"
 
 # 1980-01-01T00:00:00Z, the earliest timestamp a zip entry can store.
 ZIP_EPOCH = 315532800
-EXCLUDED_DIRS = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache"})
-EXCLUDED_SUFFIXES = (".pyc", ".pyo")
+BYTECODE_SUFFIXES = (".pyc", ".pyo")
+REQUIRED_FILES = ("manifest.json", "__init__.py", "translations/en.json")
+# Relative specifiers in static imports, re-exports and dynamic imports.
+JS_RELATIVE_IMPORT = re.compile(
+    r"""(?:\bfrom|\bimport)\s*\(?\s*["'](\.{1,2}/[^"']+)["']"""
+)
 FILE_MODE = 0o100644  # regular file, rw-r--r--
 COMPRESS_LEVEL = 9
 
@@ -43,25 +54,58 @@ class ReleaseZipError(Exception):
     """Raised when the release zip cannot be built."""
 
 
-def is_excluded(relative: Path) -> bool:
-    """Return True when a path under the package must stay out of the zip."""
-    if any(part in EXCLUDED_DIRS or part.startswith(".") for part in relative.parts):
-        return True
-    return relative.name.endswith(EXCLUDED_SUFFIXES)
+def tracked_files(package_dir: Path) -> list[str]:
+    """Return the files Git tracks under ``package_dir``, relative to it."""
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed Git arguments
+            ["git", "-C", str(package_dir), "ls-files", "-z", "--", "."],  # noqa: S607
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as err:
+        raise ReleaseZipError(f"{package_dir} is not inside a Git work tree") from err
+    return [name for name in result.stdout.split("\0") if name]
 
 
 def iter_package_files(package_dir: Path) -> Iterator[Path]:
-    """Yield the runtime files under ``package_dir`` as sorted relative paths."""
+    """Yield the tracked runtime files under ``package_dir``, sorted."""
     files: list[Path] = []
-    for path in package_dir.rglob("*"):
-        relative = path.relative_to(package_dir)
-        if is_excluded(relative):
+    for name in tracked_files(package_dir):
+        relative = Path(name)
+        if any(part.startswith(".") for part in relative.parts):
             continue
+        if "__pycache__" in relative.parts or name.endswith(BYTECODE_SUFFIXES):
+            raise ReleaseZipError(f"Bytecode is tracked in Git: {name}")
+        path = package_dir / relative
         if path.is_symlink():
-            raise ReleaseZipError(f"Symbolic links are not allowed: {relative}")
-        if path.is_file():
-            files.append(relative)
+            raise ReleaseZipError(f"Symbolic links are not allowed: {name}")
+        if not path.is_file():
+            raise ReleaseZipError(f"Tracked file is missing from the checkout: {name}")
+        files.append(relative)
     yield from sorted(files, key=lambda p: p.as_posix())
+
+
+def check_members(package_dir: Path, names: Sequence[str]) -> None:
+    """Fail unless the file list can load as an integration with working cards."""
+    members = set(names)
+    for required in REQUIRED_FILES:
+        if required not in members:
+            raise ReleaseZipError(f"{required} is missing from the package")
+    for name in names:
+        if name.startswith("custom_components/"):
+            raise ReleaseZipError(f"Entry is not at the zip root: {name}")
+        if not name.endswith(".js"):
+            continue
+        source = (package_dir / name).read_text(encoding="utf-8")
+        for specifier in JS_RELATIVE_IMPORT.findall(source):
+            target = posixpath.normpath(
+                (PurePosixPath(name).parent / specifier).as_posix()
+            )
+            if target not in members:
+                raise ReleaseZipError(
+                    f"{name} imports {specifier}, which is not in the package"
+                )
 
 
 def source_date_epoch(environ: dict[str, str] | None = None) -> int:
@@ -100,20 +144,17 @@ def check_version(package_dir: Path, expected: str) -> None:
 def build_zip(package_dir: Path, zip_path: Path, epoch: int) -> list[str]:
     """Write the reproducible zip and return its entry names in order."""
     date_time = time.gmtime(epoch)[:6]
-    names: list[str] = []
+    names = [relative.as_posix() for relative in iter_package_files(package_dir)]
+    check_members(package_dir, names)
     zip_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path, "w") as archive:
-        for relative in iter_package_files(package_dir):
-            name = relative.as_posix()
+        for name in names:
             info = zipfile.ZipInfo(name, date_time=date_time)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.create_system = 3  # Unix, so external_attr holds the file mode
             info.external_attr = FILE_MODE << 16
-            data = (package_dir / relative).read_bytes()
+            data = (package_dir / name).read_bytes()
             archive.writestr(info, data, compresslevel=COMPRESS_LEVEL)
-            names.append(name)
-    if "manifest.json" not in names:
-        raise ReleaseZipError("manifest.json is missing from the package")
     return names
 
 

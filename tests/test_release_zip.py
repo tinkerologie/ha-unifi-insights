@@ -6,7 +6,9 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import stat
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -31,31 +33,50 @@ def release_zip() -> Any:
     return module
 
 
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(  # noqa: S603 - fixed Git executable and fixture arguments
+        ["git", "-c", "commit.gpgsign=false", *args],  # noqa: S607
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
 def _expected_files(package_dir: Path) -> list[str]:
-    """List the package files independently of the script's own walker."""
-    names = []
-    for path in package_dir.rglob("*"):
-        relative = path.relative_to(package_dir)
-        if not path.is_file() or "__pycache__" in relative.parts:
-            continue
-        if relative.suffix in {".pyc", ".pyo"} or any(
-            part.startswith(".") for part in relative.parts
-        ):
-            continue
-        names.append(relative.as_posix())
-    return sorted(names)
+    """List the tracked package files independently of the script."""
+    tracked = _git(package_dir, "ls-files", ".").splitlines()
+    return sorted(
+        n for n in tracked if not any(p.startswith(".") for p in n.split("/"))
+    )
 
 
-def _fake_package(root: Path, version: str = "2026.10.4") -> Path:
-    package = root / "unifi_insights"
-    (package / "translations").mkdir(parents=True)
+def _fake_package(
+    root: Path, version: str = "2026.10.4", files: dict[str, str] | None = None
+) -> Path:
+    """Create a committed package, plus untracked leftovers the zip must skip."""
+    package = root / "repo with spaces" / "unifi_insights"
+    tracked = {
+        "manifest.json": json.dumps({"version": version}),
+        "__init__.py": '"""Init."""\n',
+        "translations/en.json": "{}",
+        "frontend/card.js": 'import{a}from"./chunks/shared.js";import"./other.js";',
+        "frontend/other.js": 'const m=import("../frontend/chunks/shared.js");',
+        "frontend/chunks/shared.js": "export const a=1;",
+        "brand/icon.png": "png",
+        **(files or {}),
+    }
+    for name, content in tracked.items():
+        path = package / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    _git(package.parent, "init", "-q")
+    _git(package.parent, "add", "--force", ".")
     (package / "__pycache__").mkdir()
-    (package / "manifest.json").write_text(json.dumps({"version": version}))
-    (package / "__init__.py").write_text('"""Init."""\n')
-    (package / "translations" / "en.json").write_text("{}")
     (package / "__pycache__" / "__init__.cpython-314.pyc").write_bytes(b"\0")
     (package / "stale.pyc").write_bytes(b"\0")
     (package / ".DS_Store").write_bytes(b"\0")
+    (package / "untracked.py").write_text("")
     return package
 
 
@@ -80,6 +101,8 @@ def test_real_package_zip_layout(release_zip: Any, tmp_path: Path) -> None:
         "frontend/topology-card.js",
     ):
         assert required in names
+    for prefix in ("brand/", "translations/", "frontend/chunks/"):
+        assert any(n.startswith(prefix) for n in names), prefix
     assert not [n for n in names if "__pycache__" in n or n.endswith(".pyc")]
     assert not [n for n in names if n.startswith("custom_components/")]
     for info in infos:
@@ -102,8 +125,15 @@ def test_builds_are_byte_identical(release_zip: Any, tmp_path: Path) -> None:
         assert archive.infolist()[0].date_time == (2025, 10, 29, 1, 6, 40)
 
 
-def test_exclusions(release_zip: Any, tmp_path: Path) -> None:
-    """Bytecode, caches and hidden files never reach the zip."""
+def test_hacs_json_names_the_release_zip(release_zip: Any) -> None:
+    """HACS and the Marketplace download the asset hacs.json names."""
+    hacs = json.loads((REPO_ROOT / "hacs.json").read_text())
+    assert hacs["zip_release"] is True
+    assert hacs["filename"] == release_zip.ZIP_NAME
+
+
+def test_only_tracked_files_are_packaged(release_zip: Any, tmp_path: Path) -> None:
+    """Untracked files, bytecode, caches and hidden files never reach the zip."""
     package = _fake_package(tmp_path)
     zip_path = release_zip.build_release(
         tmp_path / "out", package_dir=package, version="v2026.10.4", environ={}
@@ -111,9 +141,85 @@ def test_exclusions(release_zip: Any, tmp_path: Path) -> None:
     with zipfile.ZipFile(zip_path) as archive:
         assert archive.namelist() == [
             "__init__.py",
+            "brand/icon.png",
+            "frontend/card.js",
+            "frontend/chunks/shared.js",
+            "frontend/other.js",
             "manifest.json",
             "translations/en.json",
         ]
+
+
+def test_mtimes_do_not_change_the_zip(release_zip: Any, tmp_path: Path) -> None:
+    """Checkout times differ between machines; the zip must not."""
+    package = _fake_package(tmp_path)
+    first = release_zip.build_release(tmp_path / "a", package_dir=package, environ={})
+    os.utime(package / "__init__.py", (2_000_000_000, 2_000_000_000))
+    second = release_zip.build_release(tmp_path / "b", package_dir=package, environ={})
+    assert first.read_bytes() == second.read_bytes()
+
+
+@pytest.mark.parametrize(
+    "required", ["manifest.json", "__init__.py", "translations/en.json"]
+)
+def test_missing_required_file_fails(
+    release_zip: Any, tmp_path: Path, required: str
+) -> None:
+    """The files the integration needs to load must be in the zip."""
+    package = _fake_package(tmp_path)
+    _git(package, "rm", "-q", "--cached", required)
+    with pytest.raises(release_zip.ReleaseZipError, match=f"{required} is missing"):
+        release_zip.build_release(tmp_path / "out", package_dir=package, environ={})
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'import{a}from"./chunks/missing-X1.js";',
+        'import"../frontend/gone.js";',
+        'const m=import( "./lazy.js" );',
+    ],
+)
+def test_unresolved_frontend_import_fails(
+    release_zip: Any, tmp_path: Path, source: str
+) -> None:
+    """A card whose chunk did not ship would fail to load in the browser."""
+    package = _fake_package(tmp_path, files={"frontend/broken.js": source})
+    with pytest.raises(
+        release_zip.ReleaseZipError, match=r"frontend/broken\.js imports"
+    ):
+        release_zip.build_release(tmp_path / "out", package_dir=package, environ={})
+
+
+def test_tracked_bytecode_fails(release_zip: Any, tmp_path: Path) -> None:
+    """Bytecode committed by mistake stops the build instead of shipping."""
+    package = _fake_package(tmp_path)
+    _git(package, "add", "--force", "stale.pyc")
+    with pytest.raises(release_zip.ReleaseZipError, match="Bytecode is tracked"):
+        release_zip.build_release(tmp_path / "out", package_dir=package, environ={})
+
+
+def test_tracked_file_missing_from_checkout_fails(
+    release_zip: Any, tmp_path: Path
+) -> None:
+    """A tracked file deleted locally would silently drop out of the zip."""
+    package = _fake_package(tmp_path)
+    (package / "brand/icon.png").unlink()
+    with pytest.raises(release_zip.ReleaseZipError, match="missing from the checkout"):
+        release_zip.build_release(tmp_path / "out", package_dir=package, environ={})
+
+
+def test_outside_git_fails(
+    release_zip: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without Git the tracked file list is unknown, so nothing is built."""
+    package = tmp_path / "not a repo"
+    package.mkdir()
+    (package / "manifest.json").write_text("{}")
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    with pytest.raises(release_zip.ReleaseZipError, match="not inside a Git"):
+        release_zip.build_release(tmp_path / "out", package_dir=package, environ={})
 
 
 def test_version_mismatch_fails(release_zip: Any, tmp_path: Path) -> None:
@@ -140,19 +246,11 @@ def test_bad_manifest(
         release_zip.check_version(package, "1")
 
 
-def test_zip_without_manifest_fails(release_zip: Any, tmp_path: Path) -> None:
-    """The zip must carry manifest.json at its root."""
-    package = tmp_path / "pkg"
-    package.mkdir()
-    (package / "__init__.py").write_text("")
-    with pytest.raises(release_zip.ReleaseZipError, match="missing"):
-        release_zip.build_release(tmp_path / "out", package_dir=package, environ={})
-
-
 def test_symlink_rejected(release_zip: Any, tmp_path: Path) -> None:
     """Symbolic links would make the zip depend on the build machine."""
     package = _fake_package(tmp_path)
     (package / "link.py").symlink_to(package / "__init__.py")
+    _git(package, "add", "link.py")
     with pytest.raises(release_zip.ReleaseZipError, match="Symbolic links"):
         release_zip.build_release(tmp_path / "out", package_dir=package, environ={})
 
