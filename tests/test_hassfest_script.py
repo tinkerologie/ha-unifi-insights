@@ -309,13 +309,13 @@ def test_validator_package_is_installed_only_when_core_ships_it(
     result = project.run("hassfest", "--skip-plugins", "")
 
     assert result.returncode == 0, result.stdout + result.stderr
-    run_call = next(
-        call
+    uv_runs = [
+        uv_args
         for call in project.trace()
-        if isinstance(call.get("uv_args"), list) and call["uv_args"][:1] == ["run"]
-    )
-    uv_args = run_call["uv_args"]
-    assert isinstance(uv_args, list)
+        if isinstance(uv_args := call.get("uv_args"), list) and uv_args[:1] == ["run"]
+    ]
+    assert len(uv_runs) == 1
+    uv_args = uv_runs[0]
     editable = str(project.root / ".local/ha-core/packages/hassfest")
     if has_package:
         assert uv_args[uv_args.index("--with-editable") + 1] == editable
