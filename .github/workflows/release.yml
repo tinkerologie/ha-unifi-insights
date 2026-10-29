@@ -139,6 +139,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.build.outputs.tag }}
         run: |
-          # Fails when release immutability is off, so the setting can't lapse unnoticed.
-          gh release verify "$TAG"
+          # GitHub creates the release attestation shortly after publication, so
+          # retry for about a minute. A release published without immutability
+          # never gets one, so the step still fails and the setting can't lapse
+          # unnoticed.
+          for attempt in $(seq 1 12); do
+            if gh release verify "$TAG"; then
+              break
+            fi
+            if [ "$attempt" -eq 12 ]; then
+              echo "::error::No release attestation for $TAG. Is release immutability enabled?"
+              exit 1
+            fi
+            echo "Release attestation not available yet (attempt $attempt/12); retrying in 5 seconds."
+            sleep 5
+          done
           gh release verify-asset "$TAG" dist/unifi_insights.zip
