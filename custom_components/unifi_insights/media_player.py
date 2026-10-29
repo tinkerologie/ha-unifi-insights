@@ -22,7 +22,11 @@ from homeassistant.exceptions import ServiceValidationError
 
 from .const import DEVICE_TYPE_CAMERA, DOMAIN
 from .data_transforms import protect_collection
-from .entity import UnifiProtectEntity, camera_supports_speaker
+from .entity import (
+    UnifiProtectEntity,
+    async_delegate_entity_id_changed,
+    camera_supports_speaker,
+)
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -233,6 +237,11 @@ class UnifiProtectCameraSpeaker(UnifiProtectEntity, MediaPlayerEntity):
                 and item.media_content_type.startswith("audio/")
             ),
         )
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Keep the entity on an entity ID change; nothing here is keyed on it."""
+        async_delegate_entity_id_changed(super(), old_entity_id)
 
     async def async_will_remove_from_hass(self) -> None:
         """Clean up when entity is removed from Home Assistant."""

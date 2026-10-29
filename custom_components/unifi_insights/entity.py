@@ -195,6 +195,22 @@ def camera_supports_speaker(camera_data: Any) -> bool:
     return False
 
 
+@callback
+def async_delegate_entity_id_changed(parent: Any, old_entity_id: str) -> None:
+    """
+    Run the parent's ``async_entity_id_changed``, when Home Assistant has one.
+
+    Home Assistant 2026.11 changes an entity's ID in place, but re-adds an
+    entity of a custom integration whose class overrides an add or remove hook
+    unless that class also defines ``async_entity_id_changed``; Home Assistant
+    2027.11 drops the re-add. Each such class defines the hook and passes
+    ``super()`` from it, so the MRO reaches Home Assistant's own bookkeeping,
+    such as restore state. Before 2026.11 the parent has no hook to call.
+    """
+    if (hook := getattr(parent, "async_entity_id_changed", None)) is not None:
+        hook(old_entity_id)
+
+
 class UnifiInsightsEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
     """Base class for UniFi Insights entities."""
 

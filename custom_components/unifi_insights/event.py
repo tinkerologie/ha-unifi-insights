@@ -33,6 +33,7 @@ from .entity import (
     UnifiSiteEntity,
     access_coordinator_for,
     access_unique_id,
+    async_delegate_entity_id_changed,
     async_discover_access_entities,
     door_device_info,
     doorbell_device_info,
@@ -105,6 +106,11 @@ class UnifiAccessDoorbellEvent(UnifiAccessEntity, EventEntity):
             self._namespace, device_id, device_name
         )
 
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Keep the entity on an entity ID change; nothing here is keyed on it."""
+        async_delegate_entity_id_changed(super(), old_entity_id)
+
     async def async_added_to_hass(self) -> None:
         """Fire the ring that created this entity, if any, once it is added."""
         await super().async_added_to_hass()
@@ -147,6 +153,11 @@ class UnifiAccessResultEvent(UnifiAccessDoorEntity, EventEntity):
         self._attr_device_info = door_device_info(
             self._namespace, door_id, name if isinstance(name, str) else None
         )
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Keep the entity on an entity ID change; nothing here is keyed on it."""
+        async_delegate_entity_id_changed(super(), old_entity_id)
 
     async def async_added_to_hass(self) -> None:
         """Mark the entity as added so results can be written."""

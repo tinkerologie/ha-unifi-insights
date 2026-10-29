@@ -30,7 +30,7 @@ from .data_transforms import (
     site_section_available,
     voucher_site_ids,
 )
-from .entity import UnifiSiteEntity
+from .entity import UnifiSiteEntity, async_delegate_entity_id_changed
 from .innerspace_transforms import parse_floor_plan_asset_path, strip_url_query
 
 if TYPE_CHECKING:
@@ -320,6 +320,11 @@ class UnifiFloorPlanImage(
         }
         return {k: v for k, v in attrs.items() if v is not None}
 
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Keep the entity on an entity ID change; nothing here is keyed on it."""
+        async_delegate_entity_id_changed(super(), old_entity_id)
+
     async def async_will_remove_from_hass(self) -> None:
         """Cancel a pending background retry when the entity is removed."""
         self._cancel_retry()
@@ -513,6 +518,11 @@ class UnifiVoucherQrCodeImage(UnifiSiteEntity, ImageEntity):
             self._last_observed_payload = None
             self._attr_image_last_updated = dt_util.utcnow()
         self.async_write_ha_state()
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Keep the entity on an entity ID change; nothing here is keyed on it."""
+        async_delegate_entity_id_changed(super(), old_entity_id)
 
     async def async_added_to_hass(self) -> None:
         """Register lifecycle and timer on add."""

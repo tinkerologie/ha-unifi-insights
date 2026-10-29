@@ -24,7 +24,7 @@ from unifi_official_api.protect.endpoints.sirens import (
 
 from .const import DEVICE_TYPE_SIREN, DOMAIN
 from .data_transforms import protect_collection
-from .entity import UnifiProtectEntity
+from .entity import UnifiProtectEntity, async_delegate_entity_id_changed
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -219,6 +219,11 @@ class UnifiProtectSiren(UnifiProtectEntity, SirenEntity):
         """Handle updated data from the coordinator."""
         super()._handle_coordinator_update()
         self._schedule_expiry()
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Keep the entity on an entity ID change; nothing here is keyed on it."""
+        async_delegate_entity_id_changed(super(), old_entity_id)
 
     async def async_added_to_hass(self) -> None:
         """Arm the end-of-run update for a run that is already under way."""

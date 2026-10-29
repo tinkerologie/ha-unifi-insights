@@ -47,6 +47,7 @@ from .data_transforms import (
 from .entity import (
     UnifiProtectEntity,
     UnifiSiteEntity,
+    async_delegate_entity_id_changed,
 )
 
 if TYPE_CHECKING:
@@ -519,6 +520,11 @@ class UnifiVoucherInputNumber(UnifiSiteEntity, RestoreNumber):
         )
         val = getattr(settings, VOUCHER_INPUTS[self.entity_description.key].field)
         return float(val) if val is not None else None
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Keep the entity on an entity ID change; nothing here is keyed on it."""
+        async_delegate_entity_id_changed(super(), old_entity_id)
 
     async def async_added_to_hass(self) -> None:
         """Restore previous state on startup."""
