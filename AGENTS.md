@@ -315,7 +315,7 @@ Read a facade record through its lookup in `data_transforms.py` (`network_device
 - Type schemas with `probatio` under `if TYPE_CHECKING: import probatio as vol` (`else: import voluptuous as vol`)
 - Do **not** use `FlowHandler.show_advanced_options` or `context["show_advanced_options"]` (deprecated in 2026.5); use form sections for advanced settings
 - Do **not** combine a config entry update listener with reloading flow helpers (`async_update_reload_and_abort`, `_abort_if_unique_id_configured(reload_on_update=True)`) — deprecated in 2026.6 and raises an error in 2026.12
-- Use modern selectors (`SelectSelector`, `NumberSelector`, `TextSelector` with `pattern`, `DeviceClassSelector`, `StateClassSelector`, `UnitOfMeasurementSelector`) and always provide `data_description` in `strings.json`
+- Use modern selectors (`SelectSelector`, `NumberSelector`, `TextSelector` with `pattern`, `DeviceClassSelector`, `StateClassSelector`, and `UnitOfMeasurementSelector` once the minimum supported Home Assistant is 2026.11) and always provide `data_description` in `strings.json`
 
 See `.github/instructions/config_flow.instructions.md` for comprehensive patterns.
 

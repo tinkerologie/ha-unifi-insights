@@ -45,8 +45,9 @@ This integration supports three connection modes:
   ```
 - **Do NOT use `FlowHandler.show_advanced_options`** (deprecated in HA 2026.5). Use collapsible data entry flow sections (`section(...)`) instead.
 - **Avoid double reloads (HA 2026.6+):** Combining an `entry.add_update_listener(...)` with reloading flow helpers (`async_update_reload_and_abort` or `_abort_if_unique_id_configured(reload_on_update=True)`) is deprecated in HA 2026.6 and raises an error in HA 2026.12. Ensure reloading is handled in one place consistently.
-- **Modern Selectors (HA 2026.8–2026.10):**
-  - `DeviceClassSelector`, `StateClassSelector` (2026.9), `UnitOfMeasurementSelector` (2026.10)
+- **Modern Selectors (HA 2026.8–2026.11):**
+  - `DeviceClassSelector`, `StateClassSelector` (2026.9)
+  - `UnitOfMeasurementSelector` (2026.11, not in 2026.10). It is newer than the minimum supported Home Assistant, so using it needs a raised minimum in `hacs.json` or a tested fallback.
   - `TextSelector` supports `pattern` and `validation_message` (2026.8)
   - `EntitySelector` supports `device` filtering (2026.8)
 
