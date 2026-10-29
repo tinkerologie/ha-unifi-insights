@@ -50,6 +50,8 @@ jobs:
           gh label create ha-dev-blog --repo "$REPO" --color FBCA04 \
             --description "Home Assistant developer blog change that affects the integration" \
             2>/dev/null || true
+          gh label create enhancement --repo "$REPO" --color A2EEEF \
+            --description "New feature or improvement request" 2>/dev/null || true
           jq -c '.[] | select(.actionable)' report.json | while read -r post; do
             link=$(jq -r .link <<<"$post")
             title=$(jq -r .title <<<"$post")
@@ -60,7 +62,9 @@ jobs:
               | jq --arg link "($link)" '[.[] | select(.body | contains($link))] | length')
             if [ "$existing" = "0" ]; then
               jq -r .issue <<<"$post" > issue.md
-              gh issue create --repo "$REPO" --label ha-dev-blog \
+              # enhancement makes CodeRabbit write a coding plan; an issue opened
+              # with GITHUB_TOKEN never triggers the issue labeler workflow.
+              gh issue create --repo "$REPO" --label ha-dev-blog --label enhancement \
                 --title "HA dev blog: $title" --body-file issue.md
             else
               echo "Issue already exists for $link"
