@@ -46,7 +46,7 @@ INLINE_CODE = re.compile(r"<code\b[^>]*>(.*?)</code>", re.DOTALL | re.IGNORECASE
 TAG = re.compile(r"<[^>]+>")
 TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 ANNOUNCES_CHANGE = re.compile(
-    r"\b(deprecat\w*|removed|will be removed|no longer|breaking|"
+    r"\b(deprecat\w*|removed|removal|will be removed|no longer|breaking|"
     r"stops? working|must now)\b",
     re.IGNORECASE,
 )

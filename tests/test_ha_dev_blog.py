@@ -108,6 +108,22 @@ def test_changed_identifiers_without_article(blog: Any) -> None:
     assert not blog.announces_change("<p>All good.</p>")
 
 
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "The removal of <code>DeviceInfo</code> takes effect in 2027.1.",
+        "<code>DeviceInfo</code> is deprecated.",
+        "<code>DeviceInfo</code> has been removed.",
+        "<code>DeviceInfo</code> no longer accepts a dict.",
+    ],
+)
+def test_change_wording(blog: Any, sentence: str) -> None:
+    """Each way a post announces a change is recognized."""
+    page = f"<article><p>{sentence}</p></article>"
+    assert blog.announces_change(page)
+    assert blog.changed_identifiers(page) == {"DeviceInfo"}
+
+
 def test_find_usages(blog: Any, package: Path) -> None:
     """Whole-word matches in source files, capped, with repository paths."""
     usages = blog.find_usages({"old_api", "OldHelperClass", "missing_name"}, package)
