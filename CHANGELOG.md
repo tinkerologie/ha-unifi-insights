@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On Home Assistant 2026.11 and later, client trackers are created enabled again when you turn on **Track WiFi Clients** or **Track Wired Clients**. Home Assistant 2026.11 creates every network-scanner tracker disabled. Trackers you disabled stay disabled. A tracker created disabled by the integration on 2026.11 before this fix stays disabled until you enable it. Client renames on the controller now also reach Home Assistant without a reload: the client's own device is renamed, keeping any name you gave it, and a tracker under its access point or switch takes the new name. [#441](https://github.com/tinkerologie/ha-unifi-insights/issues/441)
 - Removing a stale device no longer logs a Home Assistant deprecation warning. The integration removed it with `device_registry.async_update_device(remove_config_entry_id=...)`, which Home Assistant deprecates and will stop supporting in 2027.8; it now calls `async_remove_device`. A device belongs to a single config entry, so the result is the same. [#436](https://github.com/tinkerologie/ha-unifi-insights/issues/436)
 - The integration loads on Home Assistant 2026.11. The sensor platform now imports `EntityCategory` from `homeassistant.const`. Home Assistant 2026.11 drops the unofficial copy in `homeassistant.components.sensor`, so the old import failed with an `ImportError`. [#429](https://github.com/tinkerologie/ha-unifi-insights/issues/429)
 

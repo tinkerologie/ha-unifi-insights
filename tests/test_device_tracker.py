@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 from homeassistant.components.device_tracker import SourceType
 from homeassistant.const import STATE_HOME, STATE_NOT_HOME
+from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from unifi_official_api.exceptions import UniFiConnectionError
 
@@ -41,7 +42,6 @@ if TYPE_CHECKING:
 
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers import device_registry as dr
-    from homeassistant.helpers import entity_registry as er
 
     from custom_components.unifi_insights.coordinators.facade import FacadeData
 
@@ -745,6 +745,105 @@ class TestUnifiClientTracker:
         device_info = tracker.device_info
         assert device_info is not None
         assert device_info.get("manufacturer") == "Ubiquiti Inc."
+
+    def test_trackers_are_enabled_by_default(self, mock_coordinator: MagicMock) -> None:
+        """Opted-in client trackers stay enabled on Home Assistant 2026.11+."""
+        tracker = UnifiClientTracker(
+            coordinator=mock_coordinator, site_id="site1", mac="AA:BB:CC:DD:EE:FF"
+        )
+        assert tracker._attr_entity_registry_enabled_default is True
+
+    def test_grouped_tracker_follows_client_rename(
+        self, mock_coordinator: MagicMock
+    ) -> None:
+        """A tracker under its uplink takes the new client name itself."""
+        mock_coordinator.data = _with_client_fields(
+            mock_coordinator.data, "site1", "client1", uplinkDeviceId="ap1"
+        )
+        tracker = UnifiClientTracker(
+            coordinator=mock_coordinator, site_id="site1", mac="AA:BB:CC:DD:EE:FF"
+        )
+        assert tracker._attr_name == "Test Client"
+        mock_coordinator.data = _with_client_fields(
+            mock_coordinator.data, "site1", "client1", name="Renamed"
+        )
+
+        tracker._async_follow_client_rename()
+
+        assert tracker._attr_name == "Renamed"
+
+    def test_standalone_rename_updates_only_the_client_device(
+        self, mock_coordinator: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A standalone tracker renames its own client_ device, nothing else."""
+        registry = MagicMock()
+        monkeypatch.setattr(
+            "custom_components.unifi_insights.device_tracker.dr.async_get",
+            lambda _hass: registry,
+        )
+        tracker = UnifiClientTracker(
+            coordinator=mock_coordinator, site_id="site1", mac="AA:BB:CC:DD:EE:FF"
+        )
+        client_device = MagicMock(
+            id="device1", identifiers={(DOMAIN, "client_aa:bb:cc:dd:ee:ff")}
+        )
+        client_device.name = "Old name"
+        other_device = MagicMock(id="device2", identifiers={(DOMAIN, "site1_ap1")})
+        other_device.name = "Old name"
+        same_name = MagicMock(
+            id="device3", identifiers={(DOMAIN, "client_aa:bb:cc:dd:ee:ff")}
+        )
+        same_name.name = "Test Client"
+
+        # Not added to Home Assistant yet, no device, another device, same name.
+        tracker._async_follow_client_rename()
+        tracker.hass = MagicMock()
+        for device in (None, other_device, same_name):
+            tracker.device_entry = device
+            tracker._async_follow_client_rename()
+        registry.async_update_device.assert_not_called()
+
+        tracker.device_entry = client_device
+        tracker._async_follow_client_rename()
+
+        registry.async_update_device.assert_called_once_with(
+            "device1", name="Test Client"
+        )
+        assert tracker._attr_name is None
+
+    def test_absent_client_keeps_its_name(self, mock_coordinator: MagicMock) -> None:
+        """A client missing from the snapshot is not renamed."""
+        mock_coordinator.data = _with_client_fields(
+            mock_coordinator.data, "site1", "client1", uplinkDeviceId="ap1"
+        )
+        tracker = UnifiClientTracker(
+            coordinator=mock_coordinator, site_id="site1", mac="AA:BB:CC:DD:EE:FF"
+        )
+        mock_coordinator.data = _with_site_clients(mock_coordinator.data, "site1", {})
+
+        tracker._async_follow_client_rename()
+
+        assert tracker._attr_name == "Test Client"
+
+    def test_coordinator_update_follows_rename_then_writes_state(
+        self, mock_coordinator: MagicMock
+    ) -> None:
+        """Each coordinator update applies the rename before writing state."""
+        mock_coordinator.data = _with_client_fields(
+            mock_coordinator.data, "site1", "client1", uplinkDeviceId="ap1"
+        )
+        tracker = UnifiClientTracker(
+            coordinator=mock_coordinator, site_id="site1", mac="AA:BB:CC:DD:EE:FF"
+        )
+        mock_coordinator.data = _with_client_fields(
+            mock_coordinator.data, "site1", "client1", name="Renamed"
+        )
+        written: list[str | None] = []
+        tracker.async_write_ha_state = lambda: written.append(tracker._attr_name)  # type: ignore[method-assign]
+
+        tracker._handle_coordinator_update()
+
+        assert written == ["Renamed"]
 
 
 class TestGetClientType:
@@ -1754,3 +1853,112 @@ class TestEntityPlatformRestoration:
         state = hass.states.get(entity_id)
         assert state is not None
         assert state.state == STATE_HOME
+
+    @pytest.mark.asyncio
+    async def test_new_tracker_is_enabled_and_user_disabled_stays_disabled(
+        self,
+        hass: HomeAssistant,
+        entity_registry: er.EntityRegistry,
+        mock_config_entry: MockConfigEntry,
+        mock_network_client: MagicMock,
+        mock_protect_client: MagicMock,
+        *,
+        mock_local_auth: MagicMock,
+        enable_custom_integrations: None,
+    ) -> None:
+        """A newly discovered tracker is enabled; a user's disable is kept."""
+        new_mac = "aa:bb:cc:dd:ee:31"
+        disabled_mac = "aa:bb:cc:dd:ee:32"
+        mock_config_entry.add_to_hass(hass)
+        hass.config_entries.async_update_entry(
+            mock_config_entry, options={CONF_TRACK_WIFI_CLIENTS: True}
+        )
+        disabled = entity_registry.async_get_or_create(
+            "device_tracker",
+            DOMAIN,
+            f"{DOMAIN}_{disabled_mac}",
+            config_entry=mock_config_entry,
+            disabled_by=er.RegistryEntryDisabler.USER,
+        )
+        mock_network_client.sites.get_all.return_value = [
+            {"id": "default", "name": "Default"}
+        ]
+        mock_network_client.clients.get_all.return_value = [
+            {
+                "id": f"client_{mac[-2:]}",
+                "macAddress": mac,
+                "name": f"Phone {mac[-2:]}",
+                "type": "WIRELESS",
+                "connected": True,
+            }
+            for mac in (new_mac, disabled_mac)
+        ]
+
+        await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+        entity_id = entity_registry.async_get_entity_id(
+            "device_tracker", DOMAIN, f"{DOMAIN}_{new_mac}"
+        )
+        assert entity_id is not None
+        entry = entity_registry.async_get(entity_id)
+        assert entry is not None
+        assert entry.disabled_by is None
+        state = hass.states.get(entity_id)
+        assert state is not None
+        assert state.state == STATE_HOME
+
+        kept = entity_registry.async_get(disabled.entity_id)
+        assert kept is not None
+        assert kept.disabled_by is er.RegistryEntryDisabler.USER
+        assert hass.states.get(disabled.entity_id) is None
+
+    @pytest.mark.asyncio
+    async def test_controller_rename_updates_the_client_device(
+        self,
+        hass: HomeAssistant,
+        device_registry: dr.DeviceRegistry,
+        mock_config_entry: MockConfigEntry,
+        mock_network_client: MagicMock,
+        mock_protect_client: MagicMock,
+        *,
+        mock_local_auth: MagicMock,
+        enable_custom_integrations: None,
+    ) -> None:
+        """A rename on the controller renames the device; the user's name wins."""
+        mac = "aa:bb:cc:dd:ee:33"
+        mock_config_entry.add_to_hass(hass)
+        hass.config_entries.async_update_entry(
+            mock_config_entry, options={CONF_TRACK_WIFI_CLIENTS: True}
+        )
+        client = {
+            "id": "client_33",
+            "macAddress": mac,
+            "name": "Old Phone",
+            "type": "WIRELESS",
+            "connected": True,
+        }
+        mock_network_client.sites.get_all.return_value = [
+            {"id": "default", "name": "Default"}
+        ]
+        mock_network_client.clients.get_all.return_value = [client]
+        await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+        identifier = (DOMAIN, f"client_{mac}")
+        device = device_registry.async_get_device_by_identifier(
+            identifier=identifier, config_entry_id=mock_config_entry.entry_id
+        )
+        assert device is not None
+        assert device.name == "Old Phone"
+        device_registry.async_update_device(device.id, name_by_user="My Phone")
+
+        mock_network_client.clients.get_all.return_value = [
+            {**client, "name": "New Phone"}
+        ]
+        await mock_config_entry.runtime_data.device_coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+        renamed = device_registry.async_get(device.id)
+        assert renamed is not None
+        assert renamed.name == "New Phone"
+        assert renamed.name_by_user == "My Phone"

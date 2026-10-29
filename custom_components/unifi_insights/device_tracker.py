@@ -320,6 +320,11 @@ class UnifiClientTracker(
     """Representation of a UniFi network client."""
 
     _attr_has_entity_name = True
+    # Home Assistant 2026.11 creates every ScannerEntity disabled; before, a
+    # tracker with device info was created enabled. Client tracking is off
+    # until the user turns it on for a connection type, so the trackers it
+    # creates stay enabled. A tracker the user disabled stays disabled.
+    _attr_entity_registry_enabled_default = True
 
     def __init__(
         self,
@@ -371,6 +376,7 @@ class UnifiClientTracker(
         # lands on the standalone-client device below and only settles under its
         # uplink on the next reload after the client reconnects.
         uplink_device_id = get_field(client_data, "uplinkDeviceId", "uplink_device_id")
+        self._standalone = not uplink_device_id
         if uplink_device_id:
             # Grouped under the uplink AP/switch. That device is not this
             # client, so the entity carries the client's own name and
@@ -397,6 +403,39 @@ class UnifiClientTracker(
                 model=model,
             )
             self._attr_name = None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Follow a client renamed on the controller, then write the state."""
+        self._async_follow_client_rename()
+        super()._handle_coordinator_update()
+
+    @callback
+    def _async_follow_client_rename(self) -> None:
+        """
+        Apply the controller's current client name without a reload.
+
+        A grouped tracker carries the client name itself; the uplink device
+        is not the client and is never renamed. A standalone tracker has no
+        name of its own, so its `client_` device is renamed instead. Only the
+        device's `name` changes: a name the user gave it (`name_by_user`) wins.
+        An absent client keeps its last name.
+        """
+        name = get_field(self._get_client_data() or {}, "name", "hostname")
+        if not name:
+            return
+        if not self._standalone:
+            self._attr_name = name
+            return
+        device = self.device_entry
+        if (
+            self.hass is None
+            or device is None
+            or device.name == name
+            or (DOMAIN, f"client_{self._mac}") not in device.identifiers
+        ):
+            return
+        dr.async_get(self.hass).async_update_device(device.id, name=name)
 
     @property
     def unique_id(self) -> str | None:

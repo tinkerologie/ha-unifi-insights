@@ -125,6 +125,8 @@ To change these settings after setup, go to **Settings** → **Devices & service
 | Enable Client Control | On      | Creates client allow/block switches, reconnect buttons and disabled-by-default Wake-on-LAN buttons for wired clients. Turn off for read-only monitoring.                           |
 | Sites                 | All     | Only shown when the console has more than one site. Choose the sites to poll. Sites you don't choose are not queried at all, which reduces API traffic. Leave empty for all sites. |
 
+Client trackers are created enabled, also on Home Assistant 2026.11 and later, which otherwise creates network-scanner trackers disabled. A tracker you disable stays disabled. When a client is renamed on the controller, the integration follows the new name on the next poll. It renames the client's own device when the tracker has one; a name you gave that device in Home Assistant is kept. When the tracker sits under its access point or switch, only the tracker is renamed.
+
 Carrier Fabric entries have their own options. See [Carrier Fabric setup](#carrier-fabric-setup).
 
 ## UniFi Network
