@@ -16,11 +16,14 @@ import re
 
 DOMAIN = "unifi_insights"
 
-# Matches the frame helper's "Detected that custom integration '<domain>' ..."
-# and the deprecation helpers' "The deprecated constant X was used from <domain>."
+# Matches the frame helper's "Detected that custom integration '<domain>' ...",
+# the deprecation helpers' "The deprecated constant X was used from <domain>.",
+# and their "custom_components.<domain>.<module>::<Class> provides the deprecated
+# <name>, ..." for an entity class that still defines a deprecated attribute.
 _REPORT_PATTERN = re.compile(
     rf"Detected that (?:custom )?integration '{DOMAIN}' "
     rf"|The deprecated .+ was \w+ from {DOMAIN}\."
+    rf"|custom_components\.{DOMAIN}(?:\.\w+)*::\S+ provides the deprecated "
 )
 
 

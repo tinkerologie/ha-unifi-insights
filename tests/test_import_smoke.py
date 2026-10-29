@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from .fixtures.deprecations import HANDLER as DEPRECATION_REPORTS
+from .fixtures.deprecations import DeprecationReportHandler
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -109,3 +111,59 @@ def test_deprecations_reports_and_import_errors_fail(
     assert "import smoke_ns.fake_integration.broken failed" in out
     assert "ignored third-party DeprecationWarning: library internals" in out
     assert "not a deprecation" not in out
+
+
+REPORTS = {
+    "frame helper": "Detected that custom integration 'unifi_insights' uses X",
+    "deprecated constant": "The deprecated constant X was used from unifi_insights.",
+    "deprecated entity attribute": (
+        "custom_components.unifi_insights.climate::UnifiInsightsClimate provides "
+        "the deprecated temperature_unit, this will stop working in Home Assistant "
+        "2027.11, use native_temperature_unit instead, please report it"
+    ),
+}
+NOT_REPORTS = {
+    "other integration": "Detected that custom integration 'other' uses X",
+    "other entity class": (
+        "custom_components.other.sensor::OtherSensor provides the deprecated x"
+    ),
+    "domain prefix": (
+        "custom_components.unifi_insights_extra.sensor::Extra provides the deprecated x"
+    ),
+}
+
+
+def _handlers(smoke: Any) -> list[Any]:
+    return [smoke.ReportHandler(), DeprecationReportHandler()]
+
+
+def _emit(handler: logging.Handler, message: str) -> None:
+    handler.emit(
+        logging.LogRecord(
+            "homeassistant.helpers.deprecation",
+            logging.WARNING,
+            __file__,
+            1,
+            message,
+            None,
+            None,
+        )
+    )
+
+
+@pytest.mark.parametrize("message", REPORTS.values(), ids=REPORTS.keys())
+def test_report_patterns_match_every_home_assistant_format(
+    smoke: Any, message: str
+) -> None:
+    """The smoke script and the test fixture both keep each report format."""
+    for handler in _handlers(smoke):
+        _emit(handler, message)
+        assert handler.reports == [f"homeassistant.helpers.deprecation: {message}"]
+
+
+@pytest.mark.parametrize("message", NOT_REPORTS.values(), ids=NOT_REPORTS.keys())
+def test_report_patterns_ignore_other_integrations(smoke: Any, message: str) -> None:
+    """Reports about another integration are not attributed to this one."""
+    for handler in _handlers(smoke):
+        _emit(handler, message)
+        assert handler.reports == []
