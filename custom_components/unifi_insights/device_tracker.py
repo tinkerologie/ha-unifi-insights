@@ -450,7 +450,7 @@ class UnifiClientTracker(
         """
         return self._attr_unique_id
 
-    @property  # type: ignore[misc]
+    @property  # type: ignore[misc, unused-ignore]
     def device_info(self) -> DeviceInfo:
         """Return device info."""
         return self._device_info

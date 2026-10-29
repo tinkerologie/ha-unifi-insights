@@ -283,8 +283,16 @@ async def test_innerspace_placement_sensor_discovery_and_device_correlation(
     inv_sensor.hass = hass
     inv_sensor.entity_id = reg_entry.entity_id
 
-    # When target Protect device is not yet in dev_reg, _reconcile_device_association
-    # creates it via async_get_or_create and updates entity_registry
+    # The Protect platform registered the camera already. Reconciliation moves
+    # the entity to it and must leave the camera's own metadata alone.
+    camera_dev = dev_reg.async_get_or_create(
+        config_entry_id=real_entry.entry_id,
+        identifiers={(DOMAIN, "protect_camera_cam-1")},
+        name="Front Door",
+        manufacturer="Ubiquiti",
+        model="G5 Bullet",
+        serial_number="CAM-SERIAL",
+    )
     inv_record = {
         **innerspace["devices"]["is-inv-1"],
         "placement_state": "other",
@@ -310,7 +318,13 @@ async def test_innerspace_placement_sensor_discovery_and_device_correlation(
         config_entry_id=real_entry.entry_id,
         identifiers={(DOMAIN, "protect_camera_cam-1")},
     )
-    assert updated_entry.device_id == protect_dev.id
+    assert updated_entry.device_id == protect_dev.id == camera_dev.id
+    assert (
+        protect_dev.name,
+        protect_dev.manufacturer,
+        protect_dev.model,
+        protect_dev.serial_number,
+    ) == ("Front Door", "Ubiquiti", "G5 Bullet", "CAM-SERIAL")
 
     # When record disappears from snapshot, fallback to innerspace_<id>
     mock_coordinator.data = with_sections(
@@ -398,11 +412,9 @@ def test_innerspace_entity_and_discovery_edge_cases(
         mock_er = MagicMock()
         mock_er.async_get.return_value = None
         mp.setattr(er, "async_get", lambda _hass: mock_er)
-        sensor._reconcile_device_association(sensor.device_info)
-        sensor._attr_device_info = {"identifiers": {(DOMAIN, "old")}}  # type: ignore[typeddict-item]
-        sensor._reconcile_device_association(
-            {"identifiers": {(DOMAIN, "new")}}  # type: ignore[typeddict-item]
-        )
+        sensor._reconcile_device_association(sensor._build_device_fields())
+        sensor._set_device_fields({"identifiers": {(DOMAIN, "old")}})
+        sensor._reconcile_device_association({"identifiers": {(DOMAIN, "new")}})
 
     # Non-dict innerspace and non-dict devices in innerspace_record property
     mock_coordinator.data = with_sections(mock_coordinator.data, innerspace="invalid")

@@ -34,7 +34,7 @@ If not provided, ask for:
 
 ### 4. Check Device Registry & Stale Device Cleanup (HA 2026.8–2026.10+)
 
-- Ensure device lookups use `dev_reg.async_get_device_by_identifier(entry.entry_id, (DOMAIN, device_id))` or `dr.async_entries_for_config_entry(dev_reg, entry.entry_id)`.
+- Ensure device lookups use `dev_reg.async_get_device_by_identifier((DOMAIN, device_id), entry.entry_id)` or `dr.async_entries_for_config_entry(dev_reg, entry.entry_id)`.
 - Verify code checks `device.config_entry_id` (not deprecated `device.config_entries` or `device.primary_config_entry`) and does not call dict methods on `dev_reg.devices`.
 - Verify child devices use `via_device_id` rather than deprecated `via_device`.
 

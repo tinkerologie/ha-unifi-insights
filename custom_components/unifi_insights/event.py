@@ -12,6 +12,7 @@ from homeassistant.components.event import (
 )
 from homeassistant.const import EntityCategory
 from homeassistant.core import callback
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -400,12 +401,12 @@ class UnifiProtectDoorbellEventEntity(
         self._attr_unique_id = f"{DOMAIN}_camera_{device_id}_doorbell_event"
 
         # Set device info
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, f"protect_camera_{device_id}")},
-            "name": camera_name,
-            "manufacturer": MANUFACTURER,
-            "model": camera_data.get("type", "UniFi Camera"),
-        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"protect_camera_{device_id}")},
+            name=camera_name,
+            manufacturer=MANUFACTURER,
+            model=camera_data.get("type", "UniFi Camera"),
+        )
 
     @property
     def available(self) -> bool:
@@ -481,12 +482,12 @@ class UnifiProtectSmartDetectEventEntity(
         self._attr_unique_id = f"{DOMAIN}_camera_{device_id}_smart_detect_event"
 
         # Set device info
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, f"protect_camera_{device_id}")},
-            "name": camera_name,
-            "manufacturer": MANUFACTURER,
-            "model": camera_data.get("type", "UniFi Camera"),
-        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"protect_camera_{device_id}")},
+            name=camera_name,
+            manufacturer=MANUFACTURER,
+            model=camera_data.get("type", "UniFi Camera"),
+        )
 
     @property
     def available(self) -> bool:
@@ -571,12 +572,12 @@ class UnifiProtectSensorEventEntity(
         self._attr_unique_id = f"{DOMAIN}_sensor_{device_id}_event"
 
         # Set device info
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, f"protect_sensor_{device_id}")},
-            "name": sensor_name,
-            "manufacturer": MANUFACTURER,
-            "model": sensor_data.get("type", "UniFi Sensor"),
-        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"protect_sensor_{device_id}")},
+            name=sensor_name,
+            manufacturer=MANUFACTURER,
+            model=sensor_data.get("type", "UniFi Sensor"),
+        )
 
     @property
     def available(self) -> bool:

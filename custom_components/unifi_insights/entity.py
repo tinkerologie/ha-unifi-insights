@@ -289,7 +289,7 @@ class UnifiInsightsEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         ):
             device_info["suggested_area"] = "Network"
 
-        self._attr_device_info = DeviceInfo(**device_info)  # type: ignore[typeddict-item]
+        self._attr_device_info = DeviceInfo(**device_info)  # type: ignore[typeddict-item, unused-ignore]
 
     @property
     def available(self) -> bool:
@@ -490,7 +490,7 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
                 "Created new device info for %s device %s", device_type, device_id
             )
 
-        self._attr_device_info = DeviceInfo(**device_info)  # type: ignore[typeddict-item]
+        self._attr_device_info = DeviceInfo(**device_info)  # type: ignore[typeddict-item, unused-ignore]
 
     @property
     def available(self) -> bool:
@@ -559,7 +559,7 @@ class UnifiSiteEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         self._site_id = site_id
         self._attr_unique_id = unique_id
         self._attr_device_info = DeviceInfo(
-            **build_site_device_info(coordinator.data, site_id)  # type: ignore[typeddict-item]
+            **build_site_device_info(coordinator.data, site_id)  # type: ignore[typeddict-item, unused-ignore]
         )
 
 
@@ -740,15 +740,28 @@ def async_discover_access_entities(
 # Base entity classes for UniFi Carrier Fabric integration.
 
 
+def carrier_organisation_device_fields(
+    entry: CarrierFabricConfigEntry,
+) -> dict[str, Any]:
+    """
+    Return the fields of the service device that groups an organisation.
+
+    A plain dict, so setup can pass it to ``async_get_or_create`` as keyword
+    arguments: ``DeviceInfo`` is a dataclass from Home Assistant 2026.11.
+    """
+    return {
+        "identifiers": {(DOMAIN, entry.unique_id or entry.entry_id)},
+        "name": "UniFi Carrier Fabric",
+        "manufacturer": "Ubiquiti",
+        "model": "Carrier Fabric",
+        "entry_type": DeviceEntryType.SERVICE,
+    }
+
+
 def carrier_organisation_device_info(entry: CarrierFabricConfigEntry) -> DeviceInfo:
     """Return the service device that groups an organisation's entities."""
-    return DeviceInfo(
-        identifiers={(DOMAIN, entry.unique_id or entry.entry_id)},
-        name="UniFi Carrier Fabric",
-        manufacturer="Ubiquiti",
-        model="Carrier Fabric",
-        entry_type=DeviceEntryType.SERVICE,
-    )
+    device_info: DeviceInfo = DeviceInfo(**carrier_organisation_device_fields(entry))  # type: ignore[typeddict-item, unused-ignore]
+    return device_info
 
 
 class UnifiCarrierFabricEntity(
@@ -843,7 +856,7 @@ class UnifiInnerSpaceEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         self.entity_description = description
         self._record_id = record_id
         self._attr_unique_id = f"innerspace_{record_id}_{description.key}"
-        self._attr_device_info = self._build_device_info()
+        self._set_device_fields(self._build_device_fields())
 
     @property
     def innerspace_record(self) -> dict[str, Any] | None:
@@ -857,13 +870,15 @@ class UnifiInnerSpaceEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         record = devices.get(self._record_id)
         return record if isinstance(record, dict) else None
 
-    def _build_device_info(self) -> DeviceInfo:
+    def _build_device_fields(self) -> dict[str, Any]:
         """
-        Build device info for an InnerSpace record.
+        Build the device fields for an InnerSpace record.
 
         Attaches to an existing Network or Protect device when MAC correlation
         is unambiguous, or creates a standalone InnerSpace device otherwise.
-        Does not set ``suggested_area`` from floor-plan names.
+        Does not set ``suggested_area`` from floor-plan names. The fields stay
+        a plain dict because reconciliation reads them again; ``DeviceInfo``
+        is a dataclass from Home Assistant 2026.11.
         """
         record = self.innerspace_record or {}
         matched_domain = record.get("matched_domain")
@@ -904,32 +919,33 @@ class UnifiInnerSpaceEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
             or record.get("model")
             or f"UniFi InnerSpace Device {self._record_id}"
         )
-        device_info: DeviceInfo = {
+        fields: dict[str, Any] = {
             "identifiers": {(DOMAIN, f"innerspace_{self._record_id}")},
             "name": str(name),
             "manufacturer": MANUFACTURER,
             "model": record.get("model") or "UniFi InnerSpace Device",
         }
         if serial := record.get("serial"):
-            device_info["serial_number"] = str(serial)
+            fields["serial_number"] = str(serial)
+        return fields
+
+    def _set_device_fields(self, fields: dict[str, Any]) -> DeviceInfo:
+        """Keep the fields and the device info built from them together."""
+        self._device_fields = fields
+        device_info: DeviceInfo = DeviceInfo(**fields)  # type: ignore[typeddict-item, unused-ignore]
+        self._attr_device_info = device_info
         return device_info
 
     @property
     def device_info(self) -> DeviceInfo:
         """Return current device info reflecting any updated MAC correlation."""
-        device_info = self._build_device_info()
-        self._attr_device_info = device_info
-        return device_info
+        return self._set_device_fields(self._build_device_fields())
 
-    def _reconcile_device_association(self, new_device_info: DeviceInfo) -> None:
+    def _reconcile_device_association(self, new_fields: dict[str, Any]) -> None:
         """Reconcile entity registry device_id when MAC correlation changes."""
-        old_identifiers = (
-            self._attr_device_info.get("identifiers")
-            if self._attr_device_info
-            else None
-        )
-        new_identifiers = new_device_info.get("identifiers")
-        self._attr_device_info = new_device_info
+        old_identifiers = self._device_fields.get("identifiers")
+        new_identifiers = new_fields.get("identifiers")
+        self._set_device_fields(new_fields)
         if (
             old_identifiers == new_identifiers
             or not new_identifiers
@@ -942,13 +958,21 @@ class UnifiInnerSpaceEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         if ent_reg.async_get(self.entity_id) is None:
             return
         dev_reg = dr.async_get(self.hass)
+        # Pass only the fields that are set: an explicit None clears a field,
+        # and a matched Network or Protect device keeps its own metadata.
         device = dev_reg.async_get_or_create(
             config_entry_id=self.coordinator.config_entry.entry_id,
-            identifiers=new_identifiers,
-            name=new_device_info.get("name"),
-            manufacturer=new_device_info.get("manufacturer"),
-            model=new_device_info.get("model"),
-            serial_number=new_device_info.get("serial_number"),
+            **{
+                key: new_fields[key]
+                for key in (
+                    "identifiers",
+                    "name",
+                    "manufacturer",
+                    "model",
+                    "serial_number",
+                )
+                if key in new_fields
+            },
         )
         ent_reg.async_update_entity(self.entity_id, device_id=device.id)
 
@@ -963,8 +987,7 @@ class UnifiInnerSpaceEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        new_device_info = self._build_device_info()
-        self._reconcile_device_association(new_device_info)
+        self._reconcile_device_association(self._build_device_fields())
         self.async_write_ha_state()
 
 
@@ -976,15 +999,29 @@ _DEFAULT_ROUTER_NAME = "UniFi Mobile Router"
 _WORKSPACE_MODEL = "UniFi Mobility workspace"
 
 
+def mobility_workspace_device_fields(
+    workspace_id: str, name: str | None
+) -> dict[str, Any]:
+    """
+    Return the fields of the service device that groups a workspace's routers.
+
+    A plain dict, so discovery can pass it to ``async_get_or_create`` as
+    keyword arguments: ``DeviceInfo`` is a dataclass from Home Assistant 2026.11.
+    """
+    return {
+        "identifiers": {(DOMAIN, f"{MOBILITY_WORKSPACE_PREFIX}{workspace_id}")},
+        "name": name or _WORKSPACE_MODEL,
+        "manufacturer": MANUFACTURER,
+        "model": _WORKSPACE_MODEL,
+        "entry_type": DeviceEntryType.SERVICE,
+    }
+
+
 def mobility_workspace_device_info(workspace_id: str, name: str | None) -> DeviceInfo:
     """Return the service device that groups a workspace's routers."""
-    return DeviceInfo(
-        identifiers={(DOMAIN, f"{MOBILITY_WORKSPACE_PREFIX}{workspace_id}")},
-        name=name or _WORKSPACE_MODEL,
-        manufacturer=MANUFACTURER,
-        model=_WORKSPACE_MODEL,
-        entry_type=DeviceEntryType.SERVICE,
-    )
+    fields = mobility_workspace_device_fields(workspace_id, name)
+    device_info: DeviceInfo = DeviceInfo(**fields)  # type: ignore[typeddict-item, unused-ignore]
+    return device_info
 
 
 class UnifiMobilityRouterEntity(CoordinatorEntity[UnifiInsightsMobilityCoordinator]):
@@ -1057,7 +1094,7 @@ def async_add_mobility_router_entities(
             workspace = coordinator.data["workspaces"].get(workspace_id) or {}
             workspace_device = device_registry.async_get_or_create(
                 config_entry_id=entry.entry_id,
-                **mobility_workspace_device_info(workspace_id, workspace.get("name")),
+                **mobility_workspace_device_fields(workspace_id, workspace.get("name")),
             )
             entities.extend(build(device_id, workspace_device.id))
         if entities:

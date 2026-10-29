@@ -121,7 +121,7 @@ class UnifiNetworkDeviceUpdate(
         if mac:
             device_info["connections"] = {(CONNECTION_NETWORK_MAC, mac)}
 
-        self._attr_device_info = DeviceInfo(**device_info)  # type: ignore[typeddict-item]
+        self._attr_device_info = DeviceInfo(**device_info)  # type: ignore[typeddict-item, unused-ignore]
 
     @property
     def available(self) -> bool:

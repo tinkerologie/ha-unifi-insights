@@ -42,7 +42,7 @@ pytest --cov-report=xml && python script/check_coverage_per_file.py coverage.xml
 - When asserting device registry entries:
   - Check `device_entry.config_entry_id == entry.entry_id` (single config entry per device; never check `config_entries` or `primary_config_entry`).
   - Check `device_entry.via_device_id` (not `via_device`).
-  - Look up devices via `dev_reg.async_get_device_by_identifier(entry.entry_id, (DOMAIN, device_id))`.
+  - Look up devices via `dev_reg.async_get_device_by_identifier((DOMAIN, device_id), entry.entry_id)`.
   - Check `device_entry.area_id` (never `device_entry.suggested_area`, which was removed in HA 2026.9).
 - When asserting service action errors:
   - Verify `pytest.raises(ServiceValidationError)` or `pytest.raises(HomeAssistantError)` and assert `err.value.translation_domain == DOMAIN` and `err.value.translation_key == "..."`.

@@ -707,7 +707,7 @@ class UnifiClientWakeButton(
             self._attr_device_info = device_info
         elif site_id:
             site_info = build_site_device_info(coordinator.data, site_id)
-            self._attr_device_info = DeviceInfo(**site_info)  # type: ignore[typeddict-item]
+            self._attr_device_info = DeviceInfo(**site_info)  # type: ignore[typeddict-item, unused-ignore]
         self.async_update_history_name(fallback_name)
 
     @callback

@@ -110,7 +110,7 @@ from .entity import (
     UnifiProtectEntity,
     UnifiSiteEntity,
     async_add_mobility_router_entities,
-    carrier_organisation_device_info,
+    carrier_organisation_device_fields,
     device_has_feature,
     first_not_none,
     get_field,
@@ -3637,7 +3637,7 @@ async def async_setup_carrier_fabric_sensors(
         dr.async_get(hass)
         .async_get_or_create(
             config_entry_id=config_entry.entry_id,
-            **carrier_organisation_device_info(config_entry),
+            **carrier_organisation_device_fields(config_entry),
         )
         .id
     )
