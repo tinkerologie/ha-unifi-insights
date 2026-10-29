@@ -211,6 +211,36 @@ def test_main_without_outputs(
     assert "Thing is deprecated" in capsys.readouterr().out
 
 
+def test_unreachable_post_is_reported_and_the_rest_still_read(
+    blog: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A failed post fetch keeps the other posts and fails after writing outputs."""
+    monkeypatch.setattr(blog, "datetime", _FrozenDatetime)
+    available = pages(blog)
+
+    def fetch(url: str) -> str:
+        if url == "https://blog/feature":
+            message = "timed out"
+            raise TimeoutError(message)
+        return available[url]
+
+    report = tmp_path / "report.json"
+    summary = tmp_path / "summary.md"
+    result = blog.main(["--json", str(report), "--summary", str(summary)], fetch=fetch)
+
+    assert result == 1
+    data = {entry["link"]: entry for entry in json.loads(report.read_text())}
+    assert data["https://blog/new"]["announces_change"]
+    assert data["https://blog/new"]["error"] is None
+    assert data["https://blog/feature"]["error"] == "TimeoutError: timed out"
+    assert not data["https://blog/feature"]["actionable"]
+    assert "fetch failed: TimeoutError: timed out" in summary.read_text()
+    assert "Could not read https://blog/feature" in capsys.readouterr().err
+
+
 def test_fetch_url_sends_user_agent(blog: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """Requests identify the watcher and decode the body as text."""
     seen: dict[str, Any] = {}

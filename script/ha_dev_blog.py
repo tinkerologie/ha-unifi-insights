@@ -66,6 +66,7 @@ class Post:
     summary: str
     announces_change: bool = False
     matches: dict[str, list[str]] = field(default_factory=dict)
+    error: str | None = None
 
     @property
     def actionable(self) -> bool:
@@ -176,7 +177,12 @@ def recent_posts(
         if datetime.fromisoformat(post.published) >= cutoff
     ]
     for post in posts:
-        page = fetch(post.link)
+        # One unreachable post must not hide the others; main reports it.
+        try:
+            page = fetch(post.link)
+        except OSError as err:
+            post.error = f"{type(err).__name__}: {err}"
+            continue
         post.announces_change = announces_change(page)
         post.matches = find_usages(changed_identifiers(page), package_dir)
     return posts
@@ -192,6 +198,11 @@ def render_summary(posts: Sequence[Post], days: int) -> str:
         "| --- | --- | --- |",
     ]
     for post in posts:
+        if post.error:
+            lines.append(
+                f"| [{post.title}]({post.link}) | fetch failed: {post.error} | |"
+            )
+            continue
         flag = "yes" if post.announces_change else "no"
         used = ", ".join(f"`{name}`" for name in post.matches) or "none"
         marker = " **(issue)**" if post.actionable else ""
@@ -229,7 +240,9 @@ def render_issue(post: Post) -> str:
 def main(argv: Sequence[str] | None = None, *, fetch: Fetch = fetch_url) -> int:
     """Run the command-line interface."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--days", type=int, default=8, help="Look-back window")
+    # Three weeks: a weekly run still catches up after two missed runs, and
+    # the workflow never opens a second issue for a post.
+    parser.add_argument("--days", type=int, default=22, help="Look-back window")
     parser.add_argument("--json", type=Path, help="Write the report as JSON here")
     parser.add_argument("--summary", type=Path, help="Append a Markdown summary here")
     args = parser.parse_args(argv)
@@ -246,7 +259,11 @@ def main(argv: Sequence[str] | None = None, *, fetch: Fetch = fetch_url) -> int:
         with args.summary.open("a", encoding="utf-8") as handle:
             handle.write(summary)
     print(summary)
-    return 0
+    # Fail after writing the report, so issues still open for the posts read.
+    failed = [post for post in posts if post.error]
+    for post in failed:
+        print(f"Could not read {post.link}: {post.error}", file=sys.stderr)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

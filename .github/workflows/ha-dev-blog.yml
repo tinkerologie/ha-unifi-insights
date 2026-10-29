@@ -14,7 +14,7 @@ on:
       days:
         description: Look-back window in days
         required: false
-        default: "8"
+        default: "22"
 
 permissions:
   contents: read
@@ -35,14 +35,18 @@ jobs:
         with:
           persist-credentials: false
 
+      # Three weeks, so a run catches up after two missed weekly runs.
       - name: Match recent posts against the integration
         env:
-          DAYS: ${{ inputs.days || '8' }}
+          DAYS: ${{ inputs.days || '22' }}
         run: |
           python3 script/ha_dev_blog.py --days "$DAYS" --json report.json \
             --summary "$GITHUB_STEP_SUMMARY"
 
+      # Runs when some post pages failed too: the report covers the others,
+      # and the failed scan step still fails the job.
       - name: Open an issue per actionable post
+        if: ${{ !cancelled() && hashFiles('report.json') != '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
