@@ -149,13 +149,23 @@ jobs:
           SMOKE: ${{ steps.smoke.outcome }}
           TESTS: ${{ steps.tests.outcome }}
           HASSFEST: ${{ steps.hassfest.outcome }}
+          JOB_STATUS: ${{ job.status }}
         run: |
+          # A check that never ran fails too: a step that stops the job, such as
+          # resolving the version, skips every check after it. Only the tests
+          # may be skipped, and only when no matching harness exists.
           status=success
-          for outcome in "$INSTALL" "$SMOKE" "$TESTS" "$HASSFEST"; do
-            if [[ "$outcome" != success && "$outcome" != skipped ]]; then
+          if [[ "$JOB_STATUS" != success ]]; then
+            status=failure
+          fi
+          for outcome in "$INSTALL" "$SMOKE" "$HASSFEST"; do
+            if [[ "$outcome" != success ]]; then
               status=failure
             fi
           done
+          if [[ "$HARNESS" == true && "$TESTS" != success ]]; then
+            status=failure
+          fi
           if [[ "$HARNESS" == true ]]; then
             tests="$TESTS"
           else
