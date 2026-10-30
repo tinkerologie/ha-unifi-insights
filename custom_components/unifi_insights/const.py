@@ -133,6 +133,11 @@ SCAN_INTERVAL_ACCESS = timedelta(seconds=30)
 # Scan intervals for multi-coordinator architecture (Platinum compliance)
 # Device coordinator - fast updates for status, stats (30 seconds)
 SCAN_INTERVAL_DEVICE = timedelta(seconds=30)
+# Access point radio settings (a per-device details call) change rarely, so
+# they are fetched far less often than the statistics they accompany. A failed
+# attempt waits the same interval before it retries, so rate limiting or an
+# offline console is not hammered once per statistics poll (#454).
+SCAN_INTERVAL_DEVICE_DETAILS = timedelta(minutes=5)
 # Config coordinator - slow updates for sites, WiFi config (5 minutes)
 SCAN_INTERVAL_CONFIG = timedelta(minutes=5)
 SCAN_INTERVAL_INNERSPACE = timedelta(minutes=5)

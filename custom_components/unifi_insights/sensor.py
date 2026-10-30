@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable, Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, TypeIs, cast
+from typing import TYPE_CHECKING, Any, Final, Literal, TypeIs, cast
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -22,6 +22,7 @@ from homeassistant.const import (
     UnitOfDataRate,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
+    UnitOfFrequency,
     UnitOfInformation,
     UnitOfPower,
     UnitOfTemperature,
@@ -70,6 +71,9 @@ from .const import (
 from .coordinators import UnifiInsightsFacadeCoordinator
 from .coordinators.mobility import UnifiInsightsMobilityCoordinator
 from .data_transforms import (
+    RADIO_BAND_LABELS,
+    RADIO_TX_POWER_MODE_OPTIONS,
+    RADIO_WLAN_STANDARD_OPTIONS,
     THREAD_DEVICE_TYPES,
     NetworkDeviceFacts,
     _field,
@@ -86,11 +90,19 @@ from .data_transforms import (
     nested_dict,
     network_device,
     network_device_stats,
+    network_radio_details,
+    network_radio_stats,
     normalize_nvr_storage,
     owner_available,
     parse_timestamp,
     present_attributes,
     protect_collection,
+    radio_band_map,
+    radio_channel,
+    radio_channel_width,
+    radio_tx_power_mode,
+    radio_tx_retries,
+    radio_wlan_standard,
     rule_record,
     section_by_site,
     site_section,
@@ -1357,6 +1369,14 @@ async def async_setup_entry(
                     known_sensor_keys,
                     entities=entities,
                 )
+                _discover_radio_sensors(
+                    coordinator,
+                    site_id,
+                    device_id,
+                    device_data,
+                    known_sensor_keys,
+                    entities=entities,
+                )
                 _discover_outlet_sensors(
                     coordinator,
                     site_id,
@@ -2590,6 +2610,176 @@ def discover_storage_sensors(
                 )
             )
     return entities
+
+
+# --- Access point radios ----------------------------------------------------
+#
+# One sensor family per radio of an access point (#454), following the port
+# and storage sub-item pattern. Step-1 sensors read the latest statistics the
+# coordinator already fetches; step-2 sensors read the throttled per-device
+# details record and go unavailable while its last request failed.
+
+
+@dataclass(frozen=True, kw_only=True)
+class UnifiRadioSensorEntityDescription(SensorEntityDescription):
+    """Describes one reading of one access point radio."""
+
+    # Which published section the radio is read from.
+    source: Literal["stats", "details"]
+    value_fn: Callable[[Mapping[str, Any]], StateType]
+
+
+RADIO_STATS_SENSOR_TYPES: tuple[UnifiRadioSensorEntityDescription, ...] = (
+    UnifiRadioSensorEntityDescription(
+        key="radio_tx_retries",
+        translation_key="radio_tx_retries",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        source="stats",
+        value_fn=radio_tx_retries,
+    ),
+)
+
+# Radio settings rarely change, so these are diagnostic and start disabled.
+RADIO_DETAILS_SENSOR_TYPES: tuple[UnifiRadioSensorEntityDescription, ...] = (
+    UnifiRadioSensorEntityDescription(
+        key="radio_tx_power_mode",
+        translation_key="radio_tx_power_mode",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(RADIO_TX_POWER_MODE_OPTIONS),
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        source="details",
+        value_fn=radio_tx_power_mode,
+    ),
+    UnifiRadioSensorEntityDescription(
+        key="radio_wlan_standard",
+        translation_key="radio_wlan_standard",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(RADIO_WLAN_STANDARD_OPTIONS),
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        source="details",
+        value_fn=radio_wlan_standard,
+    ),
+    UnifiRadioSensorEntityDescription(
+        key="radio_channel",
+        translation_key="radio_channel",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        source="details",
+        value_fn=radio_channel,
+    ),
+    UnifiRadioSensorEntityDescription(
+        key="radio_channel_width",
+        translation_key="radio_channel_width",
+        native_unit_of_measurement=UnitOfFrequency.MEGAHERTZ,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        source="details",
+        value_fn=radio_channel_width,
+    ),
+)
+
+
+class UnifiRadioSensor(UnifiInsightsEntity, SensorEntity):
+    """One reading of one radio of a UniFi access point."""
+
+    entity_description: UnifiRadioSensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsFacadeCoordinator,
+        description: UnifiRadioSensorEntityDescription,
+        site_id: str,
+        device_id: str,
+        *,
+        band: str,
+    ) -> None:
+        """Initialize the radio sensor."""
+        super().__init__(coordinator, description, site_id, device_id)
+        self._band = band
+        # The {band} placeholder of the per-radio translation strings, such as
+        # "Wi-Fi 5 GHz TX retries".
+        self._attr_translation_placeholders = {"band": RADIO_BAND_LABELS[band]}
+        # The band slug is the stable key: it does not move when the channel,
+        # the power mode or a label changes.
+        self._attr_unique_id = f"{site_id}_{device_id}_radio_{band}_{description.key}"
+
+    def _radio_record(self) -> Mapping[str, Any] | None:
+        """
+        Return this radio's record from the current snapshot, or None.
+
+        A step-2 radio is only readable while the last details request
+        succeeded: the coordinator keeps its previous radios through a failure
+        but marks the record unavailable, so the sensors drop to unavailable
+        instead of freezing on an old value.
+        """
+        if self.entity_description.source == "stats":
+            radios = network_radio_stats(
+                self.coordinator.data, self._site_id, self._device_id
+            )
+            return None if radios is None else radios.get(self._band)
+        details = network_radio_details(
+            self.coordinator.data, self._site_id, self._device_id
+        )
+        if details is None or details.get("available") is not True:
+            return None
+        return radio_band_map(details.get("radios")).get(self._band)
+
+    @property
+    def available(self) -> bool:
+        """Return False once the radio is gone or its details are stale."""
+        return bool(super().available and self._radio_record() is not None)
+
+    @property
+    def native_value(self) -> StateType:
+        """Return this radio's reading, or None (unknown) when it has none."""
+        radio = self._radio_record()
+        return None if radio is None else self.entity_description.value_fn(radio)
+
+
+def _discover_radio_sensors(
+    coordinator: UnifiInsightsFacadeCoordinator,
+    site_id: str,
+    device_id: str,
+    device_data: dict[str, Any],
+    known_sensor_keys: set[tuple[Any, ...]],
+    *,
+    entities: list[SensorEntity],
+) -> None:
+    """Discover per-radio sensors for an access point."""
+    if not device_has_feature(device_data, "accessPoint"):
+        return
+
+    # Step 1 comes from the statistics the coordinator already polls, step 2
+    # from the throttled details record. Each band is discovered once; a band
+    # that first appears later is added on the next coordinator update.
+    stats_radios = network_radio_stats(coordinator.data, site_id, device_id) or {}
+    details = network_radio_details(coordinator.data, site_id, device_id)
+    details_radios = (
+        radio_band_map(details.get("radios")) if details is not None else {}
+    )
+    for radios, descriptions in (
+        (stats_radios, RADIO_STATS_SENSOR_TYPES),
+        (details_radios, RADIO_DETAILS_SENSOR_TYPES),
+    ):
+        for band in radios:
+            for description in descriptions:
+                key = (site_id, device_id, "radio", band, description.key)
+                if key in known_sensor_keys:
+                    continue
+                known_sensor_keys.add(key)
+                entities.append(
+                    UnifiRadioSensor(
+                        coordinator,
+                        description,
+                        site_id,
+                        device_id,
+                        band=band,
+                    )
+                )
 
 
 # --- Protect security devices ------------------------------------------------

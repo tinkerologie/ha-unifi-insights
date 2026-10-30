@@ -39,6 +39,9 @@ from custom_components.unifi_insights.select import (
     async_setup_entry as async_setup_select,
 )
 from custom_components.unifi_insights.sensor import (
+    RADIO_DETAILS_SENSOR_TYPES,
+)
+from custom_components.unifi_insights.sensor import (
     async_setup_entry as async_setup_sensor,
 )
 from custom_components.unifi_insights.switch import (
@@ -945,3 +948,111 @@ class TestDiscoveryRegressions:
         add_entities.reset_mock()
         listener()
         assert add_entities.call_count == 0
+
+
+RADIO_AP: dict[str, Any] = {
+    "id": "ap1",
+    "name": "Office AP",
+    "model": "U7-Pro",
+    "state": "ONLINE",
+    "features": ["accessPoint"],
+}
+RADIO_2_4: dict[str, Any] = {
+    "frequencyGHz": 2.4,
+    "channel": 6,
+    "channelWidthMHz": 40,
+    "txPowerMode": "AUTO",
+    "wlanStandard": "802.11ax",
+    "txRetriesPct": 1.5,
+}
+RADIO_5: dict[str, Any] = {
+    "frequencyGHz": 5,
+    "channel": 44,
+    "channelWidthMHz": 80,
+    "txPowerMode": "HIGH",
+    "wlanStandard": "802.11ac",
+    "txRetriesPct": 0,
+}
+RADIO_6: dict[str, Any] = {
+    "frequencyGHz": 6,
+    "channel": 37,
+    "channelWidthMHz": 160,
+    "txPowerMode": "AUTO",
+    "wlanStandard": "802.11be",
+    "txRetriesPct": 2,
+}
+
+
+class TestRadioSensorDiscovery:
+    """Per-radio sensor discovery across coordinator updates (#454)."""
+
+    @staticmethod
+    def _radio_entities(add_mock: MagicMock) -> list[Any]:
+        """Return every radio sensor handed to ``add_mock``, deduped by ID."""
+        by_id: dict[str, Any] = {}
+        for call in add_mock.call_args_list:
+            for entity in call[0][0]:
+                if "_radio_" in str(getattr(entity, "unique_id", "")):
+                    by_id[entity.unique_id] = entity
+        return list(by_id.values())
+
+    def _publish(self, coordinator: MagicMock, *radios: dict[str, Any]) -> None:
+        """Publish an AP whose stats and details carry ``radios``."""
+        coordinator.data = with_sections(
+            coordinator.data,
+            devices={"site1": {"ap1": dict(RADIO_AP)}},
+            stats={"site1": {"ap1": {"interfaces": {"radios": list(radios)}}}},
+            radio_details={
+                "site1": {
+                    "ap1": {"radios": list(radios), "available": True},
+                }
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_radio_bands_are_discovered_without_reload(
+        self,
+        hass: Any,
+        mock_coordinator: MagicMock,
+        mock_config_entry: MagicMock,
+    ) -> None:
+        """Two radios create two retry sensors; a later 6 GHz adds one more."""
+        add_entities = MagicMock()
+        await async_setup_sensor(hass, mock_config_entry, add_entities)
+        listener = mock_coordinator.async_add_listener.call_args[0][0]
+
+        self._publish(mock_coordinator, RADIO_2_4, RADIO_5)
+        listener()
+
+        added = self._radio_entities(add_entities)
+        by_key = {
+            (
+                entity.entity_description.key,
+                entity.unique_id.split("_radio_", 1)[1],
+            )
+            for entity in added
+        }
+        assert by_key == {
+            ("radio_tx_retries", f"{band}_radio_tx_retries")
+            for band in ("2_4ghz", "5ghz")
+        } | {
+            (description.key, f"{band}_{description.key}")
+            for band in ("2_4ghz", "5ghz")
+            for description in RADIO_DETAILS_SENSOR_TYPES
+        }
+
+        # An unchanged notification adds no duplicates.
+        add_entities.reset_mock()
+        listener()
+        assert self._radio_entities(add_entities) == []
+
+        # A band that appears later is discovered on the next update.
+        self._publish(mock_coordinator, RADIO_2_4, RADIO_5, RADIO_6)
+        listener()
+
+        late = self._radio_entities(add_entities)
+        assert {entity.entity_description.key for entity in late} == {
+            "radio_tx_retries",
+            *{description.key for description in RADIO_DETAILS_SENSOR_TYPES},
+        }
+        assert all("6ghz" in str(entity.unique_id) for entity in late)

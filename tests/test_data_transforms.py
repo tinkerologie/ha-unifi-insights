@@ -30,6 +30,9 @@ from custom_components.unifi_insights.data_transforms import (
     GUEST_LIMIT_UI_MAX,
     NETWORK_DEVICE_STATES,
     NETWORK_FACTS_KEY,
+    RADIO_BAND_LABELS,
+    RADIO_TX_POWER_MODE_OPTIONS,
+    RADIO_WLAN_STANDARD_OPTIONS,
     TIME_LIMIT_MINUTES_RANGE,
     VOUCHER_INPUTS,
     NetworkDeviceFacts,
@@ -55,6 +58,8 @@ from custom_components.unifi_insights.data_transforms import (
     is_voucher_active,
     latest_voucher_qr_payload,
     led_level_to_percent,
+    network_radio_details,
+    network_radio_stats,
     normalize_innerspace_snapshot,
     normalize_legacy_storage,
     normalize_legacy_wans,
@@ -63,16 +68,25 @@ from custom_components.unifi_insights.data_transforms import (
     parse_timestamp,
     percent_to_led_level,
     port_index,
+    radio_band_map,
+    radio_band_slug,
+    radio_channel,
+    radio_channel_width,
+    radio_tx_power_mode,
+    radio_tx_retries,
+    radio_wlan_standard,
     refresh_latest_voucher,
     restore_input,
     site_device_facts,
     site_network_facts,
     storage_used_percent,
+    tx_power_mode_slug,
     uplink_rate_bps,
     valid_led_level,
     voucher_request_kwargs,
     voucher_site_ids,
     voucher_to_record,
+    wlan_standard_slug,
 )
 from custom_components.unifi_insights.innerspace_transforms import (
     _normalize_innerspace_mac,
@@ -1864,3 +1878,227 @@ def test_accessor_falls_back_to_the_builder(caplog: pytest.LogCaptureFixture) ->
     no_stats = site_network_facts({"devices": _raw_data()["devices"]}, "site")
     assert no_stats is not None
     assert no_stats.devices["udm"].cpu_pct is None
+
+
+# --- Access point radios (#454) -------------------------------------------
+
+RADIO_2_4 = {
+    "frequencyGHz": 2.4,
+    "channel": 6,
+    "channelWidthMHz": 40,
+    "txPowerMode": "AUTO",
+    "wlanStandard": "802.11ax",
+    "txRetriesPct": 3.5,
+}
+RADIO_5 = {
+    "frequencyGHz": 5,
+    "channel": 44,
+    "channelWidthMHz": 80,
+    "txPowerMode": "HIGH",
+    "wlanStandard": "802.11ac",
+    "txRetriesPct": 0,
+}
+
+
+@pytest.mark.parametrize(
+    ("frequency", "expected"),
+    [
+        (0.9, "900mhz"),
+        (2.4, "2_4ghz"),
+        ("5", "5ghz"),
+        (6.0, "6ghz"),
+        (60, "60ghz"),
+        (True, None),
+        (None, None),
+        (3, None),
+        ("fast", None),
+        (float("nan"), None),
+    ],
+)
+def test_radio_band_slug_normalises_spec_frequencies(
+    frequency: Any, expected: str | None
+) -> None:
+    """Numeric freqs and numeric strings map; booleans and strangers do not."""
+    assert radio_band_slug(frequency) == expected
+
+
+def test_radio_band_labels_cover_every_band() -> None:
+    """Every band slug has a display label, including the 900 MHz band."""
+    assert RADIO_BAND_LABELS == {
+        "900mhz": "900 MHz",
+        "2_4ghz": "2.4 GHz",
+        "5ghz": "5 GHz",
+        "6ghz": "6 GHz",
+        "60ghz": "60 GHz",
+    }
+
+
+def test_radio_band_map_reads_the_interfaces_mapping() -> None:
+    """The statistics/details shape nests radios under interfaces."""
+    radios = radio_band_map({"radios": [RADIO_2_4, RADIO_5]})
+
+    assert list(radios) == ["2_4ghz", "5ghz"]
+    assert radios["2_4ghz"]["channel"] == 6
+    assert radios["5ghz"]["wlanStandard"] == "802.11ac"
+    with pytest.raises(TypeError):
+        radios["6ghz"] = {}  # type: ignore[index]
+    with pytest.raises(TypeError):
+        radios["2_4ghz"]["channel"] = 1  # type: ignore[index]
+
+
+def test_radio_band_map_accepts_a_bare_radios_list() -> None:
+    """The details record stores the bare list, not the interfaces wrapper."""
+    assert set(radio_band_map([RADIO_5])) == {"5ghz"}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        {},
+        {"radios": None},
+        {"radios": {}},
+        {"radios": "radios"},
+        ["ports", "radios"],
+        42,
+    ],
+)
+def test_radio_band_map_returns_empty_for_other_shapes(payload: Any) -> None:
+    """The overview's list-shaped interfaces has no radios and never raises."""
+    assert dict(radio_band_map(payload)) == {}
+
+
+def test_radio_band_map_skips_bad_and_duplicate_radios(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Bad entries and repeated bands are skipped at debug, first band wins."""
+    with caplog.at_level(
+        logging.DEBUG, logger="custom_components.unifi_insights.data_transforms"
+    ):
+        radios = radio_band_map(
+            [
+                "not a radio",
+                {"frequencyGHz": None},
+                {"frequencyGHz": 3},
+                RADIO_2_4,
+                {**RADIO_2_4, "channel": 11},
+            ]
+        )
+
+    assert list(radios) == ["2_4ghz"]
+    assert radios["2_4ghz"]["channel"] == 6
+    assert "Skipping radio entry that is not a mapping" in caplog.text
+    assert "Skipping radio with unknown frequency: None" in caplog.text
+    assert "Skipping radio with unknown frequency: 3" in caplog.text
+    assert "Skipping duplicate 2_4ghz radio" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("AUTO", "auto"),
+        ("low", "low"),
+        (" Medium ", "medium"),
+        ("HIGH", "high"),
+        ("CUSTOM", "custom"),
+        ("DISABLED", "disabled"),
+        ("TURBO", None),
+        (None, None),
+        (1, None),
+    ],
+)
+def test_tx_power_mode_slug(value: Any, expected: str | None) -> None:
+    """Every spec TX power mode becomes a valid translation state key."""
+    assert tx_power_mode_slug(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("802.11a", "802_11a"),
+        ("802.11b", "802_11b"),
+        ("802.11g", "802_11g"),
+        ("802.11n", "802_11n"),
+        ("802.11ac", "802_11ac"),
+        (" 802.11AX ", "802_11ax"),
+        ("802.11be", "802_11be"),
+        ("802.11ah", "802_11ah"),
+        ("802.11ad", None),
+        (None, None),
+    ],
+)
+def test_wlan_standard_slug(value: Any, expected: str | None) -> None:
+    """Every spec Wi-Fi standard becomes a dot-free translation state key."""
+    assert wlan_standard_slug(value) == expected
+
+
+def test_radio_option_tuples_are_the_translation_keys() -> None:
+    """The shared option tuples carry no dots, as HA state keys require."""
+    assert RADIO_TX_POWER_MODE_OPTIONS == (
+        "auto",
+        "low",
+        "medium",
+        "high",
+        "custom",
+        "disabled",
+    )
+    assert RADIO_WLAN_STANDARD_OPTIONS == (
+        "802_11a",
+        "802_11b",
+        "802_11g",
+        "802_11n",
+        "802_11ac",
+        "802_11ax",
+        "802_11be",
+        "802_11ah",
+    )
+    for option in (*RADIO_TX_POWER_MODE_OPTIONS, *RADIO_WLAN_STANDARD_OPTIONS):
+        assert option.replace("_", "").replace("80211", "").isalnum()
+
+
+def test_radio_field_readers() -> None:
+    """Readers unwrap the record fields and keep a real zero."""
+    assert radio_tx_retries(RADIO_5) == 0
+    assert radio_tx_retries(RADIO_2_4) == 3.5
+    assert radio_tx_retries({}) is None
+    assert radio_tx_retries({"txRetriesPct": "nope"}) is None
+    assert radio_tx_power_mode(RADIO_2_4) == "auto"
+    assert radio_tx_power_mode({}) is None
+    assert radio_wlan_standard(RADIO_5) == "802_11ac"
+    assert radio_wlan_standard({}) is None
+    assert radio_channel(RADIO_5) == 44
+    assert radio_channel({}) is None
+    assert radio_channel({"channel": 6.0}) == 6
+    assert radio_channel_width(RADIO_5) == 80
+    assert radio_channel_width({"channel_width_mhz": 160}) == 160
+    assert radio_channel_width({"channelWidthMHz": True}) is None
+
+
+def test_network_radio_stats_reads_published_statistics() -> None:
+    """The statistics accessor returns the device's radios by band."""
+    data = {"stats": {"site": {"dev": {"interfaces": {"radios": [RADIO_2_4]}}}}}
+
+    radios = network_radio_stats(data, "site", "dev")
+
+    assert radios is not None
+    assert radios["2_4ghz"]["txRetriesPct"] == 3.5
+    assert network_radio_stats(data, "site", "missing") is None
+    assert (
+        network_radio_stats(
+            {"stats": {"site": {"dev": {"interfaces": ["ports", "radios"]}}}},
+            "site",
+            "dev",
+        )
+        == {}
+    )
+
+
+def test_network_radio_details_returns_the_record_or_none() -> None:
+    """The details accessor returns the per-device record, or None."""
+    record = {"radios": [RADIO_5], "available": True}
+    data: dict[str, Any] = {"radio_details": {"site": {"dev": record}}}
+
+    assert network_radio_details(data, "site", "dev") is record
+    assert network_radio_details(data, "site", "missing") is None
+    assert network_radio_details({}, "site", "dev") is None
+    assert network_radio_details({"radio_details": {"site": []}}, "site", "dev") is None

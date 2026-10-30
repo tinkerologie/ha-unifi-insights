@@ -13,6 +13,7 @@ import asyncio
 import copy
 import logging
 from contextlib import nullcontext, suppress
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Final
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -42,6 +43,10 @@ from custom_components.unifi_insights.const import (
     DOMAIN,
     MAX_CONSECUTIVE_MISSING_POLLS,
     SCAN_INTERVAL_DEVICE,
+    SCAN_INTERVAL_DEVICE_DETAILS,
+)
+from custom_components.unifi_insights.coordinators import (
+    device as device_coordinator_module,
 )
 from custom_components.unifi_insights.coordinators.config import (
     UnifiInsightsConfigCoordinator,
@@ -5854,3 +5859,308 @@ async def test_two_outlet_writes_across_getting_ready_refresh(
         second.kwargs["current_device"]["outlet_overrides"]
         == legacy["outlet_overrides"]
     )
+
+
+# --- Access point radio settings (#454) ------------------------------------
+
+
+AP_ID = "ap1"
+AP_DEVICE: dict[str, Any] = {
+    "id": AP_ID,
+    "name": "Office AP",
+    "mac": "aa:bb:cc:00:00:02",
+    "model": "U7-Pro",
+    "features": ["accessPoint"],
+}
+RADIO_SAMPLE: list[dict[str, Any]] = [
+    {
+        "frequencyGHz": 2.4,
+        "channel": 6,
+        "channelWidthMHz": 40,
+        "txPowerMode": "AUTO",
+        "wlanStandard": "802.11ax",
+    },
+    {
+        "frequencyGHz": 5,
+        "channel": 44,
+        "channelWidthMHz": 80,
+        "txPowerMode": "HIGH",
+        "wlanStandard": "802.11ac",
+    },
+]
+
+
+class TestAccessPointRadioDetails:
+    """The throttled per-device radio settings fetch and its retention."""
+
+    @pytest.fixture
+    def config_coordinator(
+        self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
+    ) -> UnifiInsightsConfigCoordinator:
+        """Create a config coordinator publishing one site."""
+        coord = UnifiInsightsConfigCoordinator(
+            hass=hass,
+            network_client=_create_mock_network_client(),
+            protect_client=_create_mock_protect_client(),
+            entry=mock_config_entry,
+        )
+        coord.data["sites"] = {"default": {"id": "default", "name": "Default"}}
+        coord.data["legacy_site_names"] = {"default": "default"}
+        return coord
+
+    @pytest.fixture
+    def coordinator(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+        config_coordinator: UnifiInsightsConfigCoordinator,
+    ) -> UnifiInsightsDeviceCoordinator:
+        """Create a device coordinator for testing."""
+        return UnifiInsightsDeviceCoordinator(
+            hass=hass,
+            network_client=_create_mock_network_client(),
+            protect_client=_create_mock_protect_client(),
+            entry=mock_config_entry,
+            config_coordinator=config_coordinator,
+        )
+
+    @pytest.fixture
+    def clock(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        """Freeze and advance the coordinator module's monotonic clock."""
+        state = {"now": 1000.0}
+
+        mock_time = MagicMock()
+        mock_time.monotonic.side_effect = lambda: state["now"]
+        monkeypatch.setattr(device_coordinator_module, "time", mock_time)
+
+        def advance(seconds: float) -> None:
+            state["now"] += seconds
+
+        return SimpleNamespace(advance=advance)
+
+    @staticmethod
+    def _detail_model(radios: list[dict[str, Any]]) -> MagicMock:
+        """Return a details model carrying ``radios``."""
+        return _create_mock_model({"id": AP_ID, "interfaces": {"radios": radios}})
+
+    @staticmethod
+    def _serve_only(*devices: dict[str, Any]) -> AsyncMock:
+        """Return a get_all mock serving exactly ``devices``."""
+        return AsyncMock(
+            return_value=[_create_mock_model(device) for device in devices]
+        )
+
+    async def test_details_fetched_for_access_points_only(
+        self, coordinator: UnifiInsightsDeviceCoordinator
+    ) -> None:
+        """A switch never costs a details request; an AP publishes its radios."""
+        switch = {
+            "id": "sw1",
+            "name": "Switch",
+            "mac": "aa:bb:cc:00:00:01",
+            "features": ["switching"],
+        }
+        coordinator.network_client.devices.get_all = self._serve_only(AP_DEVICE, switch)
+        get = require_mock(coordinator.network_client.devices.get)
+        get.return_value = self._detail_model(RADIO_SAMPLE)
+
+        result = await coordinator._async_update_data()
+
+        get.assert_awaited_once_with("default", AP_ID)
+        assert result["radio_details"]["default"][AP_ID] == {
+            "radios": RADIO_SAMPLE,
+            "available": True,
+        }
+
+    async def test_details_skip_mac_addressed_devices(
+        self, coordinator: UnifiInsightsDeviceCoordinator
+    ) -> None:
+        """A device keyed on its MAC cannot be looked up by id, so is skipped."""
+        coordinator.network_client.devices.get_all = self._serve_only(
+            {**AP_DEVICE, "id": AP_DEVICE["mac"]}
+        )
+
+        result = await coordinator._async_update_data()
+
+        require_mock(coordinator.network_client.devices.get).assert_not_awaited()
+        assert result["radio_details"] == {"default": {}}
+
+    async def test_details_without_radios_publishes_an_empty_list(
+        self, coordinator: UnifiInsightsDeviceCoordinator
+    ) -> None:
+        """A details answer with no radio list still publishes availability."""
+        coordinator.network_client.devices.get_all = self._serve_only(AP_DEVICE)
+        require_mock(
+            coordinator.network_client.devices.get
+        ).return_value = _create_mock_model({"id": AP_ID, "interfaces": {}})
+
+        result = await coordinator._async_update_data()
+
+        assert result["radio_details"]["default"][AP_ID] == {
+            "radios": [],
+            "available": True,
+        }
+
+    async def test_details_are_throttled_and_carried_forward(
+        self, coordinator: UnifiInsightsDeviceCoordinator, clock: Any
+    ) -> None:
+        """A second poll inside the interval reuses the record, then refetches."""
+        coordinator.network_client.devices.get_all = self._serve_only(AP_DEVICE)
+        get = require_mock(coordinator.network_client.devices.get)
+        get.return_value = self._detail_model(RADIO_SAMPLE)
+        interval = SCAN_INTERVAL_DEVICE_DETAILS.total_seconds()
+
+        await coordinator._async_update_data()
+        first = coordinator.data["radio_details"]["default"][AP_ID]
+        clock.advance(interval - 1)
+        await coordinator._async_update_data()
+
+        get.assert_awaited_once()
+        assert coordinator.data["radio_details"]["default"][AP_ID] == first
+
+        clock.advance(2)
+        get.return_value = self._detail_model(RADIO_SAMPLE[:1])
+        await coordinator._async_update_data()
+
+        assert get.await_count == 2
+        assert coordinator.data["radio_details"]["default"][AP_ID]["radios"] == [
+            RADIO_SAMPLE[0]
+        ]
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            UniFiConnectionError("Connection lost"),
+            UniFiTimeoutError("Timed out"),
+            UniFiResponseError("Server error", status_code=500),
+            UniFiValidationError("Bad payload"),
+            UniFiAuthenticationError("Forbidden", status_code=403),
+            UniFiNotFoundError("Not found", status_code=404),
+            UniFiRateLimitError("Slow down", status_code=429),
+        ],
+        ids=["connection", "timeout", "500", "validation", "403", "404", "429"],
+    )
+    async def test_details_failure_keeps_radios_but_marks_unavailable(
+        self,
+        coordinator: UnifiInsightsDeviceCoordinator,
+        clock: Any,
+        error: Exception,
+    ) -> None:
+        """A failed details request never fails the refresh or blanks step 1."""
+        coordinator.network_client.devices.get_all = self._serve_only(AP_DEVICE)
+        get = require_mock(coordinator.network_client.devices.get)
+        get.return_value = self._detail_model(RADIO_SAMPLE)
+        await coordinator._async_update_data()
+        assert coordinator._available is True
+
+        get.side_effect = error
+        clock.advance(SCAN_INTERVAL_DEVICE_DETAILS.total_seconds())
+        result = await coordinator._async_update_data()
+
+        assert coordinator._available is True
+        assert result["radio_details"]["default"][AP_ID] == {
+            "radios": RADIO_SAMPLE,
+            "available": False,
+        }
+        assert result["stats"]["default"][AP_ID]["id"] == AP_ID
+
+    async def test_details_failure_without_previous_publishes_nothing(
+        self, coordinator: UnifiInsightsDeviceCoordinator
+    ) -> None:
+        """A first details failure publishes no record and no step-2 entity."""
+        coordinator.network_client.devices.get_all = self._serve_only(AP_DEVICE)
+        require_mock(
+            coordinator.network_client.devices.get
+        ).side_effect = UniFiTimeoutError("Timed out")
+
+        result = await coordinator._async_update_data()
+
+        assert result["radio_details"] == {"default": {}}
+        assert coordinator._radio_details_last_attempt
+
+    async def test_details_failure_retries_on_the_details_interval(
+        self, coordinator: UnifiInsightsDeviceCoordinator, clock: Any
+    ) -> None:
+        """A failed attempt is timestamped, so retries wait the full interval."""
+        coordinator.network_client.devices.get_all = self._serve_only(AP_DEVICE)
+        get = require_mock(coordinator.network_client.devices.get)
+        get.side_effect = UniFiTimeoutError("Timed out")
+
+        await coordinator._async_update_data()
+        clock.advance(SCAN_INTERVAL_DEVICE.total_seconds() * 5)
+        await coordinator._async_update_data()
+
+        get.assert_awaited_once()
+
+    async def test_details_recover_after_a_failure(
+        self, coordinator: UnifiInsightsDeviceCoordinator, clock: Any
+    ) -> None:
+        """The next due attempt replaces the unavailable record."""
+        coordinator.network_client.devices.get_all = self._serve_only(AP_DEVICE)
+        get = require_mock(coordinator.network_client.devices.get)
+        get.return_value = self._detail_model(RADIO_SAMPLE)
+        await coordinator._async_update_data()
+
+        get.side_effect = UniFiTimeoutError("Timed out")
+        clock.advance(SCAN_INTERVAL_DEVICE_DETAILS.total_seconds())
+        await coordinator._async_update_data()
+        assert coordinator.data["radio_details"]["default"][AP_ID]["available"] is False
+
+        get.side_effect = None
+        get.return_value = self._detail_model(RADIO_SAMPLE[:1])
+        clock.advance(SCAN_INTERVAL_DEVICE_DETAILS.total_seconds())
+        result = await coordinator._async_update_data()
+
+        assert result["radio_details"]["default"][AP_ID] == {
+            "radios": RADIO_SAMPLE[:1],
+            "available": True,
+        }
+
+    async def test_details_auth_failure_starts_reauth(
+        self, coordinator: UnifiInsightsDeviceCoordinator
+    ) -> None:
+        """A revoked key surfacing on the details endpoint fails the refresh."""
+        coordinator.network_client.devices.get_all = self._serve_only(AP_DEVICE)
+        require_mock(
+            coordinator.network_client.devices.get
+        ).side_effect = UniFiAuthenticationError("Revoked", status_code=401)
+
+        with pytest.raises(ConfigEntryAuthFailed):
+            await coordinator._async_update_data()
+
+    async def test_details_are_pruned_with_the_device(
+        self, coordinator: UnifiInsightsDeviceCoordinator, clock: Any
+    ) -> None:
+        """A vanished AP loses its record and schedule; returning refetches."""
+        get = require_mock(coordinator.network_client.devices.get)
+        get.return_value = self._detail_model(RADIO_SAMPLE)
+        coordinator.network_client.devices.get_all = self._serve_only(AP_DEVICE)
+        await coordinator._async_update_data()
+        assert ("default", AP_ID) in coordinator._radio_details_last_attempt
+
+        coordinator.network_client.devices.get_all = self._serve_only()
+        result = await coordinator._async_update_data()
+
+        assert result["radio_details"] == {"default": {}}
+        assert coordinator._radio_details_last_attempt == {}
+
+        get.return_value = self._detail_model(RADIO_SAMPLE[:1])
+        coordinator.network_client.devices.get_all = self._serve_only(AP_DEVICE)
+        clock.advance(1)
+        result = await coordinator._async_update_data()
+
+        assert get.await_count == 2
+        assert result["radio_details"]["default"][AP_ID]["available"] is True
+
+    async def test_details_are_dropped_when_no_site_is_polled(
+        self, coordinator: UnifiInsightsDeviceCoordinator
+    ) -> None:
+        """An empty site list clears the records and the schedule."""
+        coordinator.network_client.devices.get_all = self._serve_only(AP_DEVICE)
+        await coordinator._async_update_data()
+        coordinator.config_coordinator.data["sites"] = {}
+
+        result = await coordinator._async_update_data()
+
+        assert result["radio_details"] == {}
+        assert coordinator._radio_details_last_attempt == {}

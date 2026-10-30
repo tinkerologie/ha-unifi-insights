@@ -130,6 +130,34 @@ def _create_mock_network_client() -> MagicMock:
             }
         )
     )
+    # Per-device details endpoint, read for access point radios only (#454).
+    # The switch above never calls it; tests with an access point override
+    # ``get_all`` and assert on this call.
+    client.devices.get = AsyncMock(
+        return_value=_create_mock_model(
+            {
+                "id": "device1",
+                "interfaces": {
+                    "radios": [
+                        {
+                            "frequencyGHz": 2.4,
+                            "channel": 6,
+                            "channelWidthMHz": 40,
+                            "txPowerMode": "AUTO",
+                            "wlanStandard": "802.11ax",
+                        },
+                        {
+                            "frequencyGHz": 5,
+                            "channel": 44,
+                            "channelWidthMHz": 80,
+                            "txPowerMode": "HIGH",
+                            "wlanStandard": "802.11ac",
+                        },
+                    ]
+                },
+            }
+        )
+    )
     client.devices.get_legacy_site_devices = AsyncMock(return_value=[])
     client.devices.execute_port_action = AsyncMock(return_value=True)
 

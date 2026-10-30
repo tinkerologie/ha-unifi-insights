@@ -40,12 +40,14 @@ from custom_components.unifi_insights.const import (
     DOMAIN,
     MAX_CONSECUTIVE_MISSING_POLLS,
     SCAN_INTERVAL_DEVICE,
+    SCAN_INTERVAL_DEVICE_DETAILS,
 )
 from custom_components.unifi_insights.data_transforms import (
     CPU_STAT_KEYS,
     MEMORY_STAT_KEYS,
     NETWORK_FACTS_KEY,
     UPTIME_STAT_KEYS,
+    _has_feature,
     build_site_network_facts,
     device_facts,
     normalize_legacy_storage,
@@ -93,6 +95,8 @@ class SiteProcessResult(NamedTuple):
     # Raw controller outlet arrays by device ID, captured before the display
     # normalizer runs. Private poll data: never added to a device record.
     raw_outlet_arrays: dict[str, dict[str, Any]]
+    # Access point radio settings by device ID, as published to the facade.
+    radio_details: dict[str, dict[str, Any]]
     legacy_macs: LegacyMacs = None
 
 
@@ -839,6 +843,11 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
         self._vpn_connection_failures: dict[str, int] = {}
         # Consecutive polls each site's legacy device call has failed for.
         self._legacy_wan_failures: dict[str, int] = {}
+        # When each access point's radio settings were last requested, and the
+        # radios those requests last returned, keyed by (site_id, device_id)
+        # (#454). A failed attempt is recorded too, so retries follow the
+        # details interval rather than the faster statistics poll.
+        self._radio_details_last_attempt: dict[tuple[str, str], float] = {}
         # Successful outlet writes the controller has not reported back yet
         # (#376), committed at snapshot publication.
         self._pending_outlet_writes: dict[PendingOutletKey, PendingOutletWrite] = {}
@@ -852,6 +861,9 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             "clients": {},
             "stats": {},
             "vpn_connections": {},
+            # Access point radio settings: site_id -> {device_id: {radios,
+            # available}}. Entities read it through data_transforms.
+            "radio_details": {},
             # site_id -> SiteNetworkFacts, rebuilt (never mutated) per refresh
             NETWORK_FACTS_KEY: {},
             "last_update": None,
@@ -1503,6 +1515,85 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             )
             return device_id, device_dict, {}
 
+    def _radio_details_due(
+        self, site_id: str, device: dict[str, Any], device_id: str
+    ) -> bool:
+        """
+        Return whether a device's radio settings are due for a fetch.
+
+        Only access points are asked: the details endpoint is per device, so a
+        console's switches and gateways would cost a request each for radios
+        they do not have. A device keyed on its MAC (the API sent no id) cannot
+        be looked up by id, as with statistics.
+        """
+        if (
+            not device_id
+            or device_id_is_mac(device)
+            or not _has_feature(device.get("features"), "accessPoint")
+        ):
+            return False
+        last_attempt = self._radio_details_last_attempt.get((site_id, device_id))
+        if last_attempt is None:
+            return True
+        return (
+            time.monotonic() - last_attempt
+            >= SCAN_INTERVAL_DEVICE_DETAILS.total_seconds()
+        )
+
+    async def _fetch_radio_details(
+        self, site_id: str, device: dict[str, Any]
+    ) -> tuple[str, dict[str, Any] | None]:
+        """
+        Return a device's radio settings record, fetching it when due.
+
+        Runs beside the device's statistics call, never inside its error
+        handling: a failed details request must not affect step-1 sensors or
+        fail the refresh. A success publishes only the radios and an
+        ``available`` flag. Any failure (403/404 unsupported responses, 429,
+        timeouts, connection, response and validation errors) keeps the
+        previous radios and marks them unavailable; when there is no previous
+        record, none is published. Either way the attempt is timestamped, so
+        the retry waits the details interval. A non-unsupported authentication
+        error (401) is re-raised so the revoked key starts reauth.
+        """
+        device_id: str = device.get("id", "")
+        if not self._radio_details_due(site_id, device, device_id):
+            return device_id, self._published_radio_details(site_id, device_id)
+
+        self._radio_details_last_attempt[(site_id, device_id)] = time.monotonic()
+        try:
+            model = await self.network_client.devices.get(site_id, device_id)
+        except Exception as err:
+            if isinstance(err, UniFiAuthenticationError) and not (
+                self._is_unsupported_response(err)
+            ):
+                raise
+            _LOGGER.debug(
+                "Radio details not available for device %s (%s): %s",
+                device.get("name", device_id),
+                device_id,
+                err,
+            )
+            previous = self._published_radio_details(site_id, device_id)
+            return device_id, (
+                None if previous is None else {**previous, "available": False}
+            )
+
+        details = self._model_to_dict(model) if model else {}
+        interfaces = details.get("interfaces")
+        radios = interfaces.get("radios") if isinstance(interfaces, dict) else None
+        return device_id, {
+            "radios": radios if isinstance(radios, list) else [],
+            "available": True,
+        }
+
+    def _published_radio_details(
+        self, site_id: str, device_id: str
+    ) -> dict[str, Any] | None:
+        """Return a device's published radio record, or None."""
+        record = self.data["radio_details"].get(site_id, {}).get(device_id)
+        return record if isinstance(record, dict) else None
+
     async def _process_site(
         self, site_id: str, legacy_site_name: str | None = None
     ) -> SiteProcessResult:
@@ -1735,7 +1826,14 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             )
             for device in devices
         ]
-        results = await asyncio.gather(*tasks)
+        # Radio settings are fetched for due access points beside the
+        # statistics, not after them, so a slow details call delays neither the
+        # other devices nor the step-1 sensors.
+        radio_tasks = [self._fetch_radio_details(site_id, device) for device in devices]
+        results, radio_results = await asyncio.gather(
+            asyncio.gather(*tasks),
+            asyncio.gather(*radio_tasks),
+        )
 
         # Organize results
         devices_dict = {}
@@ -1749,6 +1847,12 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             str(client.get("id")): client for client in clients if client.get("id")
         }
 
+        radio_details: dict[str, dict[str, Any]] = {
+            radio_device_id: radio_record
+            for radio_device_id, radio_record in radio_results
+            if radio_device_id and isinstance(radio_record, dict)
+        }
+
         return SiteProcessResult(
             devices=devices_dict,
             stats=stats_dict,
@@ -1756,6 +1860,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             source=source,
             device_macs=device_macs,
             raw_outlet_arrays=raw_outlet_arrays,
+            radio_details=radio_details,
             legacy_macs=legacy_macs,
         )
 
@@ -1784,6 +1889,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                     "stats",
                     "clients",
                     "vpn_connections",
+                    "radio_details",
                     NETWORK_FACTS_KEY,
                 )
             }
@@ -1808,6 +1914,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 self._available = True
                 self._pending_outlet_writes = {}
                 self._outlet_payload_provenance = {}
+                self._radio_details_last_attempt = {}
                 self.data = {
                     **self.data,
                     **sections,
@@ -1906,6 +2013,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 source,
                 dev_macs,
                 raw_outlet_arrays,
+                radio_details,
                 legacy_macs,
             ), vpn in zip(site_ids, site_results, vpn_results, strict=True):
                 # Judge the raw controller record before the pending overlay
@@ -1928,6 +2036,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 sections["devices"][site_id] = devices_dict
                 sections["stats"][site_id] = stats_dict
                 sections["clients"][site_id] = clients_dict
+                sections["radio_details"][site_id] = radio_details
                 site_sources[site_id] = source
                 site_device_macs[site_id] = dev_macs
                 site_legacy_macs[site_id] = legacy_macs
@@ -1969,6 +2078,21 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 device_id: count
                 for device_id, count in self._stats_failures.items()
                 if device_id in current_device_ids
+            }
+
+            # Radio timestamps follow the polled devices, like the statistics
+            # failure counts: a device a site no longer reports forgets its
+            # schedule and refetches when it reappears. A failed first attempt
+            # keeps its timestamp, so its retry still waits the full interval.
+            polled_device_keys = {
+                (site_id, device_id)
+                for site_id, site_devices in sections["devices"].items()
+                for device_id in site_devices
+            }
+            self._radio_details_last_attempt = {
+                key: attempt
+                for key, attempt in self._radio_details_last_attempt.items()
+                if key in polled_device_keys
             }
 
             self._available = True
