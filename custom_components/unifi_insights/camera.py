@@ -27,11 +27,16 @@ if TYPE_CHECKING:
 
     from . import UnifiInsightsConfigEntry
     from .coordinators import UnifiInsightsFacadeCoordinator
+    from .coordinators.protect import StreamQuality
 
 _LOGGER = logging.getLogger(__name__)
 
 # Camera streaming/snapshots can be parallel
 PARALLEL_UPDATES = 1
+
+# Every camera gets one entity per channel. The medium and low entities are
+# disabled by default, so only the high one shows up on a fresh install.
+CAMERA_QUALITIES: tuple[StreamQuality, ...] = ("high", "medium", "low")
 
 
 async def async_setup_entry(
@@ -59,14 +64,18 @@ async def async_setup_entry(
             if camera_id in known_camera_ids:
                 continue
             _LOGGER.debug(
-                "Adding camera entity for %s", camera_data.get("name", camera_id)
+                "Adding camera entities for %s", camera_data.get("name", camera_id)
             )
             known_camera_ids.add(camera_id)
-            new_entities.append(
+            # One entity per channel. The medium and low ones are disabled by
+            # default; all three attach to the camera's existing device.
+            new_entities.extend(
                 UnifiProtectCamera(
                     coordinator=coordinator,
                     camera_id=camera_id,
+                    quality=quality,
                 )
+                for quality in CAMERA_QUALITIES
             )
 
         if new_entities:
@@ -81,16 +90,32 @@ class UnifiProtectCamera(UnifiProtectEntity, Camera):
     """Representation of a UniFi Protect Camera."""
 
     _attr_has_entity_name = True
-    _attr_name = None
 
     def __init__(
         self,
         coordinator: UnifiInsightsFacadeCoordinator,
         camera_id: str,
+        quality: StreamQuality = "high",
     ) -> None:
         """Initialize the camera."""
-        super().__init__(coordinator, DEVICE_TYPE_CAMERA, camera_id)
+        self._quality: StreamQuality = quality
+        # Only the extra channels carry an entity type suffix, so the high
+        # channel keeps the unique ID it has always had.
+        super().__init__(
+            coordinator,
+            DEVICE_TYPE_CAMERA,
+            camera_id,
+            None if quality == "high" else quality,
+        )
         Camera.__init__(self)
+        if quality == "high":
+            self._attr_name = None
+        elif quality == "medium":
+            self._attr_translation_key = "medium_resolution"
+            self._attr_entity_registry_enabled_default = False
+        else:
+            self._attr_translation_key = "low_resolution"
+            self._attr_entity_registry_enabled_default = False
 
         # Set up camera features - use CameraEntityFeature flags for proper type
         # STREAM enables streaming support for the camera
@@ -133,15 +158,29 @@ class UnifiProtectCamera(UnifiProtectEntity, Camera):
         """
         Return the stream source.
 
-        Returns RTSPS URL for UniFi Protect cameras.
-        Uses the API to create a dynamic stream URL when possible, with fallback
-        to static URL construction if needed.
+        Returns the RTSPS URL of this entity's channel. The high channel falls
+        back to a static URL when the API cannot create one; the medium and low
+        channels return None instead, because that static URL is the high
+        channel and serving it would be the stream the user turned away from.
         """
-        _LOGGER.debug("Getting stream source for %s", self._device_id)
+        _LOGGER.debug("Getting %s stream source for %s", self._quality, self._device_id)
 
         # Try to use the API to create a dynamic RTSPS stream (preferred method)
         protect = self.coordinator.require_protect_coordinator()
-        if dynamic_url := await protect.async_create_camera_stream_url(self._device_id):
+        dynamic_url = await protect.async_create_camera_stream_url(
+            self._device_id, self._quality
+        )
+        if self._quality != "high":
+            # The static URL below is the high channel, so it is no fallback
+            # for the medium and low channels: they serve their own URL or none.
+            if dynamic_url:
+                _LOGGER.debug(
+                    "Using dynamic %s stream URL for camera %s",
+                    self._quality,
+                    self._device_id,
+                )
+            return dynamic_url
+        if dynamic_url:
             _LOGGER.debug("Using dynamic stream URL for camera %s", self._device_id)
             return dynamic_url
 

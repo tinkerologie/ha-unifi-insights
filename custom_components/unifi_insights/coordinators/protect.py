@@ -86,6 +86,9 @@ if TYPE_CHECKING:
 
 type _DeviceFamily = Literal["fobs", "link_stations", "alarm_hubs", "sirens"]
 
+# The RTSPS channels Protect renders for a camera, heaviest first.
+type StreamQuality = Literal["high", "medium", "low"]
+
 _LOGGER = logging.getLogger(__name__)
 
 # Re-exported: the reconciler's bounds are part of the coordinator's contract.
@@ -1781,11 +1784,19 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
             return None
         return snapshot if isinstance(snapshot, bytes) else None
 
-    async def async_create_camera_stream_url(self, camera_id: str) -> str | None:
-        """Return a new high-quality RTSPS stream URL, or None on failure."""
+    async def async_create_camera_stream_url(
+        self, camera_id: str, quality: StreamQuality = "high"
+    ) -> str | None:
+        """
+        Return a new RTSPS stream URL for one quality, or None on failure.
+
+        Protect renders a URL per quality. Only the requested quality is asked
+        for and only its URL is read, so a caller never gets a channel it did
+        not ask for: a response without that quality is no URL.
+        """
         try:
             stream = await self._client.cameras.create_rtsps_stream(
-                camera_id, qualities=["high"]
+                camera_id, qualities=[quality]
             )
         except Exception:
             _LOGGER.debug(
@@ -1793,4 +1804,10 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
                 exc_info=True,
             )
             return None
-        return stream.high if stream and stream.high else None
+        if not stream:
+            return None
+        if quality == "high":
+            return stream.high or None
+        if quality == "medium":
+            return stream.medium or None
+        return stream.low or None
