@@ -984,6 +984,7 @@ def _discover_port_sensors(
     known_sensor_keys: set[tuple[Any, ...]],
     *,
     entities: list[SensorEntity],
+    restorable_unique_ids: frozenset[str] = frozenset(),
 ) -> None:
     """Discover port sensors for a network device."""
     # Ports need legacy data (see data_transforms): without port records no
@@ -1007,6 +1008,26 @@ def _discover_port_sensors(
 
         port_state = get_field(port, "state", "status", default="DOWN")
         if str(port_state).upper() != "UP":
+            if not restorable_unique_ids:
+                continue
+            port_label = _get_port_label(port, port_idx)
+            for desc in (
+                *PORT_SENSOR_TYPES,
+                *PORT_RATE_SENSOR_TYPES,
+                *SFP_SENSOR_TYPES,
+            ):
+                candidate = UnifiPortSensor(
+                    coordinator=coordinator,
+                    description=desc,
+                    site_id=site_id,
+                    device_id=device_id,
+                    port_idx=port_idx,
+                    port_label=port_label,
+                )
+                if candidate.unique_id in restorable_unique_ids:
+                    p_key = (site_id, device_id, port_idx, desc.key)
+                    known_sensor_keys.add(p_key)
+                    entities.append(candidate)
             continue
         active_port_indices.add(port_idx)
 
@@ -1255,6 +1276,40 @@ def _discover_protect_sensors(
                 )
 
 
+def _parse_port_sensor_identity(
+    entity: er.RegistryEntry,
+    config_entry_id: str,
+) -> tuple[str, UnifiInsightsSensorEntityDescription, int] | None:
+    """Parse device ID, description, and port index from an entity row."""
+    if (
+        entity.domain != "sensor"
+        or entity.platform != DOMAIN
+        or entity.config_entry_id != config_entry_id
+        or is_storage_unique_id(entity.unique_id)
+    ):
+        return None
+    prefix, separator, port_idx_str = entity.unique_id.rpartition("_")
+    try:
+        if not separator or str(int(port_idx_str)) != port_idx_str:
+            return None
+        port_idx = int(port_idx_str)
+    except ValueError:
+        return None
+    for description in (
+        *PORT_SENSOR_TYPES,
+        *PORT_RATE_SENSOR_TYPES,
+        *SFP_SENSOR_TYPES,
+    ):
+        ending = f"_{description.key}"
+        if not prefix.endswith(ending):
+            continue
+        device_id = prefix[: -len(ending)]
+        if not device_id:
+            return None
+        return (device_id, description, port_idx)
+    return None
+
+
 def _is_owned_port_sensor(
     entity: er.RegistryEntry,
     config_entry_id: str,
@@ -1268,34 +1323,35 @@ def _is_owned_port_sensor(
     incompatible or otherwise ambiguous rows are retained. Namespace, site,
     and storage-path text containing ``_port_`` never establishes port identity.
     """
-    if (
-        entity.domain != "sensor"
-        or entity.platform != DOMAIN
-        or entity.config_entry_id != config_entry_id
-        or is_storage_unique_id(entity.unique_id)
-    ):
+    parsed = _parse_port_sensor_identity(entity, config_entry_id)
+    if parsed is None:
         return False
-    prefix, separator, port_idx = entity.unique_id.rpartition("_")
-    try:
-        if not separator or str(int(port_idx)) != port_idx:
-            return False
-    except ValueError:
-        return False
-    for description in (
-        *PORT_SENSOR_TYPES,
-        *PORT_RATE_SENSOR_TYPES,
-        *SFP_SENSOR_TYPES,
-    ):
-        ending = f"_{description.key}"
-        if not prefix.endswith(ending):
-            continue
-        device_id = prefix[: -len(ending)]
-        if not device_id:
-            return False
-        return entity.translation_key == description.translation_key or (
-            entity.translation_key in (None, "") and device_id in known_device_ids
-        )
-    return False
+    device_id, description, _ = parsed
+    return entity.translation_key == description.translation_key or (
+        entity.translation_key in (None, "") and device_id in known_device_ids
+    )
+
+
+def _collect_device_port_indices(
+    coordinator: UnifiInsightsFacadeCoordinator,
+) -> dict[str, set[int]]:
+    """
+    Collect the union of valid port indices across sites for each device.
+
+    Devices with no valid port indices (missing ports, empty ports, all-invalid indices,
+    or facts is None) are omitted so their port evidence is treated as unknown.
+    """
+    device_ports: dict[str, set[int]] = {}
+    devices_by_site = section_by_site(coordinator.data, "devices") or {}
+    for site_id, devices in devices_by_site.items():
+        for device_id in devices:
+            facts = device_facts(coordinator.data, site_id, device_id)
+            if facts is None or not facts.ports:
+                continue
+            for port in facts.ports:
+                if port.index is not None:
+                    device_ports.setdefault(device_id, set()).add(port.index)
+    return device_ports
 
 
 def _is_carrier_fabric_sensor_entry(
@@ -1323,6 +1379,14 @@ async def async_setup_entry(
     coordinator: UnifiInsightsFacadeCoordinator = config_entry.runtime_data.coordinator
     known_sensor_keys: set[tuple[Any, ...]] = set()
     initial_entities: list[SensorEntity] = []
+
+    ent_reg = er.async_get(hass)
+    restorable_unique_ids: frozenset[str] = frozenset(
+        entry.unique_id
+        for entry in er.async_entries_for_config_entry(ent_reg, config_entry.entry_id)
+        if entry.domain == "sensor" and entry.platform == DOMAIN
+    )
+
     # Only the first pass feeds the stale-entity sweep below. Without this the
     # list would keep every entity discovered for the lifetime of the entry,
     # long after the one sweep that reads it has run.
@@ -1356,6 +1420,9 @@ async def async_setup_entry(
                     device_data,
                     known_sensor_keys,
                     entities=entities,
+                    restorable_unique_ids=restorable_unique_ids
+                    if not setup_complete
+                    else frozenset(),
                 )
                 _discover_outlet_sensors(
                     coordinator,
@@ -1472,13 +1539,25 @@ async def async_setup_entry(
         for device_id in devices
         if isinstance(device_id, str) and device_id
     }
-    ent_reg = er.async_get(hass)
-    stale = [
-        entry
-        for entry in er.async_entries_for_config_entry(ent_reg, config_entry.entry_id)
-        if entry.unique_id not in created_uids
-        and _is_owned_port_sensor(entry, config_entry.entry_id, known_device_ids)
-    ]
+    device_port_indices = _collect_device_port_indices(coordinator)
+    stale: list[er.RegistryEntry] = []
+    for entry in er.async_entries_for_config_entry(ent_reg, config_entry.entry_id):
+        if entry.unique_id in created_uids:
+            continue
+        if not _is_owned_port_sensor(entry, config_entry.entry_id, known_device_ids):
+            continue
+        parsed = _parse_port_sensor_identity(entry, config_entry.entry_id)
+        if parsed is None:
+            continue
+        device_id, _, port_idx = parsed
+        if device_id not in known_device_ids:
+            stale.append(entry)
+            continue
+        valid_indices = device_port_indices.get(device_id)
+        if not valid_indices:
+            continue
+        if port_idx not in valid_indices:
+            stale.append(entry)
     for entry in stale:
         _LOGGER.debug("Removing stale port sensor entity: %s", entry.unique_id)
         ent_reg.async_remove(entry.entity_id)
