@@ -370,6 +370,13 @@ class TestDynamicProtectDeviceDiscovery:
         assert "cam_1" in discovered_camera_ids
         assert "cam_2" not in discovered_camera_ids
 
+        # Two cameras got one entity per channel, each with its own identity
+        camera_entities = add_mocks["camera"].call_args[0][0]
+        assert len(camera_entities) == 6
+        assert len({e.unique_id for e in camera_entities}) == 6
+        assert {e._device_id for e in camera_entities} == {"cam_1", "cam_2"}
+        assert [e._quality for e in camera_entities].count("high") == 2
+
         # Subsequent updates must not add duplicate entities
         post_counts = {k: m.call_count for k, m in add_mocks.items()}
         for callback in callbacks.values():

@@ -63,6 +63,7 @@ from custom_components.unifi_insights.coordinators.protect import (
     MAX_CONSECUTIVE_EMPTY_FETCHES,
     MAX_CONSECUTIVE_MISSING_POLLS,
     STALE_EVENT_TIMEOUT,
+    StreamQuality,
     UnifiInsightsProtectCoordinator,
     protect_digital_input_signal,
 )
@@ -1001,12 +1002,27 @@ class TestCameraReads:
         get_snapshot.side_effect = UniFiConnectionError("down")
         assert await protect.async_get_camera_snapshot(CAMERA_ID) is None
 
-    async def test_stream_url(self, seeded_owners: SeededOwners) -> None:
-        """The high-quality URL is returned; no URL or a failure is None."""
+    @pytest.mark.parametrize("quality", ["high", "medium", "low"])
+    async def test_stream_url(
+        self, seeded_owners: SeededOwners, quality: StreamQuality
+    ) -> None:
+        """Each quality is requested and only its own URL is returned."""
+        protect = seeded_owners.protect
+        create = seeded_owners.protect_client.cameras.create_rtsps_stream
+        url = f"rtsps://nvr:7441/abc-{quality}"
+        create.return_value = RTSPSStream.model_validate({quality: url})
+
+        assert await protect.async_create_camera_stream_url(CAMERA_ID, quality) == url
+        create.assert_awaited_once_with(CAMERA_ID, qualities=[quality])
+
+    async def test_stream_url_defaults_to_high(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A caller that names no quality still asks for the high channel."""
         protect = seeded_owners.protect
         create = seeded_owners.protect_client.cameras.create_rtsps_stream
         create.return_value = RTSPSStream.model_validate(
-            {"high": "rtsps://nvr:7441/abc"}
+            {"high": "rtsps://nvr:7441/abc", "medium": "rtsps://nvr:7441/abc-med"}
         )
 
         assert (
@@ -1015,7 +1031,31 @@ class TestCameraReads:
         )
         create.assert_awaited_once_with(CAMERA_ID, qualities=["high"])
 
+    @pytest.mark.parametrize("quality", ["high", "medium", "low"])
+    async def test_stream_url_without_the_requested_quality(
+        self, seeded_owners: SeededOwners, quality: StreamQuality
+    ) -> None:
+        """A response that lacks the requested quality is no URL."""
+        protect = seeded_owners.protect
+        create = seeded_owners.protect_client.cameras.create_rtsps_stream
+        other = {"high": "medium", "medium": "low", "low": "high"}[quality]
+        create.return_value = RTSPSStream.model_validate(
+            {other: f"rtsps://nvr:7441/abc-{other}"}
+        )
+
+        assert await protect.async_create_camera_stream_url(CAMERA_ID, quality) is None
+
+    async def test_stream_url_empty_or_failed_response(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """An empty response, no response and a failed call are all no URL."""
+        protect = seeded_owners.protect
+        create = seeded_owners.protect_client.cameras.create_rtsps_stream
+
         create.return_value = RTSPSStream.model_validate({})
+        assert await protect.async_create_camera_stream_url(CAMERA_ID) is None
+
+        create.return_value = None
         assert await protect.async_create_camera_stream_url(CAMERA_ID) is None
 
         create.side_effect = UniFiConnectionError("down")
