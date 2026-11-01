@@ -12,7 +12,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
@@ -62,7 +62,7 @@ from tests.fixtures.mobility_responses import (
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_registry import EntityRegistry
-    from pytest_homeassistant_custom_component.typing import WebSocketGenerator
+    from pytest_homeassistant.typing import WebSocketGenerator
 
 
 async def test_setup_entry_success(

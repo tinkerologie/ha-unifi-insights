@@ -18,7 +18,7 @@ from homeassistant.helpers.entity_registry import (
 from homeassistant.helpers.entity_registry import (
     async_get as async_get_entity_registry,
 )
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api.network.models.routes import (
     PolicyBasedRoute,
 )

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
 from homeassistant.helpers import device_registry as dr
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api.exceptions import UniFiUnsupportedError
 from unifi_official_api.innerspace import InnerSpaceProject
 
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
     from homeassistant.core import HomeAssistant
 
-pytest_plugins = "pytest_homeassistant_custom_component"
+pytest_plugins = "pytest_homeassistant"
 
 
 def _create_mock_network_client() -> MagicMock:
@@ -233,6 +233,17 @@ def fail_on_ha_deprecation_reports() -> Generator[None]:
             + "\n".join(reports),
             pytrace=False,
         )
+
+
+@pytest.fixture
+def hass_config_dir(hass_tmp_config_dir: str) -> str:
+    """Give every test its own temporary Home Assistant config directory.
+
+    pytest-home-assistant points the config directory at `tests/testing_config`
+    in this repository by default, so tests that load blueprints would write
+    files into the working tree.
+    """
+    return hass_tmp_config_dir
 
 
 @pytest.fixture(autouse=True)

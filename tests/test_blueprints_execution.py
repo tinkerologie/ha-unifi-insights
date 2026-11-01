@@ -26,7 +26,7 @@ from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.helpers.entity import entity_sources
 from homeassistant.setup import async_setup_component
 from homeassistant.util import yaml as yaml_util
-from pytest_homeassistant_custom_component.common import (
+from pytest_homeassistant.common import (
     MockConfigEntry,
     async_fire_time_changed,
     async_mock_service,

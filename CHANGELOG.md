@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Tests now run on Home Assistant's official `pytest-home-assistant` plugin instead of the retired `pytest-homeassistant-custom-component`, which has no release for Home Assistant 2026.11. CI runs them on 2026.11, and the `ha-next` early-warning workflow now runs the full suite on the release and dev channels instead of only an import check. [#461](https://github.com/tinkerologie/ha-unifi-insights/issues/461)
 - The integration now requires `unifi-official-api` 3.0.1, which adds Network 11.0.97 support (`reportFlowEnabled` on firewall policies, switch stack units). Entities and their behaviour don't change.
 - Device info no longer relies on `DeviceInfo` behaving as a dict, which Home Assistant 2026.11 turned into a dataclass and is deprecating as a mapping. The Protect event entities build a `DeviceInfo` instead of a dict, and the Carrier Fabric organisation, Mobility workspace and InnerSpace devices are registered from plain field dicts. Type checking passes on Home Assistant 2026.10 and on Core dev. [#444](https://github.com/tinkerologie/ha-unifi-insights/issues/444)
 - Developer guidance no longer says `UnitOfMeasurementSelector` arrived in Home Assistant 2026.10. It arrived in 2026.11, which is newer than the minimum supported release, so the integration doesn't use it yet. [#446](https://github.com/tinkerologie/ha-unifi-insights/issues/446)

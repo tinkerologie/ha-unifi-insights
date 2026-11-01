@@ -69,7 +69,7 @@ from tests.fixtures.network_rule_responses import (
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
 _SITES: dict[str, Any] = {
     "site1": {"id": "site1", "name": "Home", "internalReference": "default"},

@@ -45,7 +45,7 @@ from tests.fixtures.coordinator_clients import (
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
 _INTEGRATION_DIR = Path(__file__).parents[2] / "custom_components" / "unifi_insights"
 

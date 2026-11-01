@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, NonCallableMagicMock, create_autospec
 
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api.network import UniFiNetworkClient
 from unifi_official_api.network.models.device import LegacyPortMetrics
 from unifi_official_api.protect import UniFiProtectClient

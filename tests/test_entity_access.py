@@ -10,7 +10,7 @@ import pytest
 from homeassistant.components.cover import CoverDeviceClass, CoverEntityFeature
 from homeassistant.const import CONF_API_KEY
 from homeassistant.exceptions import HomeAssistantError
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiResponseError,

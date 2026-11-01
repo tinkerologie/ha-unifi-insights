@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from homeassistant.exceptions import HomeAssistantError
-from pytest_homeassistant_custom_component.common import async_mock_service
+from pytest_homeassistant.common import async_mock_service
 from unifi_official_api import UniFiResponseError
 
 from custom_components.unifi_insights.client_wake import (
@@ -36,7 +36,7 @@ from tests.fixtures.assertions import patch_attribute, require_mock, require_not
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
 
 # =============================================================================

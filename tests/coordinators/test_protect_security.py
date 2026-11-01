@@ -56,7 +56,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
 
 # --- Security device families ------------------------------------------------

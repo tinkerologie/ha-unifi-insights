@@ -10,7 +10,7 @@ import pytest
 from homeassistant.components.device_tracker import SourceType
 from homeassistant.const import STATE_HOME, STATE_NOT_HOME
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api.exceptions import UniFiConnectionError
 
 from custom_components.unifi_insights.const import (

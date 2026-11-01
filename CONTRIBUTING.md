@@ -88,7 +88,7 @@ Before a pull request can be merged, it must satisfy all automated quality gates
 ### Prerequisites and Setup
 
 - Python 3.14.2 or later
-- Virtual environment with dependencies installed (`script/setup/bootstrap` or `pip install -e ".[dev]" homeassistant`)
+- Virtual environment with dependencies installed (`script/setup/bootstrap`, or install the Home Assistant version pinned in `script/test` together with the matching test plugin, which is not on PyPI yet: `pip install -e ".[dev]" "homeassistant==2026.11.0b1" "pytest-home-assistant @ https://github.com/home-assistant/core/archive/refs/tags/2026.11.0b1.tar.gz#subdirectory=packages/pytest-home-assistant"`)
 - Pre-commit (`pre-commit install`)
 
 ### Validation Commands

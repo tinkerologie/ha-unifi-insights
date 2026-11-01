@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
 from homeassistant.const import CONF_API_KEY, EVENT_HOMEASSISTANT_STOP
-from pytest_homeassistant_custom_component.common import (
+from pytest_homeassistant.common import (
     MockConfigEntry,
 )
 from unifi_official_api.access.models.devices import AccessDevice

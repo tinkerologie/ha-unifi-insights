@@ -40,7 +40,7 @@ from custom_components.unifi_insights.coordinators import (
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
 
 # --- InnerSpace coordinator --------------------------------------------------

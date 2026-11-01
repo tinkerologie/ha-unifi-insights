@@ -15,7 +15,7 @@ import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import (
+from pytest_homeassistant.common import (
     MockConfigEntry as MockConfigEntryForTest,
 )
 from unifi_official_api import UniFiResponseError
@@ -64,7 +64,7 @@ from tests.fixtures.facade_data import with_sections
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
     from custom_components.unifi_insights.coordinators.facade import FacadeData
 
