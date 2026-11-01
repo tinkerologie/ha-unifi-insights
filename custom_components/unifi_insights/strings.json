@@ -486,6 +486,39 @@
       "port_sfp_serial": {
         "name": "{port_label} SFP Serial"
       },
+      "radio_tx_retries": {
+        "name": "Wi-Fi {band} TX retries"
+      },
+      "radio_tx_power_mode": {
+        "name": "Wi-Fi {band} TX power mode",
+        "state": {
+          "auto": "Auto",
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High",
+          "custom": "Custom",
+          "disabled": "Disabled"
+        }
+      },
+      "radio_wlan_standard": {
+        "name": "Wi-Fi {band} standard",
+        "state": {
+          "802_11a": "802.11a",
+          "802_11b": "802.11b",
+          "802_11g": "802.11g",
+          "802_11n": "802.11n",
+          "802_11ac": "802.11ac",
+          "802_11ax": "802.11ax",
+          "802_11be": "802.11be",
+          "802_11ah": "802.11ah"
+        }
+      },
+      "radio_channel": {
+        "name": "Wi-Fi {band} channel"
+      },
+      "radio_channel_width": {
+        "name": "Wi-Fi {band} channel width"
+      },
       "wan_ip": {
         "name": "WAN IP Address"
       },

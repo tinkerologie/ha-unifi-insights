@@ -143,60 +143,68 @@ Carrier Fabric entries have their own options. See [Carrier Fabric setup](#carri
 
 ### Network entities
 
-| Entity                                              | Type           | Notes                                                                                  |
-| --------------------------------------------------- | -------------- | -------------------------------------------------------------------------------------- |
-| Status                                              | Binary sensor  | Device online state                                                                    |
-| CPU Usage, Memory Usage                             | Sensor         | Per device (%)                                                                         |
-| Uplink Transmit Rate, Uplink Receive Rate           | Sensor         | Per device (Mbit/s)                                                                    |
-| Uptime, Temperature, Firmware Version               | Sensor         | Per device, disabled by default                                                        |
-| Wired Clients, Wireless Clients                     | Sensor         | Per switch or access point                                                             |
-| Total Clients, Wired Clients, Wireless Clients      | Sensor         | Per site                                                                               |
-| Connected clients                                   | Sensor         | Per Wi-Fi network, on its `WiFi: <SSID>` device                                        |
-| Internet Download, Internet Upload                  | Sensor         | Per site, for the last hour, 24 hours, 7 days and 30 days                              |
-| Total PoE Power, _port_ PoE Power                   | Sensor         | Per switch and per port (W)                                                            |
-| _Port_ TX, RX, TX Rate, RX Rate, Speed              | Sensor         | Per port: traffic (bytes), rates (Mbit/s) and link speed (Mbps, disabled by default)   |
-| _Port_ SFP Module, SFP Vendor, SFP Type, SFP Serial | Sensor         | Per SFP port, disabled by default                                                      |
-| _Port_ SFP Module                                   | Binary sensor  | On when an SFP module is inserted                                                      |
-| AC Power Consumption, AC Power Budget               | Sensor         | Devices that report power                                                              |
-| Storage _mount_ Used Percentage                     | Sensor         | Consoles that report storage, per filesystem (%). /tmp-style mounts start disabled     |
-| Storage _mount_ Used, Storage _mount_ Total         | Sensor         | Per filesystem (GiB), disabled by default                                              |
-| Storage Nearly Full                                 | Binary sensor  | On when a persistent filesystem is 90% full or more                                    |
-| _Outlet name_ Power, Voltage, Current, Power Factor | Sensor         | Per PDU outlet                                                                         |
-| WAN Status                                          | Binary sensor  | Gateway online state (for the link state, use the WAN connection)                      |
-| _WAN name_ Connection                               | Binary sensor  | Internet connection state of each WAN (DHCP, static or PPPoE)                          |
-| _Tunnel name_ Site-to-Site VPN                      | Binary sensor  | Connection state of each site-to-site VPN tunnel                                       |
-| WAN IP Address, WAN Uptime                          | Sensor         | Gateway, disabled by default                                                           |
-| WiFi _network name_                                 | Switch         | Turn a Wi-Fi network on or off                                                         |
-| _Policy name_                                       | Switch         | Turn a user-defined firewall policy on or off                                          |
-| _Route name_                                        | Switch         | Turn a policy-based route on or off                                                    |
-| _VPN client name_                                   | Switch         | Turn a VPN client (WireGuard, OpenVPN, Privado VPN) on or off                          |
-| Port forward _rule name_                            | Switch         | Turn a port forwarding rule on or off                                                  |
-| Traffic rule _rule description_                     | Switch         | Turn a traffic rule on or off                                                          |
-| NAT rule _rule description_                         | Switch         | Turn a custom NAT rule on or off (console-managed rules get no switch)                 |
-| Static route _route name_                           | Switch         | Turn a static route on or off, disabled by default                                     |
-| Network rule changes                                | Event          | A firewall policy, route, static route, port forward, traffic rule or NAT rule changed |
-| _Outlet name_                                       | Switch         | Turn a PDU outlet on or off                                                            |
-| _Outlet name_ Power Cycle                           | Switch         | Automatic modem power cycling for an outlet, disabled by default                       |
-| _Client name_ Allow                                 | Switch         | Block or allow a client (needs **Enable Client Control**)                              |
-| _Client name_ Reconnect                             | Button         | Reconnect a client (needs **Enable Client Control**)                                   |
-| Wake _Client name_                                  | Button         | Send a Wake-on-LAN packet, disabled by default (needs **Enable Client Control**)       |
-| Restart                                             | Button         | Restart a device                                                                       |
-| _Port_ PoE Power Cycle                              | Button         | Cut and restore power on a port with PoE enabled, disabled by default                  |
-| WiFi QR code                                        | Image          | Scan to join a Wi-Fi network                                                           |
-| Client tracker                                      | Device tracker | Presence of each client (needs **Track WiFi Clients** or **Track Wired Clients**)      |
-| Firmware                                            | Update         | Installed and available firmware version (no installation)                             |
-| Voucher Duration                                    | Number         | Duration in minutes for generated vouchers (1–1,000,000, default 480)                  |
-| Voucher Guest Limit                                 | Number         | Authorized guest limit (0–1000, default 1; 0 = not set; UniFi applies its own default) |
-| Voucher Download Limit                              | Number         | Download rate limit in Mbit/s (0–100, step 0.1, ×1000 to kbps; 0 = not set)            |
-| Voucher Upload Limit                                | Number         | Upload rate limit in Mbit/s (0–100, step 0.1, ×1000 to kbps; 0 = not set)              |
-| Voucher Data Limit                                  | Number         | Data transfer quota in MB (0–1,048,576; 0 = not set; UniFi applies its own default)    |
-| Generate guest voucher                              | Button         | Generate a new hotspot voucher using current input settings                            |
-| Active Vouchers                                     | Sensor         | Count of active, unexpired vouchers for the site                                       |
-| Latest Voucher Code                                 | Sensor         | Secret activation code of the most recent generated voucher                            |
-| Latest Voucher Expiration                           | Sensor         | Expiration timestamp of the most recent generated voucher                              |
-| Latest voucher QR code                              | Image          | Captive portal activation code QR code (not for joining Wi-Fi)                         |
+| Entity                                                       | Type           | Notes                                                                                  |
+| ------------------------------------------------------------ | -------------- | -------------------------------------------------------------------------------------- |
+| Status                                                       | Binary sensor  | Device online state                                                                    |
+| CPU Usage, Memory Usage                                      | Sensor         | Per device (%)                                                                         |
+| Uplink Transmit Rate, Uplink Receive Rate                    | Sensor         | Per device (Mbit/s)                                                                    |
+| Uptime, Temperature, Firmware Version                        | Sensor         | Per device, disabled by default                                                        |
+| Wired Clients, Wireless Clients                              | Sensor         | Per switch or access point                                                             |
+| Total Clients, Wired Clients, Wireless Clients               | Sensor         | Per site                                                                               |
+| Connected clients                                            | Sensor         | Per Wi-Fi network, on its `WiFi: <SSID>` device                                        |
+| Internet Download, Internet Upload                           | Sensor         | Per site, for the last hour, 24 hours, 7 days and 30 days                              |
+| Total PoE Power, _port_ PoE Power                            | Sensor         | Per switch and per port (W)                                                            |
+| _Port_ TX, RX, TX Rate, RX Rate, Speed                       | Sensor         | Per port: traffic (bytes), rates (Mbit/s) and link speed (Mbps, disabled by default)   |
+| _Port_ SFP Module, SFP Vendor, SFP Type, SFP Serial          | Sensor         | Per SFP port, disabled by default                                                      |
+| _Port_ SFP Module                                            | Binary sensor  | On when an SFP module is inserted                                                      |
+| Wi-Fi _band_ TX retries                                      | Sensor         | Per access point radio (%), diagnostic                                                 |
+| Wi-Fi _band_ TX power mode, Standard, Channel, Channel width | Sensor         | Per access point radio, diagnostic, disabled by default                                |
+| AC Power Consumption, AC Power Budget                        | Sensor         | Devices that report power                                                              |
+| Storage _mount_ Used Percentage                              | Sensor         | Consoles that report storage, per filesystem (%). /tmp-style mounts start disabled     |
+| Storage _mount_ Used, Storage _mount_ Total                  | Sensor         | Per filesystem (GiB), disabled by default                                              |
+| Storage Nearly Full                                          | Binary sensor  | On when a persistent filesystem is 90% full or more                                    |
+| _Outlet name_ Power, Voltage, Current, Power Factor          | Sensor         | Per PDU outlet                                                                         |
+| WAN Status                                                   | Binary sensor  | Gateway online state (for the link state, use the WAN connection)                      |
+| _WAN name_ Connection                                        | Binary sensor  | Internet connection state of each WAN (DHCP, static or PPPoE)                          |
+| _Tunnel name_ Site-to-Site VPN                               | Binary sensor  | Connection state of each site-to-site VPN tunnel                                       |
+| WAN IP Address, WAN Uptime                                   | Sensor         | Gateway, disabled by default                                                           |
+| WiFi _network name_                                          | Switch         | Turn a Wi-Fi network on or off                                                         |
+| _Policy name_                                                | Switch         | Turn a user-defined firewall policy on or off                                          |
+| _Route name_                                                 | Switch         | Turn a policy-based route on or off                                                    |
+| _VPN client name_                                            | Switch         | Turn a VPN client (WireGuard, OpenVPN, Privado VPN) on or off                          |
+| Port forward _rule name_                                     | Switch         | Turn a port forwarding rule on or off                                                  |
+| Traffic rule _rule description_                              | Switch         | Turn a traffic rule on or off                                                          |
+| NAT rule _rule description_                                  | Switch         | Turn a custom NAT rule on or off (console-managed rules get no switch)                 |
+| Static route _route name_                                    | Switch         | Turn a static route on or off, disabled by default                                     |
+| Network rule changes                                         | Event          | A firewall policy, route, static route, port forward, traffic rule or NAT rule changed |
+| _Outlet name_                                                | Switch         | Turn a PDU outlet on or off                                                            |
+| _Outlet name_ Power Cycle                                    | Switch         | Automatic modem power cycling for an outlet, disabled by default                       |
+| _Client name_ Allow                                          | Switch         | Block or allow a client (needs **Enable Client Control**)                              |
+| _Client name_ Reconnect                                      | Button         | Reconnect a client (needs **Enable Client Control**)                                   |
+| Wake _Client name_                                           | Button         | Send a Wake-on-LAN packet, disabled by default (needs **Enable Client Control**)       |
+| Restart                                                      | Button         | Restart a device                                                                       |
+| _Port_ PoE Power Cycle                                       | Button         | Cut and restore power on a port with PoE enabled, disabled by default                  |
+| WiFi QR code                                                 | Image          | Scan to join a Wi-Fi network                                                           |
+| Client tracker                                               | Device tracker | Presence of each client (needs **Track WiFi Clients** or **Track Wired Clients**)      |
+| Firmware                                                     | Update         | Installed and available firmware version (no installation)                             |
+| Voucher Duration                                             | Number         | Duration in minutes for generated vouchers (1–1,000,000, default 480)                  |
+| Voucher Guest Limit                                          | Number         | Authorized guest limit (0–1000, default 1; 0 = not set; UniFi applies its own default) |
+| Voucher Download Limit                                       | Number         | Download rate limit in Mbit/s (0–100, step 0.1, ×1000 to kbps; 0 = not set)            |
+| Voucher Upload Limit                                         | Number         | Upload rate limit in Mbit/s (0–100, step 0.1, ×1000 to kbps; 0 = not set)              |
+| Voucher Data Limit                                           | Number         | Data transfer quota in MB (0–1,048,576; 0 = not set; UniFi applies its own default)    |
+| Generate guest voucher                                       | Button         | Generate a new hotspot voucher using current input settings                            |
+| Active Vouchers                                              | Sensor         | Count of active, unexpired vouchers for the site                                       |
+| Latest Voucher Code                                          | Sensor         | Secret activation code of the most recent generated voucher                            |
+| Latest Voucher Expiration                                    | Sensor         | Expiration timestamp of the most recent generated voucher                              |
+| Latest voucher QR code                                       | Image          | Captive portal activation code QR code (not for joining Wi-Fi)                         |
 
 NAT rule and static route switches use the console's private API. They were tested on one UniFi gateway through the cloud connector; other consoles and Network versions may behave differently. If the console rejects a change, the switch reports an error and the rule is left as it was. A console can refuse requests for a few seconds while it applies a change (seen after static route changes). The rule switches of that site are then unavailable for about 15 seconds, until the integration reads the rules again.
+
+### Access point radios
+
+Each radio of an access point gets sensors named after its band: **Wi-Fi 2.4 GHz TX retries**, **Wi-Fi 5 GHz TX retries**, and so on for 900 MHz, 6 GHz and 60 GHz. The retry rate is a diagnostic measurement in percent, and it is polled every 30 seconds with the rest of the device statistics.
+
+The radio settings - TX power mode, Wi-Fi standard, channel and channel width - come from the console's per-device details, which the integration requests for access points only and at most once every 5 minutes. Their sensors are diagnostic and disabled by default, because these values rarely change. A request that fails does not affect the retry rate: the settings sensors become unavailable and keep the last values until a request succeeds again, and the request is retried on the next 5-minute check rather than on every poll.
 
 ### Network rule change events
 

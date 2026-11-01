@@ -233,6 +233,21 @@
       "port_sfp_serial": {
         "default": "mdi:barcode"
       },
+      "radio_tx_retries": {
+        "default": "mdi:wifi"
+      },
+      "radio_tx_power_mode": {
+        "default": "mdi:flash"
+      },
+      "radio_wlan_standard": {
+        "default": "mdi:router-wireless"
+      },
+      "radio_channel": {
+        "default": "mdi:sine-wave"
+      },
+      "radio_channel_width": {
+        "default": "mdi:speedometer"
+      },
       "site_total_clients": {
         "default": "mdi:account-group"
       },

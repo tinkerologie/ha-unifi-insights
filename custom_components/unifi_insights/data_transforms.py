@@ -1030,11 +1030,198 @@ def is_volatile_storage_mount(mount: dict[str, Any]) -> bool:
     return str(mount.get("type") or "").lower() in _VOLATILE_MOUNT_TYPES
 
 
+# --- Access point radios -----------------------------------------------------
+#
+# The Network API (11.0.97) reports each access point radio by frequency in two
+# places: the latest statistics (``interfaces.radios[]`` with ``frequencyGHz``
+# and ``txRetriesPct``) and the device details (``frequencyGHz``, ``channel``,
+# ``channelWidthMHz``, ``txPowerMode`` and ``wlanStandard``). Radios are keyed
+# by their normalised frequency so a radio's entities keep their identity, and
+# the spec enums become Home Assistant translation state keys, which allow only
+# ``[a-z0-9_-]`` (the spec's ``802.11ax`` contains a dot).
+
+# Band slug -> display label, which fills the ``{band}`` name placeholder.
+RADIO_BAND_LABELS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "900mhz": "900 MHz",
+        "2_4ghz": "2.4 GHz",
+        "5ghz": "5 GHz",
+        "6ghz": "6 GHz",
+        "60ghz": "60 GHz",
+    }
+)
+
+# The spec's ``frequencyGHz`` enum, in GHz, to its band slug.
+_RADIO_BAND_SLUGS: Final[Mapping[float, str]] = MappingProxyType(
+    {
+        0.9: "900mhz",
+        2.4: "2_4ghz",
+        5.0: "5ghz",
+        6.0: "6ghz",
+        60.0: "60ghz",
+    }
+)
+
+# Every ``txPowerMode`` and ``wlanStandard`` state key, shared by the sensor
+# descriptions and the translation tests so there is one source of truth.
+RADIO_TX_POWER_MODE_OPTIONS: Final = (
+    "auto",
+    "low",
+    "medium",
+    "high",
+    "custom",
+    "disabled",
+)
+RADIO_WLAN_STANDARD_OPTIONS: Final = (
+    "802_11a",
+    "802_11b",
+    "802_11g",
+    "802_11n",
+    "802_11ac",
+    "802_11ax",
+    "802_11be",
+    "802_11ah",
+)
+
+# The spec value (upper case, as sent) -> state key.
+_RADIO_TX_POWER_MODE_KEYS: Final[Mapping[str, str]] = MappingProxyType(
+    {option.upper(): option for option in RADIO_TX_POWER_MODE_OPTIONS}
+)
+_RADIO_WLAN_STANDARD_KEYS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        f"802.11{suffix.upper()}": f"802_11{suffix}"
+        for suffix in ("a", "b", "g", "n", "ac", "ax", "be", "ah")
+    }
+)
+
+
+def _spec_token(value: Any) -> str:
+    """Return an enum value as an upper-case spec token, or an empty string."""
+    value = _enum_value(value)
+    return value.strip().upper() if isinstance(value, str) else ""
+
+
+def radio_band_slug(frequency: Any) -> str | None:
+    """
+    Return the band slug of a ``frequencyGHz`` value, or None when unknown.
+
+    The spec types the field as a number, so ints, floats and numeric strings
+    are accepted (``5``, ``5.0`` and ``"5"`` are the same band). Booleans,
+    missing values, non-numeric values and frequencies outside the enum are
+    not.
+    """
+    number = _finite_number(frequency)
+    return None if number is None else _RADIO_BAND_SLUGS.get(number)
+
+
+def radio_band_map(payload: Any) -> Mapping[str, Mapping[str, Any]]:
+    """
+    Return radios keyed by band slug, as read-only records.
+
+    ``payload`` is either a device's ``interfaces`` mapping (the statistics and
+    the details payloads both nest ``radios`` under it) or the ``radios`` list
+    itself. Anything else, including the overview's list-shaped
+    ``interfaces`` (``["ports", "radios"]``), has no radios and gives an empty
+    mapping. A radio that is not a mapping, has no known ``frequencyGHz``, or
+    repeats a band already seen is skipped with a debug log and never raises;
+    the first radio of a band wins.
+    """
+    radios = payload.get("radios") if isinstance(payload, Mapping) else payload
+    if not isinstance(radios, list):
+        return MappingProxyType({})
+    bands: dict[str, Mapping[str, Any]] = {}
+    for radio in radios:
+        if not isinstance(radio, Mapping):
+            _LOGGER.debug("Skipping radio entry that is not a mapping: %r", radio)
+            continue
+        frequency = get_field(radio, "frequencyGHz", "frequency_ghz")
+        band = radio_band_slug(frequency)
+        if band is None:
+            _LOGGER.debug("Skipping radio with unknown frequency: %r", frequency)
+            continue
+        if band in bands:
+            _LOGGER.debug("Skipping duplicate %s radio", band)
+            continue
+        bands[band] = MappingProxyType(dict(radio))
+    return MappingProxyType(bands)
+
+
+def tx_power_mode_slug(value: Any) -> str | None:
+    """Return the state key of a ``txPowerMode`` value, or None when unknown."""
+    return _RADIO_TX_POWER_MODE_KEYS.get(_spec_token(value))
+
+
+def wlan_standard_slug(value: Any) -> str | None:
+    """Return the state key of a ``wlanStandard`` value, or None when unknown."""
+    return _RADIO_WLAN_STANDARD_KEYS.get(_spec_token(value))
+
+
+def radio_tx_retries(radio: Mapping[str, Any]) -> float | None:
+    """Return a radio's retry rate in percent, keeping a real 0."""
+    return _finite_number(get_field(radio, "txRetriesPct", "tx_retries_pct"))
+
+
+def radio_tx_power_mode(radio: Mapping[str, Any]) -> str | None:
+    """Return a radio's TX power mode state key."""
+    return tx_power_mode_slug(get_field(radio, "txPowerMode", "tx_power_mode"))
+
+
+def radio_wlan_standard(radio: Mapping[str, Any]) -> str | None:
+    """Return a radio's Wi-Fi standard state key."""
+    return wlan_standard_slug(get_field(radio, "wlanStandard", "wlan_standard"))
+
+
+def _radio_number(radio: Mapping[str, Any], *keys: str) -> int | None:
+    """Return a whole-number radio field, or None when it is not a number."""
+    number = _finite_number(get_field(radio, *keys))
+    return None if number is None else int(number)
+
+
+def radio_channel(radio: Mapping[str, Any]) -> int | None:
+    """Return a radio's channel number, or None."""
+    return _radio_number(radio, "channel")
+
+
+def radio_channel_width(radio: Mapping[str, Any]) -> int | None:
+    """Return a radio's channel width in MHz, or None."""
+    return _radio_number(radio, "channelWidthMHz", "channel_width_mhz")
+
+
+def network_radio_stats(
+    data: Mapping[str, Any], site_id: str, device_id: str
+) -> Mapping[str, Mapping[str, Any]] | None:
+    """
+    Return one Network device's radios from its latest statistics, or None.
+
+    The statistics endpoint already carries these radios, so step-1 sensors
+    cost no request of their own. None means the device has no published
+    statistics; an empty mapping means it reported no usable radio.
+    """
+    stats = network_device_stats(data, site_id, device_id)
+    return None if stats is None else radio_band_map(stats.get("interfaces"))
+
+
+def network_radio_details(
+    data: Mapping[str, Any], site_id: str, device_id: str
+) -> Mapping[str, Any] | None:
+    """
+    Return one Network device's published radio settings record, or None.
+
+    The record is ``{"radios": [...], "available": bool}``. ``available`` is
+    False while the last details request failed, so the step-2 sensors keep
+    their radios but report unavailable instead of a frozen value.
+    """
+    return _record(data, "radio_details", site_id, device_id)
+
+
 __all__ = [
     "CPU_STAT_KEYS",
     "MEMORY_STAT_KEYS",
     "NETWORK_DEVICE_STATES",
     "NETWORK_FACTS_KEY",
+    "RADIO_BAND_LABELS",
+    "RADIO_TX_POWER_MODE_OPTIONS",
+    "RADIO_WLAN_STANDARD_OPTIONS",
     "TRANSIENT_SERVICEABLE_STATES",
     "UPTIME_STAT_KEYS",
     "AvailabilityOwner",
@@ -1068,6 +1255,8 @@ __all__ = [
     "network_client",
     "network_device",
     "network_device_stats",
+    "network_radio_details",
+    "network_radio_stats",
     "normalize_innerspace_snapshot",
     "normalize_legacy_storage",
     "normalize_legacy_wans",
@@ -1077,6 +1266,13 @@ __all__ = [
     "port_index",
     "protect_collection",
     "protect_device",
+    "radio_band_map",
+    "radio_band_slug",
+    "radio_channel",
+    "radio_channel_width",
+    "radio_tx_power_mode",
+    "radio_tx_retries",
+    "radio_wlan_standard",
     "rule_record",
     "section_by_site",
     "site_device_facts",
@@ -1088,7 +1284,9 @@ __all__ = [
     "transform_innerspace_device",
     "transform_innerspace_floor_plan",
     "transform_innerspace_project",
+    "tx_power_mode_slug",
     "uplink_rate_bps",
+    "wlan_standard_slug",
 ]
 
 

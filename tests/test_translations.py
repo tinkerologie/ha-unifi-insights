@@ -19,6 +19,7 @@ from typing import Any, Final
 
 import pytest
 import yaml
+from homeassistant.components.sensor import SensorDeviceClass
 
 from custom_components.unifi_insights.binary_sensor import (
     BINARY_SENSOR_TYPES,
@@ -34,6 +35,8 @@ from custom_components.unifi_insights.coordinators.rule_audit import (
 )
 from custom_components.unifi_insights.device_tracker import LOCATION_DESCRIPTION
 from custom_components.unifi_insights.sensor import (
+    RADIO_DETAILS_SENSOR_TYPES,
+    RADIO_STATS_SENSOR_TYPES,
     ROUTER_SENSORS,
     SECURITY_SENSOR_TYPES,
     SITE_INTERNET_ACTIVITY_SENSOR_TYPES,
@@ -390,6 +393,42 @@ def test_switch_translation_placeholders_are_supplied() -> None:
             f"switch.{key} name needs placeholders {sorted(missing)} "
             "which switch.py never supplies"
         )
+
+
+def test_radio_sensor_translations_and_enum_states() -> None:
+    """Every radio sensor has a name, and both enums a translated state each."""
+    en_sensor = json.loads(_EN_JSON.read_text())["entity"]["sensor"]
+    strings_sensor = json.loads(_STRINGS_JSON.read_text())["entity"]["sensor"]
+    radio_descriptions = (*RADIO_STATS_SENSOR_TYPES, *RADIO_DETAILS_SENSOR_TYPES)
+
+    enum_descriptions = 0
+    for description in radio_descriptions:
+        key = description.translation_key
+        assert key is not None
+        assert key in strings_sensor, f"{key} missing from strings.json"
+        assert en_sensor[key] == strings_sensor[key], (
+            f"{key} differs between strings.json and translations/en.json"
+        )
+        assert "{band}" in strings_sensor[key]["name"]
+        if description.device_class != SensorDeviceClass.ENUM:
+            continue
+        enum_descriptions += 1
+        assert description.options
+        for states in (strings_sensor[key]["state"], en_sensor[key]["state"]):
+            assert set(states) == set(description.options), (
+                f"{key} states do not match its options"
+            )
+    assert enum_descriptions == 2
+    assert set(en_sensor["radio_wlan_standard"]["state"].values()) == {
+        "802.11a",
+        "802.11b",
+        "802.11g",
+        "802.11n",
+        "802.11ac",
+        "802.11ax",
+        "802.11be",
+        "802.11ah",
+    }
 
 
 def test_site_internet_activity_sensor_translations_resolve_in_both_files() -> None:
