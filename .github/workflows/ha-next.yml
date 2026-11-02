@@ -95,10 +95,22 @@ jobs:
               exit 1
             fi
             echo "Home Assistant dev at $revision"
+            # Core's source tree has no translations/ folders: release wheels
+            # generate them at build time. Without them an entity named only by
+            # its device class loses that name ("Office Router" instead of
+            # "Office Router Connectivity"), so generate the English files the
+            # way Core's developer setup does, then install from that tree.
+            core_dir="$RUNNER_TEMP/ha-core"
+            mkdir -p "$core_dir"
+            curl -fsSL --retry 3 "$core_archive/$revision.tar.gz" |
+              tar -xz -C "$core_dir" --strip-components=1
+            (cd "$core_dir" &&
+              uv run --no-project --python 3.14.2 --with orjson \
+                python -m script.translations develop --all > /dev/null)
             {
               echo "ha_version=dev@${revision:0:12}"
-              echo "requirement=homeassistant @ https://github.com/home-assistant/core/archive/$revision.tar.gz"
-              echo "plugin_requirement=pytest-home-assistant @ $core_archive/$revision.tar.gz#$plugin_subdirectory"
+              echo "requirement=homeassistant @ file://$core_dir"
+              echo "plugin_requirement=pytest-home-assistant @ file://$core_dir/packages/pytest-home-assistant"
               echo "hassfest_ref=$revision"
             } >> "$GITHUB_OUTPUT"
             exit 0
