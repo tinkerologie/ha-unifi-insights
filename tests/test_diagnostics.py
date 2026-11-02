@@ -14,7 +14,7 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.components.diagnostics.const import REDACTED
 from homeassistant.const import CONF_API_KEY
 from homeassistant.helpers.json import ExtendedJSONEncoder, JSONEncoder
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api import UniFiResponseError, __version__
 from unifi_official_api.access.models import AccessDevice, AccessDoor, AccessUser
 from unifi_official_api.const import SENSITIVE_CREDENTIAL_KEYS

@@ -56,7 +56,7 @@ from tests.fixtures.protect_ws import FakeProtectWebSocket
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
 COMPONENT_DIR = Path(__file__).parent.parent / "custom_components" / DOMAIN
 UNIQUE_ID = f"{DOMAIN}_nvr_nvr_1_alarm"

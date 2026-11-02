@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from unittest.mock import NonCallableMagicMock
 
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
 # Sorted (platform, unique_id) of every entity the seeded entry registers. A
 # change here renames entities for every user, so it needs a migration.

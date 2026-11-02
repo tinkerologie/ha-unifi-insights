@@ -27,8 +27,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
 TEST_PYTHON_VERSION="3.14.2"
-TEST_HOME_ASSISTANT_VERSION="2026.10.1"
-TEST_PLUGIN_VERSION="0.13.372"
+# Keep equal to HA_VERSION in .github/workflows/ci.yml; script/setup/bootstrap
+# reads this line.
+TEST_HOME_ASSISTANT_VERSION="2026.11.0b1"
+# TODO: Switch TEST_PLUGIN to "pytest-home-assistant==${TEST_HOME_ASSISTANT_VERSION}" once published on PyPI
+TEST_PLUGIN="pytest-home-assistant @ https://github.com/home-assistant/core/archive/refs/tags/${TEST_HOME_ASSISTANT_VERSION}.tar.gz#subdirectory=packages/pytest-home-assistant"
 
 # shellcheck source=script/.lib/output.sh
 source "$SCRIPT_DIR/.lib/output.sh"
@@ -69,10 +72,11 @@ fi
 source "$TEST_VENV_PATH/bin/activate"
 
 log_info "Installing Home Assistant test dependencies"
+uv pip uninstall -q pytest-homeassistant-custom-component 2>/dev/null || true
 uv pip install \
     . \
     "homeassistant==${TEST_HOME_ASSISTANT_VERSION}" \
-    "pytest-homeassistant-custom-component==${TEST_PLUGIN_VERSION}" \
+    "${TEST_PLUGIN}" \
     "PyTurboJPEG>=2.2.0" \
     "av>=16.1.0" \
     "ha-ffmpeg>=3.2.2" \

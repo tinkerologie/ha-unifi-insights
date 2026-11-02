@@ -315,7 +315,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         # tests without ever going through config-entry setup/unload; this
         # listener is the same safety net `cancel_on_shutdown` gives the
         # reconcile timer, so a scheduled cooldown can never outlive `hass`
-        # itself and trip pytest-homeassistant-custom-component's
+        # itself and trip pytest-home-assistant's
         # lingering-timer check.
         #
         # Registered via `entry.async_on_unload` (not called bare): the

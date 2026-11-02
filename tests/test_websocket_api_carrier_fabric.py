@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.unifi_insights import CarrierFabricData
 from custom_components.unifi_insights.const import (

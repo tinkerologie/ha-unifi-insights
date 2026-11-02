@@ -83,6 +83,10 @@ jobs:
           CHANNEL: ${{ matrix.channel }}
           REQUESTED_VERSION: ${{ inputs.ha_version }}
         run: |
+          # pytest-home-assistant ships inside Core; install it from the same
+          # archive as homeassistant so the two always match.
+          core_archive=https://github.com/home-assistant/core/archive
+          plugin_subdirectory=subdirectory=packages/pytest-home-assistant
           if [[ "$CHANNEL" == dev ]]; then
             # Pin one commit so the install and Hassfest test the same Core.
             revision=$(git ls-remote https://github.com/home-assistant/core.git refs/heads/dev | cut -f1)
@@ -91,9 +95,22 @@ jobs:
               exit 1
             fi
             echo "Home Assistant dev at $revision"
+            # Core's source tree has no translations/ folders: release wheels
+            # generate them at build time. Without them an entity named only by
+            # its device class loses that name ("Office Router" instead of
+            # "Office Router Connectivity"), so generate the English files the
+            # way Core's developer setup does, then install from that tree.
+            core_dir="$RUNNER_TEMP/ha-core"
+            mkdir -p "$core_dir"
+            curl -fsSL --retry 3 "$core_archive/$revision.tar.gz" |
+              tar -xz -C "$core_dir" --strip-components=1
+            (cd "$core_dir" &&
+              uv run --no-project --python 3.14.2 --with orjson \
+                python -m script.translations develop --all > /dev/null)
             {
               echo "ha_version=dev@${revision:0:12}"
-              echo "requirement=homeassistant @ https://github.com/home-assistant/core/archive/$revision.tar.gz"
+              echo "requirement=homeassistant @ file://$core_dir"
+              echo "plugin_requirement=pytest-home-assistant @ file://$core_dir/packages/pytest-home-assistant"
               echo "hassfest_ref=$revision"
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -123,26 +140,20 @@ jobs:
           {
             echo "ha_version=$ha_version"
             echo "requirement=homeassistant==$ha_version"
+            echo "plugin_requirement=pytest-home-assistant @ $core_archive/refs/tags/$ha_version.tar.gz#$plugin_subdirectory"
             echo "hassfest_ref=$ha_version"
           } >> "$GITHUB_OUTPUT"
 
       - name: Install Home Assistant and the test harness
         id: install
         env:
-          CHANNEL: ${{ matrix.channel }}
-          HA_VERSION: ${{ steps.resolve.outputs.ha_version }}
           REQUIREMENT: ${{ steps.resolve.outputs.requirement }}
+          PLUGIN_REQUIREMENT: ${{ steps.resolve.outputs.plugin_requirement }}
         run: |
-          # pytest-homeassistant-custom-component pins one Home Assistant version
-          # and often lags a beta by days; it never matches Core dev. Without a
-          # match, run only the import smoke test.
-          if [[ "$CHANNEL" == release ]] && uv pip install . ".[dev]" "$REQUIREMENT"; then
-            echo "harness=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::No pytest-homeassistant-custom-component release installs with Home Assistant $HA_VERSION; running the import smoke test only"
-            echo "harness=false" >> "$GITHUB_OUTPUT"
-            uv pip install . "$REQUIREMENT" segno numpy PyTurboJPEG
-          fi
+          # pytest-home-assistant ships with every Core release and commit, so
+          # install it from the same tag or revision as homeassistant. A failed
+          # install fails the channel; there is no smoke-test-only fallback.
+          uv pip install . ".[dev]" "$REQUIREMENT" "$PLUGIN_REQUIREMENT"
           python -c "from homeassistant.const import __version__; print('Installed Home Assistant', __version__)"
 
       - name: Import every module and check for deprecations
@@ -152,7 +163,6 @@ jobs:
 
       - name: Run tests with deprecation checks
         id: tests
-        if: steps.install.outputs.harness == 'true'
         continue-on-error: true
         run: pytest --no-cov -q
 
@@ -170,32 +180,22 @@ jobs:
           CHANNEL: ${{ matrix.channel }}
           HA_VERSION: ${{ steps.resolve.outputs.ha_version }}
           INSTALL: ${{ steps.install.outcome }}
-          HARNESS: ${{ steps.install.outputs.harness }}
           SMOKE: ${{ steps.smoke.outcome }}
           TESTS: ${{ steps.tests.outcome }}
           HASSFEST: ${{ steps.hassfest.outcome }}
           JOB_STATUS: ${{ job.status }}
         run: |
           # A check that never ran fails too: a step that stops the job, such as
-          # resolving the version, skips every check after it. Only the tests
-          # may be skipped, and only when no matching harness exists.
+          # resolving the version, skips every check after it.
           status=success
           if [[ "$JOB_STATUS" != success ]]; then
             status=failure
           fi
-          for outcome in "$INSTALL" "$SMOKE" "$HASSFEST"; do
+          for outcome in "$INSTALL" "$SMOKE" "$TESTS" "$HASSFEST"; do
             if [[ "$outcome" != success ]]; then
               status=failure
             fi
           done
-          if [[ "$HARNESS" == true && "$TESTS" != success ]]; then
-            status=failure
-          fi
-          if [[ "$HARNESS" == true ]]; then
-            tests="$TESTS"
-          else
-            tests="skipped: no pytest-homeassistant-custom-component for this version"
-          fi
           {
             echo "## Home Assistant ${HA_VERSION:-unresolved}"
             echo
@@ -203,7 +203,7 @@ jobs:
             echo "| --- | --- |"
             echo "| Install | ${INSTALL:-not run} |"
             echo "| Import smoke | ${SMOKE:-not run} |"
-            echo "| Tests | ${tests:-not run} |"
+            echo "| Tests | ${TESTS:-not run} |"
             echo "| Hassfest | ${HASSFEST:-not run} |"
           } >> "$GITHUB_STEP_SUMMARY"
           mkdir -p ha-next-result

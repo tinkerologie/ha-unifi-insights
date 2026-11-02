@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 from homeassistant.exceptions import HomeAssistantError
-from pytest_homeassistant_custom_component.common import flush_store
+from pytest_homeassistant.common import flush_store
 
 from custom_components.unifi_insights.topology import (
     _NODE_KEYS,
@@ -37,7 +37,7 @@ from custom_components.unifi_insights.topology import (
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
 ENTRY = "entry-1"
 KEY = bytes(range(32))

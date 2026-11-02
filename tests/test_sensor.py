@@ -24,7 +24,7 @@ from homeassistant.helpers.entity_registry import (
     RegistryEntryHider,
 )
 from homeassistant.helpers.typing import UNDEFINED
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api.protect.models.sensor import (
     Sensor as ProtectSensorModel,
 )
