@@ -321,6 +321,21 @@ async def test_discovery_adds_an_entity_for_a_record(
     assert _built_ids(doubles[case.entity_class]) == {DEVICE_ID}
 
 
+async def test_camera_discovery_builds_every_quality(hass: HomeAssistant) -> None:
+    """A camera record gets one entity per channel, all for the same camera."""
+    case = Discovery(camera, "cameras", {"name": "Cam"}, "UnifiProtectCamera", ())
+
+    doubles = await _discover(hass, case, _snapshot("cameras", {"name": "Cam"}))
+
+    factory = doubles["UnifiProtectCamera"]
+    assert [call.kwargs["quality"] for call in factory.call_args_list] == [
+        "high",
+        "medium",
+        "low",
+    ]
+    assert {call.kwargs["camera_id"] for call in factory.call_args_list} == {DEVICE_ID}
+
+
 @pytest.mark.parametrize("variant", NO_RECORD)
 @pytest.mark.parametrize("case", DISCOVERY)
 async def test_discovery_skips_a_missing_or_malformed_record(

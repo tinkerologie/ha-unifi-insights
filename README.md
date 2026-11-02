@@ -377,7 +377,7 @@ refer to are not included, and there is no import action.
 
 ## UniFi Protect
 
-- **Cameras:** live view, snapshots and RTSPS streams, with switches and selects for the status light, HDR and video mode.
+- **Cameras:** live view, snapshots and RTSPS streams, with switches and selects for the status light, HDR and video mode. Each camera also has a **Medium resolution** and a **Low resolution** camera entity for lighter streams, disabled by default: enable one and point a low-power client at it. They take the same snapshots as the main entity, stream only their own channel, and return no stream when Protect cannot create it instead of falling back to the high channel or a static URL. The existing camera entity keeps its unique ID, entity ID, name and high-channel stream.
 - **Detection:** motion, person, vehicle, animal and package binary sensors, and smart detection and doorbell event entities.
 - **Camera digital inputs:** an event entity for each digital (alarm) input of a camera, created on the first `cameraDigitalInputChanged` event for that input and restored after a restart. It fires `circuit_open` and `circuit_closed`; with normally-closed wiring an open circuit can mean the input is idle, so the names describe the circuit, not what it is wired to. Needs Protect 7.2.105 or newer.
 - **Lights:** floodlight on/off and brightness, and a light mode action.
@@ -394,7 +394,7 @@ refer to are not included, and there is no import action.
 
 | Entity                                                                                                 | Type                  | Notes                                                                           |
 | ------------------------------------------------------------------------------------------------------ | --------------------- | ------------------------------------------------------------------------------- |
-| Camera                                                                                                 | Camera                | Live view, snapshots, RTSPS stream                                              |
+| Camera                                                                                                 | Camera                | Live view, snapshots, RTSPS stream; Medium/Low are disabled by default          |
 | Motion Detection, Person Detection, Vehicle Detection, Animal Detection, Package Detection, Microphone | Binary sensor         | Cameras (Microphone is read-only; skipped if the camera reports no mic)         |
 | Ring                                                                                                   | Binary sensor         | Doorbells                                                                       |
 | Doorbell, Smart Detection, Door/Window, Digital input                                                  | Event                 | Doorbell rings, smart detections, sensor open/close and digital input events    |

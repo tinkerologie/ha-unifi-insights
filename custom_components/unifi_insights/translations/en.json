@@ -850,6 +850,14 @@
         "name": "Stop PTZ patrol"
       }
     },
+    "camera": {
+      "medium_resolution": {
+        "name": "Medium resolution"
+      },
+      "low_resolution": {
+        "name": "Low resolution"
+      }
+    },
     "switch": {
       "status_light": {
         "name": "Status Light"
