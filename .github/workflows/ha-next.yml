@@ -83,10 +83,7 @@ jobs:
           CHANNEL: ${{ matrix.channel }}
           REQUESTED_VERSION: ${{ inputs.ha_version }}
         run: |
-          # pytest-home-assistant ships inside Core; install it from the same
-          # archive as homeassistant so the two always match.
           core_archive=https://github.com/home-assistant/core/archive
-          plugin_subdirectory=subdirectory=packages/pytest-home-assistant
           if [[ "$CHANNEL" == dev ]]; then
             # Pin one commit so the install and Hassfest test the same Core.
             revision=$(git ls-remote https://github.com/home-assistant/core.git refs/heads/dev | cut -f1)
@@ -110,7 +107,7 @@ jobs:
             {
               echo "ha_version=dev@${revision:0:12}"
               echo "requirement=homeassistant @ file://$core_dir"
-              echo "plugin_requirement=pytest-home-assistant @ file://$core_dir/packages/pytest-home-assistant"
+              echo "plugin_requirement=pytest-homeassistant @ file://$core_dir/packages/pytest-homeassistant"
               echo "hassfest_ref=$revision"
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -140,7 +137,7 @@ jobs:
           {
             echo "ha_version=$ha_version"
             echo "requirement=homeassistant==$ha_version"
-            echo "plugin_requirement=pytest-home-assistant @ $core_archive/refs/tags/$ha_version.tar.gz#$plugin_subdirectory"
+            echo "plugin_requirement=pytest-homeassistant==$ha_version"
             echo "hassfest_ref=$ha_version"
           } >> "$GITHUB_OUTPUT"
 
@@ -150,8 +147,8 @@ jobs:
           REQUIREMENT: ${{ steps.resolve.outputs.requirement }}
           PLUGIN_REQUIREMENT: ${{ steps.resolve.outputs.plugin_requirement }}
         run: |
-          # pytest-home-assistant ships with every Core release and commit, so
-          # install it from the same tag or revision as homeassistant. A failed
+          # pytest-homeassistant ships with every Core release and commit, so
+          # install the version or revision that matches homeassistant. A failed
           # install fails the channel; there is no smoke-test-only fallback.
           uv pip install . ".[dev]" "$REQUIREMENT" "$PLUGIN_REQUIREMENT"
           python -c "from homeassistant.const import __version__; print('Installed Home Assistant', __version__)"

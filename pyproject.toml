@@ -14,10 +14,12 @@ dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.1.0",
-    # Must match the installed Home Assistant exactly. Not on PyPI yet, so every
-    # install path (ci.yml, ha-next.yml, script/test, script/setup/bootstrap,
-    # CONTRIBUTING.md) also passes the matching Core archive URL.
-    "pytest-home-assistant",
+    # Must match the installed Home Assistant exactly, so every install path
+    # (ci.yml, ha-next.yml, script/test, script/setup/bootstrap, CONTRIBUTING.md)
+    # also pins the matching version. 0.1.x are unrelated releases from 2020 that
+    # an unpinned install would pick. No lower bound: HA Next's dev channel
+    # installs a Core checkout, whose plugin version is 0.0.0.
+    "pytest-homeassistant!=0.1.*",
     "pytest-timeout>=2.4.0",
     "PyTurboJPEG>=2.2.0",
     "av>=17.0.0",
