@@ -72,7 +72,11 @@ source "$TEST_VENV_PATH/bin/activate"
 
 log_info "Installing Home Assistant test dependencies"
 uv pip uninstall -q pytest-homeassistant-custom-component pytest-home-assistant 2>/dev/null || true
+# Running script/test from an older revision can leave both plugin names in this
+# venv. They share files, so the uninstall above can break the new plugin while
+# it still shows as installed. Reinstall it so its files are always restored.
 uv pip install \
+    --reinstall-package pytest-homeassistant \
     . \
     "homeassistant==${TEST_HOME_ASSISTANT_VERSION}" \
     "${TEST_PLUGIN}" \
