@@ -66,13 +66,12 @@ jobs:
         run: |
           uv venv --python 3.14.2
           echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
-          # pytest-home-assistant is not on PyPI yet: install it from the Core
-          # tag that matches the Home Assistant pin. Keep HA_VERSION equal to
-          # TEST_HOME_ASSISTANT_VERSION in script/test (bootstrap reads it from
-          # there). Once the plugin is on PyPI, replace the URL with a version pin.
-          HA_VERSION=2026.11.0b1
+          # pytest-homeassistant must match Home Assistant exactly. Keep HA_VERSION
+          # equal to TEST_HOME_ASSISTANT_VERSION in script/test (bootstrap reads
+          # it from there).
+          HA_VERSION=2026.11.0b4
           uv pip install . ".[dev]" "homeassistant==$HA_VERSION" \
-            "pytest-home-assistant @ https://github.com/home-assistant/core/archive/refs/tags/$HA_VERSION.tar.gz#subdirectory=packages/pytest-home-assistant"
+            "pytest-homeassistant==$HA_VERSION"
 
       - name: Check Python types without errors or warnings
         run: ./script/type-check

@@ -88,7 +88,7 @@ Before a pull request can be merged, it must satisfy all automated quality gates
 ### Prerequisites and Setup
 
 - Python 3.14.2 or later
-- Virtual environment with dependencies installed (`script/setup/bootstrap`, or install the Home Assistant version pinned in `script/test` together with the matching test plugin, which is not on PyPI yet. In an existing environment, first remove the retired plugin, which supplies the same fixtures: `pip uninstall -y pytest-homeassistant-custom-component`. Then install: `pip install -e ".[dev]" "homeassistant==2026.11.0b1" "pytest-home-assistant @ https://github.com/home-assistant/core/archive/refs/tags/2026.11.0b1.tar.gz#subdirectory=packages/pytest-home-assistant"`)
+- Virtual environment with dependencies installed (`script/setup/bootstrap`, or install the Home Assistant version pinned in `script/test` together with the matching test plugin. In an existing environment, first remove the retired plugin and any copy under the plugin's earlier or current name, because they supply the same fixtures and the two names share files: `pip uninstall -y pytest-homeassistant-custom-component pytest-home-assistant pytest-homeassistant`. Then install: `pip install -e ".[dev]" "homeassistant==2026.11.0b4" "pytest-homeassistant==2026.11.0b4"`)
 - Pre-commit (`pre-commit install`)
 
 ### Validation Commands

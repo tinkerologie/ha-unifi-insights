@@ -133,16 +133,17 @@ log_info "Using pyproject.toml extras: dev"
 # the custom_components namespace package. A setuptools editable install adds a
 # __editable__ path hook that breaks discovery, so install a regular local wheel.
 #
-# pytest-home-assistant must match Home Assistant exactly and is not on PyPI
-# yet, so pin both to the version script/test uses. Once the plugin is
-# published, go back to `--upgrade ".[dev]" homeassistant` so the dev
-# environment tracks the newest release again.
+# pytest-homeassistant must match Home Assistant exactly, so pin both to the
+# version script/test uses.
 HA_VERSION="$(sed -n 's/^TEST_HOME_ASSISTANT_VERSION="\(.*\)"$/\1/p' script/test)"
 # A reused environment may still have the retired plugin, which supplies the same
-# fixtures and cannot import on Home Assistant 2026.11.
-uv pip uninstall pytest-homeassistant-custom-component 2>/dev/null || true
-uv pip install --upgrade ".[dev]" "homeassistant==${HA_VERSION}" \
-    "pytest-home-assistant @ https://github.com/home-assistant/core/archive/refs/tags/${HA_VERSION}.tar.gz#subdirectory=packages/pytest-home-assistant"
+# fixtures and cannot import on Home Assistant 2026.11, or the plugin's earlier
+# pytest-home-assistant name, which provides the same module. That name shares
+# files with pytest-homeassistant, so the uninstall can break an installed copy of
+# the new plugin. Reinstall it so its files are always restored.
+uv pip uninstall pytest-homeassistant-custom-component pytest-home-assistant 2>/dev/null || true
+uv pip install --upgrade --reinstall-package pytest-homeassistant ".[dev]" "homeassistant==${HA_VERSION}" \
+    "pytest-homeassistant==${HA_VERSION}"
 
 # Only install pre-commit hooks in local development, not in CI
 # GITHUB_ACTIONS is always set to "true" in GitHub Actions environments

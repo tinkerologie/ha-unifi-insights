@@ -239,7 +239,7 @@ def fail_on_ha_deprecation_reports() -> Generator[None]:
 def hass_config_dir(hass_tmp_config_dir: str) -> str:
     """Give every test its own temporary Home Assistant config directory.
 
-    pytest-home-assistant points the config directory at `tests/testing_config`
+    pytest-homeassistant points the config directory at `tests/testing_config`
     in this repository by default, so tests that load blueprints would write
     files into the working tree.
     """
