@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.11.0] - 2026-11-05
+
 ### Added
 
 - Access point radios now get diagnostic sensors. Each radio of an access point reports its retry rate as **Wi-Fi _band_ TX retries** (percent), read from the device statistics the integration already polls, so it costs no extra request. The radio settings - **TX power mode**, **Wi-Fi standard**, **channel** and **channel width** - come from the console's per-device details, which are requested for access points only and at most once every 5 minutes; those four sensors are diagnostic and disabled by default. A failed details request keeps the last values and marks only those sensors unavailable. Bands are keyed by frequency (900 MHz, 2.4 GHz, 5 GHz, 6 GHz, 60 GHz), so a radio that appears later adds its sensors without a reload, and a radio with a missing or unknown frequency is skipped with a debug log. [#454](https://github.com/tinkerologie/ha-unifi-insights/issues/454)
