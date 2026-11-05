@@ -950,6 +950,43 @@ class TestProtectOnlyPollingBehavior:
         assert coordinator._network_available is False
         assert data["sites"] == {}
 
+    @pytest.mark.asyncio
+    async def test_config_coordinator_keeps_network_after_it_answered(
+        self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
+    ) -> None:
+        """A console that listed its sites keeps Network through a reboot.
+
+        While it reboots or updates, the console answers the sites endpoint
+        with its web UI's HTML page (a 200). That fails the refresh but must
+        not turn Network off, or no later poll would ask again.
+        """
+        network_client = _create_site_listing_client()
+        coordinator = UnifiInsightsConfigCoordinator(
+            hass=hass,
+            network_client=network_client,
+            protect_client=MagicMock(),
+            entry=mock_config_entry,
+            network_available=True,
+        )
+        await coordinator._async_update_data()
+        assert coordinator._network_confirmed is True
+
+        network_client.sites.get_all = AsyncMock(
+            side_effect=UniFiResponseError(
+                "Response is not JSON", status_code=200, response_body="<html></html>"
+            )
+        )
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+        assert coordinator._network_available is True
+
+        network_client.sites.get_all = AsyncMock(
+            side_effect=UniFiNotFoundError("Not found", status_code=404)
+        )
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+        assert coordinator._network_available is True
+
 
 # --- WiFi QR payloads and legacy site names ----------------------------------
 

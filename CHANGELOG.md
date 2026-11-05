@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Network entities no longer stay unavailable after the console reboots or updates its firmware. While it starts, the console answers the Network API with its web UI's HTML page, and on a console that also runs Protect or InnerSpace that answer turned Network off until the entry was reloaded. Once the sites endpoint has answered, a failed fetch now fails the refresh and is retried on the next poll; a console whose Network API has never answered is still treated as having no Network application. [#505](https://github.com/tinkerologie/ha-unifi-insights/issues/505)
+
 ## [2026.11.0] - 2026-11-05
 
 ### Added

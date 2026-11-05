@@ -154,6 +154,10 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
             update_interval=SCAN_INTERVAL_CONFIG,
         )
         self._network_available = network_available
+        # Set once the sites endpoint has answered. After that, Network is
+        # known to exist and a failure is transient, never a reason to stop
+        # asking.
+        self._network_confirmed = False
         self._innerspace_available = innerspace_available
         self.data: dict[str, Any] = {
             "sites": {},
@@ -332,11 +336,18 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
         try:
             sites_models = []
             if self._network_available:
-                other_app_available = (
+                # Only a console whose Network API has never answered is
+                # treated as having no Network application. Once it has, a
+                # rebooting or updating console's HTML page (a 200), 404 or
+                # 401 is a failed refresh, retried on the next poll; turning
+                # Network off then would leave every Network entity
+                # unavailable until the entry is reloaded.
+                other_app_available = not self._network_confirmed and (
                     self.protect_client is not None or self._innerspace_available
                 )
                 try:
                     sites_models = await self.network_client.sites.get_all()
+                    self._network_confirmed = True
                 except (UniFiNotFoundError, UniFiAuthenticationError) as err:
                     if other_app_available:
                         self._network_available = False
