@@ -18,6 +18,10 @@ To maintain code quality, protect maintainer capacity, and prevent maintainer bu
 
 ## Development Workflow
 
+Before exploring the integration, read the [domain glossary](GLOSSARY.md),
+[architecture overview](docs/development/ARCHITECTURE.md), and
+[architecture decisions](docs/development/DECISIONS.md).
+
 All contributions—whether submitted by humans or AI agents—must adhere to this step-by-step workflow:
 
 ### 1. Open a GitHub Issue First

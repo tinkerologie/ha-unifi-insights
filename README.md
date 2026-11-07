@@ -888,6 +888,9 @@ The report is cleaned before it is written: API keys, passwords and Wi-Fi secret
 
 Contributions are welcome. Please open an issue before you submit significant changes. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
+The [domain glossary](GLOSSARY.md) and [architecture decisions](docs/development/DECISIONS.md)
+explain the integration's terminology and the reasons for its design.
+
 ## License
 
 This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
