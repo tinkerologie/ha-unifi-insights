@@ -47,3 +47,20 @@ Consult the relevant instruction file when working on specific file types:
 - `json.instructions.md` — JSON formatting and validation (`manifest.json`, `strings.json`, `icons.json`, `hacs.json`)
 - `yaml.instructions.md` — YAML formatting, `services.yaml`, and GitHub Actions workflow conventions
 - `markdown.instructions.md` — Markdown formatting and documentation separation rules
+
+## Agent skills
+
+### Issue tracker
+
+Use this repository's GitHub Issues. Before ticket operations, read
+`docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five canonical triage labels. Before triaging, read
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use a single-context domain layout. Before exploring domain concepts or
+architecture, read `docs/agents/domain.md`.
