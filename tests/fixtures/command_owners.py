@@ -41,6 +41,7 @@ from custom_components.unifi_insights.coordinators import (
     UnifiInsightsFacadeCoordinator,
     UnifiInsightsProtectCoordinator,
 )
+from tests.fixtures.coordinator_clients import protect_list
 
 from .library_responses import (
     SAMPLE_DOORBELL_CAMERA,
@@ -122,7 +123,9 @@ def autospec_endpoint(endpoint_cls: type) -> NonCallableMagicMock:
     if hasattr(instance, "last_result_complete"):
         endpoint.last_result_complete = True
     for name, _ in inspect.getmembers(endpoint_cls, inspect.iscoroutinefunction):
-        if name.startswith(_LIST_READ_PREFIXES):
+        if name == "get_all_result":
+            getattr(endpoint, name).return_value = protect_list()
+        elif name.startswith(_LIST_READ_PREFIXES):
             getattr(endpoint, name).return_value = []
     return endpoint
 
@@ -160,11 +163,16 @@ def seed_network_client(client: NonCallableMagicMock) -> None:
 
 def seed_protect_client(client: NonCallableMagicMock) -> None:
     """Seed the Protect reads, including a chime paired with two doorbells."""
-    client.cameras.get_all.return_value = [
-        copy.deepcopy(SAMPLE_DOORBELL_CAMERA),
-        _second_doorbell(),
-    ]
-    client.chimes.get_all.return_value = [_two_doorbell_chime()]
+    client.cameras.get_all_result.return_value = protect_list(
+        [
+            copy.deepcopy(SAMPLE_DOORBELL_CAMERA),
+            _second_doorbell(),
+        ]
+    )
+    client.cameras.get_all.return_value = list(
+        client.cameras.get_all_result.return_value.records
+    )
+    client.chimes.get_all_result.return_value = protect_list([_two_doorbell_chime()])
     client.nvr.get.return_value = copy.deepcopy(SAMPLE_NVR)
 
 

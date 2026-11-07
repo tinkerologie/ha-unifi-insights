@@ -45,6 +45,7 @@ from custom_components.unifi_insights.siren import (
     siren_volume_from_level,
 )
 from tests.fixtures.assertions import require_instance, require_not_none
+from tests.fixtures.coordinator_clients import protect_list
 from tests.fixtures.library_responses import SAMPLE_SIREN
 from tests.fixtures.protect_ws import FakeProtectWebSocket
 
@@ -85,8 +86,8 @@ async def _setup(
 ) -> None:
     """Set the integration up with ``sirens`` on a mocked Protect console."""
     endpoint = protect_client.sirens
-    endpoint.get_all = AsyncMock(
-        return_value=[Siren.model_validate(record) for record in sirens]
+    endpoint.get_all_result = AsyncMock(
+        return_value=protect_list(Siren.model_validate(record) for record in sirens)
     )
     endpoint.play = AsyncMock(return_value=True)
     endpoint.stop = AsyncMock(return_value=True)
@@ -487,7 +488,7 @@ async def test_sirens_endpoint_unsupported_creates_no_entity(
 ) -> None:
     """A Protect without /sirens is logged once at INFO, not warned about."""
     caplog.set_level(logging.INFO)
-    protect_client.sirens.get_all = AsyncMock(side_effect=error)
+    protect_client.sirens.get_all_result = AsyncMock(side_effect=error)
 
     mock_config_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_config_entry.entry_id)
@@ -512,8 +513,8 @@ async def test_siren_added_on_later_poll(
     await _setup(hass, mock_config_entry, protect_client, sirens=[])
     assert hass.states.async_entity_ids("siren") == []
 
-    protect_client.sirens.get_all = AsyncMock(
-        return_value=[Siren.model_validate(_siren())]
+    protect_client.sirens.get_all_result = AsyncMock(
+        return_value=protect_list([Siren.model_validate(_siren())])
     )
     await mock_config_entry.runtime_data.protect_coordinator.async_refresh()
     await hass.async_block_till_done()
@@ -594,7 +595,7 @@ async def test_timed_run_reads_off_while_unrelated_frames_keep_arriving(
         protect_client,
         sirens=[_siren(), _siren("siren_22", mac="AABBCC000022")],
     )
-    polls = protect_client.sirens.get_all.await_count
+    polls = protect_client.sirens.get_all_result.await_count
 
     await _push(hass, mock_config_entry, _ws_frame("siren_1", _active(5000)))
     assert _state(hass) == STATE_ON
@@ -614,7 +615,7 @@ async def test_timed_run_reads_off_while_unrelated_frames_keep_arriving(
         freezer.tick(timedelta(seconds=10))
         await _push(hass, mock_config_entry, _ws_frame("siren_22", {"isActive": False}))
         assert _state(hass) == STATE_OFF
-    assert protect_client.sirens.get_all.await_count == polls
+    assert protect_client.sirens.get_all_result.await_count == polls
 
 
 async def test_run_in_progress_at_setup_ends_on_its_own(
@@ -786,8 +787,10 @@ async def test_reconcile_timer_refreshes_sirens_without_a_frame_or_the_main_poll
     )
     assert _state(hass) == STATE_ON
     protect = mock_config_entry.runtime_data.protect_coordinator
-    protect_client.sirens.get_all = AsyncMock(
-        return_value=[Siren.model_validate(_siren(sirenStatus={"isActive": False}))]
+    protect_client.sirens.get_all_result = AsyncMock(
+        return_value=protect_list(
+            [Siren.model_validate(_siren(sirenStatus={"isActive": False}))]
+        )
     )
 
     with patch.object(protect, "_async_update_data", AsyncMock()) as main_poll:
@@ -795,7 +798,7 @@ async def test_reconcile_timer_refreshes_sirens_without_a_frame_or_the_main_poll
         await hass.async_block_till_done(wait_background_tasks=True)
 
     assert _state(hass) == STATE_OFF
-    protect_client.sirens.get_all.assert_awaited()
+    protect_client.sirens.get_all_result.assert_awaited()
     main_poll.assert_not_awaited()
 
 
