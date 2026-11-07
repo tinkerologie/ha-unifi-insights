@@ -16,10 +16,10 @@ if TYPE_CHECKING:
 
 
 def protect_list(
-    records: Iterable[Any] = (), *, skipped: int = 0, shape_valid: bool = True
+    records: Iterable[Any] = (), *, skipped: int = 0
 ) -> ProtectListResult[Any]:
-    """Build a Protect listing result from test records."""
-    return ProtectListResult(tuple(records), skipped, shape_valid)
+    """Build a result from a valid list with an optional count of skipped records."""
+    return ProtectListResult(records=tuple(records), skipped=skipped, shape_valid=True)
 
 
 def _create_mock_model(data: dict) -> MagicMock:

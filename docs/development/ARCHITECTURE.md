@@ -70,7 +70,8 @@ docs/development/               # This document, DECISIONS.md and adr/
 
 **Library.** The integration uses
 [`unifi-official-api`](https://pypi.org/project/unifi-official-api/) from PyPI.
-The manifest sets the version. The Python import name is `unifi_official_api`.
+The Python import name is `unifi_official_api`. Keep the same version in
+`manifest.json`, `pyproject.toml`, and `requirements.txt`.
 See [ADR-008](./adr/008-depend-on-unifi-official-api-from-pypi.md).
 
 Fix API contracts in
