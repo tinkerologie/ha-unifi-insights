@@ -36,6 +36,7 @@ from custom_components.unifi_insights.select import (
 )
 from tests.fixtures.assertions import patch_attribute, require_mock, require_not_none
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
+from tests.fixtures.coordinator_clients import protect_list
 from tests.fixtures.entities import EntityCollector
 from tests.fixtures.facade_data import with_protect_collection, with_protect_fields
 
@@ -606,17 +607,19 @@ class TestLprVideoModeStates:
         self, mock_protect_client: MagicMock, mode: str
     ) -> MagicMock:
         """Seed the API boundary before the integration builds its snapshots."""
-        mock_protect_client.cameras.get_all.return_value = [
-            {
-                "id": "lpr_camera",
-                "name": "LPR Camera",
-                "state": "CONNECTED",
-                "model": "UVC-G5-Bullet",
-                "mac": "11:22:33:44:55:66",
-                "videoMode": mode,
-                "featureFlags": {},
-            }
-        ]
+        mock_protect_client.cameras.get_all_result.return_value = protect_list(
+            [
+                {
+                    "id": "lpr_camera",
+                    "name": "LPR Camera",
+                    "state": "CONNECTED",
+                    "model": "UVC-G5-Bullet",
+                    "mac": "11:22:33:44:55:66",
+                    "videoMode": mode,
+                    "featureFlags": {},
+                }
+            ]
+        )
         return mock_protect_client
 
     @pytest.mark.parametrize(
@@ -679,12 +682,16 @@ class TestLprVideoModeStates:
         # A fresh API response must publish the new translated state through HA.
         raw_update = "highFps" if mode == "default" else "default"
         key_update = "high_fps" if mode == "default" else "default"
-        mock_protect_client.cameras.get_all.return_value = [
-            {
-                **mock_protect_client.cameras.get_all.return_value[0],
-                "videoMode": raw_update,
-            }
-        ]
+        mock_protect_client.cameras.get_all_result.return_value = protect_list(
+            [
+                {
+                    **mock_protect_client.cameras.get_all_result.return_value.records[
+                        0
+                    ],
+                    "videoMode": raw_update,
+                }
+            ]
+        )
         owner = init_integration.runtime_data.coordinator.require_protect_coordinator()
         await owner.async_refresh()
         await hass.async_block_till_done()

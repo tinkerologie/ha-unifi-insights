@@ -21,6 +21,7 @@ from tests.fixtures.command_owners import (
     seed_network_client,
     seed_protect_client,
 )
+from tests.fixtures.coordinator_clients import protect_list
 from tests.fixtures.library_responses import (
     SAMPLE_ALARM_HUB,
     SAMPLE_CLIENT,
@@ -204,37 +205,51 @@ def _protect_client() -> NonCallableMagicMock:
     client = autospec_client(UniFiProtectClient)
     seed_protect_client(client)
     client.nvr.get.return_value = copy.deepcopy(SAMPLE_NVR_WITH_ARM_MODE)
-    client.sensors.get_all.return_value = [copy.deepcopy(SAMPLE_USL_ENTRY_SENSOR)]
-    client.link_stations.get_all.return_value = [
-        copy.deepcopy(SAMPLE_LINK_STATION),
-        copy.deepcopy(SAMPLE_THREAD_LINK_STATION),
-    ]
-    client.alarm_hubs.get_all.return_value = [copy.deepcopy(SAMPLE_ALARM_HUB)]
-    client.fobs.get_all.return_value = [copy.deepcopy(SAMPLE_KEYPAD_FOB)]
-    client.sirens.get_all.return_value = [copy.deepcopy(SAMPLE_SIREN)]
-    client.lights.get_all.return_value = [
-        {
-            "id": "light_1",
-            "modelKey": "light",
-            "name": "Porch Light",
-            "state": "CONNECTED",
-            "type": "UP FloodLight",
-            "mac": "AABBCC0000E1",
-            "lightModeSettings": {"mode": "motion", "enableAt": "fulltime"},
-            "lightDeviceSettings": {"ledLevel": 3},
-        }
-    ]
-    client.viewers.get_all.return_value = [
-        {
-            "id": "viewer_1",
-            "modelKey": "viewer",
-            "name": "Lobby Viewer",
-            "state": "CONNECTED",
-            "type": "UP Viewport",
-            "mac": "AABBCC0000E2",
-            "liveview": "liveview_1",
-        }
-    ]
+    client.sensors.get_all_result.return_value = protect_list(
+        [copy.deepcopy(SAMPLE_USL_ENTRY_SENSOR)]
+    )
+    client.link_stations.get_all_result.return_value = protect_list(
+        [
+            copy.deepcopy(SAMPLE_LINK_STATION),
+            copy.deepcopy(SAMPLE_THREAD_LINK_STATION),
+        ]
+    )
+    client.alarm_hubs.get_all_result.return_value = protect_list(
+        [copy.deepcopy(SAMPLE_ALARM_HUB)]
+    )
+    client.fobs.get_all_result.return_value = protect_list(
+        [copy.deepcopy(SAMPLE_KEYPAD_FOB)]
+    )
+    client.sirens.get_all_result.return_value = protect_list(
+        [copy.deepcopy(SAMPLE_SIREN)]
+    )
+    client.lights.get_all_result.return_value = protect_list(
+        [
+            {
+                "id": "light_1",
+                "modelKey": "light",
+                "name": "Porch Light",
+                "state": "CONNECTED",
+                "type": "UP FloodLight",
+                "mac": "AABBCC0000E1",
+                "lightModeSettings": {"mode": "motion", "enableAt": "fulltime"},
+                "lightDeviceSettings": {"ledLevel": 3},
+            }
+        ]
+    )
+    client.viewers.get_all_result.return_value = protect_list(
+        [
+            {
+                "id": "viewer_1",
+                "modelKey": "viewer",
+                "name": "Lobby Viewer",
+                "state": "CONNECTED",
+                "type": "UP Viewport",
+                "mac": "AABBCC0000E2",
+                "liveview": "liveview_1",
+            }
+        ]
+    )
     client.liveviews.get_all.return_value = [
         {"id": "liveview_1", "modelKey": "liveview", "name": "All Cameras"}
     ]

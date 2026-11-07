@@ -3,11 +3,23 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from unifi_official_api.protect import ProtectListResult
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # --- Client doubles ----------------------------------------------------------
+
+
+def protect_list(
+    records: Iterable[Any] = (), *, skipped: int = 0, shape_valid: bool = True
+) -> ProtectListResult[Any]:
+    """Build a Protect listing result from test records."""
+    return ProtectListResult(tuple(records), skipped, shape_valid)
 
 
 def _create_mock_model(data: dict) -> MagicMock:
@@ -180,47 +192,53 @@ def _create_mock_protect_client() -> MagicMock:
 
     # Cameras namespace
     client.cameras = MagicMock()
-    client.cameras.get_all = AsyncMock(
-        return_value=[
-            _create_mock_model(
-                {
-                    "id": "camera1",
-                    "name": "Front Door",
-                    "state": "CONNECTED",
-                    "type": "UVC-G4-DOORBELL",
-                    "mac": "11:22:33:44:55:66",
-                    "featureFlags": {"smartDetectTypes": ["person", "vehicle"]},
-                }
-            )
-        ]
+    client.cameras.get_all_result = AsyncMock(
+        return_value=protect_list(
+            [
+                _create_mock_model(
+                    {
+                        "id": "camera1",
+                        "name": "Front Door",
+                        "state": "CONNECTED",
+                        "type": "UVC-G4-DOORBELL",
+                        "mac": "11:22:33:44:55:66",
+                        "featureFlags": {"smartDetectTypes": ["person", "vehicle"]},
+                    }
+                )
+            ]
+        )
     )
 
     # Lights namespace
     client.lights = MagicMock()
-    client.lights.get_all = AsyncMock(
-        return_value=[
-            _create_mock_model(
-                {
-                    "id": "light1",
-                    "name": "Garage Light",
-                    "state": "CONNECTED",
-                }
-            )
-        ]
+    client.lights.get_all_result = AsyncMock(
+        return_value=protect_list(
+            [
+                _create_mock_model(
+                    {
+                        "id": "light1",
+                        "name": "Garage Light",
+                        "state": "CONNECTED",
+                    }
+                )
+            ]
+        )
     )
 
     # Sensors namespace
     client.sensors = MagicMock()
-    client.sensors.get_all = AsyncMock(
-        return_value=[
-            _create_mock_model(
-                {
-                    "id": "sensor1",
-                    "name": "Door Sensor",
-                    "state": "CONNECTED",
-                }
-            )
-        ]
+    client.sensors.get_all_result = AsyncMock(
+        return_value=protect_list(
+            [
+                _create_mock_model(
+                    {
+                        "id": "sensor1",
+                        "name": "Door Sensor",
+                        "state": "CONNECTED",
+                    }
+                )
+            ]
+        )
     )
 
     # NVR namespace
@@ -231,30 +249,34 @@ def _create_mock_protect_client() -> MagicMock:
 
     # Chimes namespace
     client.chimes = MagicMock()
-    client.chimes.get_all = AsyncMock(
-        return_value=[
-            _create_mock_model(
-                {
-                    "id": "chime1",
-                    "name": "Door Chime",
-                    "state": "CONNECTED",
-                }
-            )
-        ]
+    client.chimes.get_all_result = AsyncMock(
+        return_value=protect_list(
+            [
+                _create_mock_model(
+                    {
+                        "id": "chime1",
+                        "name": "Door Chime",
+                        "state": "CONNECTED",
+                    }
+                )
+            ]
+        )
     )
 
     # Viewers namespace
     client.viewers = MagicMock()
-    client.viewers.get_all = AsyncMock(
-        return_value=[
-            _create_mock_model(
-                {
-                    "id": "viewer1",
-                    "name": "Viewport",
-                    "state": "CONNECTED",
-                }
-            )
-        ]
+    client.viewers.get_all_result = AsyncMock(
+        return_value=protect_list(
+            [
+                _create_mock_model(
+                    {
+                        "id": "viewer1",
+                        "name": "Viewport",
+                        "state": "CONNECTED",
+                    }
+                )
+            ]
+        )
     )
 
     # Liveviews namespace
@@ -274,8 +296,7 @@ def _create_mock_protect_client() -> MagicMock:
     # Protect 7.3.70 security device families
     for family in ("fobs", "link_stations", "alarm_hubs", "sirens"):
         endpoint = MagicMock()
-        endpoint.get_all = AsyncMock(return_value=[])
-        endpoint.last_result_complete = True
+        endpoint.get_all_result = AsyncMock(return_value=protect_list([]))
         setattr(client, family, endpoint)
     # WebSocket support
     client.get_host_id = AsyncMock(return_value="nvr1")

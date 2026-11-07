@@ -1034,11 +1034,11 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         stamp = begin_request(self._events, "cameras", self._now())
         outcome: RestOutcome
         try:
-            cameras_models = await self.protect_client.cameras.get_all()
+            result = await self.protect_client.cameras.get_all_result()
             # Rebuild the dict from the API response so cameras removed from
             # Protect disappear from coordinator data (enables stale cleanup).
             cameras: dict[str, Any] = {}
-            for camera_model in cameras_models:
+            for camera_model in result.records:
                 camera = normalize_camera(self._model_to_dict(camera_model))
                 camera_id = camera.get("id")
                 if camera_id:
@@ -1049,9 +1049,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
                         camera.get("name", camera_id),
                         camera.get("smartDetectTypes", []),
                     )
-            outcome = Fetched(
-                cameras, complete=self.protect_client.cameras.last_result_complete
-            )
+            outcome = Fetched(cameras, complete=result.complete)
         except UniFiNotFoundError:
             outcome = NotFound()
         except (UniFiConnectionError, UniFiTimeoutError, UniFiResponseError) as err:
@@ -1072,16 +1070,14 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         stamp = begin_request(self._events, "lights", self._now())
         outcome: RestOutcome
         try:
-            lights_models = await self.protect_client.lights.get_all()
+            result = await self.protect_client.lights.get_all_result()
             lights: dict[str, Any] = {}
-            for light_model in lights_models:
+            for light_model in result.records:
                 light = self._model_to_dict(light_model)
                 light_id = light.get("id")
                 if light_id:
                     lights[light_id] = light
-            outcome = Fetched(
-                lights, complete=self.protect_client.lights.last_result_complete
-            )
+            outcome = Fetched(lights, complete=result.complete)
         except UniFiNotFoundError:
             outcome = NotFound()
         except (UniFiConnectionError, UniFiTimeoutError, UniFiResponseError) as err:
@@ -1106,16 +1102,14 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         stamp = begin_request(self._events, "sensors", self._now())
         outcome: RestOutcome
         try:
-            sensors_models = await self.protect_client.sensors.get_all()
+            result = await self.protect_client.sensors.get_all_result()
             sensors: dict[str, Any] = {}
-            for sensor_model in sensors_models:
+            for sensor_model in result.records:
                 sensor = self._model_to_dict(sensor_model)
                 sensor_id = sensor.get("id")
                 if sensor_id:
                     sensors[sensor_id] = sensor
-            outcome = Fetched(
-                sensors, complete=self.protect_client.sensors.last_result_complete
-            )
+            outcome = Fetched(sensors, complete=result.complete)
         except UniFiNotFoundError:
             outcome = NotFound()
         except UniFiAuthenticationError as err:
@@ -1137,7 +1131,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         if applied and isinstance(outcome, Fetched):
             _LOGGER.debug(
                 "Protect coordinator: Successfully fetched %d sensors",
-                len(sensors_models),
+                len(result.records),
             )
 
     async def _fetch_nvr(self) -> None:
@@ -1179,16 +1173,14 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         stamp = begin_request(self._events, "chimes", self._now())
         outcome: RestOutcome
         try:
-            chimes_models = await self.protect_client.chimes.get_all()
+            result = await self.protect_client.chimes.get_all_result()
             chimes: dict[str, Any] = {}
-            for chime_model in chimes_models:
+            for chime_model in result.records:
                 chime = self._model_to_dict(chime_model)
                 chime_id = chime.get("id")
                 if chime_id:
                     chimes[chime_id] = chime
-            outcome = Fetched(
-                chimes, complete=self.protect_client.chimes.last_result_complete
-            )
+            outcome = Fetched(chimes, complete=result.complete)
         except UniFiNotFoundError:
             outcome = NotFound()
         except Exception as err:
@@ -1202,7 +1194,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
             self._log_family_fetch_recovery("chimes")
             _LOGGER.debug(
                 "Protect coordinator: Successfully fetched %d chimes",
-                len(chimes_models),
+                len(result.records),
             )
 
     async def _fetch_viewers(self) -> None:
@@ -1216,16 +1208,14 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         stamp = begin_request(self._events, "viewers", self._now())
         outcome: RestOutcome
         try:
-            viewers_models = await self.protect_client.viewers.get_all()
+            result = await self.protect_client.viewers.get_all_result()
             viewers: dict[str, Any] = {}
-            for viewer_model in viewers_models:
+            for viewer_model in result.records:
                 viewer = self._model_to_dict(viewer_model)
                 viewer_id = viewer.get("id")
                 if viewer_id:
                     viewers[viewer_id] = viewer
-            outcome = Fetched(
-                viewers, complete=self.protect_client.viewers.last_result_complete
-            )
+            outcome = Fetched(viewers, complete=result.complete)
         except UniFiNotFoundError:
             outcome = NotFound()
         except Exception as err:
@@ -1235,7 +1225,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         if isinstance(outcome, Fetched):
             _LOGGER.debug(
                 "Protect coordinator: Successfully fetched %d viewers",
-                len(viewers_models),
+                len(result.records),
             )
 
     async def _fetch_liveviews(self) -> None:
@@ -1334,7 +1324,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         answered = collection in self._answered_families
         _LOGGER.debug("Protect coordinator: Fetching %s", collection)
         try:
-            models = await endpoint.get_all(expected_unsupported=not answered)
+            result = await endpoint.get_all_result(expected_unsupported=not answered)
         except UniFiNotFoundError:
             if answered:
                 return NotFound()
@@ -1354,12 +1344,12 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         self._unsupported_until.pop(collection, None)
         self._answered_families.add(collection)
         devices: dict[str, Any] = {}
-        for model in models:
+        for model in result.records:
             device = self._model_to_dict(model)
             device_id = device.get("id")
             if device_id:
                 devices[device_id] = device
-        return Fetched(devices, complete=endpoint.last_result_complete)
+        return Fetched(devices, complete=result.complete)
 
     def _mark_family_unsupported(self, collection: str, reason: str) -> None:
         """Skip a family this Protect version lacks until the next re-probe."""

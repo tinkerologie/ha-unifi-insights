@@ -47,6 +47,7 @@ from custom_components.unifi_insights.services import (
 )
 from tests.conftest import _create_mock_protect_client
 from tests.fixtures.assertions import require_not_none
+from tests.fixtures.coordinator_clients import protect_list
 from tests.fixtures.facade_data import with_protect_collection, without_sections
 from tests.fixtures.library_responses import SAMPLE_DOORBELL_CAMERA, SAMPLE_PUBLIC_CHIME
 
@@ -89,11 +90,11 @@ def _prepare(
     chimes: list[dict[str, Any]],
 ) -> None:
     """Give a mocked Protect client its cameras and chimes, and an update call."""
-    client.cameras.get_all = AsyncMock(
-        return_value=[Camera.model_validate(camera) for camera in cameras]
+    client.cameras.get_all_result = AsyncMock(
+        return_value=protect_list([Camera.model_validate(camera) for camera in cameras])
     )
-    client.chimes.get_all = AsyncMock(
-        return_value=[Chime.model_validate(chime) for chime in chimes]
+    client.chimes.get_all_result = AsyncMock(
+        return_value=protect_list([Chime.model_validate(chime) for chime in chimes])
     )
     client.chimes.update = AsyncMock(
         return_value=Chime.model_validate(SAMPLE_PUBLIC_CHIME)

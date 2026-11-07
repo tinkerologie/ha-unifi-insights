@@ -28,6 +28,7 @@ from custom_components.unifi_insights.const import (
 )
 from tests.fixtures.assertions import require_not_none
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
+from tests.fixtures.coordinator_clients import protect_list
 from tests.fixtures.facade_data import (
     with_camera,
     with_protect_collection,
@@ -560,16 +561,18 @@ class TestCameraQualityRegistry:
     @pytest.fixture
     def mock_protect_client(self, mock_protect_client: MagicMock) -> MagicMock:
         """Seed one camera before the integration builds its snapshot."""
-        mock_protect_client.cameras.get_all.return_value = [
-            {
-                "id": "camera1",
-                "name": "Front Door",
-                "state": "CONNECTED",
-                "model": "UVC-G6-Turret",
-                "mac": "11:22:33:44:55:66",
-                "featureFlags": {},
-            }
-        ]
+        mock_protect_client.cameras.get_all_result.return_value = protect_list(
+            [
+                {
+                    "id": "camera1",
+                    "name": "Front Door",
+                    "state": "CONNECTED",
+                    "model": "UVC-G6-Turret",
+                    "mac": "11:22:33:44:55:66",
+                    "featureFlags": {},
+                }
+            ]
+        )
         return mock_protect_client
 
     async def test_extra_channels_are_disabled_and_share_the_device(
