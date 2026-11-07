@@ -13,6 +13,15 @@ registry entries to remove. It stores the inventory and publishes the snapshot
 before it removes these entries. See
 [ADR-014](./adr/014-pure-network-inventory-reconciliation.md).
 
+## Facade notifications
+
+The facade publishes a snapshot before it sends notifications. Use
+`FacadeOwner.DEVICE` or `FacadeOwner.PROTECT` as the listener context for
+an entity that reads from that owner. The facade notifies the entity when
+its owner updates. Listeners without a `FacadeOwner` receive all updates.
+Use the default context for discovery and for entities that read from more
+than one owner.
+
 ## Directory structure
 
 ```text

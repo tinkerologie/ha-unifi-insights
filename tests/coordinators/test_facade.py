@@ -13,10 +13,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util.read_only_dict import ReadOnlyDict
 from unifi_official_api import UniFiConnectionError
 
+from custom_components.unifi_insights.binary_sensor import (
+    UnifiInsightsSiteToSiteVpnBinarySensor,
+)
 from custom_components.unifi_insights.const import (
     DOMAIN,
 )
@@ -31,6 +35,7 @@ from custom_components.unifi_insights.coordinators.facade import (
     EMPTY_PROTECT,
     SITE_SECTIONS,
     FacadeData,
+    FacadeOwner,
     build_facade_data,
     capture_availability,
 )
@@ -51,13 +56,17 @@ from custom_components.unifi_insights.data_transforms import (
     site_record,
     site_section_available,
 )
+from custom_components.unifi_insights.entity import (
+    UnifiInsightsEntity,
+    UnifiProtectEntity,
+)
 from tests.fixtures.assertions import (
     patch_attribute,
     require_instance,
     require_mock,
     require_not_none,
 )
-from tests.fixtures.command_owners import SITE_ID
+from tests.fixtures.command_owners import DOORBELL_IDS, PDU_ID, SITE_ID
 from tests.fixtures.coordinator_clients import (
     _create_mock_network_client,
     _create_mock_protect_client,
@@ -1085,7 +1094,7 @@ class TestUnifiFacadeCoordinator:
             listener_called = True
 
         facade_coordinator.async_add_listener(listener)
-        facade_coordinator._handle_coordinator_update()
+        facade_coordinator._handle_coordinator_update(FacadeOwner.DEVICE)
 
         assert listener_called
 
@@ -1912,3 +1921,65 @@ def test_with_sections_freezes_the_sections_it_replaces() -> None:
         data["devices"]["site1"]["d1"]["ports"].append(2)
     with pytest.raises(RuntimeError):
         require_instance(data["devices"]["site1"], ReadOnlyDict)["d2"] = {}
+
+
+async def test_owner_notifications_reach_entities_and_preserve_unscoped_listeners(
+    seeded_owners: SeededOwners,
+) -> None:
+    """Notify entity writers from their owners and publish before callbacks run."""
+    owners = seeded_owners
+    facade = owners.facade
+    network = UnifiInsightsEntity(
+        facade, EntityDescription(key="test"), SITE_ID, PDU_ID
+    )
+    protect = UnifiProtectEntity(facade, "camera", DOORBELL_IDS[0])
+    vpn = UnifiInsightsSiteToSiteVpnBinarySensor(
+        facade, SITE_ID, PDU_ID, "tunnel", "Tunnel"
+    )
+    full_update = MagicMock()
+    unsub = facade.async_add_listener(full_update, context="discovery")
+    availability: list[tuple[str, bool]] = []
+
+    with (
+        patch.object(
+            network,
+            "async_write_ha_state",
+            side_effect=lambda: availability.append(("network", network.available)),
+        ) as network_write,
+        patch.object(
+            protect,
+            "async_write_ha_state",
+            side_effect=lambda: availability.append(("protect", protect.available)),
+        ) as protect_write,
+        patch.object(vpn, "async_write_ha_state") as vpn_write,
+    ):
+        await network.async_added_to_hass()
+        await protect.async_added_to_hass()
+        await vpn.async_added_to_hass()
+        owners.protect.async_set_update_error(UpdateFailed("protect down"))
+        owners.protect.async_set_updated_data(owners.protect.data)
+        assert availability == [("protect", False), ("protect", True)]
+        assert network_write.call_count == 0
+        assert vpn_write.call_count == 2
+
+        owners.device.async_set_update_error(UpdateFailed("device down"))
+        owners.device.async_set_updated_data(owners.device.data)
+        assert availability[-2:] == [("network", False), ("network", True)]
+        assert protect_write.call_count == 2
+
+        owners.config.async_set_updated_data(owners.config.data)
+        assert network_write.call_count == protect_write.call_count == 2
+        assert vpn_write.call_count == full_update.call_count == 5
+
+        facade.async_update_listeners()
+        assert network_write.call_count == protect_write.call_count == 3
+        assert vpn_write.call_count == full_update.call_count == 6
+
+        network.hass = facade.hass
+        network.entity_id = "sensor.test_474"
+        await network.async_remove()
+        owners.device.async_set_updated_data(owners.device.data)
+        assert network_write.call_count == 3
+        assert vpn_write.call_count == full_update.call_count == 7
+
+    unsub()

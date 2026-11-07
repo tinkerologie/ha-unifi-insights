@@ -1004,6 +1004,8 @@ class UnifiInsightsSiteToSiteVpnBinarySensor(UnifiInsightsEntity, BinarySensorEn
     the list, or is listed with a status other than CONNECTED, is off.
     """
 
+    _facade_owner = None  # Reads both the Config and Device coordinators.
+
     def __init__(
         self,
         coordinator: UnifiInsightsFacadeCoordinator,
