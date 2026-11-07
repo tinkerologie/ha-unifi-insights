@@ -35,3 +35,5 @@ applyTo: "**/*.md"
 - Write for non-native English speakers
 - Use American English
 - Be concise — avoid unnecessary words
+
+- For English technical prose, use the [Issue 9 rules in the contributor guide](../../CONTRIBUTING.md#technical-documentation). Limit instructions to 20 words and descriptions to 25 words per sentence. Preserve literals.

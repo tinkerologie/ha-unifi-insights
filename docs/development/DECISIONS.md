@@ -1,6 +1,7 @@
 # Architectural and design decisions
 
-This document is the index of significant architectural and design decisions for the UniFi Insights integration. Each entry summarizes one decision and links to its full Architecture Decision Record (ADR) in [`adr/`](./adr/).
+This index gives the design decisions for UniFi Insights. The full
+Architecture Decision Records (ADRs) are in [`adr/`](./adr/).
 
 For the domain vocabulary used by these decisions, see the [glossary](../../GLOSSARY.md).
 
@@ -15,7 +16,7 @@ Each ADR follows the template from [ADR-001](./adr/001-record-architecture-decis
 - **Alternatives considered**: options with pros and cons
 - **Consequences**: positive, negative, and neutral impacts
 
-An accepted ADR is never edited to change its meaning. A new ADR supersedes it instead, so the log shows how long each decision governed the code.
+Use a new ADR to change an accepted decision. Keep the previous ADR as a record.
 
 ---
 
@@ -40,61 +41,168 @@ An accepted ADR is never edited to change its meaning. A new ADR supersedes it i
 
 ### Record architecture decisions
 
-Record significant decisions as sequentially numbered ADRs with their context, decision, alternatives, consequences, date, and status. Keep each record indexed here with a short summary, preserve accepted history through superseding records, and obtain maintainer approval before publishing a draft. [ADR-001](./adr/001-record-architecture-decisions.md)
+Record each significant decision in an ADR. Use the next number.
+Include the context, decision, alternatives, consequences, date, and status.
+Add a summary to this index. Get maintainer approval before publishing a draft.
+
+[ADR-001](./adr/001-record-architecture-decisions.md)
 
 ### Multi-coordinator architecture behind a facade
 
-One `DataUpdateCoordinator` per data domain (Config 5 min, Device 30 s, Protect 30 s plus WebSocket, Access 30 s plus webhook, InnerSpace 5 min, Site Manager 10 min, Mobility 5 min, Carrier Fabric 5 min), aggregated by a push-only facade coordinator that entities and services read from. Keeps expensive configuration polls off the 30 s path and gives every data source its own error and recovery handling. [ADR-002](./adr/002-multi-coordinator-architecture-behind-a-facade.md)
+Each data domain has its own `DataUpdateCoordinator`. This keeps
+configuration polls off the 30 s device poll. Each coordinator handles
+its own errors and recovery. The facade combines Config, Device, Protect,
+InnerSpace, and Site Manager data. Access, Mobility, and Carrier Fabric
+use their own coordinators.
+
+[ADR-002](./adr/002-multi-coordinator-architecture-behind-a-facade.md)
 
 ### Vendor the UniFi API client inside the integration (superseded)
 
-From release 2026.3.0 the upstream `unifi-official-api` package was copied into `custom_components/unifi_insights/api/` so contract fixes could ship without waiting for a PyPI release. Superseded by ADR-008. [ADR-003](./adr/003-vendor-the-unifi-api-client.md)
+Release 2026.3.0 copied `unifi-official-api` into
+`custom_components/unifi_insights/api/`. This let the integration ship API
+fixes before a PyPI release. ADR-008 supersedes this decision.
+
+[ADR-003](./adr/003-vendor-the-unifi-api-client.md)
 
 ### Stable console identity for config entry unique IDs
 
-`unique_id` is the gateway or Cloud Key MAC (falling back to the Protect NVR MAC) for local entries, the cloud `console_id` for remote entries, and `carrier_<org_id>` for Carrier Fabric. One module, `console_identity.py`, answers the question for both the config flow and setup, so the two can never drift. [ADR-004](./adr/004-stable-console-identity-for-unique-ids.md)
+For a local entry, `unique_id` uses the gateway or Cloud Key MAC.
+If neither is available, it uses the Protect NVR MAC. A remote entry uses
+`console_id`. A Carrier Fabric entry uses `carrier_<org_id>`.
+The config flow and setup use the same function in `console_identity.py`.
+
+[ADR-004](./adr/004-stable-console-identity-for-unique-ids.md)
 
 ### Bundled dashboard cards with versioned WebSocket contracts
 
-The six Lovelace cards are compiled from `frontend/` and served by the integration itself with content-digest cache busting. Cards talk to `websocket_api.py` through versioned TypedDict snapshot contracts, and topology node ids are per-entry HMACs of the MAC. [ADR-005](./adr/005-bundled-dashboard-cards-with-versioned-contracts.md)
+The build makes six Lovelace bundles from `frontend/`. The integration
+serves them with a content digest in the URL. The cards use versioned
+`TypedDict` snapshots through `websocket_api.py`. Each entry uses its own
+HMAC key for MAC-based topology node IDs.
+
+[ADR-005](./adr/005-bundled-dashboard-cards-with-versioned-contracts.md)
 
 ### Three-layer diagnostics redaction
 
-Diagnostics pass through `TO_REDACT`, then `CLIENT_TO_REDACT` / `WIFI_TO_REDACT`, then `_anonymize_macs()`. A new field is safe by default because the layers run on the whole payload, not on a hand-picked list of keys. [ADR-006](./adr/006-three-layer-diagnostics-redaction.md)
+Diagnostics use three layers in order. They apply `TO_REDACT`, then
+`CLIENT_TO_REDACT` and `WIFI_TO_REDACT`. Finally, `_anonymize_macs()` replaces
+MAC addresses throughout the payload.
+
+[ADR-006](./adr/006-three-layer-diagnostics-redaction.md)
 
 ### Flat Home Assistant module layout
 
-Consolidate 57 root modules into 33 by moving every base entity into `entity.py`, every platform entity into its standard platform module, pure helpers into `data_transforms.py`, dashboard builders into `dashboard_snapshots.py`, and topology helpers into `topology.py`. `coordinators/` is the only subpackage now that #345 removed the vendored `api/` (199 to 71 Python files, and 48 after #341). No module goes over about 2,000 lines: when one grows past that, deepen it rather than split it, and land the file moves after #337 to #339. Tracked in [#341](https://github.com/tinkerologie/ha-unifi-insights/issues/341), part of [#343](https://github.com/tinkerologie/ha-unifi-insights/issues/343). [ADR-007](./adr/007-flat-home-assistant-module-layout.md)
+The decision reduced 57 root modules to 33. Base entities moved to
+`entity.py`. Platform entities moved to their platform modules. Pure
+functions moved to `data_transforms.py`, `dashboard_snapshots.py`, and
+`topology.py`. After #345, `coordinators/` was the only subpackage.
+The count went from 199 Python files to 71, then to 48 after #341.
+
+The decision set a budget of about 2,000 lines for a module. The file
+moves followed #337 to #339. See
+[#341](https://github.com/tinkerologie/ha-unifi-insights/issues/341) and
+[#343](https://github.com/tinkerologie/ha-unifi-insights/issues/343).
+
+[ADR-007](./adr/007-flat-home-assistant-module-layout.md)
 
 ### Depend on `unifi-official-api` from PyPI
 
-`manifest.json` pins `unifi-official-api[talkback]==2.0.0`, published to PyPI by the upstream release workflow at a tagged release, and the vendored `api/` package (128 files, about 17,400 lines) is deleted. This meets the `dependency-transparency` rule. API contract fixes now go to `tinkerologie/unifi-official-api` first and reach the integration through a pin bump; no local shims. Implemented in [#345](https://github.com/tinkerologie/ha-unifi-insights/issues/345). [ADR-008](./adr/008-depend-on-unifi-official-api-from-pypi.md)
+At decision time, `manifest.json` pinned `unifi-official-api[talkback]==2.0.0`.
+The upstream release published the package to PyPI. The integration
+removed the vendored `api/` package (128 files, about 17,400 lines).
+This meets `dependency-transparency`. Fix API contracts upstream, then
+update the integration pin after a release. See
+[#345](https://github.com/tinkerologie/ha-unifi-insights/issues/345).
+
+[ADR-008](./adr/008-depend-on-unifi-official-api-from-pypi.md)
 
 ### Amendments to the flat module layout
 
-ADR-007 is amended for the deepening issues #337, #338 and #339. `get_field()` and `first_not_none()` live in `data_transforms.py`, re-exported by `entity.py`. `data_transforms.normalize_mac()` is the canonical MAC parser for reading device data, and four identity-specific MAC policies stay separate and tested. `service_targets.py` is an allowed 34th root module. `coordinators/protect.py` had a size exception capped at 3,500 lines, which ended when #340 split it (ADR-012). [ADR-009](./adr/009-amend-flat-module-layout.md)
+ADR-009 amends ADR-007 for #337, #338, and #339.
+`data_transforms.py` owns `get_field()` and `first_not_none()`.
+`entity.py` exports them again. `data_transforms.normalize_mac()` parses
+MAC addresses for device reads. Four other rules apply to stored or
+visible identities. `service_targets.py` is the 34th root module.
+The temporary 3,500-line limit for `coordinators/protect.py` ended in #340
+(ADR-012).
+
+[ADR-009](./adr/009-amend-flat-module-layout.md)
 
 ### One owner per write command
 
-Each write belongs to the coordinator that owns the data it changes: config (rules, Wi-Fi, guest authorisation), device (restart, PoE, outlets, clients), Protect (cameras, lights, chimes, viewers, alarms, sirens, talkback), Access and Carrier Fabric (unchanged), and the facade only for `async_refresh_or_raise` (ADR-013 moved the voucher commands to config). The owner runs the call through the shared `async_execute_command` in `coordinators/base.py`, raises translated errors, publishes a copy-on-write overlay and applies one recorded reconciliation policy; a failed refresh never fails a successful write. The config coordinator publishes the legacy site-name mapping and owns the only resolver, which never guesses `"default"`. Entities and services call owners with typed calls, replacing the string dispatch and its fallbacks. The Protect commands fit inside ADR-009's 3,500-line cap. Implemented in [#338](https://github.com/tinkerologie/ha-unifi-insights/issues/338). [ADR-010](./adr/010-one-owner-per-write-command.md)
+A write goes to the coordinator that owns its data. Config owns rules,
+Wi-Fi, and guest authorization. Device owns restarts, PoE, outlets, and
+Network clients. Protect, Access, and Carrier Fabric own their commands.
+The facade keeps `async_refresh_or_raise`. ADR-013 moves voucher
+commands to Config.
+
+The owner uses `async_execute_command` in `coordinators/base.py`.
+It translates errors and applies the command's overlay and refresh rules.
+A failed refresh cannot fail a successful write. Config owns the classic
+site name mapping. It does not guess `"default"`. Entities and actions
+call owners directly. Protect commands fit the limit in ADR-009.
+See [#338](https://github.com/tinkerologie/ha-unifi-insights/issues/338).
+
+[ADR-010](./adr/010-one-owner-per-write-command.md)
 
 ### Platform module size and homes for the remaining helpers
 
-The 17 platform modules are exempt from ADR-007's 2,000-line budget and are bounded by role instead: setup, description tables, entity classes and discovery, in one section per data source. Pure value extraction goes to `data_transforms.py` and base classes to `entity.py`. `sensor.py` is about 3,700 lines after the satellites merge. `async_get_device_entry()` and the site entity identity helpers move to `console_identity.py` (an `entity.py` home would create an import cycle with the coordinators), `get_port_label()` and `is_doorbell_camera_model()` to `data_transforms.py`. `data_transforms.py` may import `homeassistant.util.*` and only the pure integration modules, enforced by a test. Decided in the design review of [#341](https://github.com/tinkerologie/ha-unifi-insights/issues/341). [ADR-011](./adr/011-platform-modules-and-flat-layout-homes.md)
+The 17 platform modules use one section per data source. Each section
+has setup, description tables, entities, and discovery as applicable.
+These modules have an exception to the 2,000-line budget.
+`sensor.py` was about 3,700 lines after the merge.
+
+`console_identity.py` owns `async_get_device_entry()` and site entity
+identity. This avoids an import cycle with the coordinators.
+`data_transforms.py` owns `get_port_label()` and `is_doorbell_camera_model()`.
+A test limits its imports to `homeassistant.util.*` and pure integration
+modules. See [#341](https://github.com/tinkerologie/ha-unifi-insights/issues/341).
+
+[ADR-011](./adr/011-platform-modules-and-flat-layout-homes.md)
 
 ### A pure reconciler for Protect state
 
-`coordinators/protect_events.py` decides how every WebSocket frame, REST device answer, poll boundary, siren stop and command overlay changes the Protect cache (liveviews, which have nothing to reconcile, are written by the coordinator): `reconcile(state, cache, input, now)` returns a new frozen state, a copy-on-write cache and effects as data (`PublishUpdate`, `RemoveDevice`, `Escalate`, `Log`). It imports nothing from Home Assistant or the API library and never reads a clock; `now` carries both the monotonic and the wall clock. `coordinators/protect_ws.py` parses frames and tracks stream health. The coordinator does the I/O, and its `_apply()` is the only writer of the state. Notification calls and the latent quirks are unchanged, each quirk pinned by a test and tracked in its own issue (#379, #381 to #384). `coordinators/protect.py` drops from 3,482 to about 1,770 lines, ending ADR-009's exception. Implemented in [#340](https://github.com/tinkerologie/ha-unifi-insights/issues/340). [ADR-012](./adr/012-pure-protect-state-reconciler.md)
+The Protect reconciler is in `coordinators/protect_events.py`.
+`reconcile(state, cache, input, now)` returns state, cache, and effects.
+Effects include `PublishUpdate`, `RemoveDevice`, `Escalate`, and `Log`.
+The function uses only its inputs, including both clocks in `now`.
+`coordinators/protect_ws.py` parses frames and tracks stream health.
+
+The coordinator runs I/O and applies results with `_apply()`. It stores
+liveviews directly. Separate issues recorded later work for #379 and
+#381 through #384. The initial split reduced `coordinators/protect.py`
+from 3,482 to about 1,770 lines. This ended the ADR-009 exception.
+See [#340](https://github.com/tinkerologie/ha-unifi-insights/issues/340).
+
+[ADR-012](./adr/012-pure-protect-state-reconciler.md)
 
 ### A typed, read-only facade snapshot
 
-The facade becomes a typed, read-only projection that holds no domain state, amending ADR-002 and ADR-010's ownership table. `FacadeData` is a `TypedDict` with `ReadOnly` keys and `Mapping` sections, published as a top-level `ReadOnlyDict`: no runtime cost, unchanged section identity and JSON, nested writes caught by strict mypy, and test builders that deep-freeze so an entity write fails in tests. Owners publish copy-on-write. The voucher settings (now a frozen `VoucherSettings`), the latest generated vouchers and the generate and delete commands move to the config coordinator, which already owns the voucher inventory. Pure lookups go to `data_transforms.py`, availability is captured in the snapshot, Protect WebSocket streams gate by identity, and the InnerSpace view stays an identity-keyed memo. A deep freeze (about 3 to 6 ms per rebuild), `MappingProxyType`, a frozen dataclass and a `ReadOnlyDict` subclass (`@final`) were rejected. Implemented in [#342](https://github.com/tinkerologie/ha-unifi-insights/issues/342) (#386 to #405): readers use the lookups and the captured availability, the copying lookups are never called per entity or per record on every update, and the facade's `get_site`, `get_device`, `get_device_stats` and per-site `*_available` methods are gone. [ADR-013](./adr/013-typed-read-only-facade-snapshot.md)
+The facade publishes `FacadeData` as a `ReadOnlyDict` at the root.
+Its `TypedDict` uses `ReadOnly` keys and `Mapping` sections. Mypy checks
+nested writes. The snapshot shares sections with owners where possible.
+Tests use frozen fixtures. The decision rejected a deep freeze,
+`MappingProxyType`, a frozen dataclass, and a `ReadOnlyDict` subclass
+(`@final`).
+
+Config owns `VoucherSettings`, the latest vouchers, and voucher commands.
+Readers use pure lookups in `data_transforms.py` and captured availability.
+Protect streams compare input objects by identity. InnerSpace reuses its
+view until inputs change. Per-entity reads avoid copying whole sections.
+The facade removed `get_site`, `get_device`, `get_device_stats`, and the
+per-site `*_available` methods. See
+[#342](https://github.com/tinkerologie/ha-unifi-insights/issues/342) (#386 through #405).
+
+[ADR-013](./adr/013-typed-read-only-facade-snapshot.md)
 
 ### Reconcile Network inventory before registry changes
 
-The Device coordinator stages site evidence and reconciles it with committed
-inventory before publishing. Registry removals run after the snapshot and
-inventory commit. [ADR-014](./adr/014-pure-network-inventory-reconciliation.md)
+The Device coordinator compares site evidence with the current inventory.
+It stores the new inventory and publishes the snapshot. Then it removes
+stale registry entries.
+
+[ADR-014](./adr/014-pure-network-inventory-reconciliation.md)
 
 ## Future considerations
 
@@ -102,19 +210,27 @@ inventory commit. [ADR-014](./adr/014-pure-network-inventory-reconciliation.md)
 
 **Status:** kept
 
-`UnifiInsightsFacadeCoordinator` exists so entities and services read one `data` mapping. ADR-013 makes it a typed, read-only projection that holds no domain state: the voucher state and commands moved to the config coordinator, and it keeps aggregation, availability, `async_refresh_or_raise` and pure reads and exports. Entities now read through the snapshot lookups (#342); whether they can subscribe to their owning coordinator directly is still open.
+`UnifiInsightsFacadeCoordinator` gives readers one `data` snapshot.
+ADR-013 moves voucher state and commands to Config. The facade keeps
+aggregation, availability, refresh, and read functions. Some entities
+now use owner notifications (#474). A direct subscription to each
+owner is still open.
 
 ### Repairs
 
 **Status:** not implemented
 
-The integration does not create repair issues, and the unused repair-flow scaffold was removed (#334). Developers should add repair issues and matching translations under `"issues"` in `strings.json` when a user-fixable condition requires them. Authentication failures continue to use standard reauthentication rather than repair issues.
+Issue #334 removed the unused repair flow. If a condition needs a repair
+that a user can do, add the repair and its translation. Put the translation
+under `"issues"` in `strings.json`. Authentication failures use reauthentication.
 
 ### Discovery
 
 **Status:** not implemented
 
-Consoles are added manually through the user step. Zeroconf, DHCP, and SSDP matchers in `manifest.json` are empty; add them (and a `discovery-update-info` path) only if UniFi consoles can be matched reliably without false positives.
+Users add consoles through the setup flow. The Zeroconf, DHCP, and SSDP
+matchers in `manifest.json` are empty. If a reliable console match is
+available, add the matchers and a `discovery-update-info` path.
 
 ---
 

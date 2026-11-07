@@ -356,3 +356,74 @@ A Home Assistant operation that reads or changes UniFi data. A device restart
 and a request for vouchers are examples.
 
 Use event for an occurrence that the integration reports.
+
+### Architecture
+
+#### Console identity
+
+The stable value that Home Assistant uses to identify a console entry.
+
+#### Voucher
+
+Permission to use a hotspot. A voucher has an activation code and can have
+time, speed, data, or guest limits.
+
+#### Network Integration API
+
+The versioned interface for supported Network resources and operations.
+The Classic API is a separate interface.
+
+#### Domain coordinator
+
+The component that reads data for one domain and handles its updates.
+
+#### Facade
+
+The coordinator that combines Config, Device, Protect, InnerSpace, and
+Site Manager data into a snapshot.
+
+#### Snapshot
+
+The data that a coordinator publishes at one time. The facade has a
+read-only root. Type checks also protect nested data.
+
+#### Command owner
+
+The coordinator that runs the command for the data that it owns.
+
+#### Optimistic overlay
+
+Values that a command owner can publish after a successful write, before
+the next poll confirms those values.
+
+#### Reconciliation
+
+The process that compares new data with current state and selects the
+next state and its effects.
+
+#### Access webhook
+
+The receiver for signed access-result events from UniFi Access.
+
+#### Versioned dashboard contract
+
+The format and version of the data that the integration sends to a
+dashboard card.
+
+#### Diagnostics redaction
+
+The replacement or removal of sensitive values in a diagnostics report.
+
+### Technical verbs
+
+- **Dispatch** means to send an event to its listeners.
+- **Poll** means to make a request for current data.
+- **Publish** means to make a new snapshot available to readers.
+- **Reconcile** means to calculate the next state from new data and current state.
+- **Redact** means to replace or remove sensitive values from an output.
+- **Subscribe** means to register to receive updates.
+- **Enable** and **disable** mean to make a feature active or inactive.
+- **Rebase** means to apply branch commits again on a different base.
+- **Reload** means to load a config entry again.
+- **Run** means to start a command, check, or automation.
+- **Trigger** means to start an automation in response to an input.
