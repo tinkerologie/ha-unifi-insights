@@ -1,108 +1,124 @@
 # Contributing to Home Assistant UniFi Insights Integration
 
-Thank you for your interest in contributing to Home Assistant UniFi Insights Integration. This project welcomes contributions from human developers and autonomous AI coding agents alike.
-
-Home Assistant integration for UniFi Network and Protect telemetry, analytics, and device controls.
-
-To maintain code quality, protect maintainer capacity, and prevent maintainer burnout, all contributors must follow the standardized development and governance workflow outlined below.
+Use this guide to prepare and submit changes.
 
 ---
 
 ## Code of Conduct and Standards
 
-- Be respectful, constructive, and collaborative.
-- Zero secrets policy: Never commit passwords, tokens, API keys, private certificates, or personal data.
-- Anti-burnout principle: Perform full due diligence locally before opening pull requests or requesting review.
+- Be respectful.
+- Keep passwords, tokens, API keys, private certificates, and personal data out of commits.
+- Run the required local checks before you submit a pull request.
 
 ---
 
 ## Technical documentation
 
-Use [ASD-STE100 Simplified Technical English, Issue 9][ste] for English technical
-documentation. Use the [glossary](GLOSSARY.md) for project terms.
+Use [ASD-STE100 Simplified Technical English, Issue 9][ste] for these documents.
 
-1. Use words with their meanings in the Issue 9 dictionary.
-2. Use the same technical term for each item.
-3. Use the command form for instructions.
-4. Write one action in each instruction sentence.
-5. Use a maximum of 20 words in each instruction sentence.
-6. Use a maximum of 25 words in each description sentence.
-7. Use one topic in each paragraph.
-8. Obey the other Issue 9 rules that apply to the text.
+- `README.md`, `CONTRIBUTING.md`, and `GLOSSARY.md`
+- `docs/development/ARCHITECTURE.md`
+- The prose summaries in `docs/development/DECISIONS.md`
 
-Keep product names, interface labels, code, and commands exact. Make sure that the
-instructions and descriptions agree with the software.
+Apply the rules to English technical prose. Legal text, release records, generated files, and source code are outside
+this scope. UI strings, agent instructions, and governance files are also
+outside this scope. Keep ADR bodies as historical records.
+Keep commands, examples, identifiers, product names, UI labels, and link
+targets during language changes.
+
+1. Use dictionary words in the specified sense, form, and part of speech (1.1–1.4).
+2. Use project terms from the [glossary](GLOSSARY.md) (1.5–1.13).
+3. Use American English, except in exact labels and quoted text (1.14).
+4. Limit noun groups to three words, subject to the exceptions in 2.2.
+5. Use active voice and approved verb forms (3.1–3.7).
+6. Write complete sentences and keep each list procedural or descriptive (4.1–4.4).
+7. Put the condition before the command (5.4).
+8. Give one instruction in each sentence, with a maximum of 20 words (5.1–5.3).
+9. Use a maximum of 25 words in a description or note (5.5, 6.3).
+10. Give each paragraph one topic and a maximum of six sentences (6.4–6.6).
+11. State the instruction and the risk in a warning (7.1–7.3).
+12. Use the punctuation and counting rules in section 8.
+
+For the project count, treat an identifier, an exact UI label, a product
+name, or a hyphenated term as one word. Count each list item and prose table
+cell separately. Count parenthetical text separately and as one word in its
+sentence. Leave code blocks and URLs out of the prose count.
+
+Before you submit a change, examine word senses and sentence limits. Compare
+examples with the source. Make sure that links and anchors resolve. Use Markdown and spelling tools as aids. Examine the STE rules manually.
 
 [ste]: https://www.asd-ste100.org/assets/files/ASD-STE100_ISSUE9.pdf
 
 ## Development Workflow
 
-Before exploring the integration, read the [domain glossary](GLOSSARY.md),
+Before you make a change, read the [glossary](GLOSSARY.md),
 [architecture overview](docs/development/ARCHITECTURE.md), and
 [architecture decisions](docs/development/DECISIONS.md).
-
-All contributions—whether submitted by humans or AI agents—must adhere to this step-by-step workflow:
+Use this workflow for all contributions.
 
 ### 1. Open a GitHub Issue First
 
-- Every bug fix, feature, or enhancement must start with an issue.
-- Use the appropriate GitHub Issue Form:
-  - Bug Report (`01-bug-report.yml`)
-  - Enhancement Request (`02-enhancement-request.yml`)
-- Blank or unstructured issues are disabled. Pull requests without a corresponding issue will be closed.
+1. Open an issue before you start a fix, feature, or enhancement.
+2. Use the bug report form (`01-bug-report.yml`) or enhancement form (`02-enhancement-request.yml`).
+
+GitHub disables blank issues. Maintainers close pull requests without an issue.
 
 ### 2. CodeRabbit AI Plan Generation
 
-- Once the issue is created, CodeRabbit AI is triggered to generate an implementation plan (either automatically via the `bug` or `enhancement` label, or by commenting `@coderabbitai plan` on the issue).
-- CodeRabbit analyzes the codebase and posts a comprehensive Coding Plan containing:
-  - Codebase research and affected components
-  - Architectural design choices
-  - Phased task breakdowns
-  - Machine-readable agent prompts and verifiable acceptance criteria
-- Contributors must review, refine, and confirm the plan before writing code. Do not start implementation without an approved plan.
+1. Request a plan with the `bug` or `enhancement` label.
+2. If necessary, write `@coderabbitai plan` on the issue.
+3. Review the Coding Plan.
+4. Confirm the plan before you start implementation.
+
+The plan gives the affected files, design choices, implementation steps,
+agent prompts, and acceptance criteria.
 
 ### 3. Create a Dedicated Branch
 
-- Create a feature or bugfix branch off `main`:
+- Create the branch from `main`.
   - Features: `git checkout -b feat/<issue-number>-<short-description>`
   - Fixes: `git checkout -b fix/<issue-number>-<short-description>`
   - Documentation: `git checkout -b docs/<issue-number>-<short-description>`
-- Never commit directly to the default branch (`main`).
+- Make commits on the issue branch.
 
 ### 4. Implementation and Local Validation
 
-- Implement changes following project conventions and the approved plan.
-- Update `CHANGELOG.md` under `## [Unreleased]` describing what changed and why.
-- Run all required local validation checks (tests with coverage, linters, type checkers, and formatters). Ensure all checks pass with zero errors and zero warnings.
+1. Implement the approved plan.
+2. Record the change and its reason in `CHANGELOG.md` under `## [Unreleased]`.
+3. Run the required tests, coverage checks, lint checks, type checks, and format checks.
+4. Correct errors and warnings before submission.
 
 ### 5. Follow the Pull Request Template
 
-- Open a Pull Request using `.github/pull_request_template.md`.
-- Complete all sections in the template:
-  - Summary of changes
-  - Linked issue keywords (`Fixes #<issue>`, `Closes #<issue>`, `Addresses #<issue>`)
-  - Verification steps and pasted terminal output
-  - Mandatory Pre-Submission Governance checklist (every box must be checked)
+1. Use `.github/pull_request_template.md` for the pull request.
+2. Describe the changes.
+3. Link the issue in **Related Issues**.
+4. Paste the local verification output in **Testing Performed**.
+5. Confirm every item in **Pre-Submission Governance**.
+
+Use `Fixes #<issue>` or `Closes #<issue>` for complete work. Use
+`Part of #<number>` for partial work. `Addresses #<issue>` does not close an
+issue.
 
 ### 6. Open PR as DRAFT First
 
-- Pull requests MUST be opened in Draft mode (`gh pr create --draft` or choose "Create draft pull request" in GitHub).
-- Draft PRs allow CI workflows to run in isolation without triggering premature reviewer notifications or consuming unnecessary review capacity.
-- Verify that all CI checks pass in draft mode and confirm that everything is working as expected from your end.
+1. Open a draft with `gh pr create --draft` or **Create draft pull request** in GitHub.
+2. Make sure that the checks pass on the draft.
 
 ### 7. Mark Ready for Review
 
-- Only after all local and draft CI checks have succeeded, convert the pull request to "Ready for Review".
-- Pull requests marked ready for review with failing checks, incomplete templates, or unverified changes will be converted back to draft or closed.
+1. Rebase on `main`.
+2. After local checks and draft CI pass, mark the pull request **Ready for Review**.
+
+Maintainers can close a pull request or return it to draft if verification
+fails or the template is incomplete.
 
 ### 8. Automated Quality Gates and Merge Criteria
 
-Before a pull request can be merged, it must satisfy all automated quality gates:
-
-- CodeRabbit AI Review: All review comments and suggestions must be resolved or addressed.
-- GitHub Copilot Code Review: Must pass with no blocking feedback.
-- Codecov Coverage Reports: Must pass with zero errors, zero warnings, and no coverage regressions below the repository target.
-- Branch Ruleset Checks: All required status checks defined in the default branch ruleset must pass.
+1. Resolve the CodeRabbit review comments.
+2. Resolve blocking GitHub Copilot feedback.
+3. Make sure that Codecov meets the coverage target with zero errors and warnings.
+4. Make sure that the branch ruleset checks pass.
 
 ---
 
@@ -110,9 +126,17 @@ Before a pull request can be merged, it must satisfy all automated quality gates
 
 ### Prerequisites and Setup
 
-- Python 3.14.2 or later
-- Virtual environment with dependencies installed (`script/setup/bootstrap`, or install the Home Assistant version pinned in `script/test` together with the matching test plugin. In an existing environment, first remove the retired plugin and any copy under the plugin's earlier or current name, because they supply the same fixtures and the two names share files: `pip uninstall -y pytest-homeassistant-custom-component pytest-home-assistant pytest-homeassistant`. Then install: `pip install -e ".[dev]" "homeassistant==2026.11.0b4" "pytest-homeassistant==2026.11.0b4"`)
-- Pre-commit (`pre-commit install`)
+Use Python 3.14.2 or a subsequent version.
+
+1. Run `script/setup/bootstrap`.
+2. Install the Git hooks with `pre-commit install`.
+
+For manual setup, use the Home Assistant version in `script/test` and the
+matching test plugin. The plugin names can supply the same fixtures and
+share files.
+
+1. Remove existing test plugins with `pip uninstall -y pytest-homeassistant-custom-component pytest-home-assistant pytest-homeassistant`.
+2. Install the dependencies with `pip install ".[dev]" "homeassistant==2026.11.0b4" "pytest-homeassistant==2026.11.0b4"`.
 
 ### Validation Commands
 
@@ -132,18 +156,19 @@ mypy custom_components/unifi_insights
 pre-commit run --all-files
 ```
 
-The mypy hook runs `./script/mypy`, which checks the full integration package
-with the project's installed Home Assistant dependencies. It uses `.venv`,
-`.local/ha-venv`, or the active virtual environment. Run the setup script first;
-an isolated mypy environment without HA cannot check its entity and schema types.
-Spelling and formatting hooks exclude the generated frontend bundles; validate
-their editable sources with the frontend checks and rebuild with `npm run build`.
+The mypy hook runs `./script/mypy` with the installed Home Assistant
+dependencies. It uses `.venv`, `.local/ha-venv`, or the active virtual
+environment. Run the setup script before the hook. Mypy needs Home Assistant
+types to check the entities and schemas.
+
+The spelling and format hooks omit the generated frontend bundles. Run the
+frontend checks on their sources. Build the bundles with `npm run build`.
 
 ---
 
 ## Commit Message Guidelines
 
-We follow Conventional Commits:
+Use Conventional Commits.
 
 - `feat(<scope>): <description>` — New feature
 - `fix(<scope>): <description>` — Bug fix
@@ -156,45 +181,44 @@ We follow Conventional Commits:
 
 ## Pull Request Governance Summary
 
-- No spam or back-to-back PRs: Batch related changes into a single PR.
-- AI-assisted PRs require human verification and local testing before submission.
-- All template checkboxes must be confirmed.
-- PRs must remain in Draft until verified.
+- Put related changes in one pull request.
+- Get human verification of AI-assisted changes.
+- Run the local tests before you submit the pull request.
+- Complete the required template checkboxes.
+- Keep the pull request in draft until verification is complete.
 
 ## Issue and Pull Request Governance
 
-These rules apply to every contributor, including AI coding agents. The full org-wide rules are in
+These rules apply to all contributors. See the organization rules in
 [GOVERNANCE.md](https://github.com/tinkerologie/.github/blob/main/GOVERNANCE.md).
 
-1. **Issue first.** Open an issue with the bug or enhancement template before opening a pull
-   request. Keep the title prefix `[Bug]:` or `[Enhancement]:`, followed by a space and the title.
-   Automation applies the `bug` or `enhancement` label when it can tell the type, and CodeRabbit
-   then posts a Coding Plan on the issue. Implement from that plan. The labeler skips issues labeled
-   `question`, `duplicate`, `invalid`, `wontfix`, or `no-type`, and never re-adds a type label that
-   a maintainer removed.
-2. **Link the issue.** In the PR's **Related Issues** section, write `Closes #<number>` (or `Fixes`
-   or `Resolves`) when the PR completely resolves the issue; these keywords close it on merge. Use
-   `Part of #<number>` or `Related to #<number>` for partial work. The linked issue must exist; an
-   issue in another public repository (`owner/repo#123`) is fine. Only authors with write access or
-   higher (maintainers) may write `None`, for housekeeping such as CI,
-   documentation, or dependency updates; PR governance rejects `None` from everyone else.
-3. **One change at a time.** Contributors without write access can have at most 2 open, non-draft
-   pull requests here. GitHub enforces this limit, and draft pull requests do not count toward it.
-   Do not open PRs that edit the same files as another open PR, such as `CHANGELOG.md`,
-   translations, `README.md`, or generated bundles. Wait for the first to merge, rebase, then
-   continue.
-4. **Act on the Tinkerologie-Bot report.** When PR governance fails, Tinkerologie-Bot posts one comment
-   listing every problem as a numbered item. Fix each item by editing the PR description or pushing
-   the missing change; the check re-runs and the comment updates to passed.
-5. **Rebase before review.** Rebase on `main` before marking a PR ready for review.
-6. **Resolve conflicts first.** When a PR gets the `conflicts` label, rebase on `main`,
-   resolve the conflicts (keep every `CHANGELOG.md` entry under `[Unreleased]`), re-run the tests,
-   and force-push before doing any other work.
-7. **Coverage.** `codecov/patch` must pass: at least 90% of added or changed lines must be
-   covered by tests. The gate is the percentage; still, add tests for the uncovered lines the
-   Codecov PR comment lists, and explain in the PR description any line you leave uncovered. Do
-   not lower coverage targets or add coverage ignore rules to make it pass.
-8. **Stale items.** Issues and PRs with no activity for 14 days are labeled `stale` and closed 30
-   days later unless there is new activity. These labels are exempt:
+1. **Open the issue first.** Use the bug or enhancement form.
+   Keep the `[Bug]:` or `[Enhancement]:` prefix and the space after it.
+   Automation applies the `bug` or `enhancement` label when it identifies the issue type.
+   CodeRabbit posts the Coding Plan. Implement that plan.
+   The labeler skips `question`, `duplicate`, `invalid`, `wontfix`, and `no-type`.
+   It does not restore a type label that a maintainer removed.
+2. **Link the issue.** Use `Closes #<number>`, `Fixes`, or `Resolves` for complete work.
+   Use `Part of #<number>` or `Related to #<number>` for partial work.
+   The issue must exist. A public issue in another repository can use `owner/repo#123`.
+   Only contributors with write access can use `None` for housekeeping changes.
+3. **Submit one change at a time.** GitHub limits contributors without write access to two open pull requests.
+   Drafts do not count toward the limit.
+   If a pull request changes a file you need, wait for it to merge.
+   Rebase before you continue.
+4. **Read the Tinkerologie-Bot report.** If governance fails, the report lists the problems.
+   Correct the pull request description or push the missing change.
+   The check runs again and the report shows the result.
+5. **Rebase before review.** Rebase on `main` before you mark the pull request ready.
+6. **Resolve conflicts first.** If the pull request has the `conflicts` label, rebase on `main`.
+   Resolve the conflicts. Keep all `CHANGELOG.md` entries under `[Unreleased]`.
+   Run the tests again. Force-push the rebased branch before you continue.
+7. **Meet the coverage target.** The `codecov/patch` check requires 90% coverage of added or changed lines.
+   Add tests for the uncovered lines in the Codecov comment.
+   Explain remaining uncovered lines in the pull request description.
+   Keep the coverage targets and coverage ignore rules.
+8. **Keep work active.** After 14 days without activity, automation adds the `stale` label.
+   After 30 more days without activity, automation closes the issue or pull request.
+   These labels prevent this:
    - Issues: `pinned`, `security`, `confirmed`, `work-in-progress`, `priority: critical`, `priority: high`.
    - Pull requests: `pinned`, `security`, `work-in-progress`.
