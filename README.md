@@ -26,14 +26,24 @@ Monitor and control your UniFi system from Home Assistant: UniFi Network, UniFi 
 
 ## Overview
 
-UniFi Insights is a custom integration that you install from the Home Assistant Marketplace (Home Assistant 2026.11 and newer) or from HACS (Home Assistant 2026.9 and 2026.10). It connects with an API key, not a user name and password. It mainly uses the official UniFi APIs that Ubiquiti publishes at [developer.ui.com](https://developer.ui.com/). For some UniFi Network features that the official API doesn't cover yet, such as Wi-Fi QR codes, VPN, route, port forward, traffic rule, NAT rule and static route switches, and internet traffic history, it uses the console's classic Network endpoints with the same API key.
+UniFi Insights connects UniFi applications to Home Assistant. It uses an API
+key. Install it from the Marketplace on Home Assistant 2026.11 or later. Use
+HACS on Home Assistant 2026.9 or 2026.10.
 
-- **One integration for your UniFi system.** One console entry covers that console's Network, Protect and InnerSpace applications. Local entries can also connect to Access using its separate token. A cloud API key adds Mobility and Site Manager data. ISPs can add a Carrier Fabric entry.
-- **API key setup, local or remote.** Connect to a console on your network, or choose any console on your UniFi account through UniFi Cloud. You don't need a local user account.
-- **Standard Home Assistant entities.** Sensors, binary sensors, switches, buttons, cameras, events, lights, selects, numbers, images, device trackers and update entities, grouped under their UniFi devices.
-- **Actions** for tasks that are not entities, such as guest authorization, hotspot vouchers, PTZ moves and Protect live views.
-- **Six dashboard cards**, installed with the integration: network topology, site health, internet activity, device performance, Protect status and an event timeline.
-- **Diagnostics that protect your privacy.** API keys, addresses, client names and other personal data are redacted.
+One console entry can connect to Network, Protect, and InnerSpace. A local
+entry can also connect to Access with an Access token. A cloud API key can add
+Mobility and Site Manager data. Internet service providers can add a Carrier
+Fabric entry.
+
+The integration gives you Home Assistant entities, actions, and six dashboard
+cards. The cards show topology, site health, internet activity, performance,
+Protect status, and events. The integration removes API keys and personal
+data from diagnostics.
+
+The integration uses the official [UniFi APIs](https://developer.ui.com/).
+It also uses the Classic API for some Network functions. Examples include
+Wi-Fi QR codes, VPN controls, some Network rule switches, and internet
+traffic history. Both APIs use the same key.
 
 ## Supported UniFi products
 
@@ -47,51 +57,67 @@ UniFi Insights is a custom integration that you install from the Home Assistant 
 | [UniFi Site Manager](#unifi-site-manager)               | Remote                | Account-wide host, site, ISP and SD-WAN data in diagnostics                                                                         |
 | [UniFi Carrier Fabric (ISP)](#unifi-carrier-fabric-isp) | Carrier Fabric (ISP)  | Subscriber and service plan counts, with optional suspend and resume                                                                |
 
-The integration only creates entities for the applications your console runs. A console with only Network, only Protect or only InnerSpace works.
+The integration creates entities for the applications that the console runs.
+A console can run only Network, Protect, or InnerSpace.
 
 ## Requirements
 
-- Home Assistant 2026.9.0 or newer.
-- For Local and Remote entries: a UniFi OS console (for example a UDM, UDR, UCG or Cloud Key Gen2+) with UniFi Network, UniFi Protect or UniFi InnerSpace. The console must provide the official UniFi Integration API. Self-hosted UniFi Network Application installs (Linux, Docker, Proxmox) don't provide it, so they can't be added as Local entries.
-- For Remote entries, Mobility and Site Manager: a cloud API key from [UniFi Site Manager](https://unifi.ui.com).
-- For Carrier Fabric: an ISP API key.
-- Keep UniFi OS and its applications up to date. Some features need recent releases. For example, the Thread and keypad fob entities, and the alarm hub's reported tamper status, need UniFi Protect 7.3.70 or newer.
+- Home Assistant 2026.9.0 or later.
+- For Local or Remote, use a UniFi OS console with Network, Protect, or
+  InnerSpace. The console must provide the UniFi Integration API. A
+  self-hosted Network application does not provide this API for a Local
+  connection. Examples include installations on Linux, Docker, and Proxmox.
+- For Remote, use a cloud API key from [UniFi Site Manager](https://unifi.ui.com).
+  Mobility and Site Manager use this key.
+- For Carrier Fabric, use an ISP API key.
+- Keep UniFi OS and its applications up to date. Thread and keypad fob entities
+  need Protect 7.3.70 or later. Alarm hub tamper status also needs this version.
 
 ## Installation
 
 ### Marketplace (Home Assistant 2026.11 and newer, recommended)
 
-Starting with Home Assistant 2026.11, HACS is built into Home Assistant as the Marketplace, so there is nothing else to install first.
+Home Assistant 2026.11 includes the Marketplace.
 
 [![Open your Home Assistant instance and open a repository in the Marketplace.](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=tinkerologie&repository=ha-unifi-insights&category=integration)
 
-1. Select the button above, or go to **Settings** → **Marketplace** and search for "UniFi Insights".
-2. Install it. The integration loads right away. If Home Assistant shows a repair that asks for a restart, restart Home Assistant.
+1. Open **Settings** → **Marketplace**.
+2. Search for **UniFi Insights**. The button above also opens the repository.
+3. Install the integration.
+4. If Home Assistant shows a repair that requests a restart, restart Home Assistant.
 
-If you installed UniFi Insights with HACS before you upgraded to Home Assistant 2026.11, you don't need to do anything. The Marketplace takes over HACS installs, and UniFi Insights keeps getting updates.
+The Marketplace updates existing HACS installations of UniFi Insights after
+you upgrade to Home Assistant 2026.11.
 
 ### HACS (Home Assistant 2026.9 and 2026.10)
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=tinkerologie&repository=ha-unifi-insights&category=integration)
 
-1. Select the button above, or open HACS and search for "UniFi Insights".
-2. Select **Download**.
-3. Restart Home Assistant.
+1. Open HACS.
+2. Search for **UniFi Insights**. The button above also opens the repository.
+3. Select **Download**.
+4. Restart Home Assistant.
 
 ### Manual installation
 
-1. Download `unifi_insights.zip` from the latest release on the [Releases page](https://github.com/tinkerologie/ha-unifi-insights/releases).
-2. Create the folder `config/custom_components/unifi_insights/` and extract the zip into it. `manifest.json` must end up directly in that folder.
-3. Restart Home Assistant.
+1. Download `unifi_insights.zip` from the latest [release](https://github.com/tinkerologie/ha-unifi-insights/releases).
+2. Create the `config/custom_components/unifi_insights/` folder.
+3. Extract the ZIP file into that folder. Make sure that `manifest.json` is directly in the folder.
+4. Restart Home Assistant.
 
-Each release since the first one that ships `unifi_insights.zip` carries the zip, a `SHA256SUMS` file and a signed build provenance attestation. The Marketplace and HACS install the same zip. The "Downloaded N times" figure they show is the download count of the latest release's zip, so it starts again with each release. To check that a zip you downloaded is the one the release workflow built:
+Releases with a ZIP file also include `SHA256SUMS` and a signed build
+provenance attestation. The Marketplace and HACS use the same ZIP file.
+The download count applies to the ZIP file for the latest release.
+
+Use the commands below to check the ZIP file. Put `SHA256SUMS` in the same
+folder as the ZIP file first.
 
 ```bash
 gh attestation verify unifi_insights.zip -R tinkerologie/ha-unifi-insights
 sha256sum -c SHA256SUMS
 ```
 
-Keep `SHA256SUMS` in the same folder as the zip. On macOS, use `shasum -a 256 -c SHA256SUMS`.
+On macOS, use `shasum -a 256 -c SHA256SUMS` for the checksum check.
 
 ## Configuration
 
@@ -103,20 +129,38 @@ Keep `SHA256SUMS` in the same folder as the zip. On macOS, use `shasum -a 256 -c
 | Remote (UniFi Cloud)      | Any console on your UniFi account, plus Mobility and Site Manager | Created in [UniFi Site Manager](https://unifi.ui.com)          |
 | Carrier Fabric (ISP)      | An ISP's Carrier Fabric subscribers and service plans             | ISP API key, see [Carrier Fabric setup](#carrier-fabric-setup) |
 
-You can add more than one entry, for example one per console.
+You can add an entry for each console.
 
 ### Add the integration
 
-1. In Home Assistant, go to **Settings** → **Devices & services**.
-2. Select **Add integration** and search for "UniFi Insights".
-3. Choose the connection type, then follow the steps for it:
-   - **Local:** create an API key on the console in **Settings** → **Control Plane** → **API Keys**. Enter the console URL (for example `https://192.168.1.1`) and the key. Leave **Verify SSL Certificate** off if the console uses its default self-signed certificate.
-   - **Remote:** in [UniFi Site Manager](https://unifi.ui.com), go to **Settings** → **API Keys** and select **Create New API Key**. Copy the key, enter it, then choose the console from the list of consoles that the key can access.
-   - **Carrier Fabric (ISP):** enter an ISP API key. See [Carrier Fabric setup](#carrier-fabric-setup).
+1. In Home Assistant, open **Settings** → **Devices & services**.
+2. Select **Add integration**.
+3. Search for **UniFi Insights**.
+4. Select the connection type.
+
+#### Local connection
+
+1. On the console, open **Settings** → **Control Plane** → **API Keys**.
+2. Create an API key.
+3. Enter the console URL in Home Assistant. An example is `https://192.168.1.1`.
+4. Enter the API key.
+5. If the console uses its default self-signed certificate, leave **Verify SSL Certificate** off.
+
+#### Remote connection
+
+1. In [UniFi Site Manager](https://unifi.ui.com), open **Settings** → **API Keys**.
+2. Select **Create New API Key**.
+3. Copy the key.
+4. Enter the key in Home Assistant.
+5. Select the console from the list.
+
+For Carrier Fabric, enter the ISP API key. See
+[Carrier Fabric setup](#carrier-fabric-setup).
 
 ### Options
 
-To change these settings after setup, go to **Settings** → **Devices & services** → **UniFi Insights** → **Configure**:
+To change these settings, open **Settings** → **Devices & services** →
+**UniFi Insights** → **Configure**.
 
 | Option                | Default | Description                                                                                                                                                                        |
 | --------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -125,7 +169,15 @@ To change these settings after setup, go to **Settings** → **Devices & service
 | Enable Client Control | On      | Creates client allow/block switches, reconnect buttons and disabled-by-default Wake-on-LAN buttons for wired clients. Turn off for read-only monitoring.                           |
 | Sites                 | All     | Only shown when the console has more than one site. Choose the sites to poll. Sites you don't choose are not queried at all, which reduces API traffic. Leave empty for all sites. |
 
-Client trackers are created enabled, also on Home Assistant 2026.11 and later, which otherwise creates network-scanner trackers disabled. A tracker you disable stays disabled. When a client is renamed on the controller, the integration follows the new name on the next poll. It renames the client's own device when the tracker has one; a name you gave that device in Home Assistant is kept. When the tracker sits under its access point or switch, only the tracker is renamed.
+The integration enables new client trackers. This also applies to Home
+Assistant 2026.11 and later, which disable network-scanner trackers by default.
+A tracker that you disable stays disabled.
+
+If you change a client name in UniFi, the integration updates the tracker name
+on the next poll. If the tracker has its own Home Assistant device, the
+integration also updates that device name. It keeps a name that you set in
+Home Assistant. If the tracker belongs to an access point or switch device,
+the integration changes only the tracker name.
 
 Carrier Fabric entries have their own options. See [Carrier Fabric setup](#carrier-fabric-setup).
 
@@ -843,18 +895,20 @@ Use the Up and Down arrow keys, Home and End to move through the menu, Enter to 
 
 ### Enable debug logging
 
-Add the following to your `configuration.yaml` and restart Home Assistant:
+1. Add this configuration to `configuration.yaml`.
 
-```yaml
-logger:
-  default: info
-  logs:
-    custom_components.unifi_insights: debug
-```
+   ```yaml
+   logger:
+     default: info
+     logs:
+       custom_components.unifi_insights: debug
+   ```
+
+2. Restart Home Assistant.
 
 ### Force a refresh
 
-To refresh all data now, for example in an automation:
+Use the `unifi_insights.refresh_data` action to refresh all data.
 
 ```yaml
 action: unifi_insights.refresh_data
@@ -862,34 +916,39 @@ action: unifi_insights.refresh_data
 
 ### Common problems
 
-| Problem                       | Solution                                                                                                                                                                                                           |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Cannot connect                | Check that Home Assistant can reach the console URL. For self-signed certificates, turn off **Verify SSL Certificate** (reconfigure the entry to change it).                                                       |
-| Authentication failed         | Check that the API key is valid and was not revoked on the console or in UniFi Site Manager.                                                                                                                       |
-| Integration API not available | Self-hosted UniFi Network Application installs don't provide the official Integration API. Use a UniFi OS console.                                                                                                 |
-| No Protect entities           | UniFi Protect must run on the same console, and the API key must have access to it.                                                                                                                                |
-| Entities missing              | Check that the devices are adopted and online in UniFi.                                                                                                                                                            |
-| Storage sensors unavailable   | The public Protect API does not report NVR storage on all firmware versions.                                                                                                                                       |
-| Many orphaned client entities | Turn off the **Enable Client Control** option.                                                                                                                                                                     |
-| Wake button does nothing      | Check Wake-on-LAN in the device settings, Home Assistant host networking and VLAN. See the Wake-on-LAN section for details and debug logging.                                                                      |
-| Duplicate entities            | If you also use the official UniFi Network or UniFi Protect integration, both create entities for the same devices. Disable the duplicates you don't need so automations don't act on two entities for one device. |
+| Problem                       | Solution                                                                                                                                                    |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cannot connect                | Make sure that Home Assistant can reach the console URL. For a self-signed certificate, reconfigure the entry. Turn off **Verify SSL Certificate**.         |
+| Authentication failed         | Make sure that the API key is valid. Get a new key from the console or UniFi Site Manager if necessary.                                                     |
+| Integration API not available | A self-hosted Network application does not provide the UniFi Integration API. Use a UniFi OS console.                                                       |
+| No Protect entities           | Make sure that Protect runs on the same console. Make sure that the API key can access Protect.                                                             |
+| Entities missing              | Make sure that the devices are adopted and online in UniFi.                                                                                                 |
+| Storage sensors unavailable   | Some firmware versions do not report NVR storage through the public Protect API.                                                                            |
+| Many orphaned client entities | Turn off **Enable Client Control**.                                                                                                                         |
+| Wake button does nothing      | Make sure that the device has Wake-on-LAN enabled. Examine the Home Assistant host network and VLAN. See the Wake-on-LAN instructions for more information. |
+| Duplicate entities            | UniFi Insights and the official UniFi integrations can create entities for the same device. Disable the duplicate entities that you do not use.             |
 
 ### Diagnostics
 
-To download a diagnostics report for troubleshooting:
-
-1. Go to **Settings** → **Devices & services**.
+1. Open **Settings** → **Devices & services**.
 2. Select **UniFi Insights**.
-3. Select the three-dot menu and choose **Download diagnostics**.
+3. Open the three-dot menu.
+4. Select **Download diagnostics**.
 
-The report is cleaned before it is written: API keys, passwords and Wi-Fi secrets, host names and IP addresses, SSIDs, and the names of your clients are redacted. Every MAC address is replaced with a placeholder that stays the same within one report. Device, site and camera names are kept so the report stays readable. UniFi Mobility is summarized with counts only (for example routers by state and model). No workspace or router names, addresses or locations are included.
+The integration removes API keys, passwords, Wi-Fi secrets, and network
+addresses from the report. It also removes hostnames, SSIDs, and Network
+client names. It replaces each MAC address with a value that stays the same
+within one report. The report keeps device, site, and camera names.
+
+The Mobility section gives counts, for example router counts by state and
+model. It omits workspace names, router names, addresses, and locations.
 
 ## Contributing
 
-Contributions are welcome. Please open an issue before you submit significant changes. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Read the [contributor guide](CONTRIBUTING.md). Open an issue before you submit a change.
 
 The [domain glossary](GLOSSARY.md) and [architecture decisions](docs/development/DECISIONS.md)
-explain the integration's terminology and the reasons for its design.
+give the project terms and describe the design of the integration.
 
 ## License
 
