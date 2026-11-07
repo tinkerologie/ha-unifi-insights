@@ -4,6 +4,8 @@ This document describes the technical architecture of the UniFi Insights custom 
 
 For AI agent instructions, see [`AGENTS.md`](/AGENTS.md). For the decision log, see [`DECISIONS.md`](./DECISIONS.md) and the full records in [`adr/`](./adr/).
 
+For the domain vocabulary, see the [glossary](../../GLOSSARY.md).
+
 > **Status:** this describes `main` as of 2026-10-21, with the ADR-007 module layout in place (#341). The Protect coordinator is split along ADR-007's `protect_ws.py` / `protect_events.py` seam (#340, [ADR-012](./adr/012-pure-protect-state-reconciler.md)), and the facade publishes a typed, read-only snapshot (#342, [ADR-013](./adr/013-typed-read-only-facade-snapshot.md)).
 
 ## Directory structure

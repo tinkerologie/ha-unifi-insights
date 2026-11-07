@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added a domain glossary, the missing ADR-001 index summary, and contributor links to the glossary and existing architecture decisions so terminology and design history are easier to find. Runtime behavior is unchanged. [#472](https://github.com/tinkerologie/ha-unifi-insights/issues/472)
+
 ## [2026.11.0] - 2026-11-05
 
 ### Added

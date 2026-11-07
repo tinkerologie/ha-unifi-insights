@@ -2,6 +2,8 @@
 
 This document is the index of significant architectural and design decisions for the UniFi Insights integration. Each entry summarizes one decision and links to its full Architecture Decision Record (ADR) in [`adr/`](./adr/).
 
+For the domain vocabulary used by these decisions, see the [glossary](../../GLOSSARY.md).
+
 ## Format
 
 Each ADR follows the template from [ADR-001](./adr/001-record-architecture-decisions.md):
@@ -34,6 +36,10 @@ An accepted ADR is never edited to change its meaning. A new ADR supersedes it i
 | [011](./adr/011-platform-modules-and-flat-layout-homes.md)           | Platform module size and homes for the remaining helpers      | Accepted              | 2026-10-20 |
 | [012](./adr/012-pure-protect-state-reconciler.md)                    | A pure reconciler for Protect state                           | Accepted              | 2026-10-20 |
 | [013](./adr/013-typed-read-only-facade-snapshot.md)                  | A typed, read-only facade snapshot                            | Accepted              | 2026-10-20 |
+
+### Record architecture decisions
+
+Record significant decisions as sequentially numbered ADRs with their context, decision, alternatives, consequences, date, and status. Keep each record indexed here with a short summary, preserve accepted history through superseding records, and obtain maintainer approval before publishing a draft. [ADR-001](./adr/001-record-architecture-decisions.md)
 
 ### Multi-coordinator architecture behind a facade
 
