@@ -69,7 +69,13 @@ await coordinator.async_config_entry_first_refresh()
 ## Dynamic & Stale Device Cleanup (HA 2026.8–2026.10+)
 
 - **Dynamic devices (`dynamic-devices`):** Automatically register new devices discovered on subsequent coordinator refreshes.
-- **Stale devices (`stale-devices`):** Remove stale devices from the Home Assistant device registry when they disappear from the controller. The Network device coordinator removes a device on the 3rd consecutive eligible poll in which it is absent (`MAX_CONSECUTIVE_MISSING_POLLS = 3`), requiring source-aware eligibility (the site must have the same polling source as its previous snapshot and not drop from non-empty to zero devices) and a hardware MAC presence guard to protect device identity across v1 and legacy endpoint fallbacks. On a v1 poll, a device v1 omits only counts toward removal when the legacy device list fetched in the same poll also lacks its normalized MAC; while legacy still has it, its counter is held (neither advanced nor reset), and when a counter would advance but that legacy list failed or was empty, the site is not eligible for that poll. The check reuses that list, so it adds no request and cleanup stays after the single publish (ADR-013). A site without a classic site name has no legacy list, and v1 alone decides. Protect keeps a missing device for 3 polls and removes on the 4th, while InnerSpace removes immediately.
+- **Stale devices (`stale-devices`)**
+  - Remove a Network device after three consecutive eligible polls without that device (`MAX_CONSECUTIVE_MISSING_POLLS = 3`).
+  - A site poll is eligible when it uses the previous polling source. It is ineligible if the previous list had devices and the current list is empty.
+  - On a v1 poll for a site with a classic site name, check the normalized MAC address in the legacy list from the same poll. Increase the count only if the legacy list has devices and omits that address. Keep the count if the address is in the legacy list. If the legacy request fails or returns an empty list, the site poll is ineligible when a count would increase.
+  - Use the v1 result alone for a site without a classic site name.
+  - Use `coordinators/device_inventory.py` to calculate removals from poll data. Use the existing legacy list. Store the inventory and publish the snapshot before you remove registry entries. See ADR-014.
+  - Keep a missing Protect device for three polls. Remove it on the fourth poll. Remove a missing InnerSpace device on the first poll.
 - **HA 2026.8–2026.10 Device Registry rules:**
   - Use `dr.async_entries_for_config_entry(dev_reg, entry.entry_id)` or `dev_reg.async_get_device_by_identifier((DOMAIN, device_id), entry.entry_id)`.
   - Use `device.config_entry_id` (single config entry per device) — never access deprecated `device.config_entries`, `device.config_entries_subentries`, or `device.primary_config_entry`.

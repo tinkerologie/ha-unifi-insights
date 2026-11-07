@@ -67,6 +67,9 @@ from custom_components.unifi_insights.coordinators.device import (
     reconcile_pending_outlet_writes,
     require_power_cyclable_port,
 )
+from custom_components.unifi_insights.coordinators.device_inventory import (
+    NetworkInventoryState,
+)
 from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
     SiteNetworkFacts,
@@ -79,7 +82,6 @@ from tests.conftest import (
 )
 from tests.fixtures.assertions import (
     patch_attribute,
-    require_instance,
     require_mock,
     require_not_none,
 )
@@ -3174,40 +3176,37 @@ class TestUnifiDeviceCoordinator:
         """Data for a site no longer listed is dropped, and its devices go stale."""
         for key in ("devices", "stats", "clients"):
             coordinator.data[key]["gone"] = {"dev-gone": {"id": "dev-gone"}}
-        coordinator._site_sources = {"gone": "v1"}
-        coordinator._site_tracked_devices = {"gone": {"dev-gone": "aa:bb:cc:dd:ee:ff"}}
+        coordinator._inventory_state = NetworkInventoryState(
+            sources={"gone": "v1"},
+            tracked={"gone": {"dev-gone": "aa:bb:cc:dd:ee:ff"}},
+        )
 
-        with patch.object(coordinator, "_cleanup_stale_devices") as cleanup:
-            await coordinator._async_update_data()
+        await coordinator._async_update_data()
 
         for key in ("devices", "stats", "clients"):
             assert "gone" not in coordinator.data[key]
             assert "default" in coordinator.data[key]
-        cleanup.assert_called_once()
+        assert "gone" not in coordinator._inventory_state.sources
 
     @pytest.mark.asyncio
     async def test_async_update_data_no_sites_clears_data_keeps_registry(
         self, coordinator: UnifiInsightsDeviceCoordinator
     ):
-        """An empty site list clears stale data but never purges registry devices."""
+        """An empty site list clears published data and retains inventory evidence."""
         for key in ("devices", "stats", "clients"):
             coordinator.data[key]["default"] = {"device1": {"id": "device1"}}
-        coordinator._site_sources = {"default": "v1"}
-        coordinator._site_tracked_devices = {
-            "default": {"device1": "aa:bb:cc:dd:ee:01"}
-        }
+        before = NetworkInventoryState(
+            sources={"default": "v1"},
+            tracked={"default": {"device1": "aa:bb:cc:dd:ee:01"}},
+        )
+        coordinator._inventory_state = before
         coordinator.config_coordinator.data["sites"] = {}
 
-        with patch.object(coordinator, "_cleanup_stale_devices") as cleanup:
-            await coordinator._async_update_data()
+        await coordinator._async_update_data()
 
         for key in ("devices", "stats", "clients"):
             assert coordinator.data[key] == {}
-        # An empty list is also what a transient API failure looks like.
-        cleanup.assert_not_called()
-        assert coordinator._site_tracked_devices == {
-            "default": {"device1": "aa:bb:cc:dd:ee:01"}
-        }
+        assert coordinator._inventory_state is before
 
     @pytest.mark.asyncio
     async def test_process_device_stats_error(
@@ -3751,364 +3750,6 @@ class TestUnifiDeviceCoordinator:
         result = coordinator.get_clients("nonexistent")
         assert result == {}
 
-    @pytest.mark.asyncio
-    async def test_cleanup_stale_devices(
-        self, hass: HomeAssistant, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """A genuinely removed device is removed only after N consecutive polls."""
-        dev_reg = dr.async_get(hass)
-        require_instance(coordinator.config_entry, MockConfigEntry).add_to_hass(hass)
-        entry_id = coordinator.config_entry.entry_id
-        id1 = (DOMAIN, "default_device1")
-        id2 = (DOMAIN, "default_device2")
-        dev1 = dev_reg.async_get_or_create(
-            config_entry_id=entry_id,
-            identifiers={id1},
-            connections={(CONNECTION_NETWORK_MAC, "aa:bb:cc:dd:ee:01")},
-        )
-        dev2 = dev_reg.async_get_or_create(
-            config_entry_id=entry_id,
-            identifiers={id2},
-            connections={(CONNECTION_NETWORK_MAC, "aa:bb:cc:dd:ee:02")},
-        )
-        assert entry_id in device_config_entry_ids(dev1)
-        assert entry_id in device_config_entry_ids(dev2)
-
-        coordinator._site_sources = {"default": "v1"}
-        coordinator._site_tracked_devices = {
-            "default": {
-                "device1": "aa:bb:cc:dd:ee:01",
-                "device2": "aa:bb:cc:dd:ee:02",
-            }
-        }
-        coordinator._site_aliases = {
-            "default": {
-                "aa:bb:cc:dd:ee:01": "device1",
-                "aa:bb:cc:dd:ee:02": "device2",
-            }
-        }
-        coordinator.data["devices"] = {
-            "default": {"device1": {"id": "device1", "mac": "aa:bb:cc:dd:ee:01"}}
-        }
-        site_sources = {"default": "v1"}
-        current_macs = {"default": {"device1": "aa:bb:cc:dd:ee:01"}}
-
-        # Polls 1 and 2: device2 is absent but threshold (3) is not yet reached
-        coordinator._cleanup_stale_devices(site_sources, current_macs)
-        assert get_device_by_identifier(dev_reg, id2, entry_id) is not None
-        assert coordinator._site_absence_counts.get("default", {}).get("device2") == 1
-
-        coordinator._cleanup_stale_devices(site_sources, current_macs)
-        assert get_device_by_identifier(dev_reg, id2, entry_id) is not None
-        assert coordinator._site_absence_counts.get("default", {}).get("device2") == 2
-
-        # Poll 3: absence threshold reached; device2 is removed and its alias pruned
-        coordinator._cleanup_stale_devices(site_sources, current_macs)
-        reg_dev2 = get_device_by_identifier(dev_reg, id2, entry_id)
-        assert reg_dev2 is None or entry_id not in device_config_entry_ids(reg_dev2)
-        assert "device2" not in coordinator._site_tracked_devices.get("default", {})
-        assert (
-            coordinator._site_absence_counts.get("default", {}).get("device2") is None
-        )
-        assert "aa:bb:cc:dd:ee:02" not in coordinator._site_aliases.get("default", {})
-        # device1 is retained
-        reg_dev1 = get_device_by_identifier(dev_reg, id1, entry_id)
-        assert reg_dev1 is not None
-        assert entry_id in device_config_entry_ids(reg_dev1)
-        assert (
-            coordinator._site_aliases.get("default", {}).get("aa:bb:cc:dd:ee:01")
-            == "device1"
-        )
-
-    @pytest.mark.asyncio
-    async def test_cleanup_stale_devices_prunes_disappeared_site_state(
-        self, coordinator: UnifiInsightsDeviceCoordinator
-    ) -> None:
-        """Drop a disappeared site's state while continuing active-site tracking."""
-        coordinator._site_sources = {"default": "v1", "gone": "legacy"}
-        coordinator._site_aliases = {
-            "default": {
-                "aa:bb:cc:dd:ee:01": "device1",
-                "aa:bb:cc:dd:ee:02": "device2",
-            },
-            "gone": {"aa:bb:cc:dd:ee:99": "gone-device"},
-        }
-        coordinator._site_tracked_devices = {
-            "default": {
-                "device1": "aa:bb:cc:dd:ee:01",
-                "device2": "aa:bb:cc:dd:ee:02",
-            },
-            "gone": {"gone-device": "aa:bb:cc:dd:ee:99"},
-        }
-        coordinator._site_absence_counts = {
-            "default": {"device1": 1, "device2": 1},
-            "gone": {"gone-device": 2},
-        }
-        coordinator.data["devices"] = {
-            "default": {"device1": {"id": "device1", "mac": "aa:bb:cc:dd:ee:01"}}
-        }
-
-        coordinator._cleanup_stale_devices(
-            site_sources={"default": "v1"},
-            site_device_macs={"default": {"device1": "aa:bb:cc:dd:ee:01"}},
-        )
-
-        assert coordinator._site_sources == {"default": "v1"}
-        assert coordinator._site_aliases == {
-            "default": {
-                "aa:bb:cc:dd:ee:01": "device1",
-                "aa:bb:cc:dd:ee:02": "device2",
-            }
-        }
-        assert coordinator._site_tracked_devices == {
-            "default": {
-                "device1": "aa:bb:cc:dd:ee:01",
-                "device2": "aa:bb:cc:dd:ee:02",
-            }
-        }
-        assert coordinator._site_absence_counts == {"default": {"device2": 2}}
-
-    @pytest.mark.asyncio
-    async def test_process_site_empty_devices(
-        self, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """Test site processing with empty devices list."""
-        # Return empty list of devices
-        coordinator.network_client.devices.get_all = AsyncMock(return_value=[])
-
-        result = await coordinator._async_update_data()
-
-        # Should handle empty devices gracefully
-        assert result is not None
-        assert coordinator._available is True
-
-    @pytest.mark.asyncio
-    async def test_cleanup_stale_devices_no_registry_match(
-        self, hass: HomeAssistant, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """Cleanup handles missing registry device gracefully after N polls."""
-        coordinator._site_sources = {"default": "v1"}
-        coordinator._site_tracked_devices = {
-            "default": {
-                "device1": "aa:bb:cc:dd:ee:01",
-                "stale_device": "aa:bb:cc:dd:ee:99",
-            }
-        }
-        coordinator.data["devices"] = {
-            "default": {"device1": {"id": "device1", "mac": "aa:bb:cc:dd:ee:01"}}
-        }
-        site_sources = {"default": "v1"}
-        current_macs = {"default": {"device1": "aa:bb:cc:dd:ee:01"}}
-
-        # Run 3 polls to hit the absence threshold
-        for _ in range(3):
-            coordinator._cleanup_stale_devices(site_sources, current_macs)
-
-        assert "stale_device" not in coordinator._site_tracked_devices.get(
-            "default", {}
-        )
-
-    @pytest.mark.asyncio
-    async def test_cleanup_v1_to_legacy_flip_removes_nothing(
-        self, hass: HomeAssistant, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """A flip from v1 to legacy fallback removes no devices
-        even if identifiers differ."""
-        dev_reg = dr.async_get(hass)
-        require_instance(coordinator.config_entry, MockConfigEntry).add_to_hass(hass)
-        entry_id = coordinator.config_entry.entry_id
-        dev_id = (DOMAIN, "default_old_dev")
-        dev = dev_reg.async_get_or_create(
-            config_entry_id=entry_id,
-            identifiers={dev_id},
-            connections={(CONNECTION_NETWORK_MAC, "00:11:22:33:44:55")},
-        )
-        assert entry_id in device_config_entry_ids(dev)
-
-        coordinator._site_sources = {"default": "v1"}
-        coordinator._site_tracked_devices = {
-            "default": {"old_dev": "00:11:22:33:44:55"}
-        }
-        coordinator._site_aliases = {"default": {"00:11:22:33:44:55": "old_dev"}}
-
-        coordinator.data["devices"] = {
-            "default": {
-                "other_dev": {
-                    "id": "other_dev",
-                    "_id": "legacy_obj_id",
-                    "mac": "aa:bb:cc:dd:ee:01",
-                }
-            }
-        }
-
-        # Alternating sources on each poll past the 3-poll threshold (6 polls)
-        # to prove continuous flips prevent removal indefinitely.
-        for i in range(6):
-            source = "legacy" if i % 2 == 0 else "v1"
-            coordinator._cleanup_stale_devices(
-                site_sources={"default": source},
-                site_device_macs={"default": {"other_dev": "aa:bb:cc:dd:ee:01"}},
-            )
-
-        reg_dev = get_device_by_identifier(dev_reg, dev_id, entry_id)
-        assert reg_dev is not None
-        assert entry_id in device_config_entry_ids(reg_dev)
-        assert "old_dev" in coordinator._site_tracked_devices.get("default", {})
-
-    @pytest.mark.asyncio
-    async def test_cleanup_legacy_to_v1_flip_removes_nothing(
-        self, hass: HomeAssistant, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """A flip from legacy fallback back to v1 removes no devices
-        even if identifiers differ."""
-        dev_reg = dr.async_get(hass)
-        require_instance(coordinator.config_entry, MockConfigEntry).add_to_hass(hass)
-        entry_id = coordinator.config_entry.entry_id
-        dev_id = (DOMAIN, "default_old_dev")
-        dev = dev_reg.async_get_or_create(
-            config_entry_id=entry_id,
-            identifiers={dev_id},
-            connections={(CONNECTION_NETWORK_MAC, "00:11:22:33:44:55")},
-        )
-        assert entry_id in device_config_entry_ids(dev)
-
-        coordinator._site_sources = {"default": "legacy"}
-        coordinator._site_tracked_devices = {
-            "default": {"old_dev": "00:11:22:33:44:55"}
-        }
-
-        coordinator.data["devices"] = {
-            "default": {
-                "other_dev": {
-                    "id": "other_dev",
-                    "mac": "aa:bb:cc:dd:ee:01",
-                }
-            }
-        }
-
-        # Alternating sources on each poll past the 3-poll threshold (6 polls)
-        # to prove continuous flips prevent removal indefinitely.
-        for i in range(6):
-            source = "v1" if i % 2 == 0 else "legacy"
-            coordinator._cleanup_stale_devices(
-                site_sources={"default": source},
-                site_device_macs={"default": {"other_dev": "aa:bb:cc:dd:ee:01"}},
-            )
-
-        reg_dev = get_device_by_identifier(dev_reg, dev_id, entry_id)
-        assert reg_dev is not None
-        assert entry_id in device_config_entry_ids(reg_dev)
-        assert "old_dev" in coordinator._site_tracked_devices.get("default", {})
-
-    @pytest.mark.asyncio
-    async def test_cleanup_empty_site_polls_remove_nothing(
-        self, hass: HomeAssistant, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """Empty site response and missing site data remove no devices."""
-        coordinator._site_sources = {"default": "v1"}
-        coordinator._site_tracked_devices = {
-            "default": {
-                "dev1": "aa:bb:cc:dd:ee:01",
-                "dev2": "aa:bb:cc:dd:ee:02",
-            }
-        }
-
-        with patch.object(coordinator, "_remove_stale_device") as mock_remove:
-            # 1. Empty site poll
-            coordinator.data["devices"] = {"default": {}}
-            for _ in range(3):
-                coordinator._cleanup_stale_devices(
-                    site_sources={"default": "v1"},
-                    site_device_macs={"default": {}},
-                )
-
-            mock_remove.assert_not_called()
-            assert "dev1" in coordinator._site_tracked_devices.get("default", {})
-            assert "dev2" in coordinator._site_tracked_devices.get("default", {})
-
-            # 2. Empty devices dictionary (site omitted from data)
-            coordinator.data["devices"] = {}
-            for _ in range(3):
-                coordinator._cleanup_stale_devices(
-                    site_sources={"default": "v1"},
-                    site_device_macs={},
-                )
-
-            mock_remove.assert_not_called()
-            assert "dev1" in coordinator._site_tracked_devices.get("default", {})
-            assert "dev2" in coordinator._site_tracked_devices.get("default", {})
-
-    @pytest.mark.asyncio
-    async def test_cleanup_same_mac_different_id_removes_nothing(
-        self, hass: HomeAssistant, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """A device appearing with a new ID but the same MAC is not removed."""
-        coordinator._site_sources = {"default": "v1"}
-        coordinator._site_tracked_devices = {"default": {"old_id": "aa:bb:cc:dd:ee:01"}}
-
-        coordinator.data["devices"] = {
-            "default": {
-                "new_id": {
-                    "id": "new_id",
-                    "mac": "aa:bb:cc:dd:ee:01",
-                }
-            }
-        }
-
-        with patch.object(coordinator, "_remove_stale_device") as mock_remove:
-            for _ in range(3):
-                coordinator._cleanup_stale_devices(
-                    site_sources={"default": "v1"},
-                    site_device_macs={"default": {"new_id": "aa:bb:cc:dd:ee:01"}},
-                )
-
-            mock_remove.assert_not_called()
-            assert "new_id" in coordinator._site_tracked_devices.get("default", {})
-
-    @pytest.mark.asyncio
-    async def test_cleanup_device_reappears_resets_absence_count(
-        self, hass: HomeAssistant, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """A missing device that reappears before threshold resets absence count."""
-        coordinator._site_sources = {"default": "v1"}
-        coordinator._site_tracked_devices = {
-            "default": {
-                "dev1": "aa:bb:cc:dd:ee:01",
-                "dev2": "aa:bb:cc:dd:ee:02",
-            }
-        }
-        coordinator.data["devices"] = {
-            "default": {"dev1": {"id": "dev1", "mac": "aa:bb:cc:dd:ee:01"}}
-        }
-        site_sources = {"default": "v1"}
-        poll_macs = {"default": {"dev1": "aa:bb:cc:dd:ee:01"}}
-
-        with patch.object(coordinator, "_remove_stale_device") as mock_remove:
-            # Polls 1 and 2: dev2 is missing
-            coordinator._cleanup_stale_devices(site_sources, poll_macs)
-            assert coordinator._site_absence_counts["default"].get("dev2") == 1
-            coordinator._cleanup_stale_devices(site_sources, poll_macs)
-            assert coordinator._site_absence_counts["default"].get("dev2") == 2
-
-            # Poll 3: dev2 reappears!
-            coordinator.data["devices"] = {
-                "default": {
-                    "dev1": {"id": "dev1", "mac": "aa:bb:cc:dd:ee:01"},
-                    "dev2": {"id": "dev2", "mac": "aa:bb:cc:dd:ee:02"},
-                }
-            }
-            coordinator._cleanup_stale_devices(
-                site_sources,
-                {
-                    "default": {
-                        "dev1": "aa:bb:cc:dd:ee:01",
-                        "dev2": "aa:bb:cc:dd:ee:02",
-                    }
-                },
-            )
-            assert coordinator._site_absence_counts["default"].get("dev2") is None
-            mock_remove.assert_not_called()
-
     def test_legacy_device_to_v1_dict_fallback_contract(self) -> None:
         """Test _legacy_device_to_v1_dict contract: maps _id to id,
         sets macAddress, state."""
@@ -4157,9 +3798,9 @@ class TestUnifiDeviceCoordinator:
 
             assert list(owners.device.data["devices"][SITE_ID].keys()) == [PDU_ID]
             assert owners.device.get_device(SITE_ID, PDU_ID) is not None
-            assert owners.device._site_sources[SITE_ID] == "v1"
-            assert owners.device._site_aliases[SITE_ID] == {mac: PDU_ID}
-            assert owners.device._site_absence_counts.get(SITE_ID, {}) == {}
+            assert owners.device._inventory_state.sources[SITE_ID] == "v1"
+            assert owners.device._inventory_state.aliases[SITE_ID] == {mac: PDU_ID}
+            assert owners.device._inventory_state.absence.get(SITE_ID, {}) == {}
 
             # Spy on _remove_stale_device
             with patch.object(
@@ -4176,9 +3817,9 @@ class TestUnifiDeviceCoordinator:
                 ]
                 await owners.device.async_refresh()
 
-                assert owners.device._site_sources[SITE_ID] == "legacy"
-                assert owners.device._site_aliases[SITE_ID] == {mac: PDU_ID}
-                assert owners.device._site_absence_counts.get(SITE_ID, {}) == {}
+                assert owners.device._inventory_state.sources[SITE_ID] == "legacy"
+                assert owners.device._inventory_state.aliases[SITE_ID] == {mac: PDU_ID}
+                assert owners.device._inventory_state.absence.get(SITE_ID, {}) == {}
 
                 # Cache keys stay v1 due to committed alias lookup
                 assert list(owners.device.data["devices"][SITE_ID].keys()) == [PDU_ID]
@@ -4206,9 +3847,9 @@ class TestUnifiDeviceCoordinator:
                 # Poll 2b: second consecutive fallback poll (eligible fallback)
                 await owners.device.async_refresh()
 
-                assert owners.device._site_sources[SITE_ID] == "legacy"
-                assert owners.device._site_aliases[SITE_ID] == {mac: PDU_ID}
-                assert owners.device._site_absence_counts.get(SITE_ID, {}) == {}
+                assert owners.device._inventory_state.sources[SITE_ID] == "legacy"
+                assert owners.device._inventory_state.aliases[SITE_ID] == {mac: PDU_ID}
+                assert owners.device._inventory_state.absence.get(SITE_ID, {}) == {}
                 assert list(owners.device.data["devices"][SITE_ID].keys()) == [PDU_ID]
                 pdu_fallback2 = owners.device.get_device(SITE_ID, PDU_ID)
                 assert pdu_fallback2 is not None
@@ -4223,9 +3864,9 @@ class TestUnifiDeviceCoordinator:
                 ]
                 await owners.device.async_refresh()
 
-                assert owners.device._site_sources[SITE_ID] == "v1"
-                assert owners.device._site_aliases[SITE_ID] == {mac: PDU_ID}
-                assert owners.device._site_absence_counts.get(SITE_ID, {}) == {}
+                assert owners.device._inventory_state.sources[SITE_ID] == "v1"
+                assert owners.device._inventory_state.aliases[SITE_ID] == {mac: PDU_ID}
+                assert owners.device._inventory_state.absence.get(SITE_ID, {}) == {}
                 assert list(owners.device.data["devices"][SITE_ID].keys()) == [PDU_ID]
                 assert owners.device.get_device(SITE_ID, PDU_ID) is not None
                 reg_pdu = get_device_by_identifier(
@@ -4280,8 +3921,11 @@ class TestUnifiDeviceCoordinator:
             await owners.config.async_refresh()
             await owners.device.async_refresh()
 
-            assert owners.device._site_aliases[SITE_ID][pdu_mac] == PDU_ID
-            assert owners.device._site_aliases[SITE_ID][sw_v1["mac"]] == sw_v1["id"]
+            assert owners.device._inventory_state.aliases[SITE_ID][pdu_mac] == PDU_ID
+            assert (
+                owners.device._inventory_state.aliases[SITE_ID][sw_v1["mac"]]
+                == sw_v1["id"]
+            )
 
             # Poll 2: eligible v1 poll omitting PDU (advances PDU absence counter to 1)
             # while the legacy list agrees that the PDU is gone
@@ -4291,16 +3935,16 @@ class TestUnifiDeviceCoordinator:
             ]
             await owners.device.async_refresh()
 
-            assert owners.device._site_absence_counts[SITE_ID][PDU_ID] == 1
-            assert owners.device._site_aliases[SITE_ID][pdu_mac] == PDU_ID
+            assert owners.device._inventory_state.absence[SITE_ID][PDU_ID] == 1
+            assert owners.device._inventory_state.aliases[SITE_ID][pdu_mac] == PDU_ID
 
             # Poll 3: v1 returns empty list [] (ineligible: empty after non-empty)
             owners.network_client.devices.get_all.return_value = []
             await owners.device.async_refresh()
 
             # Aliases must NOT be replaced with empty dict; counters must NOT reset
-            assert owners.device._site_aliases[SITE_ID][pdu_mac] == PDU_ID
-            assert owners.device._site_absence_counts[SITE_ID][PDU_ID] == 1
+            assert owners.device._inventory_state.aliases[SITE_ID][pdu_mac] == PDU_ID
+            assert owners.device._inventory_state.absence[SITE_ID][PDU_ID] == 1
 
             # Poll 4: fallback to legacy /stat/device with both devices
             owners.network_client.devices.get_all.side_effect = UniFiResponseError(
@@ -4351,7 +3995,9 @@ class TestUnifiDeviceCoordinator:
             await owners.config.async_refresh()
             await owners.device.async_refresh()
 
-            assert pdu_mac not in owners.device._site_aliases.get(SITE_ID, {})
+            assert pdu_mac not in owners.device._inventory_state.aliases.get(
+                SITE_ID, {}
+            )
 
             # Poll 2: eligible v1 poll discovers PDU (merges new PDU alias)
             owners.network_client.devices.get_all.return_value = [
@@ -4360,7 +4006,7 @@ class TestUnifiDeviceCoordinator:
             ]
             await owners.device.async_refresh()
 
-            assert owners.device._site_aliases[SITE_ID][pdu_mac] == PDU_ID
+            assert owners.device._inventory_state.aliases[SITE_ID][pdu_mac] == PDU_ID
 
             # Poll 3: eligible v1 poll omits PDU (omitted for one poll), and so
             # does the legacy list
@@ -4371,8 +4017,8 @@ class TestUnifiDeviceCoordinator:
             await owners.device.async_refresh()
 
             # Merging aliases ensures PDU alias is preserved even when omitted
-            assert owners.device._site_aliases[SITE_ID][pdu_mac] == PDU_ID
-            assert owners.device._site_absence_counts[SITE_ID][PDU_ID] == 1
+            assert owners.device._inventory_state.aliases[SITE_ID][pdu_mac] == PDU_ID
+            assert owners.device._inventory_state.absence[SITE_ID][PDU_ID] == 1
 
             # Poll 4: fallback to legacy /stat/device returning PDU
             owners.network_client.devices.get_all.side_effect = UniFiResponseError(
@@ -4465,8 +4111,8 @@ class TestUnifiDeviceCoordinator:
             await owners.device.async_refresh()
 
             assert legacy_id in owners.device.data["devices"][SITE_ID]
-            assert owners.device._site_sources[SITE_ID] == "legacy"
-            assert owners.device._site_aliases.get(SITE_ID) == {}
+            assert owners.device._inventory_state.sources[SITE_ID] == "legacy"
+            assert owners.device._inventory_state.aliases.get(SITE_ID) == {}
 
             # Poll 2: v1 responds (source changed legacy -> v1: ineligible for cleanup,
             # but aliases must be merged on every committed v1 poll).
@@ -4477,8 +4123,11 @@ class TestUnifiDeviceCoordinator:
             await owners.device.async_refresh()
 
             assert v1_id in owners.device.data["devices"][SITE_ID]
-            assert owners.device._site_sources[SITE_ID] == "v1"
-            assert owners.device._site_aliases.get(SITE_ID, {}).get(mac) == v1_id
+            assert owners.device._inventory_state.sources[SITE_ID] == "v1"
+            assert (
+                owners.device._inventory_state.aliases.get(SITE_ID, {}).get(mac)
+                == v1_id
+            )
 
             # Poll 3: v1 drops again to fallback.
             # Because the v1 alias was recorded in poll 2, fallback must reuse
@@ -4490,7 +4139,7 @@ class TestUnifiDeviceCoordinator:
 
             assert v1_id in owners.device.data["devices"][SITE_ID]
             assert legacy_id not in owners.device.data["devices"][SITE_ID]
-            assert owners.device._site_sources[SITE_ID] == "legacy"
+            assert owners.device._inventory_state.sources[SITE_ID] == "legacy"
         finally:
             await async_shutdown_owners(owners)
 
@@ -4515,7 +4164,7 @@ class TestUnifiDeviceCoordinator:
             ]
             await owners.config.async_refresh()
             await owners.device.async_refresh()
-            assert PDU_ID in owners.device._site_tracked_devices[SITE_ID]
+            assert PDU_ID in owners.device._inventory_state.tracked[SITE_ID]
 
             # Polls 2, 3, 4: site returns zero devices
             owners.network_client.devices.get_all.return_value = []
@@ -4528,7 +4177,7 @@ class TestUnifiDeviceCoordinator:
             )
             assert reg_dev is not None
             assert entry_id in device_config_entry_ids(reg_dev)
-            assert PDU_ID in owners.device._site_tracked_devices[SITE_ID]
+            assert PDU_ID in owners.device._inventory_state.tracked[SITE_ID]
         finally:
             await async_shutdown_owners(owners)
 
@@ -4547,10 +4196,10 @@ class TestUnifiDeviceCoordinator:
             await owners.config.async_refresh()
             await owners.device.async_refresh()
 
-            before_aliases = copy.deepcopy(owners.device._site_aliases)
-            before_sources = copy.deepcopy(owners.device._site_sources)
-            before_tracking = copy.deepcopy(owners.device._site_tracked_devices)
-            before_absence = copy.deepcopy(owners.device._site_absence_counts)
+            before_aliases = copy.deepcopy(owners.device._inventory_state.aliases)
+            before_sources = copy.deepcopy(owners.device._inventory_state.sources)
+            before_tracking = copy.deepcopy(owners.device._inventory_state.tracked)
+            before_absence = copy.deepcopy(owners.device._inventory_state.absence)
 
             # Poll 2: multi-site poll where site 1 succeeds with new alias candidate
             # but site 2 fails -> whole refresh fails; no aliases or tracking committed
@@ -4577,10 +4226,10 @@ class TestUnifiDeviceCoordinator:
             await owners.device.async_refresh()
             assert not owners.device.last_update_success
 
-            assert owners.device._site_aliases == before_aliases
-            assert owners.device._site_sources == before_sources
-            assert owners.device._site_tracked_devices == before_tracking
-            assert owners.device._site_absence_counts == before_absence
+            assert owners.device._inventory_state.aliases == before_aliases
+            assert owners.device._inventory_state.sources == before_sources
+            assert owners.device._inventory_state.tracked == before_tracking
+            assert owners.device._inventory_state.absence == before_absence
         finally:
             await async_shutdown_owners(owners)
 
@@ -4689,12 +4338,16 @@ class TestUnifiDeviceCoordinator:
             # Poll 1 & 2: absent, not detached
             await owners.device.async_refresh()
             assert (
-                owners.device._site_absence_counts.get(SITE_ID, {}).get("switch_v1_id")
+                owners.device._inventory_state.absence.get(SITE_ID, {}).get(
+                    "switch_v1_id"
+                )
                 == 1
             )
             await owners.device.async_refresh()
             assert (
-                owners.device._site_absence_counts.get(SITE_ID, {}).get("switch_v1_id")
+                owners.device._inventory_state.absence.get(SITE_ID, {}).get(
+                    "switch_v1_id"
+                )
                 == 2
             )
 
@@ -4710,7 +4363,9 @@ class TestUnifiDeviceCoordinator:
             ]
             await owners.device.async_refresh()
             assert (
-                owners.device._site_absence_counts.get(SITE_ID, {}).get("switch_v1_id")
+                owners.device._inventory_state.absence.get(SITE_ID, {}).get(
+                    "switch_v1_id"
+                )
                 is None
             )
 

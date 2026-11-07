@@ -8,6 +8,11 @@ For the domain vocabulary, see the [glossary](../../GLOSSARY.md).
 
 > **Status:** this describes `main` as of 2026-10-21, with the ADR-007 module layout in place (#341). The Protect coordinator is split along ADR-007's `protect_ws.py` / `protect_events.py` seam (#340, [ADR-012](./adr/012-pure-protect-state-reconciler.md)), and the facade publishes a typed, read-only snapshot (#342, [ADR-013](./adr/013-typed-read-only-facade-snapshot.md)).
 
+The Device coordinator uses `coordinators/device_inventory.py` to find the
+registry entries to remove. It stores the inventory and publishes the snapshot
+before it removes these entries. See
+[ADR-014](./adr/014-pure-network-inventory-reconciliation.md).
+
 ## Directory structure
 
 ```text

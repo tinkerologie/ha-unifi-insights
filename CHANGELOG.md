@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added a domain glossary, the missing ADR-001 index summary, and contributor links to the glossary and existing architecture decisions so terminology and design history are easier to find. Runtime behavior is unchanged. [#472](https://github.com/tinkerologie/ha-unifi-insights/issues/472)
 
+### Changed
+
+- The Device coordinator finds stale devices before it publishes the snapshot. Then it removes their registry entries. The rules for stale devices stay the same. [#475](https://github.com/tinkerologie/ha-unifi-insights/issues/475)
+
 ## [2026.11.0] - 2026-11-05
 
 ### Added
