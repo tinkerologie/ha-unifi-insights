@@ -1,258 +1,358 @@
 # UniFi Insights
 
-UniFi Insights connects UniFi applications to Home Assistant for monitoring and
-control. This glossary defines the product concepts used in that integration.
+UniFi Insights connects UniFi applications to Home Assistant. This glossary
+gives the meaning of the terms in the integration.
 
 ## Language
 
 ### Integration and connections
 
-**UniFi Insights**:
-The Home Assistant integration that represents UniFi infrastructure, activity,
-and controls.
-_Avoid_: UniFi Network integration when referring to all supported applications.
+#### UniFi Insights
 
-**UniFi application**:
-A UniFi product with its own capabilities and access requirements, such as
-Network, Protect, Access, or InnerSpace.
-_Avoid_: domain without a qualifier.
+The Home Assistant integration that shows data from UniFi applications. It
+also provides controls for UniFi equipment.
 
-**Console**:
-A UniFi system that hosts applications, such as a Dream Machine, Cloud Key,
-or Protect NVR. Hosting applications and routing network traffic are distinct
-roles, even when one system performs both.
-_Avoid_: controller or gateway as a synonym for every console.
+Use UniFi Network only for the Network application.
 
-**Console entry**:
-A saved Home Assistant connection to a console and its selected capabilities.
-It can use a local connection or a remote connection.
-_Avoid_: site or application as a synonym for the connection.
+#### UniFi application
 
-**Local connection**:
-A console connection made directly to the console using its local credentials.
-_Avoid_: cloud connection.
+A UniFi product with its own functions and access requirements. Network,
+Protect, Access, and InnerSpace are examples.
 
-**Remote connection**:
-A console connection made through UniFi's cloud connector using a cloud key
-and a console identity.
-_Avoid_: Site Manager as a synonym for every remote operation.
+Give the name of the application when it is known.
 
-**Carrier Fabric entry**:
-A saved Home Assistant connection to Carrier Fabric using credentials for its
-administrative scope, separate from a console entry.
-_Avoid_: console entry or Network site.
+#### Console
 
-**Site Manager**:
-UniFi's cloud service for discovering accessible consoles and reporting cloud
-site and connectivity information.
-_Avoid_: Network application or Network site.
+A UniFi system that runs applications. A Dream Machine, a Cloud Key, and a
+Protect NVR are examples. A console can also route network traffic.
 
-**Site Manager host**:
-A console represented in Site Manager. A local console does not need a Site
-Manager host record to be used by the integration.
-_Avoid_: Network client, hostname, or physical location.
+Use gateway for the device that sends traffic between networks.
 
-**Site Manager site**:
-A site reported by Site Manager in association with a cloud host.
-_Avoid_: treating its identity as interchangeable with a Network site identity.
+#### Console entry
 
-**API client**:
-Software that communicates with a UniFi application's interface on behalf of
-the integration.
-_Avoid_: client without a qualifier.
+A Home Assistant config entry for a console and its selected functions. The
+entry can use a local connection or a remote connection.
+
+Use Network site for a group in the Network application.
+
+#### Local connection
+
+A direct connection to a console. It uses credentials that the console
+accepts.
+
+Use remote connection for access through the UniFi cloud connector.
+
+#### Remote connection
+
+A connection to a console through the UniFi cloud connector. It uses a cloud
+API key and a console ID.
+
+Use Site Manager for the cloud service that gives console and site data.
+
+#### Carrier Fabric entry
+
+A Home Assistant config entry for Carrier Fabric. It uses the credentials for
+its administrative group.
+
+Use console entry for a connection to a console.
+
+#### Site Manager
+
+The UniFi cloud service that finds consoles that the API key can access. It
+reports site and connection data.
+
+Use Network application for the application on a console.
+
+#### Site Manager host
+
+A console in Site Manager. The integration can use a local console without a
+Site Manager host record.
+
+Use hostname for the name used to find a system on the network.
+
+#### Site Manager site
+
+A site that Site Manager reports for a Site Manager host.
+
+Use Network site for the site record from the Network application.
+
+#### API client
+
+Software that the integration uses to send requests to a UniFi application.
+
+Use Network client for a device that uses the network.
 
 ### Network
 
-**Network site**:
-An administrative grouping within a console's Network application. Its identity
-is scoped to that console rather than being a unique physical location.
-_Avoid_: console, VLAN, Site Manager site, or location as a synonym.
+#### Network site
 
-**Network device**:
-Managed Network infrastructure, such as an access point, switch, gateway, or
-power distribution unit.
-_Avoid_: Network client or Home Assistant device as an interchangeable term.
+An administrative group in the Network application on one console. The site ID
+has meaning only on that console.
 
-**Gateway**:
-A Network device that routes traffic between networks, commonly including the
-internet connection.
-_Avoid_: console when only the routing role is meant.
+Use Site Manager site for the cloud site record.
 
-**Site gateway**:
-The gateway associated with a Network site for the integration's site-level
-representation. This does not mean the site can contain only one gateway.
-_Avoid_: console or sole gateway.
+#### Network device
 
-**Network client**:
-An endpoint using the network, such as a phone or computer, rather than the
-infrastructure managing it.
-_Avoid_: client without a qualifier, API client, or Network device.
+Equipment that the Network application manages. Access points, switches,
+gateways, and power distribution units are examples.
 
-**Connected Network client**:
-A Network client currently reported as connected by the Network application.
-_Avoid_: online Network device when describing client presence.
+Use Network client for a device that uses the network. Use Home Assistant
+device for a device registry entry.
 
-**Online Network device**:
-A Network device whose reported state confirms network connectivity.
-_Avoid_: serviceable or available as an interchangeable state.
+#### Gateway
 
-**Serviceable Network device**:
-A Network device eligible for its integration controls and readings, including
-a managed device applying configuration before connectivity is confirmed again.
-_Avoid_: online as a synonym.
+A Network device that sends traffic between networks. One of those networks is
+usually the internet.
 
-**Available entity**:
-A Home Assistant entity whose source is healthy and whose product-specific
-conditions allow its current reading or control to be used.
-_Avoid_: online without naming the device or source being described.
+Use console for a system that runs UniFi applications.
 
-**Wi-Fi network**:
-A configured wireless network through which Network clients can connect.
-_Avoid_: VLAN or SSID when the complete configuration is meant.
+#### Site gateway
 
-**SSID**:
-The name identifying a Wi-Fi network to wireless clients.
-_Avoid_: Network site or the entire Wi-Fi configuration.
+The gateway that the integration uses to represent a Network site. The site
+can have more than one gateway.
 
-**WAN**:
-A gateway's connection to an upstream network, commonly an internet provider.
-_Avoid_: the whole Network site.
+#### Network client
 
-**Uplink**:
-The connection from a device or client toward its upstream network attachment.
-_Avoid_: WAN when the attachment is another local device.
+A device that uses the network. A phone or a computer is an example.
 
-**Port**:
-A physical network interface on managed infrastructure.
-_Avoid_: outlet when referring to an Ethernet interface.
+Use API client for the software that sends requests to a UniFi application.
 
-**PoE**:
-Power over Ethernet supplied through a network port to an attached device.
-_Avoid_: outlet power as a synonym.
+#### Connected Network client
 
-**Network rule**:
-A Network configuration governing traffic, access, routing, or name resolution.
-_Avoid_: firewall rule when referring to all supported rule families.
+A Network client that the Network application reports as connected.
 
-**Rule-change event**:
-An observed addition, modification, or removal of a Network rule between
-successive observations.
-_Avoid_: a record of every action performed on the console.
+Use online Network device for the equipment that the Network application
+manages.
 
-**Classic API**:
-The older Network controller interface used for supported information and
-operations that the Network Integration API does not supply.
-_Avoid_: Network Integration API as an interchangeable name.
+#### Online Network device
+
+A Network device with a state that shows that it has a network connection.
+
+Use serviceable Network device for equipment that the integration can monitor
+and control.
+
+#### Serviceable Network device
+
+A Network device that the integration can monitor and control. The device can
+be in the process of applying its configuration.
+
+Use online Network device when its state shows that it has a network
+connection.
+
+#### Available entity
+
+A Home Assistant entity that can give a reading or accept a command. Its data
+source and device must meet the conditions for that entity.
+
+Use online Network device for the device state.
+
+#### Wi-Fi network
+
+A wireless network that Network clients can connect to.
+
+Use SSID for the name of the network.
+
+#### SSID
+
+A service set identifier. It gives the name of a Wi-Fi network.
+
+Use Wi-Fi network for the full network configuration.
+
+#### WAN
+
+A wide area network connection from a gateway. It usually connects to an
+internet service provider.
+
+Use Network site for the administrative group.
+
+#### Uplink
+
+A connection from a device to the network upstream of it.
+
+Use WAN for the gateway's connection to the upstream network.
+
+#### Port
+
+A physical network connection on a Network device.
+
+Use outlet for a power connection on a power distribution unit.
+
+#### PoE
+
+Power over Ethernet. A network port supplies power to the device through the
+Ethernet cable.
+
+Use outlet power for power from an outlet.
+
+#### Network rule
+
+A Network setting that controls traffic, access, routing, or name resolution.
+
+Use firewall rule only for a rule that controls traffic.
+
+#### Rule-change event
+
+An addition, change, or removal of a Network rule that the integration finds
+when it compares two polls. The event can show only changes that the integration can
+see in the poll results.
+
+#### Classic API
+
+An older Network API. The integration uses it for functions that the Network
+Integration API does not supply.
+
+Use Network Integration API for the interface with versions.
 
 ### Protect
 
-**NVR**:
-The system hosting Protect's video recording and device management, whether
-dedicated hardware or part of a console with other roles.
-_Avoid_: camera or Network gateway as a universal synonym.
+#### NVR
 
-**Smart detection**:
-A Protect camera's classification of activity, such as a person, animal, or
-vehicle detection.
-_Avoid_: motion detection when a specific classification is meant.
+A network video recorder. It records video and manages Protect devices. An NVR
+can be separate equipment or part of a console.
 
-**Protect doorbell ring**:
-A ring reported by a Protect doorbell camera.
-_Avoid_: Access doorbell ring; the applications report separate events.
+Use camera for the equipment that captures video.
+
+#### Smart detection
+
+A type of activity that a Protect camera identifies. A person, an animal, or a
+vehicle can cause a smart detection.
+
+Use motion detection when the camera reports movement without a specific type.
+
+#### Protect doorbell ring
+
+A doorbell ring that a Protect camera reports.
+
+Use Access doorbell ring for events from UniFi Access.
 
 ### Access
 
-**Access door**:
-A managed entry point in UniFi Access, with access control and optional
-position information.
-_Avoid_: hub or reader as a synonym for the entry point.
+#### Access door
 
-**Lock relay**:
-The Access door control whose locked or unlocked state governs the lock.
-_Avoid_: door or gate position; an unlocked entry point can remain closed.
+A door or gate that UniFi Access controls. UniFi Access can report its
+position.
 
-**Door or gate position**:
-The physical open or closed position reported for an Access entry point.
-_Avoid_: lock relay state.
+Use hub or reader for the equipment that controls entry.
 
-**Access doorbell ring**:
-A ring reported by UniFi Access for an entry point.
-_Avoid_: Protect doorbell ring.
+#### Lock relay
 
-**Access result event**:
-An access grant or denial reported by UniFi Access for an entry point.
-_Avoid_: treating a grant as confirmation that the door physically opened.
+The control that locks or unlocks an Access door.
+
+An unlocked door or gate can stay closed.
+
+#### Door or gate position
+
+The physical position that UniFi Access reports for a door or gate. The
+position can be open or closed.
+
+Use lock relay state for the locked or unlocked state.
+
+#### Access doorbell ring
+
+A doorbell ring that UniFi Access reports for a door or gate.
+
+Use Protect doorbell ring for events from a Protect camera.
+
+#### Access result event
+
+An event that shows if UniFi Access gave or refused access at a door or gate.
+
+Access permission alone does not show that the door is open.
 
 ### InnerSpace
 
-**Floor plan**:
-An InnerSpace representation of a physical space on which UniFi products can
-be located.
-_Avoid_: Network site or Home Assistant area as an interchangeable grouping.
+#### Floor plan
 
-**InnerSpace placement**:
-The relationship between a UniFi product and a floor plan. A placement is
-placed, unplaced, or unknown when the available information cannot decide.
-_Avoid_: treating an unknown placement as confirmed unplaced.
+A drawing of a physical space in InnerSpace. InnerSpace can show the positions
+of UniFi products on this drawing.
+
+Use Network site for the group in the Network application.
+
+#### InnerSpace placement
+
+The relation between a UniFi product and a floor plan. The product can be
+placed, unplaced, or have an unknown position.
+
+An unknown position gives no information about whether the product is placed.
 
 ### Mobility
 
-**Mobility workspace**:
-A UniFi Mobility administrative grouping for mobile routers and their
-administrators.
-_Avoid_: Network site or Carrier Fabric organization.
+#### Mobility workspace
 
-**Mobile router**:
-A router managed by UniFi Mobility, with its own connectivity and cellular
-service information.
-_Avoid_: Network client or treating every Network gateway as a Mobility router.
+An administrative group for mobile routers and their administrators in UniFi
+Mobility.
+
+Use Carrier Fabric organization for the administrative group in Carrier
+Fabric.
+
+#### Mobile router
+
+A router that UniFi Mobility manages. Mobility reports the router's
+connections and cellular service.
+
+Use gateway for a Network device that sends traffic between networks.
 
 ### Carrier Fabric
 
-**Carrier Fabric organization**:
-The administrative scope for Carrier Fabric subscribers and service plans.
-_Avoid_: Network site or fabric as an interchangeable name.
+#### Carrier Fabric organization
 
-**Subscriber**:
-A Carrier Fabric customer or service subscription represented by its own
-subscriber identity.
-_Avoid_: device, Network client, or Network site.
+An administrative group for subscribers and service plans in Carrier Fabric.
 
-**Service plan**:
-A Carrier Fabric service offering that can be assigned to subscribers.
-_Avoid_: subscriber or floor plan.
+A fabric is a separate resource in Carrier Fabric.
 
-**Unassigned subscriber**:
-A subscriber without a service-plan assignment.
-_Avoid_: pending assignment or suspended as a synonym; those are separate states.
+#### Subscriber
+
+A customer or service subscription with a subscriber ID in Carrier Fabric.
+
+Use Network client for a device that uses the network.
+
+#### Service plan
+
+A Carrier Fabric service that an administrator can give to a subscriber.
+
+Use subscriber for the customer or service subscription.
+
+#### Unassigned subscriber
+
+A subscriber without a service plan.
+
+Pending assignment and suspended are different subscriber states.
 
 ### Home Assistant representation
 
-**Entity**:
-A Home Assistant representation of one reading, event stream, or control
-exposed by the integration.
-_Avoid_: device when referring to an individual reading or control.
+#### Entity
 
-**Home Assistant device**:
-A registry grouping for related entities, representing either equipment or a
-logical object such as a site or subscriber.
-_Avoid_: physical hardware as a universal interpretation.
+A Home Assistant object for one reading, event stream, or control.
 
-**UniFi Site device**:
-The logical Home Assistant device grouping the integration's entities for a
-Network site.
-_Avoid_: gateway or physical console.
+Use Home Assistant device for a group of related entities.
 
-**Device tracker**:
-A Home Assistant entity representing a Network client's reported presence.
-_Avoid_: assuming every tracker has a separate Home Assistant device.
+#### Home Assistant device
 
-**Event entity**:
-A Home Assistant entity representing discrete occurrences such as a detection,
-doorbell ring, or rule change.
-_Avoid_: a continuously measured sensor value.
+A device registry entry that groups related entities. The entry can represent
+equipment or an object such as a site or subscriber.
 
-**Action**:
-A Home Assistant operation exposed by UniFi Insights to read or change UniFi
-state, such as restarting a device or generating vouchers.
-_Avoid_: event when referring to an operation being requested.
+#### UniFi Site device
+
+The Home Assistant device that groups entities for a Network site.
+
+Use site gateway for the gateway that represents a Network site.
+
+#### Device tracker
+
+A Home Assistant entity that shows if a Network client is present.
+
+Some device trackers have a separate Home Assistant device.
+
+#### Event entity
+
+A Home Assistant entity that reports events. A detection, a doorbell ring, and
+a rule change are examples.
+
+Use sensor for an entity that gives a measured value.
+
+#### Action
+
+A Home Assistant operation that reads or changes UniFi data. A device restart
+and a request for vouchers are examples.
+
+Use event for an occurrence that the integration reports.

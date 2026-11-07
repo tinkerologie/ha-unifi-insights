@@ -16,6 +16,25 @@ To maintain code quality, protect maintainer capacity, and prevent maintainer bu
 
 ---
 
+## Technical documentation
+
+Use [ASD-STE100 Simplified Technical English, Issue 9][ste] for English technical
+documentation. Use the [glossary](GLOSSARY.md) for project terms.
+
+1. Use words with their meanings in the Issue 9 dictionary.
+2. Use the same technical term for each item.
+3. Use the command form for instructions.
+4. Write one action in each instruction sentence.
+5. Use a maximum of 20 words in each instruction sentence.
+6. Use a maximum of 25 words in each description sentence.
+7. Use one topic in each paragraph.
+8. Obey the other Issue 9 rules that apply to the text.
+
+Keep product names, interface labels, code, and commands exact. Make sure that the
+instructions and descriptions agree with the software.
+
+[ste]: https://www.asd-ste100.org/assets/files/ASD-STE100_ISSUE9.pdf
+
 ## Development Workflow
 
 Before exploring the integration, read the [domain glossary](GLOSSARY.md),
