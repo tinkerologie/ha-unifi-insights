@@ -180,8 +180,7 @@ A ring reported by UniFi Access for an entry point.
 _Avoid_: Protect doorbell ring.
 
 **Access result event**:
-A reported access grant or denial delivered to the integration through its
-optional verified Access webhook.
+An access grant or denial reported by UniFi Access for an entry point.
 _Avoid_: treating a grant as confirmation that the door physically opened.
 
 ### InnerSpace
