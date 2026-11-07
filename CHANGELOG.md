@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The Device coordinator finds stale devices before it publishes the snapshot. Then it removes their registry entries. The rules for stale devices stay the same. [#475](https://github.com/tinkerologie/ha-unifi-insights/issues/475)
+- Network and Protect entities receive state updates from the coordinators that supply their data. [#474](https://github.com/tinkerologie/ha-unifi-insights/issues/474)
 
 ## [2026.11.0] - 2026-11-05
 

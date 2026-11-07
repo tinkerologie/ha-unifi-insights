@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
@@ -33,6 +33,7 @@ from .const import (
 from .coordinators import UnifiInsightsFacadeCoordinator
 from .coordinators.access import UnifiInsightsAccessCoordinator
 from .coordinators.base import CommandFailure, async_execute_command
+from .coordinators.facade import FacadeOwner
 from .coordinators.mobility import UnifiInsightsMobilityCoordinator
 
 # Re-exported (see __all__): the platforms import the field helpers from here.
@@ -216,6 +217,8 @@ class UnifiInsightsEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
 
     _attr_has_entity_name = True
 
+    _facade_owner: ClassVar[FacadeOwner | None] = FacadeOwner.DEVICE
+
     def __init__(
         self,
         coordinator: UnifiInsightsFacadeCoordinator,
@@ -224,7 +227,7 @@ class UnifiInsightsEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         device_id: str,
     ) -> None:
         """Initialize the entity."""
-        super().__init__(coordinator)
+        super().__init__(coordinator, context=self._facade_owner)
         self.entity_description = description
         self._site_id = site_id
         self._device_id = device_id
@@ -341,7 +344,7 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         entity_type: str | None = None,
     ) -> None:
         """Initialize the entity."""
-        super().__init__(coordinator)
+        super().__init__(coordinator, context=FacadeOwner.PROTECT)
         self._device_type = device_type
         self._device_id = device_id
         self._entity_type = entity_type
