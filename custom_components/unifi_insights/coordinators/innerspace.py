@@ -19,6 +19,7 @@ from custom_components.unifi_insights.const import SCAN_INTERVAL_INNERSPACE
 from custom_components.unifi_insights.data_transforms import (
     normalize_innerspace_snapshot,
 )
+from custom_components.unifi_insights.probe import describe_error
 
 from .base import UnifiInsightsBaseCoordinator
 
@@ -64,6 +65,7 @@ class UnifiInsightsInnerSpaceCoordinator(UnifiInsightsBaseCoordinator):
             name="innerspace",
             update_interval=SCAN_INTERVAL_INNERSPACE,
         )
+        self.refresh_failure: dict[str, str | int | None] | None = None
         self.innerspace_client = innerspace_client
         self._device_coordinator = device_coordinator
         self._protect_coordinator = protect_coordinator
@@ -92,23 +94,38 @@ class UnifiInsightsInnerSpaceCoordinator(UnifiInsightsBaseCoordinator):
             self._remove_stale_device(f"innerspace_floor_plan_{plan_id}")
         self._previous_floor_plan_ids = current_ids
 
+    def _checked_result[T](self, endpoint: str, result: T | BaseException) -> T:
+        """Record a settled fetch failure and let the base translate it."""
+        if isinstance(result, BaseException):
+            detail = describe_error(result)
+            self.refresh_failure = {
+                "endpoint": endpoint,
+                "http_status": detail.http_status,
+                "error_type": detail.error_type,
+                "error_category": detail.error_category,
+            }
+            raise result
+        return result
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch InnerSpace floor plans, placed devices, and inventory."""
         try:
             _LOGGER.debug("InnerSpace coordinator: Fetching InnerSpace data")
-            (
-                project,
-                floor_plans,
-                access_points,
-                switches,
-                inventory,
-            ) = await asyncio.gather(
+            results = await asyncio.gather(
                 self.innerspace_client.get_project(),
                 self.innerspace_client.list_floor_plans(),
                 self.innerspace_client.list_access_points(),
                 self.innerspace_client.list_switches(),
                 self.innerspace_client.list_inventory(),
+                return_exceptions=True,
             )
+            # Settle all requests before recording a failure so a late sibling
+            # cannot overwrite the evidence from a later refresh.
+            project = self._checked_result("project", results[0])
+            floor_plans = self._checked_result("floor_plans", results[1])
+            access_points = self._checked_result("access_points", results[2])
+            switches = self._checked_result("switches", results[3])
+            inventory = self._checked_result("inventory", results[4])
 
             network_devices = (
                 self._device_coordinator.data.get("devices", {})
@@ -131,6 +148,7 @@ class UnifiInsightsInnerSpaceCoordinator(UnifiInsightsBaseCoordinator):
                 protect_devices=protect_devices,
             )
             snapshot["last_update"] = datetime.now(tz=UTC)
+            self.refresh_failure = None
             self.data = snapshot
             self._available = True
             self._cleanup_stale_floor_plan_devices()

@@ -831,13 +831,19 @@ async def async_get_config_entry_diagnostics(
         "entry": async_redact_data(entry.as_dict(), TO_REDACT),
         "data": _redact_coordinator_data(facade_data),
     }
-    if isinstance(innerspace_snapshot, Mapping):
-        diagnostics_data["innerspace"] = build_innerspace_diagnostics_summary(
-            innerspace_snapshot,
-            available=bool(getattr(coordinator, "innerspace_available", True)),
-            redact_fn=async_redact_data,
-            to_redact=TO_REDACT,
-        )
+    diagnostics_data["innerspace"] = build_innerspace_diagnostics_summary(
+        innerspace_snapshot if isinstance(innerspace_snapshot, Mapping) else {},
+        available=bool(getattr(coordinator, "innerspace_available", True)),
+        redact_fn=async_redact_data,
+        to_redact=TO_REDACT,
+    )
+    diagnostics_data["innerspace"].update(
+        probe=getattr(data, "innerspace_probe", {}),
+        innerspace_owner_present=innerspace_coord is not None,
+        refresh_failure=(
+            innerspace_coord.refresh_failure if innerspace_coord is not None else None
+        ),
+    )
     if data.site_manager_coordinator:
         diagnostics_data["site_manager"] = _site_manager_summary(
             data.site_manager_coordinator.data,

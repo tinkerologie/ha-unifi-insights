@@ -115,6 +115,7 @@
     "error": {
       "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
       "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
+      "console_access_denied": "UniFi denied this API key access to the selected console's applications (HTTP 403). Site Manager can list consoles that the key cannot access through the Cloud Connector. Personal API keys work only with consoles that the key's account owns. Use an API key from the console owner, an organisation API key, or a Local connection with a key created on the console.",
       "invalid_console_id": "The selected console could not be accessed with this API key.",
       "site_entity_identity_conflict": "Home Assistant could not preserve safe site entity identities. Your saved connection settings remain unchanged. Check the logs for the reason.",
       "no_remote_consoles": "No remote UniFi consoles were found for this API key.",

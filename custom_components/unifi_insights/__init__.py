@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Final, TypeAlias, TypeIs
 
 import homeassistant.helpers.config_validation as cv
@@ -112,6 +113,7 @@ class UnifiInsightsData:
     protect_client: UniFiProtectClient | None
     innerspace_coordinator: UnifiInsightsInnerSpaceCoordinator | None = None
     innerspace_client: UniFiInnerSpaceClient | None = None
+    innerspace_probe: dict[str, str | int | bool | None] = field(default_factory=dict)
     site_manager_coordinator: UnifiInsightsSiteManagerCoordinator | None = None
     site_manager_fingerprint: str | None = None
     # Only the remote entry that owns its cloud key's Mobility data has one.
@@ -214,6 +216,26 @@ def _clear_setup_probe_attempts(hass: HomeAssistant, entry_id: str) -> None:
     hass.data.get(_SETUP_PROBE_ATTEMPTS, {}).pop(entry_id, None)
 
 
+def _innerspace_key_accepted_elsewhere(
+    innerspace_probe: ProbeResult,
+    network_probe: ProbeResult,
+    protect_probe: ProbeResult,
+) -> bool:
+    """
+    Return True when InnerSpace refused a key that Network or Protect accepts.
+
+    The library raises the same error for every 403, so the only evidence that
+    the key itself is valid is another application on the same entry (#470).
+    """
+    # Callers only reach this with Network or Protect usable today; the last
+    # clause keeps the rule true on its own if that ever changes.
+    return (
+        innerspace_probe.status is ProbeStatus.AUTH_FAILED
+        and innerspace_probe.http_status == HTTPStatus.FORBIDDEN
+        and ProbeStatus.AVAILABLE in (network_probe.status, protect_probe.status)
+    )
+
+
 def _raise_for_setup_probes(
     hass: HomeAssistant,
     entry_id: str,
@@ -233,6 +255,9 @@ def _raise_for_setup_probes(
       lose that application, then load without it rather than keeping the
       working one offline too.
     - None usable and a key rejected (401/403): reauth.
+    - InnerSpace refused with 403 while Network or Protect is usable: the key
+      is not rejected, so log one INFO line and load without InnerSpace
+      (#470). An InnerSpace 401 or error keeps its WARNING.
     - None usable and nothing more specific (no sites, no NVR, no supported
       application, an unparseable response): retry up to SETUP_PROBE_RETRIES
       times - applications still starting answer this way - then reauth as
@@ -281,6 +306,16 @@ def _raise_for_setup_probes(
     if available:
         _clear_setup_probe_attempts(hass, entry_id)
         for name, probe in probes.items():
+            if name == "InnerSpace" and _innerspace_key_accepted_elsewhere(
+                probe, network_probe, protect_probe
+            ):
+                _LOGGER.info(
+                    "InnerSpace refused the request with HTTP 403; the same API key "
+                    "works for Network or Protect so the key is not rejected; "
+                    "Floorplan is unavailable on this entry; diagnostics contain "
+                    "the details"
+                )
+                continue
             if probe.status in (
                 ProbeStatus.UNREACHABLE,
                 ProbeStatus.AUTH_FAILED,
@@ -501,6 +536,17 @@ async def async_setup_entry(
         network_available = network_probe.status is ProbeStatus.AVAILABLE
         protect_available = protect_probe.status is ProbeStatus.AVAILABLE
         innerspace_available = innerspace_probe.status is ProbeStatus.AVAILABLE
+        # Capture bounded evidence before closing an unused client.
+        innerspace_probe_record: dict[str, str | int | bool | None] = {
+            "status": innerspace_probe.status.value,
+            "endpoint": innerspace_probe.endpoint,
+            "http_status": innerspace_probe.http_status,
+            "error_type": innerspace_probe.error_type,
+            "error_category": innerspace_probe.error_category,
+            "key_accepted_elsewhere": _innerspace_key_accepted_elsewhere(
+                innerspace_probe, network_probe, protect_probe
+            ),
+        }
         sites = network_probe.sites
         if network_available:
             _LOGGER.info(
@@ -734,6 +780,7 @@ async def async_setup_entry(
             innerspace_coordinator=innerspace_coordinator,
             innerspace_client=innerspace_client,
             site_manager_coordinator=site_manager_coordinator,
+            innerspace_probe=innerspace_probe_record,
             site_manager_fingerprint=site_manager_fingerprint,
             mobility_coordinator=mobility_coordinator,
             access_client=access_client,

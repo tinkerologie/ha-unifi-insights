@@ -663,7 +663,7 @@ async def test_reauth_identity_failure_reports_preservation_error_without_mutati
         patch.object(
             UnifiInsightsConfigFlow,
             "_async_validate_remote_console",
-            AsyncMock(return_value=True),
+            AsyncMock(return_value=None),
         ),
         patch.object(
             entity_registry,
@@ -1255,7 +1255,7 @@ async def test_remote_flow_rekeys_or_reuses_normalized_namespace(
         patch.object(
             UnifiInsightsConfigFlow,
             "_async_validate_remote_console",
-            AsyncMock(return_value=True),
+            AsyncMock(return_value=None),
         ),
         patch("custom_components.unifi_insights.async_setup_entry", return_value=True),
         patch(

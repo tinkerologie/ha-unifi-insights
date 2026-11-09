@@ -1475,3 +1475,12 @@ def test_service_error_guard_requires_the_key_in_both_files(
     assert _translated_error_violations("bad.py") == [
         "bad.py:1: key 'no_coordinator' missing in en.json"
     ]
+
+
+def test_console_access_denied_translation_parity() -> None:
+    """The remote permission error exists and matches in both English files."""
+    strings = json.loads(_STRINGS_JSON.read_text(encoding="utf-8"))
+    english = json.loads(_EN_JSON.read_text(encoding="utf-8"))
+    message = strings["config"]["error"]["console_access_denied"]
+    assert message
+    assert english["config"]["error"]["console_access_denied"] == message
