@@ -913,9 +913,13 @@ class TestUnifiFloorPlanImage:
 
     @pytest.mark.asyncio
     async def test_setup_entry_skips_plan_without_image_until_it_has_one(
-        self, hass: HomeAssistant, innerspace_coordinator: MagicMock
+        self,
+        hass: HomeAssistant,
+        innerspace_coordinator: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """A plan without image_url gets no entity or device until it has one."""
+        caplog.set_level(logging.DEBUG)
         entry = MockConfigEntry(domain=DOMAIN)
         entry.add_to_hass(hass)
         platform = MockEntityPlatform(hass, domain="image", platform_name=DOMAIN)
@@ -948,6 +952,14 @@ class TestUnifiFloorPlanImage:
         listener = innerspace_coordinator.async_add_listener.call_args[0][0]
         listener()
         assert len(added) == 1
+        skipped = [
+            r.getMessage()
+            for r in caplog.records
+            if "without image_url" in r.getMessage()
+        ]
+        assert skipped == ["Skipping InnerSpace floor plan without image_url"]
+        assert "Second Floor" not in skipped[0]
+        assert "fp-2" not in skipped[0]
 
         # Once the plan reports an image, the next update creates it, once
         innerspace_coordinator.data = _with_floor_plan_fields(

@@ -256,6 +256,9 @@ def transform_innerspace_floor_plan(
         "floor_number": _valid_int(raw.get("floor_number") or raw.get("floorNumber")),
         "site_id": site_id if isinstance(site_id, str) and site_id else None,
         "image_url": raw.get("image_url") or raw.get("imageUrl"),
+        "has_image_filename": bool(
+            raw.get("image_filename") or raw.get("imageFilename")
+        ),
         "project_id": (
             project_id if isinstance(project_id, str) and project_id else None
         ),
@@ -798,6 +801,8 @@ def build_innerspace_diagnostics_summary(
                 "ppm": plan.get("ppm"),
                 "width": plan.get("width"),
                 "height": plan.get("height"),
+                "has_image_url": bool(plan.get("image_url")),
+                "has_image_filename": bool(plan.get("has_image_filename")),
             },
             to_redact,
         )
@@ -834,6 +839,9 @@ def build_innerspace_diagnostics_summary(
         "project": redacted_project,
         "counts": {
             "floor_plans": len(floor_plans) if isinstance(floor_plans, Mapping) else 0,
+            "floor_plans_with_image_url": sum(
+                plan["has_image_url"] for plan in redacted_plans
+            ),
             "access_points": (
                 len(access_points) if isinstance(access_points, Mapping) else 0
             ),

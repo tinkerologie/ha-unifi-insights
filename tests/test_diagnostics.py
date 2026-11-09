@@ -18,6 +18,7 @@ from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api import UniFiResponseError, __version__
 from unifi_official_api.access.models import AccessDevice, AccessDoor, AccessUser
 from unifi_official_api.const import SENSITIVE_CREDENTIAL_KEYS
+from unifi_official_api.innerspace import InnerSpaceAccessPoint, InnerSpaceFloorPlan
 from unifi_official_api.network.models.client import Client
 
 from custom_components.unifi_insights import CarrierFabricData
@@ -40,6 +41,7 @@ from custom_components.unifi_insights.coordinators.config import (
 from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
     build_site_network_facts,
+    normalize_innerspace_snapshot,
 )
 from custom_components.unifi_insights.diagnostics import (
     ACCESS_TO_REDACT,
@@ -1760,3 +1762,97 @@ async def test_only_the_owner_reports_a_mobility_summary(
     assert owner_diagnostics["mobility"]["owner"] is True
     assert second_diagnostics["mobility"] == {"owner": False}
     assert "mobility" not in local_diagnostics
+
+
+@pytest.mark.parametrize("owner_present", [False, True])
+async def test_innerspace_sanitised_probe_refresh_and_image_evidence(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    *,
+    owner_present: bool,
+) -> None:
+    """Evidence remains useful without an owner and cannot export raw metadata."""
+    runtime = init_integration.runtime_data
+    runtime.innerspace_probe = {
+        "status": "auth_failed",
+        "endpoint": "project",
+        "http_status": 403,
+        "error_type": "UniFiAuthenticationError",
+        "error_category": "forbidden",
+        "key_accepted_elsewhere": True,
+    }
+    failure = {
+        "endpoint": "inventory",
+        "http_status": 502,
+        "error_type": "UniFiResponseError",
+        "error_category": "http_error",
+    }
+    snapshot = normalize_innerspace_snapshot(
+        floor_plans=[
+            InnerSpaceFloorPlan.model_validate(
+                {
+                    "id": "sensitive-plan",
+                    "image_url": "https://private.example/secret.png",
+                    "image_filename": "secret.png",
+                }
+            ),
+            InnerSpaceFloorPlan(id="blank-plan"),
+        ],
+        access_points=[
+            InnerSpaceAccessPoint.model_validate(
+                {
+                    "id": "sensitive-ap",
+                    "mac": "de:ad:be:ef:12:34",
+                }
+            )
+        ],
+    )
+    runtime.innerspace_coordinator = (
+        SimpleNamespace(data=snapshot, refresh_failure=failure)
+        if owner_present
+        else None
+    )
+    runtime.coordinator.data = with_sections(
+        runtime.coordinator.data,
+        innerspace=snapshot,
+    )
+    exported = await async_get_config_entry_diagnostics(hass, init_integration)
+    section = exported["innerspace"]
+    assert section["probe"] == runtime.innerspace_probe
+    assert section["innerspace_owner_present"] is owner_present
+    assert section["refresh_failure"] == (failure if owner_present else None)
+    assert section["counts"]["floor_plans_with_image_url"] == 1
+    assert [
+        (plan["has_image_url"], plan["has_image_filename"])
+        for plan in section["floor_plans"]
+    ] == [(True, True), (False, False)]
+    text = json.dumps(exported, cls=ExtendedJSONEncoder)
+    for value in (
+        "sensitive-plan",
+        "blank-plan",
+        "private.example",
+        "secret.png",
+        "de:ad:be:ef:12:34",
+        init_integration.data[CONF_API_KEY],
+        init_integration.data.get("host", "synthetic-host"),
+        "Headers missing",
+        "Access denied",
+        "response_body",
+    ):
+        assert value not in text
+    assert "**REDACTED-MAC-" in text
+
+
+async def test_innerspace_diagnostics_falls_back_to_explicit_owner(
+    hass: HomeAssistant,
+) -> None:
+    """A missing facade section still exposes the owner's refresh evidence."""
+    entry = MockConfigEntry(domain=DOMAIN)
+    entry.runtime_data = _runtime(None)
+    entry.runtime_data.innerspace_coordinator = SimpleNamespace(
+        data=normalize_innerspace_snapshot(), refresh_failure=None
+    )
+    section = (await async_get_config_entry_diagnostics(hass, entry))["innerspace"]
+    assert section["innerspace_owner_present"] is True
+    assert section["refresh_failure"] is None
+    assert section["probe"] == {}

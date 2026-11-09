@@ -26,7 +26,9 @@ from unifi_official_api.network import UniFiNetworkClient
 from unifi_official_api.protect import UniFiProtectClient
 
 from custom_components.unifi_insights.probe import (
+    ProbeResult,
     ProbeStatus,
+    _failed_probe,
     async_probe_access,
     async_probe_carrier_fabric,
     async_probe_innerspace,
@@ -34,6 +36,8 @@ from custom_components.unifi_insights.probe import (
     async_probe_protect,
     async_probe_with_client,
     classify_error,
+    describe_error,
+    is_forbidden,
     is_malformed_response,
     is_transient_error,
 )
@@ -291,6 +295,7 @@ async def test_probe_with_client_classifies_context_errors() -> None:
             [],
             "error",
         ),
+        (UniFiAuthenticationError("Forbidden", status_code=403), [], [], "auth_failed"),
         (_NON_JSON_PAGE, [], [], "unsupported"),
     ],
     ids=[
@@ -303,6 +308,7 @@ async def test_probe_with_client_classifies_context_errors() -> None:
         "timeout-unreachable",
         "secondary-502-unreachable",
         "200-malformed-error",
+        "403-auth-failed",
         "200-non-json-unsupported",
     ],
 )
@@ -652,3 +658,118 @@ async def test_envelope_without_success_code_is_unsupported() -> None:
     )
     assert result.status is ProbeStatus.UNSUPPORTED
     assert result.error is not None
+
+
+@pytest.mark.parametrize(
+    ("error", "category"),
+    [
+        (UniFiAuthenticationError("private", status_code=401), "authentication"),
+        (UniFiAuthenticationError("private", status_code=403), "forbidden"),
+        (UniFiRateLimitError("private", status_code=429), "rate_limited"),
+        (UniFiTimeoutError("private"), "timeout"),
+        (UniFiConnectionError("private"), "connection"),
+        (UniFiNotFoundError("private", status_code=404), "not_found"),
+        (UniFiResponseError("private", status_code=200), "malformed_response"),
+        (_NON_JSON_PAGE, "non_json_response"),
+        (UniFiResponseError("private", status_code=502), "http_error"),
+        (RuntimeError("private"), "unexpected"),
+    ],
+)
+def test_sanitised_error_detail(error: Exception, category: str) -> None:
+    """All categories expose class/status evidence without exception messages."""
+    detail = describe_error(error)
+    assert detail.error_category == category
+    assert detail.http_status == getattr(error, "status_code", None)
+    assert detail.error_type == (
+        "other" if isinstance(error, RuntimeError) else type(error).__name__
+    )
+    result = _failed_probe(classify_error(error), error, "project")
+    assert result.endpoint == "project"
+    assert result.http_status == detail.http_status
+    assert result.error_type == detail.error_type
+    assert result.error_category == category
+    assert result.error is error
+
+
+@pytest.mark.parametrize(
+    ("status", "error", "expected"),
+    [
+        (ProbeStatus.AUTH_FAILED, UniFiAuthenticationError("x", status_code=403), True),
+        (
+            ProbeStatus.AUTH_FAILED,
+            UniFiAuthenticationError("x", status_code=401),
+            False,
+        ),
+        (ProbeStatus.AUTH_FAILED, UniFiResponseError("x", status_code=403), False),
+        (ProbeStatus.ERROR, UniFiAuthenticationError("x", status_code=403), False),
+        (ProbeStatus.AVAILABLE, None, False),
+    ],
+)
+def test_is_forbidden(
+    status: ProbeStatus, error: Exception | None, *, expected: bool
+) -> None:
+    """Only an auth failure backed by a library auth 403 proves forbidden."""
+    assert is_forbidden(ProbeResult(status, error)) is expected
+
+
+@pytest.mark.parametrize("remote", [False, True])
+async def test_innerspace_real_client_forbidden_routes(
+    caplog: pytest.LogCaptureFixture, *, remote: bool
+) -> None:
+    """Record actual connector/proxy paths, headers and current 403 contract."""
+    client = UniFiInnerSpaceClient(
+        auth=ApiKeyAuth(api_key="synthetic-key"),
+        **(
+            {
+                "console_id": "synthetic-console",
+                "connection_type": ConnectionType.REMOTE,
+            }
+            if remote
+            else {
+                "base_url": "https://192.168.1.1",
+                "connection_type": ConnectionType.LOCAL,
+            }
+        ),
+    )
+    path = (
+        "/v1/connector/consoles/synthetic-console/innerspace/integration/v1/project"
+        if remote
+        else "/proxy/innerspace/integration/v1/project"
+    )
+    body = '{"type":"access","message":"Headers missing. Access denied"}'
+    response = MagicMock()
+    response.status = 403
+    response.text = AsyncMock(return_value=body)
+    response.json = AsyncMock(return_value=json.loads(body))
+    response.headers = {}
+    response.method = "GET"
+    response.history = ()
+    response.url = MagicMock()
+    response.url.path = path
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=response)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    session = MagicMock()
+    session.request.return_value = ctx
+    client._ensure_session = AsyncMock(return_value=session)
+    client._throttle = AsyncMock()
+    # The dependency logs response bodies at DEBUG; this contract covers the
+    # integration's probe logs and the normal library logging level.
+    caplog.set_level(logging.INFO, logger="unifi_official_api")
+    with caplog.at_level(
+        logging.DEBUG, logger="custom_components.unifi_insights.probe"
+    ):
+        with pytest.raises(UniFiAuthenticationError) as raised:
+            await client.get_project(expected_unsupported=True)
+        result = await async_probe_innerspace(client)
+    assert raised.value.status_code == 403
+    assert result.status is ProbeStatus.AUTH_FAILED
+    assert result.http_status == 403
+    assert result.error_category == "forbidden"
+    assert result.endpoint == "project"
+    args, kwargs = session.request.call_args
+    assert str(args[1] if len(args) > 1 else kwargs["url"]).endswith(path)
+    assert kwargs["headers"]["X-API-Key"] == "synthetic-key"
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert "Headers missing" not in caplog.text
+    assert body not in caplog.text
