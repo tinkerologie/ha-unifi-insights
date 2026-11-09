@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Any, TypeGuard
+from typing import TYPE_CHECKING, Any, Final, TypeGuard
 
 from unifi_official_api import (
     UniFiAuthenticationError,
@@ -67,6 +67,35 @@ class ProbeResult:
     sites: list[Any] = field(default_factory=list)
     org_id: str | None = None
     missing_scope: bool = False
+    # Sanitised failure detail (see describe_error). Only the InnerSpace
+    # probe sets these; they never hold messages, bodies, or URLs.
+    endpoint: str | None = None
+    http_status: int | None = None
+    error_type: str | None = None
+    error_category: str | None = None
+
+
+@dataclass(frozen=True)
+class ErrorDetail:
+    """Sanitised description of a failed request, safe for logs and diagnostics."""
+
+    http_status: int | None
+    error_type: str
+    error_category: str
+
+
+# Library exception classes whose names may appear in diagnostics; any other
+# exception is reported as "other".
+_ERROR_TYPE_NAMES: Final = frozenset(
+    {
+        "UniFiAuthenticationError",
+        "UniFiConnectionError",
+        "UniFiNotFoundError",
+        "UniFiRateLimitError",
+        "UniFiResponseError",
+        "UniFiTimeoutError",
+    }
+)
 
 
 def is_malformed_response(err: object) -> TypeGuard[UniFiResponseError]:
@@ -102,6 +131,71 @@ def classify_error(err: Exception) -> ProbeStatus:
             return ProbeStatus.UNREACHABLE
         return ProbeStatus.UNSUPPORTED
     return ProbeStatus.ERROR
+
+
+def describe_error(err: BaseException) -> ErrorDetail:
+    """
+    Describe a request failure from its exception class and status code only.
+
+    The message, ``str(err)``, ``repr(err)``, and the response body can carry
+    hosts, identifiers, or console text, so none of them is read. For a 2xx
+    ``UniFiResponseError`` only the presence of a body is checked, to tell a
+    web page in place of JSON from a record that failed to parse.
+    """
+    status_code = getattr(err, "status_code", None)
+    http_status = status_code if isinstance(status_code, int) else None
+    name = type(err).__name__
+    error_type = name if name in _ERROR_TYPE_NAMES else "other"
+    category: str
+    if isinstance(err, UniFiAuthenticationError):
+        category = (
+            "forbidden" if http_status == HTTPStatus.FORBIDDEN else "authentication"
+        )
+    elif isinstance(err, UniFiRateLimitError):
+        category = "rate_limited"
+    elif isinstance(err, UniFiTimeoutError):
+        category = "timeout"
+    elif isinstance(err, UniFiConnectionError):
+        category = "connection"
+    elif isinstance(err, UniFiNotFoundError):
+        category = "not_found"
+    elif isinstance(err, UniFiResponseError):
+        if is_malformed_response(err):
+            category = "malformed_response"
+        elif http_status is not None and http_status < HTTPStatus.BAD_REQUEST:
+            category = "non_json_response"
+        else:
+            category = "http_error"
+    else:
+        category = "unexpected"
+    return ErrorDetail(http_status, error_type, category)
+
+
+def _failed_probe(status: ProbeStatus, err: Exception, endpoint: str) -> ProbeResult:
+    """Build a failed probe result carrying sanitised failure detail."""
+    detail = describe_error(err)
+    return ProbeResult(
+        status,
+        err,
+        endpoint=endpoint,
+        http_status=detail.http_status,
+        error_type=detail.error_type,
+        error_category=detail.error_category,
+    )
+
+
+def is_forbidden(result: ProbeResult) -> bool:
+    """
+    Return True when a probe proves the key was refused with HTTP 403.
+
+    A 401 is not a permission restriction, and a 403 that the library did not
+    raise as ``UniFiAuthenticationError`` is not counted either.
+    """
+    return (
+        result.status is ProbeStatus.AUTH_FAILED
+        and isinstance(result.error, UniFiAuthenticationError)
+        and result.error.status_code == HTTPStatus.FORBIDDEN
+    )
 
 
 def is_transient_error(err: Exception) -> bool:
@@ -179,14 +273,17 @@ async def async_probe_innerspace(client: UniFiInnerSpaceClient) -> ProbeResult:
         status = (
             ProbeStatus.ERROR if is_malformed_response(err) else classify_error(err)
         )
-        status_code = getattr(err, "status_code", None)
+        result = _failed_probe(status, err, "project")
+        # Sanitised fields only: the library message is generic and misleading
+        # for a 403 that another application accepted (#470).
         _LOGGER.debug(
-            "InnerSpace API probe (project): %s (status=%s, %r)",
+            "InnerSpace API probe (project): %s (status=%s, type=%s, category=%s)",
             status,
-            status_code,
-            err,
+            result.http_status,
+            result.error_type,
+            result.error_category,
         )
-        return ProbeResult(status, err)
+        return result
 
     if (
         (project.project is not None and bool(project.project.id))
@@ -205,8 +302,16 @@ async def async_probe_innerspace(client: UniFiInnerSpaceClient) -> ProbeResult:
             records = await fetch()
         except Exception as err:
             status = classify_error(err)
-            _LOGGER.debug("InnerSpace API probe (%s): %s (%r)", label, status, err)
-            return ProbeResult(status, err)
+            result = _failed_probe(status, err, label)
+            _LOGGER.debug(
+                "InnerSpace API probe (%s): %s (status=%s, type=%s, category=%s)",
+                label,
+                status,
+                result.http_status,
+                result.error_type,
+                result.error_category,
+            )
+            return result
         if records:
             return ProbeResult(ProbeStatus.AVAILABLE)
 
