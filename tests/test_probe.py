@@ -716,7 +716,12 @@ def test_is_forbidden(
 async def test_innerspace_real_client_forbidden_routes(
     caplog: pytest.LogCaptureFixture, *, remote: bool
 ) -> None:
-    """Record actual connector/proxy paths, headers and current 403 contract."""
+    """
+    Record actual connector/proxy paths, headers and current 403 contract.
+
+    The log assertions are a contract guard: library 3.1.0 already drops the
+    403 body, so they would pass before #470 too.
+    """
     client = UniFiInnerSpaceClient(
         auth=ApiKeyAuth(api_key="synthetic-key"),
         **(

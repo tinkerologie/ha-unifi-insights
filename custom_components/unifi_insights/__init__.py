@@ -227,6 +227,8 @@ def _innerspace_key_accepted_elsewhere(
     The library raises the same error for every 403, so the only evidence that
     the key itself is valid is another application on the same entry (#470).
     """
+    # Callers only reach this with Network or Protect usable today; the last
+    # clause keeps the rule true on its own if that ever changes.
     return (
         innerspace_probe.status is ProbeStatus.AUTH_FAILED
         and innerspace_probe.http_status == HTTPStatus.FORBIDDEN
@@ -253,6 +255,9 @@ def _raise_for_setup_probes(
       lose that application, then load without it rather than keeping the
       working one offline too.
     - None usable and a key rejected (401/403): reauth.
+    - InnerSpace refused with 403 while Network or Protect is usable: the key
+      is not rejected, so log one INFO line and load without InnerSpace
+      (#470). An InnerSpace 401 or error keeps its WARNING.
     - None usable and nothing more specific (no sites, no NVR, no supported
       application, an unparseable response): retry up to SETUP_PROBE_RETRIES
       times - applications still starting answer this way - then reauth as
