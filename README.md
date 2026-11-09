@@ -155,6 +155,11 @@ You can add an entry for each console.
 4. Enter the key in Home Assistant.
 5. Select the console from the list.
 
+A console in the list does not prove that the key has Cloud Connector access.
+Personal Site Manager API keys work only with consoles that the key's account
+owns. Use a key from the console owner, an organisation API key, or a
+[Local connection](#local-connection) with a key created on the console.
+
 For Carrier Fabric, enter the ISP API key. See
 [Carrier Fabric setup](#carrier-fabric-setup).
 
@@ -1120,6 +1125,17 @@ action: unifi_insights.refresh_data
 | Many orphaned client entities | Turn off **Enable Client Control**.                                                                                                                         |
 | Wake button does nothing      | Make sure that the device has Wake-on-LAN enabled. Examine the Home Assistant host network and VLAN. See the Wake-on-LAN instructions for more information. |
 | Duplicate entities            | UniFi Insights and the official UniFi integrations can create entities for the same device. Disable the duplicate entities that you do not use.             |
+
+### Remote console access denied (HTTP 403)
+
+Site Manager can list consoles that an API key cannot access through the
+Cloud Connector. Personal Site Manager API keys work only with consoles that
+the key's account owns. Delegated accounts, including view-only accounts and
+accounts with reported Super Admin access, can receive HTTP 403.
+
+Use a key from the console owner, an organisation API key, or a
+[Local connection](#local-connection) with a key created on the console.
+UniFi Insights cannot grant access to the console's applications.
 
 ### Diagnostics
 

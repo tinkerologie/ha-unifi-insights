@@ -579,12 +579,18 @@ async def test_remote_flow_success(hass: HomeAssistant) -> None:
         }
 
 
+@pytest.mark.parametrize(
+    "network_error",
+    [None, UniFiAuthenticationError("denied", status_code=403)],
+    ids=["network-empty", "network-forbidden"],
+)
 async def test_remote_flow_success_protect_only_console(
     hass: HomeAssistant,
+    network_error: Exception | None,
 ) -> None:
     """Test remote flow succeeds for Protect-only console."""
     discovery_cm = _make_client_context(get_hosts=[_remote_host()])
-    validation_net_cm = _make_client_context(sites=[])
+    validation_net_cm = _make_client_context(sites=[], sites_side_effect=network_error)
 
     protect_mock = MagicMock()
     protect_mock.cameras = MagicMock()

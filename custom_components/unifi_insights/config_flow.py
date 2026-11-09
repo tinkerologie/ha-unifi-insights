@@ -92,6 +92,7 @@ from .probe import (
     async_probe_network,
     async_probe_protect,
     async_probe_with_client,
+    is_forbidden,
     is_malformed_response,
     is_transient_error,
 )
@@ -457,14 +458,13 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
         self,
         api_key: str,
         console_id: str,
-    ) -> bool:
+    ) -> str | None:
         """
         Validate remote connectivity for a specific console host ID.
 
-        Returns False when neither application is usable with this key and
-        console. A temporary failure (connection, timeout, 5xx, rate limit)
-        raises UniFiConnectionError so the step reports cannot_connect
-        rather than an invalid console.
+        Return None for a usable console, or the error key for a denied or
+        unusable console. Temporary failures raise UniFiConnectionError so
+        the step reports cannot_connect.
         """
         auth = ApiKeyAuth(api_key=api_key)
 
@@ -478,7 +478,7 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
             async_probe_network,
         )
         if network.status is ProbeStatus.AVAILABLE:
-            return True
+            return None
 
         protect = await async_probe_with_client(
             UniFiProtectClient(
@@ -490,13 +490,24 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
             async_probe_protect,
         )
         if protect.status is ProbeStatus.AVAILABLE:
-            return True
+            return None
 
         for probe in (network, protect):
             if probe.status is ProbeStatus.UNREACHABLE:
                 msg = f"Remote console temporarily unavailable: {probe.error}"
                 raise UniFiConnectionError(msg) from probe.error
-        return False
+        denied_apps = [
+            name
+            for name, result in (("Network", network), ("Protect", protect))
+            if is_forbidden(result)
+        ]
+        if denied_apps:
+            _LOGGER.debug(
+                "Remote console validation: %s refused the API key with HTTP 403",
+                ", ".join(denied_apps),
+            )
+            return "console_access_denied"
+        return "invalid_console_id"
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -750,11 +761,11 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
             console_id = user_input[CONF_CONSOLE_ID]
 
             try:
-                sites_found = await self._async_validate_remote_console(
+                validation_error = await self._async_validate_remote_console(
                     self._remote_api_key,
                     console_id,
                 )
-                if sites_found:
+                if validation_error is None:
                     await self.async_set_unique_id(console_id)
                     self._abort_if_unique_id_configured()
 
@@ -775,7 +786,7 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                         },
                     )
 
-                errors[CONF_CONSOLE_ID] = "invalid_console_id"
+                errors[CONF_CONSOLE_ID] = validation_error
             except AbortFlow:
                 raise
             except UniFiAuthenticationError:
@@ -973,11 +984,13 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                             errors["base"] = "invalid_console_id"
                         else:
                             try:
-                                sites_found = await self._async_validate_remote_console(
-                                    api_key,
-                                    console_id,
+                                validation_error = (
+                                    await self._async_validate_remote_console(
+                                        api_key,
+                                        console_id,
+                                    )
                                 )
-                                if sites_found:
+                                if validation_error is None:
                                     return self._async_update_site_entry_and_abort(
                                         reauth_entry,
                                         {
@@ -987,7 +1000,7 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                                         },
                                         console_id,
                                     )
-                                errors["base"] = "invalid_console_id"
+                                errors["base"] = validation_error
                             except UniFiAuthenticationError:
                                 errors["base"] = "invalid_console_id"
 
@@ -1252,11 +1265,13 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                             errors[CONF_CONSOLE_ID] = "invalid_console_id"
                         else:
                             try:
-                                sites_found = await self._async_validate_remote_console(
-                                    api_key,
-                                    console_id,
+                                validation_error = (
+                                    await self._async_validate_remote_console(
+                                        api_key,
+                                        console_id,
+                                    )
                                 )
-                                if sites_found:
+                                if validation_error is None:
                                     if (
                                         console_id != entry.data.get(CONF_CONSOLE_ID)
                                         and entry.unique_id
@@ -1279,7 +1294,7 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                                         unique_id=console_id,
                                         reason="reconfigure_successful",
                                     )
-                                errors[CONF_CONSOLE_ID] = "invalid_console_id"
+                                errors[CONF_CONSOLE_ID] = validation_error
                             except UniFiAuthenticationError:
                                 errors[CONF_CONSOLE_ID] = "invalid_console_id"
 

@@ -347,6 +347,16 @@ async def test_select_console_jumps_to_remote_when_state_missing(
     [
         ([], "call", {CONF_CONSOLE_ID: "invalid_console_id"}),
         (
+            UniFiAuthenticationError("denied", status_code=403),
+            "call",
+            {CONF_CONSOLE_ID: "console_access_denied"},
+        ),
+        (
+            UniFiAuthenticationError("unauthorized", status_code=401),
+            "call",
+            {CONF_CONSOLE_ID: "invalid_console_id"},
+        ),
+        (
             UniFiAuthenticationError("auth error"),
             "construct",
             {CONF_CONSOLE_ID: "invalid_console_id"},
@@ -538,30 +548,44 @@ async def test_reauth_remote_discovery_errors_and_recovery(
 
 
 @pytest.mark.parametrize(
-    ("validation_side_effect", "expected_errors"),
+    ("validation_side_effect", "expected_errors", "raise_at"),
     [
-        ([], {"base": "invalid_console_id"}),
         (
-            UniFiAuthenticationError("auth error"),
-            {"base": "invalid_console_id"},
+            UniFiAuthenticationError("denied", status_code=403),
+            {"base": "console_access_denied"},
+            "call",
         ),
-        (UniFiConnectionError("conn error"), {"base": "cannot_connect"}),
-        (UniFiTimeoutError("timeout"), {"base": "cannot_connect"}),
+        (
+            UniFiAuthenticationError("unauthorized", status_code=401),
+            {"base": "invalid_console_id"},
+            "call",
+        ),
+        ([], {"base": "invalid_console_id"}, "call"),
+        (
+            UniFiAuthenticationError("auth error", status_code=401),
+            {"base": "invalid_console_id"},
+            "construct",
+        ),
+        (UniFiConnectionError("conn error"), {"base": "cannot_connect"}, "call"),
+        (UniFiTimeoutError("timeout"), {"base": "cannot_connect"}, "call"),
         (
             UniFiNotFoundError("not found", status_code=404),
             {"base": "invalid_console_id"},
+            "call",
         ),
         (
             _MALFORMED_SITES,
             {"base": "invalid_console_id"},
+            "call",
         ),
-        (RuntimeError("unexpected"), {"base": "invalid_console_id"}),
+        (RuntimeError("unexpected"), {"base": "invalid_console_id"}, "call"),
     ],
 )
 async def test_reauth_remote_validation_errors_and_recovery(
     hass: HomeAssistant,
     validation_side_effect: object,
     expected_errors: dict[str, str],
+    raise_at: str,
 ) -> None:
     """Test validation errors in remote reauth and subsequent recovery."""
     remote_entry = MockConfigEntry(
@@ -575,9 +599,11 @@ async def test_reauth_remote_validation_errors_and_recovery(
         unique_id="old_api_key",
     )
     remote_entry.add_to_hass(hass)
+    original_data = dict(remote_entry.data)
+    original_unique_id = remote_entry.unique_id
 
     discovery_cm_1 = _make_client_context(get_hosts=[_remote_host("console123")])
-    if isinstance(validation_side_effect, UniFiAuthenticationError):
+    if raise_at == "construct":
         failing_validation_cm = validation_side_effect
     elif isinstance(validation_side_effect, Exception):
         failing_validation_cm = _make_client_context(
@@ -615,6 +641,8 @@ async def test_reauth_remote_validation_errors_and_recovery(
         assert result["type"] == FlowResultType.FORM
         assert result["step_id"] == "reauth_confirm"
         assert result["errors"] == expected_errors
+        assert dict(remote_entry.data) == original_data
+        assert remote_entry.unique_id == original_unique_id
 
         # Recovery attempt
         result = await hass.config_entries.flow.async_configure(
@@ -732,6 +760,14 @@ async def test_reconfigure_remote_discovery_errors_and_recovery(
 @pytest.mark.parametrize(
     ("validation_side_effect", "expected_errors"),
     [
+        (
+            UniFiAuthenticationError("denied", status_code=403),
+            {CONF_CONSOLE_ID: "console_access_denied"},
+        ),
+        (
+            UniFiAuthenticationError("unauthorized", status_code=401),
+            {CONF_CONSOLE_ID: "invalid_console_id"},
+        ),
         ([], {CONF_CONSOLE_ID: "invalid_console_id"}),
         (
             UniFiAuthenticationError("auth error"),
@@ -767,6 +803,8 @@ async def test_reconfigure_remote_validation_errors_and_recovery(
         unique_id="old_api_key",
     )
     remote_entry.add_to_hass(hass)
+    original_data = dict(remote_entry.data)
+    original_unique_id = remote_entry.unique_id
 
     discovery_cm_1 = _make_client_context(get_hosts=[_remote_host("console123")])
     if isinstance(validation_side_effect, Exception):
@@ -808,6 +846,8 @@ async def test_reconfigure_remote_validation_errors_and_recovery(
         assert result["type"] == FlowResultType.FORM
         assert result["step_id"] == "reconfigure"
         assert result["errors"] == expected_errors
+        assert dict(remote_entry.data) == original_data
+        assert remote_entry.unique_id == original_unique_id
 
         # Recovery attempt
         result = await hass.config_entries.flow.async_configure(
@@ -821,3 +861,89 @@ async def test_reconfigure_remote_validation_errors_and_recovery(
         assert result["reason"] == "reconfigure_successful"
         assert remote_entry.data[CONF_API_KEY] == "new_valid_key"
         assert remote_entry.data[CONF_CONSOLE_ID] == "console123"
+
+
+@pytest.mark.parametrize(
+    ("network_error", "protect_error", "expected_error"),
+    [
+        (
+            UniFiAuthenticationError("denied", status_code=403),
+            UniFiConnectionError("unreachable"),
+            "cannot_connect",
+        ),
+        (
+            UniFiAuthenticationError("denied", status_code=403),
+            UniFiNotFoundError("absent", status_code=404),
+            "console_access_denied",
+        ),
+        (
+            UniFiAuthenticationError("denied", status_code=403),
+            None,
+            "console_access_denied",
+        ),
+        (
+            UniFiAuthenticationError("unauthorized", status_code=401),
+            None,
+            "invalid_console_id",
+        ),
+        (
+            None,
+            UniFiAuthenticationError("denied", status_code=403),
+            "console_access_denied",
+        ),
+        (
+            UniFiConnectionError("unreachable"),
+            UniFiAuthenticationError("denied", status_code=403),
+            "cannot_connect",
+        ),
+        (
+            UniFiAuthenticationError("denied", status_code=403),
+            UniFiAuthenticationError("denied", status_code=403),
+            "console_access_denied",
+        ),
+    ],
+)
+async def test_remote_validator_permission_precedence(
+    *,
+    hass: HomeAssistant,
+    mock_protect_client_flow: MagicMock,
+    network_error: Exception | None,
+    protect_error: Exception | None,
+    expected_error: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """API outcomes preserve transient-error precedence over confirmed denials."""
+    flow = UnifiInsightsConfigFlow()
+    flow.hass = hass
+    network_cm = _make_client_context(sites_side_effect=network_error)
+    mock_protect_client_flow.cameras.get_all.side_effect = protect_error
+    with patch(
+        "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+        return_value=network_cm,
+    ):
+        if expected_error == "cannot_connect":
+            with pytest.raises(UniFiConnectionError):
+                await flow._async_validate_remote_console("synthetic-key", "console123")
+        else:
+            assert (
+                await flow._async_validate_remote_console("synthetic-key", "console123")
+                == expected_error
+            )
+    denied_logs = [
+        record.message
+        for record in caplog.records
+        if record.name == "custom_components.unifi_insights.config_flow"
+    ]
+    if expected_error == "console_access_denied":
+        applications = ", ".join(
+            name
+            for name, error in (("Network", network_error), ("Protect", protect_error))
+            if isinstance(error, UniFiAuthenticationError) and error.status_code == 403
+        )
+        expected = (
+            f"Remote console validation: {applications} refused the API key "
+            "with HTTP 403"
+        )
+        assert denied_logs == [expected]
+    else:
+        assert denied_logs == []
