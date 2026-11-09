@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
+- Update `d3-selection` to 3.0.1 and rebuild the topology card. [#494](https://github.com/tinkerologie/ha-unifi-insights/issues/494)
 - Update `d3-zoom` to 3.0.1 and rebuild the topology card. [#494](https://github.com/tinkerologie/ha-unifi-insights/issues/494)
 - Update `d3-hierarchy` to 3.1.3 and rebuild the topology card. [#494](https://github.com/tinkerologie/ha-unifi-insights/issues/494)
 - Update `unifi-official-api` to 3.1.0.
