@@ -39,6 +39,7 @@ from custom_components.unifi_insights.coordinators.protect_events import (
     DispatchDigitalInput,
     Escalate,
     EventFrame,
+    ExternalArmProfilesDisabled,
     Fetched,
     Instant,
     Log,
@@ -2471,3 +2472,112 @@ def test_external_arm_profiles_complete_empty_response_clears_cache() -> None:
         ],
     )
     assert result.cache["external_arm_profiles"] == {}
+
+
+def test_external_arm_profiles_stale_404_does_not_clear_the_overlay() -> None:
+    """A 404 that raced an arm command is dropped, so the overlay stays."""
+    seed = cache(external_arm_profiles={"p1": {"id": "p1", "state": "disarmed"}})
+    result = run(
+        seed,
+        [
+            Begin("external_arm_profiles", 1.0),
+            (2.0, CommandOverlay("external_arm_profiles", "p1", {"state": "armed"})),
+            Answer("external_arm_profiles", NotFound(), 3.0),
+        ],
+    )
+    assert result.cache["external_arm_profiles"]["p1"]["state"] == "armed"
+    assert dict(result.state.ws_generation)["external_arm_profiles"] == 1
+
+
+def test_external_arm_profiles_stale_transient_error_is_dropped() -> None:
+    """A transient error that raced an arm command is dropped, not absorbed."""
+    seed = cache(external_arm_profiles={"p1": {"id": "p1", "state": "disarmed"}})
+    result = run(
+        seed,
+        [
+            Begin("external_arm_profiles", 1.0),
+            (2.0, CommandOverlay("external_arm_profiles", "p1", {"state": "armed"})),
+            Answer("external_arm_profiles", TransientError(BoomError("down")), 3.0),
+        ],
+    )
+    assert result.cache["external_arm_profiles"]["p1"]["state"] == "armed"
+    assert result.state.families["external_arm_profiles"].fetch_errors == 0
+    assert result.effects(Escalate) == []
+
+
+def test_external_arm_profiles_404_preserves_cache_within_the_window() -> None:
+    """A 404 on an answered endpoint keeps the cached profiles for three polls."""
+    seed = cache(external_arm_profiles={"p1": {"id": "p1", "state": "disarmed"}})
+    result = run(
+        seed,
+        [
+            Begin("external_arm_profiles", 1.0),
+            Answer("external_arm_profiles", NotFound(), 2.0),
+        ],
+    )
+    assert result.cache["external_arm_profiles"] == {
+        "p1": {"id": "p1", "state": "disarmed"}
+    }
+    assert result.state.families["external_arm_profiles"].empty_fetches == 1
+
+
+def test_external_arm_profiles_older_incomplete_read_does_not_merge_back() -> None:
+    """
+    A newer complete read removes a profile; the older incomplete read that
+    lands afterwards must not merge it back.
+    """
+    p1 = {"id": "p1", "state": "disarmed"}
+    p2 = {"id": "p2", "state": "disarmed"}
+    seed = cache(external_arm_profiles={"p1": p1, "p2": p2})
+    result = run(
+        seed,
+        [
+            Begin("external_arm_profiles", 1.0, key="older"),
+            Begin("external_arm_profiles", 2.0, key="newer"),
+            Answer("newer", Fetched({"p1": p1}, complete=True), 3.0),
+            Answer("older", Fetched({"p1": p1, "p2": p2}, complete=False), 4.0),
+        ],
+    )
+    assert "p2" not in result.cache["external_arm_profiles"]
+    assert any(
+        "newer external arm profile reading" in line
+        for line in result.logs(logging.DEBUG)
+    )
+
+
+def test_external_arm_profiles_disabled_invalidates_the_inflight_read() -> None:
+    """The flag turning off clears the profiles and drops the older reading."""
+    seed = cache(external_arm_profiles={"p1": {"id": "p1", "state": "disarmed"}})
+    result = run(
+        seed,
+        [
+            Begin("external_arm_profiles", 1.0),
+            (2.0, ExternalArmProfilesDisabled()),
+            Answer(
+                "external_arm_profiles",
+                Fetched({"p1": {"id": "p1", "state": "disarmed"}}, complete=True),
+                3.0,
+            ),
+        ],
+    )
+    assert result.cache["external_arm_profiles"] == {}
+    assert dict(result.state.ws_generation)["external_arm_profiles"] == 1
+
+
+def test_a_profile_command_does_not_affect_another_family() -> None:
+    """An arm overlay bumps only the profile generation, not the NVR's."""
+    seed = cache(
+        nvrs={"n1": {"id": "n1", "name": "old"}},
+        external_arm_profiles={"p1": {"id": "p1", "state": "disarmed"}},
+    )
+    result = run(
+        seed,
+        [
+            Begin("nvrs", 1.0),
+            (2.0, CommandOverlay("external_arm_profiles", "p1", {"state": "armed"})),
+            Answer("nvrs", Fetched({"n1": {"id": "n1", "name": "rest"}}), 3.0),
+        ],
+    )
+    assert result.cache["nvrs"]["n1"]["name"] == "rest"
+    assert dict(result.state.ws_generation)["nvrs"] == 0
+    assert dict(result.state.ws_generation)["external_arm_profiles"] == 1

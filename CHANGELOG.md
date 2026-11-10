@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Allow Local and Remote add, reauth, and reconfigure flows to accept InnerSpace-only consoles by probing InnerSpace when Network and Protect are not available. Local creation requires a safe console identity, reporting `console_identity_unavailable` when an unsafe or credential-equivalent host is supplied. Derived from source review and verified with mocked-client tests. [#500](https://github.com/tinkerologie/ha-unifi-insights/issues/500)
 - Restore the internet activity sensors and card on UniFi Network 11. Network 11 no longer fills the legacy site reports, so the integration reads the Network 11 statistics engine when the console reports it. History may begin at the Network 11 upgrade, and the 30-day window uses 8-hour buckets. Logs and diagnostics now show why internet activity has no data, for example a missing statistics permission. [#503](https://github.com/tinkerologie/ha-unifi-insights/issues/503)
+- Order external arm-profile state against concurrent profile reads, arm/disarm commands, error responses and `useExternalAlarmManager` being turned off: a stale answer or error no longer clears a command overlay, an older incomplete read no longer merges a removed profile back, and turning the flag off invalidates any in-flight read. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
 
 ### Documentation
 

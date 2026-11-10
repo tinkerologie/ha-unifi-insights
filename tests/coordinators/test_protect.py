@@ -1245,10 +1245,10 @@ class TestActionCommands:
         assert "profile_1" in protect.data["external_arm_profiles"]
         assert "profile_2" not in protect.data["external_arm_profiles"]
 
-    async def test_fetch_external_arm_profiles_404_when_answered_applies_not_found(
+    async def test_fetch_external_arm_profiles_404_when_answered_preserves_cache(
         self, seeded_owners: SeededOwners
     ) -> None:
-        """HTTP 404 after answered applies NotFound to reconciler."""
+        """A 404 after a successful answer preserves the cached profiles."""
         protect = seeded_owners.protect
         protect._answered_families.add("external_arm_profiles")
         protect.data["external_arm_profiles"] = {
@@ -1260,7 +1260,7 @@ class TestActionCommands:
         await protect._fetch_external_arm_profiles()
 
         assert "external_arm_profiles" not in protect._unsupported_until
-        assert protect.data["external_arm_profiles"] == {}
+        assert "profile_1" in protect.data["external_arm_profiles"]
 
     async def test_fetch_external_arm_profiles_non_json_marks_unsupported(
         self, seeded_owners: SeededOwners
@@ -1374,6 +1374,143 @@ class TestActionCommands:
 
         # Run update
         await protect._async_update_data()
+        assert protect.data["external_arm_profiles"] == {}
+
+    async def test_stale_404_after_arm_keeps_the_overlay(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A 404 that races an arm command is dropped, so the overlay stays."""
+        protect = seeded_owners.protect
+        protect._answered_families.add("external_arm_profiles")
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        disarmed_data = {**SAMPLE_EXTERNAL_ARM_PROFILE, "state": "disarmed"}
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(disarmed_data)
+        }
+        armed_model = ExternalArmProfile.model_validate(
+            {**SAMPLE_EXTERNAL_ARM_PROFILE, "state": "armed"}
+        )
+
+        read_started = asyncio.Event()
+        read_resume = asyncio.Event()
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        not_found = UniFiNotFoundError("Not found", 404)
+
+        async def _gated_404() -> ProtectListResult[Any]:
+            read_started.set()
+            await read_resume.wait()
+            raise not_found
+
+        endpoint.get_all_result = AsyncMock(side_effect=_gated_404)
+        endpoint.arm = AsyncMock(return_value=armed_model)
+
+        fetch_task = asyncio.create_task(protect._fetch_external_arm_profiles())
+        await read_started.wait()
+
+        with patch.object(protect, "async_request_refresh", AsyncMock()):
+            await protect.async_arm_external_profile("profile_1")
+
+        assert protect.data["external_arm_profiles"]["profile_1"]["state"] == "armed"
+
+        read_resume.set()
+        await fetch_task
+
+        assert protect.data["external_arm_profiles"]["profile_1"]["state"] == "armed"
+
+    async def test_overlapping_reads_older_incomplete_does_not_merge_back(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A newer complete read wins; the older incomplete read is dropped."""
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_1 = copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        profile_2 = {
+            **SAMPLE_EXTERNAL_ARM_PROFILE,
+            "id": "profile_2",
+            "title": "Garage",
+        }
+        protect.data["external_arm_profiles"] = {
+            "profile_1": profile_1,
+            "profile_2": profile_2,
+        }
+        model_1 = ExternalArmProfile.model_validate(profile_1)
+        model_2 = ExternalArmProfile.model_validate(profile_2)
+
+        older_started = asyncio.Event()
+        newer_started = asyncio.Event()
+        older_resume = asyncio.Event()
+        newer_resume = asyncio.Event()
+        calls = 0
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+
+        async def _gated() -> ProtectListResult[Any]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                older_started.set()
+                await older_resume.wait()
+                return protect_list([model_1, model_2], skipped=1)
+            newer_started.set()
+            await newer_resume.wait()
+            return protect_list([model_1], skipped=0)
+
+        endpoint.get_all_result = AsyncMock(side_effect=_gated)
+
+        older_task = asyncio.create_task(protect._fetch_external_arm_profiles())
+        await older_started.wait()
+        newer_task = asyncio.create_task(protect._fetch_external_arm_profiles())
+        await newer_started.wait()
+
+        # The newer (complete) read lands first and removes profile_2.
+        newer_resume.set()
+        await newer_task
+        assert "profile_2" not in protect.data["external_arm_profiles"]
+
+        # The older (incomplete) read lands later and must not merge it back.
+        older_resume.set()
+        await older_task
+        assert "profile_2" not in protect.data["external_arm_profiles"]
+
+    async def test_flag_off_invalidates_an_inflight_profile_read(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """The flag turning off clears profiles and drops the older reading."""
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_model = ExternalArmProfile.model_validate(SAMPLE_EXTERNAL_ARM_PROFILE)
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        }
+
+        read_started = asyncio.Event()
+        read_resume = asyncio.Event()
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+
+        async def _gated() -> ProtectListResult[Any]:
+            read_started.set()
+            await read_resume.wait()
+            return protect_list([profile_model])
+
+        endpoint.get_all_result = AsyncMock(side_effect=_gated)
+
+        fetch_task = asyncio.create_task(protect._fetch_external_arm_profiles())
+        await read_started.wait()
+
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": False
+        }
+        await protect._reconcile_external_arm_profiles()
+        assert protect.data["external_arm_profiles"] == {}
+
+        read_resume.set()
+        await fetch_task
+
         assert protect.data["external_arm_profiles"] == {}
 
 

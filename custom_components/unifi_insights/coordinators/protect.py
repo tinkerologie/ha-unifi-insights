@@ -48,6 +48,7 @@ from .protect_events import (
     CommandOverlay,
     DispatchDigitalInput,
     Escalate,
+    ExternalArmProfilesDisabled,
     Fetched,
     Instant,
     Log,
@@ -984,8 +985,8 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
             await self._fetch_speakers()
             if self._any_nvr_uses_external_alarm_manager():
                 await self._fetch_external_arm_profiles()
-            elif self.data.get("external_arm_profiles"):
-                self.data = {**self.data, "external_arm_profiles": {}}
+            else:
+                self._disable_external_arm_profiles()
 
             self._available = True
             self.data = {**self.data, "last_update": datetime.now(tz=UTC)}
@@ -1310,15 +1311,25 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
     async def _reconcile_external_arm_profiles(self) -> None:
         """Reconcile external arm profiles on the 30s timer when enabled on an NVR."""
         if not self._any_nvr_uses_external_alarm_manager():
-            if self.data.get("external_arm_profiles"):
-                self.data = {**self.data, "external_arm_profiles": {}}
-                self.async_update_listeners()
+            self._disable_external_arm_profiles()
             return
 
         before = self.data.get("external_arm_profiles", {})
         await self._fetch_external_arm_profiles()
         if self.data.get("external_arm_profiles") != before:
             self.async_update_listeners()
+
+    @callback
+    def _disable_external_arm_profiles(self) -> None:
+        """
+        Clear the external arm profiles and invalidate any in-flight read.
+
+        The reconciler bumps the external_arm_profiles generation while it
+        clears the collection, so a profile read already in flight when the
+        ``useExternalAlarmManager`` flag turned off is dropped when it answers
+        and cannot restore the cleared profiles.
+        """
+        self._apply(ExternalArmProfilesDisabled())
 
     async def _fetch_external_arm_profiles(self) -> None:
         """

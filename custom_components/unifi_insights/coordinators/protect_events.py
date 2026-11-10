@@ -513,6 +513,11 @@ class FamilyTracking:
     previous_ids: frozenset[str] = frozenset()
     # Device id -> polls in a row it has been missing.
     missing_polls: Mapping[str, int] = field(default_factory=dict)
+    # Monotonic time of the last applied read for the family, used to drop an
+    # older reading that lands after a newer one. Only the external arm
+    # profile reads can overlap, so only that family sets it (None until the
+    # first read is applied).
+    last_applied_at: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -644,6 +649,11 @@ class SirenStopped:
 
 
 @dataclass(frozen=True, slots=True)
+class ExternalArmProfilesDisabled:
+    """The NVR stopped using the external alarm manager: profiles are cleared."""
+
+
+@dataclass(frozen=True, slots=True)
 class CommandOverlay:
     """A successful write's fields, laid over the record (ADR-010)."""
 
@@ -660,6 +670,7 @@ type ReconcilerInput = (
     | StreamReconnected
     | PollCompleted
     | SirenStopped
+    | ExternalArmProfilesDisabled
     | CommandOverlay
 )
 
@@ -864,6 +875,8 @@ def reconcile(
             _evict_missing_devices(run)
         case SirenStopped():
             _apply_siren_stop(run, event.siren_id)
+        case ExternalArmProfilesDisabled():
+            _apply_external_profiles_disabled(run)
         case CommandOverlay():
             _apply_overlay(run, event)
         case _:  # pragma: no cover - exhaustive
@@ -1330,19 +1343,26 @@ def _apply_rest_batch(run: _Run, batch: RestBatch) -> None:
     family = request.family
     match outcome:
         case TransientError():
+            if _stale_profile_read(run, request):
+                return
             if not _absorb_transient_error(run, family, outcome.error):
                 run.effects.append(Escalate())
                 return
         case NotFound():
             # The endpoint answered, so the session is alive: end any streak.
+            if _stale_profile_read(run, request):
+                return
             run.set_family(family, replace(run.family(family), fetch_errors=0))
             _update_collection(run, family, {}, is_404=True)
         case Fetched():
-            _apply_fetched(run, request, outcome)
+            if not _apply_fetched(run, request, outcome):
+                return
         case NoAnswer():
             pass
         case _:  # pragma: no cover - exhaustive
             assert_never(outcome)
+
+    _mark_profile_read_applied(run, request)
 
     if family in _REBUILT_LATCH_STARTS:
         _drop_rebuilt_latches(run, family)
@@ -1352,7 +1372,36 @@ def _apply_rest_batch(run: _Run, batch: RestBatch) -> None:
         _apply_siren_stop_guards(run)
 
 
-def _apply_fetched(run: _Run, request: RequestStamp, outcome: Fetched) -> None:
+def _stale_profile_read(run: _Run, request: RequestStamp) -> bool:
+    """
+    Return True when an external arm profile read was overtaken in flight.
+
+    Two sources overtake a profile read. An arm/disarm command overlay - or
+    the external alarm manager flag turning off - advances the family's
+    generation, and a newer read that has already been applied advances its
+    ``last_applied_at``. An outcome (answer or error) for either an older
+    generation or an older request must never be applied: it would restore
+    state a command or a newer read already superseded.
+    """
+    if request.family != "external_arm_profiles":
+        return False
+    if _generation(run.state, request.family) != request.ws_generation:
+        return True
+    last = run.family(request.family).last_applied_at
+    return last is not None and request.at <= last
+
+
+def _mark_profile_read_applied(run: _Run, request: RequestStamp) -> None:
+    """Record the request time of the last applied external arm profile read."""
+    if request.family != "external_arm_profiles":
+        return
+    run.set_family(
+        request.family,
+        replace(run.family(request.family), last_applied_at=request.at),
+    )
+
+
+def _apply_fetched(run: _Run, request: RequestStamp, outcome: Fetched) -> bool:
     """Apply a list endpoint's answer, unless a frame overtook the request."""
     family = request.family
     if _generation(run.state, family) != request.ws_generation:
@@ -1379,7 +1428,15 @@ def _apply_fetched(run: _Run, request: RequestStamp, outcome: Fetched) -> None:
                 "it was being fetched; keeping it instead of the older reading",
                 family,
             )
-        return
+        return False
+    if _stale_profile_read(run, request):
+        # The generation matched, so only a newer read overtook this one.
+        run.log(
+            logging.DEBUG,
+            "Protect coordinator: a newer external arm profile reading was "
+            "already applied; dropping the older reading",
+        )
+        return False
     run.set_family(family, replace(run.family(family), fetch_errors=0))
     items: Mapping[str, dict[str, Any]] = outcome.items
     if family == "sensors":
@@ -1406,6 +1463,7 @@ def _apply_fetched(run: _Run, request: RequestStamp, outcome: Fetched) -> None:
             len(items),
             family,
         )
+    return True
 
 
 def _absorb_transient_error(run: _Run, family: Family, error: Exception) -> bool:
@@ -1509,7 +1567,11 @@ def _update_collection(
             )
         return
 
-    if family == "external_arm_profiles":
+    if family == "external_arm_profiles" and not is_404:
+        # A real empty answer means the console has no profiles, which is a
+        # legitimate state to show at once. A 404 is an error, not an empty
+        # list, so it falls through to the bounded preserve window below like
+        # every other guarded family.
         run.replace(family, {})
         run.set_family(family, replace(tracking, empty_fetches=0))
         return
@@ -1929,6 +1991,29 @@ def _apply_siren_stop_guards(run: _Run) -> None:
 
 
 # --- command overlays ----------------------------------------------------------
+
+
+def _apply_external_profiles_disabled(run: _Run) -> None:
+    """
+    Clear the external arm profiles and invalidate any in-flight read.
+
+    Turning the ``useExternalAlarmManager`` flag off advances the family's
+    generation exactly as an arm/disarm overlay does, so a profile read that
+    was already in flight and answers afterwards is dropped instead of
+    restoring the cleared collection. Listeners are notified only when there
+    was something to clear.
+    """
+    run.state = replace(
+        run.state,
+        ws_generation=_with(
+            run.state.ws_generation,
+            "external_arm_profiles",
+            run.state.ws_generation.get("external_arm_profiles", 0) + 1,
+        ),
+    )
+    if run.records("external_arm_profiles"):
+        run.replace("external_arm_profiles", {})
+        run.effects.append(PublishUpdate(mark_success=False))
 
 
 def _apply_overlay(run: _Run, overlay: CommandOverlay) -> None:
