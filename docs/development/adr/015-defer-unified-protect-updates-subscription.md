@@ -7,7 +7,8 @@
 ## Context
 
 UniFi Protect v7.4.96 introduced a unified WebSocket endpoint at
-`/v1/subscribe/updates`, taking an optional query parameter `modelKeys` to stream
+`/v1/subscribe/updates`. It takes a required query parameter `modelKeys`
+(comma-separated or repeated) that selects the models to stream, and delivers
 combined device and event updates over a single WebSocket connection. Currently,
 the integration maintains two separate WebSocket connections to Protect:
 `/v1/subscribe/devices` for device state and `/v1/subscribe/events` for event frames.
@@ -48,8 +49,8 @@ Before migrating to `/v1/subscribe/updates`, the following prerequisites must be
 satisfied:
 
 - **Upstream client method:** `unifi-official-api` provides a typed subscription
-  helper for `subscribe_updates(model_keys: list[str] | None = None)` using the
-  `modelKeys` query parameter.
+  helper for `subscribe_updates(model_keys: list[str])` that always sends the
+  required `modelKeys` query parameter with an explicit model selection.
 - **Live frame captures:** Verified WebSocket frame captures from physical UniFi OS
   consoles running Protect v7.4.96+ confirming payload envelopes for device, event,
   and removal actions.
