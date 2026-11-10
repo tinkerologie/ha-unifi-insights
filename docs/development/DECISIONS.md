@@ -38,6 +38,7 @@ Use a new ADR to change an accepted decision. Keep the previous ADR as a record.
 | [012](./adr/012-pure-protect-state-reconciler.md)                    | A pure reconciler for Protect state                           | Accepted              | 2026-10-20 |
 | [013](./adr/013-typed-read-only-facade-snapshot.md)                  | A typed, read-only facade snapshot                            | Accepted              | 2026-10-20 |
 | [014](./adr/014-pure-network-inventory-reconciliation.md)            | Reconcile Network inventory before registry changes           | Accepted              | 2026-11-07 |
+| [015](./adr/015-defer-unified-protect-updates-subscription.md)       | Defer unified Protect updates subscription                    | Accepted              | 2026-11-10 |
 
 ### Record architecture decisions
 
@@ -203,6 +204,16 @@ It stores the new inventory and publishes the snapshot. Then it removes
 stale registry entries.
 
 [ADR-014](./adr/014-pure-network-inventory-reconciliation.md)
+
+### Defer unified Protect updates subscription
+
+UniFi Protect v7.4.96 added `/v1/subscribe/updates`. Migration is deferred
+until `unifi-official-api` provides a subscription method, live frames confirm
+the envelope, and `protect_ws.py` supports ID arrays and explicit removals.
+The integration retains two dedicated streams (`devices` and `events`).
+See [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501).
+
+[ADR-015](./adr/015-defer-unified-protect-updates-subscription.md)
 
 ## Future considerations
 
