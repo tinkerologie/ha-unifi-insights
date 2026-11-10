@@ -1713,6 +1713,19 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
                 camera_id
             )
         except Exception as err:
+            if (
+                isinstance(err, UniFiResponseError)
+                and err.status_code == HTTPStatus.CONFLICT
+            ):
+                _LOGGER.warning(
+                    "Talkback session already in progress for %s: %s",
+                    camera_id,
+                    err,
+                )
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="talkback_session_in_progress",
+                ) from err
             detail = err.message if is_malformed_response(err) else type(err).__name__
             _LOGGER.warning("Talkback session failed for %s: %s", camera_id, detail)
             raise HomeAssistantError(

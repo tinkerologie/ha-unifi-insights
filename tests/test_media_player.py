@@ -646,6 +646,39 @@ class TestUnifiProtectCameraSpeaker:
         entity.async_write_ha_state.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_play_media_start_failure_conflict_leaves_entity_idle(
+        self, hass: Any, mock_coordinator: MagicMock
+    ) -> None:
+        """Test talkback 409 conflict at start leaves entity idle."""
+        entity = UnifiProtectCameraSpeaker(mock_coordinator, "cam1")
+        entity.hass = hass
+        entity.async_write_ha_state = MagicMock()  # type: ignore[method-assign]
+
+        protect_owner(
+            mock_coordinator
+        ).async_start_camera_talkback.side_effect = HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="talkback_session_in_progress",
+        )
+
+        with (
+            patch(
+                "custom_components.unifi_insights.media_player.async_process_play_media_url",
+                return_value="http://media.local/fail.mp3",
+            ),
+            pytest.raises(HomeAssistantError) as err,
+        ):
+            await entity.async_play_media(
+                media_type=MediaType.MUSIC,
+                media_id="http://media.local/fail.mp3",
+            )
+
+        assert err.value.translation_key == "talkback_session_in_progress"
+        assert entity._current_stream is None
+        assert entity.state == MediaPlayerState.IDLE
+        entity.async_write_ha_state.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_play_media_start_failure_after_stopping_previous_stream(
         self, hass: Any, mock_coordinator: MagicMock
     ) -> None:

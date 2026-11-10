@@ -16,6 +16,7 @@ import contextlib
 import copy
 import logging
 from datetime import UTC, datetime, timedelta
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1027,6 +1028,44 @@ class TestTalkback:
             await seeded_owners.protect.async_start_camera_talkback(CAMERA_ID, "a.mp3")
 
         assert err.value.translation_key == key
+
+    async def test_session_conflict_raises_in_progress_and_preserves_cause(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A 409 response gives the new key and keeps the cause."""
+        create = seeded_owners.protect_client.cameras.create_talkback_session
+        cause = UniFiResponseError("Conflict", status_code=HTTPStatus.CONFLICT)
+        create.side_effect = cause
+        with pytest.raises(HomeAssistantError) as err:
+            await seeded_owners.protect.async_start_camera_talkback(CAMERA_ID, "a.mp3")
+        assert err.value.translation_key == "talkback_session_in_progress"
+        assert err.value.__cause__ is cause
+
+    async def test_session_non_409_response_error_raises_generic_invalid(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A non-409 UniFiResponseError gives the generic key and keeps the cause."""
+        create = seeded_owners.protect_client.cameras.create_talkback_session
+        cause = UniFiResponseError(
+            "Server Error", status_code=HTTPStatus.INTERNAL_SERVER_ERROR
+        )
+        create.side_effect = cause
+        with pytest.raises(HomeAssistantError) as err:
+            await seeded_owners.protect.async_start_camera_talkback(CAMERA_ID, "a.mp3")
+        assert err.value.translation_key == "talkback_session_invalid"
+        assert err.value.__cause__ is cause
+
+    async def test_session_non_response_error_raises_generic_invalid(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """An exception that is not a response error gives the generic key."""
+        create = seeded_owners.protect_client.cameras.create_talkback_session
+        cause = RuntimeError("Unexpected boom")
+        create.side_effect = cause
+        with pytest.raises(HomeAssistantError) as err:
+            await seeded_owners.protect.async_start_camera_talkback(CAMERA_ID, "a.mp3")
+        assert err.value.translation_key == "talkback_session_invalid"
+        assert err.value.__cause__ is cause
 
 
 class TestCameraReads:
