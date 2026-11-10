@@ -1024,9 +1024,15 @@ to `configuration.yaml`. Then restart Home Assistant.
 ```yaml
 lovelace:
   resources:
-    - url: /unifi_insights/topology-card.js
+    - url: /unifi_insights/topology-card.js?v=2026.11.1
       type: module
 ```
+
+The browser keeps this file for a long time. The text after `v=` tells the
+browser when to get a new copy. Use the installed integration version.
+After each integration update, change this text to the new version. Then
+restart Home Assistant and refresh the browser page. If you do not change
+it, the browser can load the old cards, or the cards can fail to load.
 
 This one resource loads all six cards.
 
@@ -1206,19 +1212,19 @@ action: unifi_insights.refresh_data
 
 ### Common problems
 
-| Problem                           | Solution                                                                                                                                                                                                                                                 |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cannot connect                    | Make sure that Home Assistant can reach the console URL. For a self-signed certificate, reconfigure the entry. Turn off **Verify SSL Certificate**.                                                                                                      |
-| Authentication failed             | Make sure that the API key is valid. Get a new key from the console or UniFi Site Manager if necessary.                                                                                                                                                  |
-| Integration API not available     | A self-hosted Network application does not provide the UniFi Integration API. Use a UniFi OS console.                                                                                                                                                    |
-| No Protect entities               | Make sure that Protect runs on the same console. Make sure that the API key can access Protect.                                                                                                                                                          |
-| Entities missing                  | Make sure that the devices are adopted and online in UniFi.                                                                                                                                                                                              |
-| Storage sensors unavailable       | Some firmware versions do not report NVR storage through the public Protect API.                                                                                                                                                                         |
-| Many orphaned client entities     | Turn off **Enable Client Control**.                                                                                                                                                                                                                      |
-| Wake button does nothing          | Make sure that the device has Wake-on-LAN enabled. Examine the Home Assistant host network and VLAN. See the Wake-on-LAN instructions for more information.                                                                                              |
-| Duplicate entities                | UniFi Insights and the official UniFi integrations can create entities for the same device. Disable the duplicate entities that you do not use.                                                                                                          |
-| Card not in the **Add card** list | Refresh the browser page, or close and open the Home Assistant app. Make sure that **Settings → Dashboards → Resources** shows the `/unifi_insights/` entries. If your resources are in YAML, add the resource. See [Dashboard cards](#dashboard-cards). |
-| Custom element doesn't exist      | Refresh the browser page. If your resources are in YAML, add the resource. See [Dashboard cards](#dashboard-cards).                                                                                                                                      |
+| Problem                           | Solution                                                                                                                                                                                                                                                                                          |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cannot connect                    | Make sure that Home Assistant can reach the console URL. For a self-signed certificate, reconfigure the entry. Turn off **Verify SSL Certificate**.                                                                                                                                               |
+| Authentication failed             | Make sure that the API key is valid. Get a new key from the console or UniFi Site Manager if necessary.                                                                                                                                                                                           |
+| Integration API not available     | A self-hosted Network application does not provide the UniFi Integration API. Use a UniFi OS console.                                                                                                                                                                                             |
+| No Protect entities               | Make sure that Protect runs on the same console. Make sure that the API key can access Protect.                                                                                                                                                                                                   |
+| Entities missing                  | Make sure that the devices are adopted and online in UniFi.                                                                                                                                                                                                                                       |
+| Storage sensors unavailable       | Some firmware versions do not report NVR storage through the public Protect API.                                                                                                                                                                                                                  |
+| Many orphaned client entities     | Turn off **Enable Client Control**.                                                                                                                                                                                                                                                               |
+| Wake button does nothing          | Make sure that the device has Wake-on-LAN enabled. Examine the Home Assistant host network and VLAN. See the Wake-on-LAN instructions for more information.                                                                                                                                       |
+| Duplicate entities                | UniFi Insights and the official UniFi integrations can create entities for the same device. Disable the duplicate entities that you do not use.                                                                                                                                                   |
+| Card not in the **Add card** list | Refresh the browser page, or close and open the Home Assistant app. Make sure that **Settings → Dashboards → Resources** shows the `/unifi_insights/` entries. If your resources are in YAML, add the resource, or change its `v=` text after an update. See [Dashboard cards](#dashboard-cards). |
+| Custom element doesn't exist      | Refresh the browser page. If your resources are in YAML, add the resource, or change its `v=` text after an update. See [Dashboard cards](#dashboard-cards).                                                                                                                                      |
 
 ### Remote console access denied (HTTP 403)
 
