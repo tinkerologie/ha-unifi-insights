@@ -62,6 +62,7 @@ def test_video_mode_options_have_readable_native_translations() -> None:
         "slow_shutter": "Low light",
         "lpr_reflex": "License plates (reflective)",
         "lpr_none_reflex": "License plates (non-reflective)",
+        "anti_flicker": "Anti-flicker",
     }
     for path in (_STRINGS_JSON, _EN_JSON):
         strings = json.loads(path.read_text())

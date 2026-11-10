@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add diagnostic problem binary sensor `sensor_mounted_incorrectly` for Protect UP-Sense sensors to report incorrect mounting orientation when running UniFi Protect v7.4.96 or later. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
+- Support `antiFlicker` video mode option across Protect camera select entities and `unifi_insights.set_video_mode` service action. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
+
+### Changed
+
+- Gate local NVR alarm control panel discovery and availability on `featureFlags.useExternalAlarmManager` in UniFi Protect v7.4.96+. When external alarm manager is enabled on an NVR, its local panel is hidden or made unavailable. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
+- Map UniFi Protect HTTP 409 Conflict during camera talkback session startup to a translated error informing the user that a talkback session is already in progress. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
+
 ### Removed
 
 - Removed 21 unused `const.py` constants: the two `DEFAULT_TRACK_*_CLIENTS` defaults, the three `ACCESS_MIN_VERSION_*` tuples, `UNIFI_API_HEADERS`, `ATTR_SMART_DETECT_TYPES`, `ATTR_NVR_STATE`, the two PTZ service descriptions, `SERVICE_LIST_VOUCHERS`, the three PTZ service names, four `CAMERA_TYPE_*` values, `PORT_ACTION_POWER_CYCLE`, `CLIENT_ACTION_AUTHORIZE_GUEST` and `CAMERA_STATE_CONNECTED`. Service names, schema values and behaviour do not change. [#496](https://github.com/tinkerologie/ha-unifi-insights/issues/496)
@@ -21,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Add ADR-015 recording the evaluation and deferral of the `/v1/subscribe/updates` unified WebSocket endpoint. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
 - Add the card types, YAML examples and YAML resource instructions for the dashboard cards. Add troubleshooting for cards that do not appear. [#469](https://github.com/tinkerologie/ha-unifi-insights/issues/469)
 
 - Update the README layout, setup steps, blueprint import table, and troubleshooting sections. [#478](https://github.com/tinkerologie/ha-unifi-insights/issues/478)

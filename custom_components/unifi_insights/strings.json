@@ -804,6 +804,9 @@
       "sensor_leak_external": {
         "name": "External Leak Detection"
       },
+      "sensor_mounted_incorrectly": {
+        "name": "Mounted Incorrectly"
+      },
       "port_sfp_present": {
         "name": "{port_label} SFP module"
       },
@@ -937,7 +940,8 @@
           "sport": "Fast motion",
           "slow_shutter": "Low light",
           "lpr_reflex": "License plates (reflective)",
-          "lpr_none_reflex": "License plates (non-reflective)"
+          "lpr_none_reflex": "License plates (non-reflective)",
+          "anti_flicker": "Anti-flicker"
         }
       },
       "ringtone": {
@@ -1070,6 +1074,9 @@
     },
     "talkback_session_invalid": {
       "message": "Failed to create a talkback session for the camera."
+    },
+    "talkback_session_in_progress": {
+      "message": "A talkback session is already in progress for this camera."
     },
     "talkback_unsupported_codec_or_scheme": {
       "message": "The camera talkback stream URL scheme or codec is not supported."
