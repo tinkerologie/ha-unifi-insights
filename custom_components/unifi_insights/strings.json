@@ -125,7 +125,8 @@
       "carrier_missing_scope": "The ISP API key lacks the required Carrier Fabric permissions.",
       "access_invalid_auth": "The UniFi Access token was rejected. Create a new token in Access and try again.",
       "access_cannot_connect": "Could not reach the UniFi Access API. Check the host and port, and that Access is running.",
-      "access_unsupported": "This console did not answer the UniFi Access API. Check that UniFi Access is installed and up to date."
+      "access_unsupported": "This console did not answer the UniFi Access API. Check that UniFi Access is installed and up to date.",
+      "console_identity_unavailable": "Connected, but a stable identity for this console could not be determined. Check the host value."
     },
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_device%]",

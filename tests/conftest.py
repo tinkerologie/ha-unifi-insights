@@ -256,9 +256,26 @@ def mock_innerspace_client() -> Generator[MagicMock]:
     """Return a mocked UniFi InnerSpace client."""
     client = _create_mock_innerspace_client()
 
-    with patch(
-        "custom_components.unifi_insights.UniFiInnerSpaceClient",
-        MagicMock(return_value=client),
+    # Create a mock class that works as both regular init and async context manager
+    mock_class = MagicMock()
+    async_cm = MagicMock()
+    async_cm.__aenter__ = AsyncMock(return_value=client)
+    async_cm.__aexit__ = AsyncMock(return_value=None)
+    mock_class.return_value = async_cm
+
+    for attr in dir(client):
+        if not attr.startswith("_"):
+            setattr(mock_class.return_value, attr, getattr(client, attr))
+
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiInnerSpaceClient",
+            mock_class,
+        ),
+        patch(
+            "custom_components.unifi_insights.UniFiInnerSpaceClient",
+            MagicMock(return_value=client),
+        ),
     ):
         yield client
 

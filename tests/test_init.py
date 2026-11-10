@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from homeassistant.components import websocket_api
 from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
-from homeassistant.const import CONF_API_KEY, CONF_HOST, Platform
+from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL, Platform
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -46,6 +46,7 @@ from custom_components.unifi_insights.const import (
     CONF_SITE_IDS,
     CONF_TRACK_SUBSCRIBERS,
     CONNECTION_TYPE_CARRIER_FABRIC,
+    CONNECTION_TYPE_LOCAL,
     DOMAIN,
 )
 from custom_components.unifi_insights.data_transforms import (
@@ -1488,6 +1489,58 @@ async def test_setup_entry_innerspace_only_console(
 
     assert await hass.config_entries.async_unload(mock_config_entry.entry_id)
     mock_innerspace_client.close.assert_awaited()
+
+
+async def test_setup_entry_innerspace_only_flow_shaped_entry_backfills_console_id(
+    hass: HomeAssistant,
+    mock_network_client: MagicMock,
+    mock_protect_client: MagicMock,
+    mock_innerspace_client: MagicMock,
+    *,
+    mock_local_auth: MagicMock,
+    enable_custom_integrations,
+) -> None:
+    """An InnerSpace-only flow-created entry backfills safe host as CONF_CONSOLE_ID."""
+    mock_network_client.sites.get_all.return_value = []
+    mock_protect_client.cameras.get_all.return_value = []
+    mock_protect_client.nvr.get.return_value = None
+
+    mock_innerspace_client.get_project.return_value = InnerSpaceProject(
+        project=InnerSpaceProjectIdentity(id="proj-only"),
+    )
+    mock_innerspace_client.list_floor_plans.return_value = [
+        InnerSpaceFloorPlan(id="fp-1", name="Main Floor")
+    ]
+    mock_innerspace_client.list_inventory.return_value = [
+        InnerSpaceInventoryDevice(
+            id="inv-only-1",
+            name="Unplaced AP",
+            model="U6-Pro",
+            mac="AA:BB:CC:00:11:22",
+        )
+    ]
+
+    host = "https://192.168.1.1"
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="UniFi Insights (Local)",
+        unique_id=host,
+        data={
+            CONF_CONNECTION_TYPE: CONNECTION_TYPE_LOCAL,
+            CONF_HOST: host,
+            CONF_API_KEY: "test_key",
+            CONF_VERIFY_SSL: False,
+        },
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.unique_id == host
+    assert entry.data.get(CONF_CONSOLE_ID) == host
+    assert entry.runtime_data.innerspace_coordinator is not None
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 def test_platforms_include_media_player() -> None:

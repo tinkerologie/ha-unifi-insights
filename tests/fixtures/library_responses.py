@@ -439,6 +439,15 @@ SAMPLE_ALARM_HUB_TAMPER_EVENT = {
     },
 }
 
+SAMPLE_INNERSPACE_PROJECT = {
+    "project": {
+        "id": "project_1",
+        "name": "Main Floor",
+    },
+    "plans": [],
+    "products": [],
+}
+
 SAMPLE_SITE_REPORT_RESPONSE = {
     "meta": {"rc": "ok"},
     "data": [
