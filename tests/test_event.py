@@ -1757,7 +1757,7 @@ def _digital_unique_id(camera_id: str, input_key: str) -> str:
     return f"{DOMAIN}_camera_{camera_id}_digital_input_{input_key}_event"
 
 
-def _digital_entities(added: list[Any]) -> dict[str, Any]:
+def _digital_entities(added: list[Any]) -> dict[str | None, Any]:
     """Return the added digital-input entities keyed by their unique id."""
     return {
         entity.unique_id: entity

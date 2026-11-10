@@ -602,12 +602,14 @@ class TestUnifiProtectVideoModeSelect:
 
     def test_camera_model_anti_flicker(self, mock_coordinator: MagicMock) -> None:
         """A real Camera model with antiFlicker maps correctly."""
-        camera = Camera(
-            id="cam_af",
-            name="Anti-flicker Camera",
-            mac="AA:BB:CC:DD:EE:02",
-            state="CONNECTED",
-            video_mode="antiFlicker",
+        camera = Camera.model_validate(
+            {
+                "id": "cam_af",
+                "name": "Anti-flicker Camera",
+                "mac": "AA:BB:CC:DD:EE:02",
+                "state": "CONNECTED",
+                "videoMode": "antiFlicker",
+            }
         )
         mock_coordinator.data = with_protect_collection(
             mock_coordinator.data,

@@ -1857,12 +1857,14 @@ class TestProtectSensorMountedIncorrectly:
         self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """Protect 7.4.96 isMountedIncorrectly extra field is preserved."""
-        sensor = Sensor(
-            id="sensor_mounted",
-            name="Orientation Sensor",
-            mac="AA:BB:CC:DD:EE:77",
-            state="CONNECTED",
-            isMountedIncorrectly=True,
+        sensor = Sensor.model_validate(
+            {
+                "id": "sensor_mounted",
+                "name": "Orientation Sensor",
+                "mac": "AA:BB:CC:DD:EE:77",
+                "state": "CONNECTED",
+                "isMountedIncorrectly": True,
+            }
         )
         require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
             return_value=protect_list([sensor])
