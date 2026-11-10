@@ -235,34 +235,6 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
         """Return True if the last refresh fetched WiFi networks for a site."""
         return self._section_available("wifi", site_id)
 
-    def firewall_available(self, site_id: str) -> bool:
-        """Return True if the last refresh fetched firewall rules for a site."""
-        return self._section_available("firewall_rules", site_id)
-
-    def vouchers_available(self, site_id: str) -> bool:
-        """Return True if the last refresh fetched hotspot vouchers for a site."""
-        return self._section_available("vouchers", site_id)
-
-    def port_forwards_available(self, site_id: str) -> bool:
-        """Return True if the last refresh fetched port forwards for a site."""
-        return self._section_available("port_forwards", site_id)
-
-    def traffic_rules_available(self, site_id: str) -> bool:
-        """Return True if the last refresh fetched traffic rules for a site."""
-        return self._section_available("traffic_rules", site_id)
-
-    def nat_rules_available(self, site_id: str) -> bool:
-        """Return True if the last refresh fetched NAT rules for a site."""
-        return self._section_available("nat_rules", site_id)
-
-    def static_routes_available(self, site_id: str) -> bool:
-        """Return True if the last refresh fetched static routes for a site."""
-        return self._section_available("static_routes", site_id)
-
-    def internet_activity_available(self, site_id: str) -> bool:
-        """Return True if the last refresh fetched internet activity for a site."""
-        return self._section_available("internet_activity", site_id)
-
     async def _fetch_optional_section(
         self,
         section: str,
@@ -1352,19 +1324,3 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
     def get_site_ids(self) -> list[str]:
         """Get all site IDs."""
         return list(self.data.get("sites", {}).keys())
-
-    def get_wifi_networks(self, site_id: str) -> dict[str, Any]:
-        """Get WiFi networks for a site."""
-        return dict(self.data.get("wifi", {}).get(site_id, {}))
-
-    def get_firewall_rules(self, site_id: str) -> dict[str, Any]:
-        """Get firewall rules for a site."""
-        return dict(self.data.get("firewall_rules", {}).get(site_id, {}))
-
-    def get_policy_based_routes(self, site_id: str) -> dict[str, Any]:
-        """Get policy-based routes for a site."""
-        return dict(self.data.get("policy_based_routes", {}).get(site_id, {}))
-
-    def get_vpn_clients(self, site_id: str) -> dict[str, Any]:
-        """Get VPN clients for a site."""
-        return dict(self.data.get("vpn_clients", {}).get(site_id, {}))

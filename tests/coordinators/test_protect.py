@@ -2032,50 +2032,6 @@ class TestUnifiProtectCoordinator:
                 "end": 400,
             }
 
-    def test_get_camera_existing(self, coordinator: UnifiInsightsProtectCoordinator):
-        """Test getting existing camera."""
-        coordinator.data["cameras"] = {"camera1": {"id": "camera1", "name": "Test"}}
-        result = coordinator.get_camera("camera1")
-        assert result == {"id": "camera1", "name": "Test"}
-
-    def test_get_camera_missing(self, coordinator: UnifiInsightsProtectCoordinator):
-        """Test getting missing camera."""
-        result = coordinator.get_camera("nonexistent")
-        assert result is None
-
-    def test_get_light_existing(self, coordinator: UnifiInsightsProtectCoordinator):
-        """Test getting existing light."""
-        coordinator.data["lights"] = {"light1": {"id": "light1", "name": "Test"}}
-        result = coordinator.get_light("light1")
-        assert result == {"id": "light1", "name": "Test"}
-
-    def test_get_light_missing(self, coordinator: UnifiInsightsProtectCoordinator):
-        """Test getting missing light."""
-        result = coordinator.get_light("nonexistent")
-        assert result is None
-
-    def test_get_sensor_existing(self, coordinator: UnifiInsightsProtectCoordinator):
-        """Test getting existing sensor."""
-        coordinator.data["sensors"] = {"sensor1": {"id": "sensor1", "name": "Test"}}
-        result = coordinator.get_sensor("sensor1")
-        assert result == {"id": "sensor1", "name": "Test"}
-
-    def test_get_sensor_missing(self, coordinator: UnifiInsightsProtectCoordinator):
-        """Test getting missing sensor."""
-        result = coordinator.get_sensor("nonexistent")
-        assert result is None
-
-    def test_get_nvr_existing(self, coordinator: UnifiInsightsProtectCoordinator):
-        """Test getting existing NVR."""
-        coordinator.data["nvrs"] = {"nvr1": {"id": "nvr1", "name": "Test"}}
-        result = coordinator.get_nvr("nvr1")
-        assert result == {"id": "nvr1", "name": "Test"}
-
-    def test_get_nvr_missing(self, coordinator: UnifiInsightsProtectCoordinator):
-        """Test getting missing NVR."""
-        result = coordinator.get_nvr("nonexistent")
-        assert result is None
-
     @pytest.mark.asyncio
     async def test_missing_device_eviction(
         self, hass: HomeAssistant, coordinator: UnifiInsightsProtectCoordinator

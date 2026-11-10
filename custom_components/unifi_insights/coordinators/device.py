@@ -2204,17 +2204,6 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
         result = devices.get(device_id)
         return result if isinstance(result, dict) else None
 
-    def get_device_stats(self, site_id: str, device_id: str) -> dict[str, Any] | None:
-        """Get device statistics by site ID and device ID."""
-        stats = self.data.get("stats", {}).get(site_id, {})
-        result = stats.get(device_id)
-        return result if isinstance(result, dict) else None
-
-    def get_clients(self, site_id: str) -> dict[str, Any]:
-        """Get all clients for a site."""
-        result: dict[str, Any] = self.data.get("clients", {}).get(site_id, {})
-        return result
-
     async def async_restart_device(self, site_id: str, device_id: str) -> bool:
         """Restart a network device; a falsy result raises ``restart_rejected``."""
         return await async_execute_command(

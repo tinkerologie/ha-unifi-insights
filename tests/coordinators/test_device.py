@@ -74,6 +74,7 @@ from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
     SiteNetworkFacts,
     build_site_network_facts,
+    device_facts,
 )
 from custom_components.unifi_insights.entity import is_device_online
 from tests.conftest import (
@@ -3720,36 +3721,6 @@ class TestUnifiDeviceCoordinator:
         result = coordinator.get_device("default", "nonexistent")
         assert result is None
 
-    def test_get_device_stats_existing(
-        self, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """Test getting existing device stats."""
-        coordinator.data["stats"] = {"default": {"device1": {"cpu": 15.2, "mem": 42.8}}}
-        result = coordinator.get_device_stats("default", "device1")
-        assert result == {"cpu": 15.2, "mem": 42.8}
-
-    def test_get_device_stats_missing(
-        self, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """Test getting missing device stats."""
-        result = coordinator.get_device_stats("default", "nonexistent")
-        assert result is None
-
-    def test_get_clients(self, coordinator: UnifiInsightsDeviceCoordinator):
-        """Test getting clients for a site."""
-        coordinator.data["clients"] = {
-            "default": {"client1": {"id": "client1", "name": "iPhone"}}
-        }
-        result = coordinator.get_clients("default")
-        assert "client1" in result
-
-    def test_get_clients_missing_site(
-        self, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """Test getting clients for missing site."""
-        result = coordinator.get_clients("nonexistent")
-        assert result == {}
-
     def test_legacy_device_to_v1_dict_fallback_contract(self) -> None:
         """Test _legacy_device_to_v1_dict contract: maps _id to id,
         sets macAddress, state."""
@@ -4484,15 +4455,6 @@ class TestUnifiDeviceCoordinator:
         coordinator.data["devices"] = {"default": {"device1": "not_a_dict"}}
 
         result = coordinator.get_device("default", "device1")
-        assert result is None
-
-    def test_get_device_stats_non_dict_value(
-        self, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """Test get_device_stats returns None for non-dict values."""
-        coordinator.data["stats"] = {"default": {"device1": "not_a_dict"}}
-
-        result = coordinator.get_device_stats("default", "device1")
         assert result is None
 
     # -------------------------------------------------------------------
@@ -5494,7 +5456,7 @@ async def test_two_outlet_writes_across_getting_ready_refresh(
     await device.async_set_outlet_state(SITE_ID, PDU_ID, 1, state=False)
     await device.async_refresh()
     current = device.data["devices"][SITE_ID][PDU_ID]
-    facts = seeded_owners.facade.get_device_facts(SITE_ID, PDU_ID)
+    facts = device_facts(seeded_owners.facade.data, SITE_ID, PDU_ID)
     assert current["state"] == "GETTING_READY"
     assert facts is not None
     assert facts.serviceable is True

@@ -1366,26 +1366,6 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
                 UNSUPPORTED_RESOURCE_RETRY,
             )
 
-    def get_camera(self, camera_id: str) -> dict[str, Any] | None:
-        """Get camera data by ID."""
-        result = self.data.get("cameras", {}).get(camera_id)
-        return result if isinstance(result, dict) else None
-
-    def get_light(self, light_id: str) -> dict[str, Any] | None:
-        """Get light data by ID."""
-        result = self.data.get("lights", {}).get(light_id)
-        return result if isinstance(result, dict) else None
-
-    def get_sensor(self, sensor_id: str) -> dict[str, Any] | None:
-        """Get sensor data by ID."""
-        result = self.data.get("sensors", {}).get(sensor_id)
-        return result if isinstance(result, dict) else None
-
-    def get_nvr(self, nvr_id: str) -> dict[str, Any] | None:
-        """Get NVR data by ID."""
-        result = self.data.get("nvrs", {}).get(nvr_id)
-        return result if isinstance(result, dict) else None
-
     @callback
     def mark_siren_stopped(self, siren_id: str) -> None:
         """
