@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- Removed 21 unused `const.py` constants: the two `DEFAULT_TRACK_*_CLIENTS` defaults, the three `ACCESS_MIN_VERSION_*` tuples, `UNIFI_API_HEADERS`, `ATTR_SMART_DETECT_TYPES`, `ATTR_NVR_STATE`, the two PTZ service descriptions, `SERVICE_LIST_VOUCHERS`, the three PTZ service names, four `CAMERA_TYPE_*` values, `PORT_ACTION_POWER_CYCLE`, `CLIENT_ACTION_AUTHORIZE_GUEST` and `CAMERA_STATE_CONNECTED`. Service names, schema values and behaviour do not change. [#496](https://github.com/tinkerologie/ha-unifi-insights/issues/496)
+- Removed three attributes that were written but never read: `_port_label` on the PoE power-cycle button, `_entity_type` on the Protect entity base class and `_input_key` on the camera digital-input event entity. Translation placeholders, unique IDs and constructor arguments are unchanged. [#496](https://github.com/tinkerologie/ha-unifi-insights/issues/496)
+- Removed 18 coordinator accessors that only tests called: the seven config section availability checks and four config getters, the device statistics and client getters, the facade `get_device_facts` and the four Protect cache getters. Entities and service actions read the same owner data and the pure lookups in `data_transforms.py` as before. The tests now assert the owner state (`failed_sections`, `last_update_success`, coordinator data) or the production helpers (`site_section_available`, `device_facts`), so live behaviour stays covered. [#496](https://github.com/tinkerologie/ha-unifi-insights/issues/496)
+- Removed six test-only helpers and constants: `bytes_to_megabits`, `bytes_to_bits` and `_has_storage_info` from `sensor.py`, `_first_site_id` from `__init__.py`, and `CARD_URL` and `CARD_PATH` from `frontend.py`. Storage and rate conversion behaviour stays covered through `normalize_nvr_storage` and the sensor discovery paths. [#496](https://github.com/tinkerologie/ha-unifi-insights/issues/496)
+
 ### Fixed
 
 - Allow Local and Remote add, reauth, and reconfigure flows to accept InnerSpace-only consoles by probing InnerSpace when Network and Protect are not available. Local creation requires a safe console identity, reporting `console_identity_unavailable` when an unsafe or credential-equivalent host is supplied. Derived from source review and verified with mocked-client tests. [#500](https://github.com/tinkerologie/ha-unifi-insights/issues/500)
