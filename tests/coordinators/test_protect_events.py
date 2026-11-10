@@ -865,6 +865,39 @@ def test_tamper_event_without_metadata_records_nothing_but_ids() -> None:
     )
 
 
+def test_sensor_tamper_state_comes_from_device_state_not_event() -> None:
+    """A sensor tamper event frame without finish does not change sensor_tamper;
+    a later device frame or REST poll with isTamperingDetected: false clears it."""
+    initial_sensor = {"id": "s1", "isOpened": False, "isTamperingDetected": True}
+    result = run(
+        cache(sensors={"s1": initial_sensor}),
+        [
+            (1.0, event("sensorTamper", "e1", device="s1", start=1000)),
+        ],
+    )
+    assert result.cache["sensors"]["s1"]["isTamperingDetected"] is True
+
+    result_dev = run(
+        result.cache,
+        [(2.0, device("sensor", "s1", isTamperingDetected=False))],
+        state=result.state,
+    )
+    assert result_dev.cache["sensors"]["s1"]["isTamperingDetected"] is False
+
+    result_poll = run(
+        result.cache,
+        [
+            *poll(
+                "sensors",
+                Fetched({"s1": {"id": "s1", "isTamperingDetected": False}}),
+                3.0,
+            )
+        ],
+        state=result.state,
+    )
+    assert result_poll.cache["sensors"]["s1"]["isTamperingDetected"] is False
+
+
 # --- siren stop racing a poll -------------------------------------------------
 
 
