@@ -23,7 +23,7 @@ from .const import (
     DEVICE_TYPE_NVR,
 )
 from .data_transforms import owner_available, protect_collection
-from .entity import UnifiProtectEntity
+from .entity import UnifiProtectEntity, get_field
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -56,6 +56,23 @@ def _global_alarm_manager_is_off(coordinator: UnifiInsightsFacadeCoordinator) ->
     as not off.
     """
     return coordinator.data["protect"].get("global_alarm_manager") is False
+
+
+def _uses_external_alarm_manager(nvr: Any) -> bool:
+    """Return whether the NVR uses an external alarm manager."""
+    if not isinstance(nvr, dict):
+        return False
+    feature_flags = nvr.get("featureFlags") or nvr.get("feature_flags")
+    if not isinstance(feature_flags, dict):
+        return False
+    return bool(
+        get_field(
+            feature_flags,
+            "useExternalAlarmManager",
+            "use_external_alarm_manager",
+            default=False,
+        )
+    )
 
 
 def _arm_mode(nvr: Any) -> dict[str, Any] | None:
@@ -100,14 +117,15 @@ async def async_setup_entry(
             # Firmware that predates the Alarm Manager has no armMode, and an
             # NVR that gains one on an upgrade is picked up on a later update.
             # While the UniFi global alarm manager is enabled (or not yet
-            # known to be off) there is no panel, and it appears once that is
-            # known to be off. A panel is never removed when armMode goes away
-            # again, or when the global alarm manager is switched on: it turns
-            # unavailable instead.
+            # known to be off) or an external alarm manager is in use, there is
+            # no panel, and it appears once that is known to be off. A panel is
+            # never removed when armMode goes away again, or when the global or
+            # external alarm manager is switched on: it turns unavailable instead.
             if (
                 nvr_id in known_nvr_ids
                 or _arm_mode(nvr_data) is None
                 or not _global_alarm_manager_is_off(coordinator)
+                or _uses_external_alarm_manager(nvr_data)
             ):
                 continue
             panel = UnifiProtectNvrAlarmControlPanel(coordinator, nvr_id)
@@ -147,15 +165,17 @@ class UnifiProtectNvrAlarmControlPanel(UnifiProtectEntity, AlarmControlPanelEnti
         """
         Return True while the panel shows a state that can be trusted.
 
-        That needs Protect to be reachable, the NVR to report an armMode and
-        the UniFi global alarm manager to be known to be off, because Protect's
-        own arm state does not follow it. An NVR has no ``state`` field, so the
-        base class check, which wants "CONNECTED", would never pass.
+        That needs Protect to be reachable, the NVR to report an armMode,
+        the NVR not to use an external alarm manager, and the UniFi global alarm
+        manager to be known to be off, because Protect's own arm state does not
+        follow it. An NVR has no ``state`` field, so the base class check, which
+        wants "CONNECTED", would never pass.
         """
         return (
             owner_available(self.coordinator.data, "protect")
             and _arm_mode(self.device_data) is not None
             and _global_alarm_manager_is_off(self.coordinator)
+            and not _uses_external_alarm_manager(self.device_data)
         )
 
     @property

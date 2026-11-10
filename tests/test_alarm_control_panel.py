@@ -1268,3 +1268,63 @@ async def test_nvr_read_started_after_a_frame_is_applied(
     await hass.async_block_till_done()
 
     assert protect.data["nvrs"]["nvr_1"]["armMode"]["status"] == "breach"
+
+
+def test_external_alarm_manager_availability_matrix() -> None:
+    """The panel is available only when useExternalAlarmManager is false or missing."""
+    coord_missing = _unit_coordinator(SAMPLE_NVR_WITH_ARM_MODE)
+    panel_missing = UnifiProtectNvrAlarmControlPanel(coord_missing, "nvr_1")
+    assert panel_missing.available is True
+
+    coord_empty = _unit_coordinator({**SAMPLE_NVR_WITH_ARM_MODE, "featureFlags": {}})
+    panel_empty = UnifiProtectNvrAlarmControlPanel(coord_empty, "nvr_1")
+    assert panel_empty.available is True
+
+    coord_false = _unit_coordinator(
+        {**SAMPLE_NVR_WITH_ARM_MODE, "featureFlags": {"useExternalAlarmManager": False}}
+    )
+    panel_false = UnifiProtectNvrAlarmControlPanel(coord_false, "nvr_1")
+    assert panel_false.available is True
+
+    coord_true = _unit_coordinator(
+        {**SAMPLE_NVR_WITH_ARM_MODE, "featureFlags": {"useExternalAlarmManager": True}}
+    )
+    panel_true = UnifiProtectNvrAlarmControlPanel(coord_true, "nvr_1")
+    assert panel_true.available is False
+
+
+async def test_external_alarm_manager_skips_discovery(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry, protect_client: MagicMock
+) -> None:
+    """An NVR reporting useExternalAlarmManager true skips local panel discovery."""
+    nvr_external = {**_nvr(), "featureFlags": {"useExternalAlarmManager": True}}
+    await _setup(hass, mock_config_entry, protect_client, nvr=nvr_external)
+    assert hass.states.async_entity_ids("alarm_control_panel") == []
+
+
+async def test_external_alarm_manager_transitions_unavailable_and_back(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry, protect_client: MagicMock
+) -> None:
+    """A panel turns unavailable when external manager is enabled, and back."""
+    await _setup(hass, mock_config_entry, protect_client, nvr=_nvr())
+    assert _state(hass) == "disarmed"
+
+    protect_client.nvr.get = AsyncMock(
+        return_value=NVR.model_validate(
+            {**_nvr(), "featureFlags": {"useExternalAlarmManager": True}}
+        )
+    )
+    await mock_config_entry.runtime_data.protect_coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert _state(hass) == STATE_UNAVAILABLE
+
+    protect_client.nvr.get = AsyncMock(
+        return_value=NVR.model_validate(
+            {**_nvr(), "featureFlags": {"useExternalAlarmManager": False}}
+        )
+    )
+    await mock_config_entry.runtime_data.protect_coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert _state(hass) == "disarmed"
