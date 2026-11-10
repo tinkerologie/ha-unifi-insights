@@ -142,7 +142,7 @@ set_video_mode:
       name: Video Mode
       description: >-
         Raw Protect video mode (default, highFps, sport, slowShutter, lprReflex,
-        lprNoneReflex). These action values differ from the select entity keys.
+        lprNoneReflex, antiFlicker). These action values differ from the select entity keys.
       required: true
       selector:
         select:
@@ -159,6 +159,8 @@ set_video_mode:
               value: "lprReflex"
             - label: License plates (non-reflective)
               value: "lprNoneReflex"
+            - label: Anti-flicker
+              value: "antiFlicker"
 
 set_mic_volume:
   name: Set Microphone Volume

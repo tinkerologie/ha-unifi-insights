@@ -293,6 +293,7 @@ VIDEO_MODE_SPORT: Final = "sport"
 VIDEO_MODE_SLOW_SHUTTER: Final = "slowShutter"
 VIDEO_MODE_LPR_REFLEX: Final = "lprReflex"
 VIDEO_MODE_LPR_NONE_REFLEX: Final = "lprNoneReflex"
+VIDEO_MODE_ANTI_FLICKER: Final = "antiFlicker"
 # Select keys are translatable HA slugs; API values remain unchanged.
 VIDEO_MODE_OPTIONS: Final = {
     "default": VIDEO_MODE_DEFAULT,
@@ -301,6 +302,7 @@ VIDEO_MODE_OPTIONS: Final = {
     "slow_shutter": VIDEO_MODE_SLOW_SHUTTER,
     "lpr_reflex": VIDEO_MODE_LPR_REFLEX,
     "lpr_none_reflex": VIDEO_MODE_LPR_NONE_REFLEX,
+    "anti_flicker": VIDEO_MODE_ANTI_FLICKER,
 }
 VIDEO_MODE_API_TO_OPTION: Final = {
     value: option for option, value in VIDEO_MODE_OPTIONS.items()
