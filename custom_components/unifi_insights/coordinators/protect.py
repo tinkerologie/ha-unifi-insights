@@ -1324,7 +1324,11 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         """
         Fetch external arm profiles.
 
-        Replaced as a whole; no device registry entries.
+        Routed through the pure reconciler with ``Fetched(profiles, complete=...)``
+        (ADR-012). An arm/disarm command increments the external_arm_profiles
+        generation in the reconciler; an in-flight poll stamped prior to the command
+        detects the generation change on completion and drops its stale reading so
+        it cannot overwrite the optimistic command overlay.
         """
         if not self.protect_client:
             return
@@ -1339,34 +1343,43 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
 
         answered = "external_arm_profiles" in self._answered_families
         _LOGGER.debug("Protect coordinator: Fetching external_arm_profiles")
+        stamp = begin_request(self._events, "external_arm_profiles", self._now())
         try:
             result = await endpoint.get_all_result()
-            profiles: dict[str, Any] = {}
-            for profile_model in result.records:
-                profile = self._model_to_dict(profile_model)
-                profile_id = profile.get("id")
-                if profile_id:
-                    profiles[profile_id] = profile
-            self._answered_families.add("external_arm_profiles")
-            self._log_family_fetch_recovery("external_arm_profiles")
-            self.data = {**self.data, "external_arm_profiles": profiles}
-            _LOGGER.debug(
-                "Protect coordinator: Successfully fetched %d external arm profiles",
-                len(result.records),
-            )
         except UniFiNotFoundError:
             if answered:
+                self._apply(RestBatch(stamp, NotFound()))
                 return
             self._mark_family_unsupported("external_arm_profiles", "HTTP 404")
+            return
         except UniFiResponseError as err:
-            if not answered and err.status_code < HTTPStatus.MULTIPLE_CHOICES:
-                self._mark_family_unsupported(
-                    "external_arm_profiles", "non-JSON response"
-                )
+            if answered or err.status_code >= HTTPStatus.MULTIPLE_CHOICES:
+                self._log_family_fetch_error("external_arm_profiles", err)
                 return
-            self._log_family_fetch_error("external_arm_profiles", err)
+            self._mark_family_unsupported("external_arm_profiles", "non-JSON response")
+            return
         except Exception as err:
             self._log_family_fetch_error("external_arm_profiles", err)
+            return
+
+        self._answered_families.add("external_arm_profiles")
+        self._log_family_fetch_recovery("external_arm_profiles")
+        self._unsupported_until.pop("external_arm_profiles", None)
+
+        profiles: dict[str, Any] = {}
+        for profile_model in result.records:
+            profile = self._model_to_dict(profile_model)
+            profile_id = profile.get("id")
+            if profile_id:
+                profiles[profile_id] = profile
+
+        _LOGGER.debug(
+            "Protect coordinator: Successfully fetched %d external arm profiles "
+            "(complete=%s)",
+            len(result.records),
+            result.complete,
+        )
+        self._apply(RestBatch(stamp, Fetched(profiles, complete=result.complete)))
 
     def _log_family_fetch_error(self, collection: str, err: Exception) -> None:
         """Report a family outage once while retaining details on later polls."""

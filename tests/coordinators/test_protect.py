@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import copy
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
@@ -39,6 +40,7 @@ from unifi_official_api import (
 )
 from unifi_official_api.exceptions import UniFiUnsupportedError
 from unifi_official_api.protect import UniFiProtectClient
+from unifi_official_api.protect.endpoints import ProtectListResult
 from unifi_official_api.protect.endpoints.chimes import ChimesEndpoint
 from unifi_official_api.protect.models import (
     Camera,
@@ -1095,6 +1097,284 @@ class TestActionCommands:
         await protect._fetch_external_arm_profiles()
 
         assert "external_arm_profiles" in protect._unsupported_until
+
+    async def test_fetch_external_profiles_overlap_arm_keeps_overlay(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """
+        An in-flight fetch starting while disarmed drops stale response
+        if command completes first.
+
+        A subsequent read requested after the command still applies.
+        """
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_disarmed_data = {
+            **SAMPLE_EXTERNAL_ARM_PROFILE,
+            "state": "disarmed",
+        }
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(profile_disarmed_data)
+        }
+        assert protect.data["external_arm_profiles"]["profile_1"]["state"] == "disarmed"
+
+        read_started = asyncio.Event()
+        read_resume = asyncio.Event()
+
+        disarmed_model = ExternalArmProfile.model_validate(profile_disarmed_data)
+        armed_profile_data = {**SAMPLE_EXTERNAL_ARM_PROFILE, "state": "armed"}
+        armed_model = ExternalArmProfile.model_validate(armed_profile_data)
+
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+
+        async def _gated_get_all_result() -> ProtectListResult[Any]:
+            read_started.set()
+            await read_resume.wait()
+            return protect_list([disarmed_model])
+
+        endpoint.get_all_result = AsyncMock(side_effect=_gated_get_all_result)
+        endpoint.arm = AsyncMock(return_value=armed_model)
+
+        fetch_task = asyncio.create_task(protect._fetch_external_arm_profiles())
+        await read_started.wait()
+
+        with patch.object(protect, "async_request_refresh", AsyncMock()):
+            await protect.async_arm_external_profile("profile_1")
+
+        assert protect.data["external_arm_profiles"]["profile_1"]["state"] == "armed"
+
+        read_resume.set()
+        await fetch_task
+
+        # Read result dropped because command bumped generation; state stays armed
+        assert protect.data["external_arm_profiles"]["profile_1"]["state"] == "armed"
+
+        # A normal read after the command still applies
+        endpoint.get_all_result = AsyncMock(return_value=protect_list([armed_model]))
+        await protect._fetch_external_arm_profiles()
+        assert protect.data["external_arm_profiles"]["profile_1"]["state"] == "armed"
+
+    async def test_fetch_external_profiles_malformed_record_keeps_cached(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """
+        Malformed second record (skipped > 0) preserves the existing second profile.
+        """
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_1 = copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        profile_2 = {
+            **SAMPLE_EXTERNAL_ARM_PROFILE,
+            "id": "profile_2",
+            "title": "Garage",
+        }
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(profile_1),
+            "profile_2": copy.deepcopy(profile_2),
+        }
+
+        updated_profile_1 = {**profile_1, "title": "Perimeter Updated"}
+        model_1 = ExternalArmProfile.model_validate(updated_profile_1)
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.return_value = protect_list([model_1], skipped=1)
+
+        await protect._fetch_external_arm_profiles()
+
+        assert (
+            protect.data["external_arm_profiles"]["profile_1"]["title"]
+            == "Perimeter Updated"
+        )
+        assert "profile_2" in protect.data["external_arm_profiles"]
+        assert protect.data["external_arm_profiles"]["profile_2"]["title"] == "Garage"
+
+    async def test_fetch_external_profiles_invalid_shape_keeps_cached(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """
+        Invalid list shape (complete=False, records=()) preserves all cached profiles.
+        """
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        }
+
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.return_value = ProtectListResult(
+            records=(), skipped=0, shape_valid=False
+        )
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "profile_1" in protect.data["external_arm_profiles"]
+        assert (
+            protect.data["external_arm_profiles"]["profile_1"]["title"] == "Perimeter"
+        )
+
+    async def test_fetch_external_profiles_complete_removes_deleted(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A complete response removes profiles that are no longer reported."""
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_1 = copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        profile_2 = {
+            **SAMPLE_EXTERNAL_ARM_PROFILE,
+            "id": "profile_2",
+            "title": "Garage",
+        }
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(profile_1),
+            "profile_2": copy.deepcopy(profile_2),
+        }
+
+        model_1 = ExternalArmProfile.model_validate(profile_1)
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.return_value = protect_list([model_1], skipped=0)
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "profile_1" in protect.data["external_arm_profiles"]
+        assert "profile_2" not in protect.data["external_arm_profiles"]
+
+    async def test_fetch_external_arm_profiles_404_when_answered_applies_not_found(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """HTTP 404 after answered applies NotFound to reconciler."""
+        protect = seeded_owners.protect
+        protect._answered_families.add("external_arm_profiles")
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        }
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.side_effect = UniFiNotFoundError("Not found", 404)
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "external_arm_profiles" not in protect._unsupported_until
+        assert protect.data["external_arm_profiles"] == {}
+
+    async def test_fetch_external_arm_profiles_non_json_marks_unsupported(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Non-JSON 200 response marks external_arm_profiles unsupported."""
+        protect = seeded_owners.protect
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.side_effect = UniFiResponseError("HTML", 200)
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "external_arm_profiles" in protect._unsupported_until
+
+    async def test_fetch_external_arm_profiles_response_error_logged(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """UniFiResponseError with status >= 300 logs family fetch error."""
+        protect = seeded_owners.protect
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.side_effect = UniFiResponseError("Server error", 500)
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "external_arm_profiles" in protect._failed_families
+
+    async def test_fetch_external_arm_profiles_exception_logged(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Generic exception logs family fetch error."""
+        protect = seeded_owners.protect
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.side_effect = RuntimeError("Crash")
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "external_arm_profiles" in protect._failed_families
+
+    async def test_reconcile_external_arm_profiles_notifies_when_changed(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """When profiles change during reconcile, listeners are updated."""
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_model = ExternalArmProfile.model_validate(SAMPLE_EXTERNAL_ARM_PROFILE)
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.return_value = protect_list([profile_model])
+
+        with patch.object(protect, "async_update_listeners") as notify:
+            await protect._reconcile_external_arm_profiles()
+            notify.assert_called_once()
+
+    async def test_reconcile_external_arm_profiles_no_notify_when_unchanged(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """When profiles are unchanged during reconcile, no listener notification."""
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_model = ExternalArmProfile.model_validate(SAMPLE_EXTERNAL_ARM_PROFILE)
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.return_value = protect_list([profile_model])
+        await protect._fetch_external_arm_profiles()
+
+        with patch.object(protect, "async_update_listeners") as notify:
+            await protect._reconcile_external_arm_profiles()
+            notify.assert_not_called()
+
+    async def test_fetch_external_arm_profiles_guards_and_empty_id(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """
+        Cover early returns: no client, unsupported retry window,
+        no endpoint, record without ID.
+        """
+        protect = seeded_owners.protect
+
+        # 1. No protect client
+        with patch.object(protect, "protect_client", None):
+            await protect._fetch_external_arm_profiles()
+
+        # 2. Unsupported retry window active
+        protect._unsupported_until["external_arm_profiles"] = time.monotonic() + 300.0
+        await protect._fetch_external_arm_profiles()
+        protect._unsupported_until.pop("external_arm_profiles", None)
+
+        # 3. No endpoint on client
+        with patch.object(protect, "protect_client", MagicMock(spec=[])):
+            await protect._fetch_external_arm_profiles()
+
+        # 4. Record without id
+        record_without_id = {**SAMPLE_EXTERNAL_ARM_PROFILE, "id": ""}
+        model = ExternalArmProfile.model_validate(record_without_id)
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.return_value = protect_list([model])
+        await protect._fetch_external_arm_profiles()
+
+    async def test_update_data_clears_profiles_when_flag_disabled(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """_async_update_data clears external_arm_profiles when flag becomes false."""
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": False
+        }
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        }
+
+        # Run update
+        await protect._async_update_data()
+        assert protect.data["external_arm_profiles"] == {}
 
 
 SESSION = TalkbackSession(

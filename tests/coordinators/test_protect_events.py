@@ -153,7 +153,14 @@ class Result:
 def cache(**collections: Any) -> dict[str, Any]:
     """Return a coordinator cache with every collection, overlaid by ``collections``."""
     base: dict[str, Any] = {
-        name: {} for name in (*FAMILIES, "doorlocks", "viewports", "liveviews")
+        name: {}
+        for name in (
+            *FAMILIES,
+            "doorlocks",
+            "viewports",
+            "liveviews",
+            "external_arm_profiles",
+        )
     }
     base["events"] = {}
     base["protect_info"] = {}
@@ -2385,12 +2392,18 @@ def test_overlay_for_an_unknown_record_does_nothing(seed: dict[str, Any]) -> Non
 
 @pytest.mark.parametrize(
     ("family", "generation"),
-    [("nvrs", 0), ("sirens", 0), ("cameras", None), ("alarm_hubs", None)],
+    [
+        ("nvrs", 0),
+        ("sirens", 0),
+        ("cameras", None),
+        ("alarm_hubs", None),
+        ("external_arm_profiles", 0),
+    ],
 )
 def test_begin_request_stamps_time_and_generation(
     family: Family, generation: int | None
 ) -> None:
-    """Only NVRs and sirens carry a WebSocket generation."""
+    """NVRs, sirens and external arm profiles carry a generation."""
     stamp = begin_request(initial_state(), family, at(7.0))
     assert stamp == RequestStamp(family, 7.0, generation)
 
@@ -2401,3 +2414,60 @@ def test_poll_boundaries_without_work_return_the_same_cache() -> None:
     result = run(seed, [(0.0, PollStarted()), (1.0, PollCompleted())])
     assert result.cache is seed
     assert result.effects() == []
+
+
+def test_external_profiles_command_overtakes_older_answer() -> None:
+    """
+    An arm/disarm command overlay landing while fetch is out beats the
+    older answer.
+    """
+    seed = cache(external_arm_profiles={"p1": {"id": "p1", "state": "disarmed"}})
+    result = run(
+        seed,
+        [
+            Begin("external_arm_profiles", 1.0),
+            (2.0, CommandOverlay("external_arm_profiles", "p1", {"state": "armed"})),
+            Answer(
+                "external_arm_profiles",
+                Fetched({"p1": {"id": "p1", "state": "disarmed"}}, complete=True),
+                3.0,
+            ),
+        ],
+    )
+    assert result.cache["external_arm_profiles"]["p1"]["state"] == "armed"
+    assert any(
+        "external arm profile command" in line for line in result.logs(logging.DEBUG)
+    )
+    assert dict(result.state.ws_generation)["external_arm_profiles"] == 1
+
+    # A subsequent read requested after the command still applies
+    result2 = run(
+        result.cache,
+        [
+            Begin("external_arm_profiles", 4.0),
+            Answer(
+                "external_arm_profiles",
+                Fetched({"p1": {"id": "p1", "state": "disarmed"}}, complete=True),
+                5.0,
+            ),
+        ],
+        state=result.state,
+    )
+    assert result2.cache["external_arm_profiles"]["p1"]["state"] == "disarmed"
+
+
+def test_external_arm_profiles_complete_empty_response_clears_cache() -> None:
+    """A complete response with 0 profiles clears the cache immediately."""
+    seed = cache(external_arm_profiles={"p1": {"id": "p1", "state": "disarmed"}})
+    result = run(
+        seed,
+        [
+            Begin("external_arm_profiles", 1.0),
+            Answer(
+                "external_arm_profiles",
+                Fetched({}, complete=True),
+                2.0,
+            ),
+        ],
+    )
+    assert result.cache["external_arm_profiles"] == {}

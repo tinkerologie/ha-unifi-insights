@@ -78,8 +78,9 @@ type Family = Literal[
     "alarm_hubs",
     "sirens",
     "speakers",
+    "external_arm_profiles",
 ]
-type GuardedFamily = Literal["nvrs", "sirens"]
+type GuardedFamily = Literal["nvrs", "sirens", "external_arm_profiles"]
 
 # Every family the registry clean-up watches, in the order it walks them.
 FAMILIES: Final[tuple[Family, ...]] = (
@@ -543,8 +544,10 @@ def initial_state() -> ReconcilerState:
         sensors={},
         tamper={},
         siren_stops={},
-        ws_generation={"nvrs": 0, "sirens": 0},
-        families={family: FamilyTracking() for family in FAMILIES},
+        ws_generation={"nvrs": 0, "sirens": 0, "external_arm_profiles": 0},
+        families={
+            family: FamilyTracking() for family in (*FAMILIES, "external_arm_profiles")
+        },
     )
 
 
@@ -722,7 +725,7 @@ def begin_request(state: ReconcilerState, family: Family, now: Instant) -> Reque
 
 def _generation(state: ReconcilerState, family: Family) -> int | None:
     """Return the family's WebSocket generation, or None if it has none."""
-    if family in ("nvrs", "sirens"):
+    if family in ("nvrs", "sirens", "external_arm_profiles"):
         return state.ws_generation.get(family)
     return None
 
@@ -1362,6 +1365,13 @@ def _apply_fetched(run: _Run, request: RequestStamp, outcome: Fetched) -> None:
                 "while it was being fetched; keeping it instead of the "
                 "older reading",
             )
+        elif family == "external_arm_profiles":
+            run.log(
+                logging.DEBUG,
+                "Protect coordinator: an external arm profile command "
+                "completed while profiles were being fetched; keeping the "
+                "command state instead of the older reading",
+            )
         else:
             run.log(
                 logging.DEBUG,
@@ -1382,7 +1392,14 @@ def _apply_fetched(run: _Run, request: RequestStamp, outcome: Fetched) -> None:
                 "Protect coordinator: Successfully fetched NVR: %s",
                 next(iter(items)),
             )
-    elif family in ("fobs", "link_stations", "alarm_hubs", "sirens", "speakers"):
+    elif family in (
+        "fobs",
+        "link_stations",
+        "alarm_hubs",
+        "sirens",
+        "speakers",
+        "external_arm_profiles",
+    ):
         run.log(
             logging.DEBUG,
             "Protect coordinator: Successfully fetched %d %s",
@@ -1490,6 +1507,11 @@ def _update_collection(
                 "Protect coordinator: %s endpoint returned 404; no devices configured",
                 family,
             )
+        return
+
+    if family == "external_arm_profiles":
+        run.replace(family, {})
+        run.set_family(family, replace(tracking, empty_fetches=0))
         return
 
     count = tracking.empty_fetches + 1
@@ -1920,4 +1942,17 @@ def _apply_overlay(run: _Run, overlay: CommandOverlay) -> None:
         overlay.device_id,
         deep_merge(record, overlay.changes, into_lists=True),
     )
+    match overlay.collection:
+        case "nvrs" | "sirens" | "external_arm_profiles":
+            guarded: GuardedFamily = overlay.collection
+            run.state = replace(
+                run.state,
+                ws_generation=_with(
+                    run.state.ws_generation,
+                    guarded,
+                    run.state.ws_generation.get(guarded, 0) + 1,
+                ),
+            )
+        case _:
+            pass
     run.effects.append(PublishUpdate(mark_success=False))
