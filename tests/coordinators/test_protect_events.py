@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import itertools
 import logging
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -177,10 +178,11 @@ def run(
     """Feed ``ops`` into the reconciler, checking it never mutates its inputs."""
     result = Result(state or initial_state(), seed)
     stamps: dict[str, RequestStamp] = {}
+    seq = itertools.count(1)
     for op in ops:
         if isinstance(op, Begin):
             stamps[op.key or op.family] = begin_request(
-                result.state, op.family, at(op.t)
+                result.state, op.family, at(op.t), seq=next(seq)
             )
             continue
         if isinstance(op, Answer):
@@ -2543,6 +2545,23 @@ def test_external_arm_profiles_older_incomplete_read_does_not_merge_back() -> No
         "newer external arm profile reading" in line
         for line in result.logs(logging.DEBUG)
     )
+
+
+def test_external_arm_profiles_equal_timestamps_later_read_wins() -> None:
+    """A later read stamped at the same instant still applies over an earlier one."""
+    p1_old = {"id": "p1", "state": "disarmed"}
+    p1_new = {"id": "p1", "state": "armed"}
+    seed = cache(external_arm_profiles={"p1": p1_old})
+    result = run(
+        seed,
+        [
+            Begin("external_arm_profiles", 1.0, key="older"),
+            Begin("external_arm_profiles", 1.0, key="newer"),
+            Answer("older", Fetched({"p1": p1_old}, complete=True), 2.0),
+            Answer("newer", Fetched({"p1": p1_new}, complete=True), 3.0),
+        ],
+    )
+    assert result.cache["external_arm_profiles"]["p1"]["state"] == "armed"
 
 
 def test_external_arm_profiles_disabled_invalidates_the_inflight_read() -> None:

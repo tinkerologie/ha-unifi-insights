@@ -64,6 +64,7 @@ from .protect_events import (
     TransientError,
     begin_request,
     initial_state,
+    is_stale_profile_read,
     normalize_camera,
     reconcile,
 )
@@ -228,6 +229,10 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         # Families already reported once as unsupported (logged at INFO the
         # first time only, not on every hourly re-probe).
         self._unsupported_logged: set[str] = set()
+        # Strictly increasing sequence stamped on each external arm profile
+        # read before its await, so overlapping reads order by issue even when
+        # the monotonic clock returns the same value for two of them.
+        self._profile_read_seq: int = 0
         # Monotonic time before which the global alarm manager is not asked
         # about again (see `_probe_global_alarm_manager`).
         self._global_alarm_manager_probe_after: float = 0.0
@@ -1336,10 +1341,18 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         Fetch external arm profiles.
 
         Routed through the pure reconciler with ``Fetched(profiles, complete=...)``
-        (ADR-012). An arm/disarm command increments the external_arm_profiles
-        generation in the reconciler; an in-flight poll stamped prior to the command
-        detects the generation change on completion and drops its stale reading so
-        it cannot overwrite the optimistic command overlay.
+        (ADR-012). Each read takes a strictly increasing request sequence before
+        its await, so overlapping reads order by issue rather than by the
+        monotonic clock (two reads can share a clock value).
+
+        An arm/disarm command increments the external_arm_profiles generation in
+        the reconciler; an in-flight poll stamped prior to the command detects the
+        generation change on completion and drops its stale reading so it cannot
+        overwrite the optimistic command overlay. A 404 or non-JSON answer marks
+        the endpoint unsupported only when the read is not stale and the family
+        has not answered yet, both decided after the await on live state: a stale
+        first read that a newer read overtook must neither mark the family
+        unsupported nor change the cache.
         """
         if not self.protect_client:
             return
@@ -1352,22 +1365,36 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         if endpoint is None:
             return
 
-        answered = "external_arm_profiles" in self._answered_families
         _LOGGER.debug("Protect coordinator: Fetching external_arm_profiles")
-        stamp = begin_request(self._events, "external_arm_profiles", self._now())
+        self._profile_read_seq += 1
+        stamp = begin_request(
+            self._events,
+            "external_arm_profiles",
+            self._now(),
+            seq=self._profile_read_seq,
+        )
         try:
             result = await endpoint.get_all_result()
         except UniFiNotFoundError:
-            if answered:
-                self._apply(RestBatch(stamp, NotFound()))
+            if is_stale_profile_read(self._events, stamp):
                 return
-            self._mark_family_unsupported("external_arm_profiles", "HTTP 404")
+            if "external_arm_profiles" in self._answered_families:
+                self._apply(RestBatch(stamp, NotFound()))
+            else:
+                self._mark_family_unsupported("external_arm_profiles", "HTTP 404")
             return
         except UniFiResponseError as err:
-            if answered or err.status_code >= HTTPStatus.MULTIPLE_CHOICES:
+            if err.status_code >= HTTPStatus.MULTIPLE_CHOICES:
                 self._log_family_fetch_error("external_arm_profiles", err)
                 return
-            self._mark_family_unsupported("external_arm_profiles", "non-JSON response")
+            if is_stale_profile_read(self._events, stamp):
+                return
+            if "external_arm_profiles" in self._answered_families:
+                self._log_family_fetch_error("external_arm_profiles", err)
+            else:
+                self._mark_family_unsupported(
+                    "external_arm_profiles", "non-JSON response"
+                )
             return
         except Exception as err:
             self._log_family_fetch_error("external_arm_profiles", err)

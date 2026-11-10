@@ -513,11 +513,13 @@ class FamilyTracking:
     previous_ids: frozenset[str] = frozenset()
     # Device id -> polls in a row it has been missing.
     missing_polls: Mapping[str, int] = field(default_factory=dict)
-    # Monotonic time of the last applied read for the family, used to drop an
-    # older reading that lands after a newer one. Only the external arm
-    # profile reads can overlap, so only that family sets it (None until the
-    # first read is applied).
-    last_applied_at: float | None = None
+    # Request sequence of the last applied read for the family, used to drop
+    # an older reading that lands after a newer one. The sequence is a
+    # strictly increasing integer the coordinator assigns before each read's
+    # await, so two reads stamped at the same monotonic instant still order
+    # by issue. Only the external arm profile reads can overlap, so only that
+    # family sets it (None until the first read is applied).
+    last_applied_seq: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -585,6 +587,9 @@ class RequestStamp:
     at: float
     # The family's WebSocket generation then (None for unguarded families).
     ws_generation: int | None
+    # The coordinator's strictly increasing read sequence, assigned before the
+    # await (None for families whose reads never overlap).
+    seq: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -729,9 +734,22 @@ class Step:
     effects: tuple[Effect, ...]
 
 
-def begin_request(state: ReconcilerState, family: Family, now: Instant) -> RequestStamp:
-    """Stamp a REST request; call it before the request's await."""
-    return RequestStamp(family, now.monotonic, _generation(state, family))
+def begin_request(
+    state: ReconcilerState,
+    family: Family,
+    now: Instant,
+    *,
+    seq: int | None = None,
+) -> RequestStamp:
+    """
+    Stamp a REST request; call it before the request's await.
+
+    ``seq`` is the coordinator's strictly increasing read sequence for the
+    family, used to order overlapping reads regardless of the monotonic clock.
+    Only the external arm profile reads can overlap, so only they need one;
+    every other family leaves it None.
+    """
+    return RequestStamp(family, now.monotonic, _generation(state, family), seq)
 
 
 def _generation(state: ReconcilerState, family: Family) -> int | None:
@@ -1343,14 +1361,14 @@ def _apply_rest_batch(run: _Run, batch: RestBatch) -> None:
     family = request.family
     match outcome:
         case TransientError():
-            if _stale_profile_read(run, request):
+            if is_stale_profile_read(run.state, request):
                 return
             if not _absorb_transient_error(run, family, outcome.error):
                 run.effects.append(Escalate())
                 return
         case NotFound():
             # The endpoint answered, so the session is alive: end any streak.
-            if _stale_profile_read(run, request):
+            if is_stale_profile_read(run.state, request):
                 return
             run.set_family(family, replace(run.family(family), fetch_errors=0))
             _update_collection(run, family, {}, is_404=True)
@@ -1372,32 +1390,36 @@ def _apply_rest_batch(run: _Run, batch: RestBatch) -> None:
         _apply_siren_stop_guards(run)
 
 
-def _stale_profile_read(run: _Run, request: RequestStamp) -> bool:
+def is_stale_profile_read(state: ReconcilerState, request: RequestStamp) -> bool:
     """
     Return True when an external arm profile read was overtaken in flight.
 
     Two sources overtake a profile read. An arm/disarm command overlay - or
     the external alarm manager flag turning off - advances the family's
     generation, and a newer read that has already been applied advances its
-    ``last_applied_at``. An outcome (answer or error) for either an older
+    ``last_applied_seq``. An outcome (answer or error) for either an older
     generation or an older request must never be applied: it would restore
     state a command or a newer read already superseded.
+
+    The read order is the coordinator's strictly increasing request sequence
+    (``seq``), not the monotonic clock (``at``), so two reads stamped at the
+    same instant still order by issue.
     """
     if request.family != "external_arm_profiles":
         return False
-    if _generation(run.state, request.family) != request.ws_generation:
+    if _generation(state, request.family) != request.ws_generation:
         return True
-    last = run.family(request.family).last_applied_at
-    return last is not None and request.at <= last
+    last = state.families[request.family].last_applied_seq
+    return last is not None and request.seq is not None and request.seq <= last
 
 
 def _mark_profile_read_applied(run: _Run, request: RequestStamp) -> None:
-    """Record the request time of the last applied external arm profile read."""
+    """Record the request sequence of the last applied external arm profile read."""
     if request.family != "external_arm_profiles":
         return
     run.set_family(
         request.family,
-        replace(run.family(request.family), last_applied_at=request.at),
+        replace(run.family(request.family), last_applied_seq=request.seq),
     )
 
 
@@ -1429,7 +1451,7 @@ def _apply_fetched(run: _Run, request: RequestStamp, outcome: Fetched) -> bool:
                 family,
             )
         return False
-    if _stale_profile_read(run, request):
+    if is_stale_profile_read(run.state, request):
         # The generation matched, so only a newer read overtook this one.
         run.log(
             logging.DEBUG,

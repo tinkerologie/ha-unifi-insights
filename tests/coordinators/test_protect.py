@@ -1274,6 +1274,24 @@ class TestActionCommands:
 
         assert "external_arm_profiles" in protect._unsupported_until
 
+    async def test_fetch_external_arm_profiles_non_json_when_answered_logs_error(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A non-JSON 200 after a successful answer logs the error, keeps cache."""
+        protect = seeded_owners.protect
+        protect._answered_families.add("external_arm_profiles")
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        }
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.side_effect = UniFiResponseError("HTML", 200)
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "external_arm_profiles" not in protect._unsupported_until
+        assert "external_arm_profiles" in protect._failed_families
+        assert "profile_1" in protect.data["external_arm_profiles"]
+
     async def test_fetch_external_arm_profiles_response_error_logged(
         self, seeded_owners: SeededOwners
     ) -> None:
@@ -1474,6 +1492,66 @@ class TestActionCommands:
         older_resume.set()
         await older_task
         assert "profile_2" not in protect.data["external_arm_profiles"]
+
+    @pytest.mark.parametrize("older_kind", ["not_found", "non_json"])
+    async def test_stale_first_read_does_not_mark_unsupported(
+        self, seeded_owners: SeededOwners, older_kind: str
+    ) -> None:
+        """
+        A first read overtaken by a newer successful read must not mark the
+        endpoint unsupported; the next poll still fetches and keeps profiles.
+        """
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_model = ExternalArmProfile.model_validate(SAMPLE_EXTERNAL_ARM_PROFILE)
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+
+        older_started = asyncio.Event()
+        newer_started = asyncio.Event()
+        older_resume = asyncio.Event()
+        newer_resume = asyncio.Event()
+        calls = 0
+        if older_kind == "not_found":
+            older_error: Exception = UniFiNotFoundError("Not found", 404)
+        else:
+            older_error = UniFiResponseError("HTML", 200)
+
+        async def _gated() -> ProtectListResult[Any]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                older_started.set()
+                await older_resume.wait()
+                raise older_error
+            newer_started.set()
+            await newer_resume.wait()
+            return protect_list([profile_model])
+
+        endpoint.get_all_result = AsyncMock(side_effect=_gated)
+
+        older_task = asyncio.create_task(protect._fetch_external_arm_profiles())
+        await older_started.wait()
+        newer_task = asyncio.create_task(protect._fetch_external_arm_profiles())
+        await newer_started.wait()
+
+        # The newer read succeeds first and applies the profiles.
+        newer_resume.set()
+        await newer_task
+        assert "profile_1" in protect.data["external_arm_profiles"]
+
+        # The older read fails afterwards; it must not mark the endpoint unsupported.
+        older_resume.set()
+        await older_task
+        assert "external_arm_profiles" not in protect._unsupported_until
+        assert "profile_1" in protect.data["external_arm_profiles"]
+
+        # The next poll still fetches and keeps the profiles.
+        endpoint.get_all_result = AsyncMock(return_value=protect_list([profile_model]))
+        await protect._fetch_external_arm_profiles()
+        endpoint.get_all_result.assert_awaited_once()
+        assert "profile_1" in protect.data["external_arm_profiles"]
 
     async def test_flag_off_invalidates_an_inflight_profile_read(
         self, seeded_owners: SeededOwners
