@@ -42,6 +42,7 @@ from custom_components.unifi_insights.alarm_control_panel import (
     UnifiProtectNvrAlarmControlPanel,
     _arm_mode,
     _epoch_ms_to_iso,
+    _uses_external_alarm_manager,
     async_setup_entry,
 )
 from custom_components.unifi_insights.const import DOMAIN
@@ -220,6 +221,36 @@ def test_nvr_model_without_arm_mode_reads_none() -> None:
 def test_arm_mode_helper_rejects_anything_but_a_dict(nvr: Any) -> None:
     """Only an armMode dict counts as the NVR reporting an arm mode."""
     assert _arm_mode(nvr) is None
+
+
+@pytest.mark.parametrize(
+    ("nvr", "expected"),
+    [
+        (None, False),
+        ("garbage", False),
+        ({}, False),
+        ({"featureFlags": None}, False),
+        ({"featureFlags": "garbage"}, False),
+        ({"featureFlags": {}}, False),
+        ({"featureFlags": {"useExternalAlarmManager": False}}, False),
+        ({"featureFlags": {"useExternalAlarmManager": True}}, True),
+        ({"feature_flags": {"use_external_alarm_manager": True}}, True),
+    ],
+    ids=[
+        "none",
+        "string",
+        "no-flags",
+        "null-flags",
+        "string-flags",
+        "empty-flags",
+        "flag-off",
+        "flag-on",
+        "snake-case-flag-on",
+    ],
+)
+def test_external_alarm_manager_helper(nvr: Any, *, expected: bool) -> None:
+    """Only a true useExternalAlarmManager flag in a flags dict counts."""
+    assert _uses_external_alarm_manager(nvr) is expected
 
 
 def test_arm_mode_helper_returns_the_dict() -> None:
