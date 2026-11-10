@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add the card types, YAML examples and YAML resource instructions for the dashboard cards. Add troubleshooting for cards that do not appear. [#469](https://github.com/tinkerologie/ha-unifi-insights/issues/469)
 
+- Update the README layout, setup steps, blueprint import table, and troubleshooting sections. [#478](https://github.com/tinkerologie/ha-unifi-insights/issues/478)
+
 ## [2026.11.1] - 2026-11-10
 
 ### Documentation

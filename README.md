@@ -1,43 +1,33 @@
 # UniFi Insights integration for Home Assistant
 
+Monitor and control UniFi devices from Home Assistant. UniFi Insights adds
+entities, actions, and six dashboard cards.
+
 <!-- BADGES:START -->
 
 [![Marketplace and HACS](https://img.shields.io/badge/Marketplace%20%7C%20HACS-Default-orange.svg)](https://www.hacs.xyz/docs/marketplace/)
-[![GitHub Last Commit](https://img.shields.io/github/last-commit/tinkerologie/ha-unifi-insights)](https://github.com/tinkerologie/ha-unifi-insights/commits/main)
-[![GitHub Release](https://img.shields.io/github/v/release/tinkerologie/ha-unifi-insights)](https://github.com/tinkerologie/ha-unifi-insights/releases)
-[![codecov](https://codecov.io/gh/tinkerologie/ha-unifi-insights/graph/badge.svg)](https://codecov.io/gh/tinkerologie/ha-unifi-insights)
-[![License](https://img.shields.io/github/license/tinkerologie/ha-unifi-insights)](./LICENSE)
+[![Last commit on main](https://img.shields.io/github/last-commit/tinkerologie/ha-unifi-insights)](https://github.com/tinkerologie/ha-unifi-insights/commits/main)
+[![Latest release](https://img.shields.io/github/v/release/tinkerologie/ha-unifi-insights)](https://github.com/tinkerologie/ha-unifi-insights/releases)
+[![Test coverage](https://codecov.io/gh/tinkerologie/ha-unifi-insights/graph/badge.svg)](https://codecov.io/gh/tinkerologie/ha-unifi-insights)
+[![Apache License 2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 <!-- BADGES:END -->
 
-UniFi Insights connects Home Assistant to Network, Protect, Access, and
-InnerSpace. It also supports Mobility, Site Manager, and Carrier Fabric.
-
 ## Contents
 
-- [Overview](#overview)
-- [Supported UniFi products](#supported-unifi-products)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- Products: [Network](#unifi-network), [Protect](#unifi-protect), [Access](#unifi-access), [InnerSpace](#unifi-innerspace), [Mobility](#unifi-mobility), [Site Manager](#unifi-site-manager), [Carrier Fabric (ISP)](#unifi-carrier-fabric-isp)
-- [Automation blueprints](#automation-blueprints)
-- [Dashboard cards](#dashboard-cards)
-- [Troubleshooting](#troubleshooting)
+- **Setup** · [Requirements](#requirements) · [Installation](#installation) · [Configuration](#configuration)
+- **Products** · [Overview](#overview) · [Supported UniFi products](#supported-unifi-products)
+- **Home Assistant** · [Automation blueprints](#automation-blueprints) · [Dashboard cards](#dashboard-cards)
+- **Help** · [Troubleshooting](#troubleshooting) · [Contributing](#contributing) · [License](#license)
 
 ## Overview
-
-UniFi Insights connects UniFi applications to Home Assistant. It uses an API
-key. Install it from the Marketplace on Home Assistant 2026.11 or later. Use
-HACS on Home Assistant 2026.9 or 2026.10.
 
 One console entry can connect to Network, Protect, and InnerSpace. A local
 entry can also connect to Access with an Access token. A cloud API key can add
 Mobility and Site Manager data. Internet service providers can add a Carrier
 Fabric entry.
 
-The integration gives you Home Assistant entities, actions, and six dashboard
-cards. The cards show topology, site health, internet activity, performance,
+The dashboard cards show topology, site health, internet activity, performance,
 Protect status, and events. The integration removes API keys and personal
 data from diagnostics.
 
@@ -59,7 +49,7 @@ traffic history. Both APIs use the same key.
 | [UniFi Carrier Fabric (ISP)](#unifi-carrier-fabric-isp) | Carrier Fabric (ISP)  | Subscriber and service plan counts, with optional suspend and resume                                                                |
 
 The integration creates entities for the applications that the console runs.
-A console can run only Network, Protect, or InnerSpace.
+The integration also works if the console runs only Network, Protect, or InnerSpace.
 
 ## Requirements
 
@@ -78,12 +68,10 @@ A console can run only Network, Protect, or InnerSpace.
 
 ### Marketplace (Home Assistant 2026.11 and newer, recommended)
 
-Home Assistant 2026.11 includes the Marketplace.
-
 [![Open your Home Assistant instance and open a repository in the Marketplace.](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=tinkerologie&repository=ha-unifi-insights&category=integration)
 
 1. Open **Settings** → **Marketplace**.
-2. Search for **UniFi Insights**. The button above also opens the repository.
+2. Search for **UniFi Insights**.
 3. Install the integration.
 4. If Home Assistant shows a repair that requests a restart, restart Home Assistant.
 
@@ -95,7 +83,7 @@ you upgrade to Home Assistant 2026.11.
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=tinkerologie&repository=ha-unifi-insights&category=integration)
 
 1. Open HACS.
-2. Search for **UniFi Insights**. The button above also opens the repository.
+2. Search for **UniFi Insights**.
 3. Select **Download**.
 4. Restart Home Assistant.
 
@@ -103,15 +91,16 @@ you upgrade to Home Assistant 2026.11.
 
 1. Download `unifi_insights.zip` from the latest [release](https://github.com/tinkerologie/ha-unifi-insights/releases).
 2. Create the `config/custom_components/unifi_insights/` folder.
-3. Extract the ZIP file into that folder. Make sure that `manifest.json` is directly in the folder.
-4. Restart Home Assistant.
+3. Extract the ZIP file into that folder.
+4. Make sure that `manifest.json` is directly in the folder.
+5. Restart Home Assistant.
 
 Releases with a ZIP file also include `SHA256SUMS` and a signed build
 provenance attestation. The Marketplace and HACS use the same ZIP file.
 The download count applies to the ZIP file for the latest release.
 
-Use the commands below to check the ZIP file. Put `SHA256SUMS` in the same
-folder as the ZIP file first.
+Put `SHA256SUMS` in the same folder as the ZIP file.
+Use these commands to check the ZIP file.
 
 ```bash
 gh attestation verify unifi_insights.zip -R tinkerologie/ha-unifi-insights
@@ -157,7 +146,7 @@ You can add an entry for each console.
 
 A console in the list does not prove that the key has Cloud Connector access.
 Personal Site Manager API keys work only with consoles that the key's account
-owns. Use a key from the console owner, an organisation API key, or a
+owns. Use a key from the console owner, an organization API key, or a
 [Local connection](#local-connection) with a key created on the console.
 
 For Carrier Fabric, enter the ISP API key. See
@@ -189,18 +178,32 @@ Carrier Fabric entries have their own options. See [Carrier Fabric setup](#carri
 
 ## UniFi Network
 
-- **Device health:** status, CPU, memory, uptime, temperature and uplink rates for gateways, switches and access points.
-- **Ports:** PoE power, link speed, traffic counters and rates, and SFP module details.
-- **Power:** PDU outlet switches with power, voltage, current and power factor, and AC power consumption and budget.
-- **Storage:** used percentage, used space and total space for each filesystem a console reports (for example eMMC and backup storage on a UDM Pro SE), and a Storage Nearly Full alert. Per-drive SMART, temperature, RAID and Drive/UNAS data require supported API fields. Protect NVR storage diagnostics need storage fields. The official `/v1/nvrs` response can omit them.
+- **Device health.** Sensors show the status, CPU, memory, uptime, temperature,
+  and uplink rates of gateways, switches, and access points.
+- **Ports.** Sensors show PoE power, link speed, traffic counters, traffic
+  rates, and SFP module details.
+- **Power.** Switches control PDU outlets. Sensors show power, voltage,
+  current, and power factor. Devices can also report AC consumption and budget.
+- **Storage.** Sensors show used space, total space, and percent used for each
+  filesystem that the console reports. Examples include eMMC and backup storage
+  on a UDM Pro SE. The **Storage Nearly Full** sensor turns on if a persistent
+  filesystem is at least 90% full. Per-drive SMART, temperature, RAID, and
+  Drive/UNAS data need the applicable API fields. Protect NVR storage needs
+  fields that the official `/v1/nvrs` response can omit.
 - **Internet and WAN.** Sensors show the gateway and WAN connection status.
   They also show WAN IP addresses and site-to-site VPN status. The integration
   reports download and upload totals for the last hour, day, week, and month.
-- **Clients:** client counts per site, device, and Wi-Fi network. Optional controls include presence tracking, allow/block switches, reconnect buttons, and Wake-on-LAN for wired clients.
+- **Clients.** Sensors show client counts per site, device, and Wi-Fi network.
+  Optional features include presence tracking, allow/block switches,
+  reconnect buttons, and Wake-on-LAN for wired clients.
 - **Controls.** The integration has switches for Wi-Fi networks and Network rules.
   Buttons restart devices. Wi-Fi QR images help you connect to a network.
-- **Firmware:** update entities show the installed firmware and whether a newer version is available. They do not install firmware. Use the UniFi app for that.
-- **Guest access:** authorize guests and create or delete hotspot vouchers with actions.
+- **Firmware.** Update entities show the firmware version and indicate if a
+  newer version is available. The integration does not install firmware.
+- **Guest access.** Actions give access to guests and create or delete hotspot
+  vouchers.
+
+Use the UniFi app to install firmware.
 
 ### Network entities
 
@@ -292,9 +295,12 @@ Changes from Home Assistant switches also count.
 The entity does not report rule order changes, system-defined firewall
 policies, console-managed NAT rules, or VPN clients.
 
-Changes are found when the configuration is polled, every 5 minutes. A change that is made and undone between two polls is not seen.
+The integration checks for changes every 5 minutes. If a rule changes and
+returns to its previous state between polls, the integration reports no change.
 
-The first poll after Home Assistant starts or the integration reloads only records the current rules. Changes made while Home Assistant was stopped or reloading are not reported.
+The first poll after a start or reload records the current rules. The
+integration does not report changes from the time between a stop or reload
+and that first poll.
 
 If the console is unavailable, the entity reports no events. It reports
 changes after the next successful poll.
@@ -336,7 +342,7 @@ mode: queued
 Keep `unknown` out of `not_from`. The entity starts in `unknown`.
 The trigger needs that state to report the first event.
 
-#### Hotspot voucher management
+### Hotspot voucher management
 
 The integration has entities to configure, generate, and monitor vouchers.
 
@@ -367,16 +373,21 @@ The integration has entities to configure, generate, and monitor vouchers.
   Use the Wi-Fi QR code entity for Wi-Fi credentials. The voucher image
   becomes unavailable at expiration.
 
-- **Recorder history disclosure and privacy:**
-  - **Security:** Voucher codes grant network access. By default, Recorder stores the active credential from "Latest Voucher Code".
-  - Exclude the sensor in `configuration.yaml` to keep new codes out of Recorder.
-    ```yaml
-    recorder:
-      exclude:
-        entities:
-          - sensor.your_site_latest_voucher_code
-    ```
-  - You can also disable the code sensor in Home Assistant. Recorder keeps the codes that it already stored.
+#### Voucher codes in Recorder
+
+> **Warning.** To keep new voucher codes out of Recorder, exclude the sensor
+> in `configuration.yaml`. Voucher codes give network access. By default,
+> Recorder stores the active code from **Latest Voucher Code**.
+
+```yaml
+recorder:
+  exclude:
+    entities:
+      - sensor.your_site_latest_voucher_code
+```
+
+You can also disable the code sensor in Home Assistant. Recorder keeps the
+codes that it already stored.
 
 ### Wake-on-LAN buttons
 
@@ -695,10 +706,11 @@ Doorbell notifications need **1.20.11+**. Lock rules and emergency settings
 need **1.24.6+**. Webhooks need **2.2.10+**. Community Access SDKs document
 gate motor commands for **4.2.16+** and a **UA Hub Gate in three-button mode**.
 
-**Warning.** Verify the hub type and door link before you automate gate
-commands. Testing has not verified these commands on gate hardware.
-Only a hub that reports `UGT` with an exact door location link gets a
-cover. Other hub types keep the ordinary door controls.
+> **Warning.** Before you automate gate commands, check the hub type and door
+> link. Tests did not use gate hardware.
+
+The integration creates a cover only for a hub that reports `UGT` with an
+exact door location link. Other hub types keep their door controls.
 
 If the token lacks permission, the related feature becomes unavailable.
 Door and gate controls also need device-read permission. If the Access
@@ -771,12 +783,14 @@ results for a door until a poll finds that door. If Access registers an
 endpoint but returns an unusable response, remove it in Access before retrying.
 Diagnostics and events omit tokens, PINs, signing secrets, and other credentials.
 
-**Warning.** Keep reusable PINs out of automation YAML. Traces, event
-listeners, Recorder, and core debug logs can contain service inputs.
-Turn off `homeassistant.core` DEBUG before you use a PIN action. Restrict
-access to traces, logs, and the database. Give PINs as strings. In YAML,
-quote a PIN (for example, `pin: "0123"`). This keeps the leading zeroes.
-The integration rejects numeric inputs.
+> **Warning.** Do not put PINs that you use again in automation YAML. Traces,
+> event listeners, Recorder, and core debug logs can contain action inputs.
+> Before you use a PIN action, turn off `homeassistant.core` DEBUG.
+> Limit access to traces, logs, and the database.
+
+Give PINs as strings. In YAML, put the PIN in quotation marks (for example,
+`pin: "0123"`). This keeps the initial zeros. The integration rejects
+numeric inputs.
 
 ## UniFi InnerSpace
 
@@ -904,32 +918,49 @@ The repository includes three YAML blueprints for network health alerts.
 They use UniFi Insights entities and need Home Assistant 2026.9.0 or later.
 Each blueprint runs the actions you select.
 
-| Blueprint                      | Runs your actions when                                                                                      | Needs                                                                                                                            |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Infrastructure offline alert   | A gateway, switch or access point stays offline for a set time, and optionally when it comes back           | The **Status** connectivity sensors in [Network entities](#network-entities)                                                     |
-| AP overload alert              | An access point has too many wireless clients, or optionally too high a channel utilization, for a set time | The **Wireless Clients** sensors in [Network entities](#network-entities); an external utilization sensor for utilization alerts |
-| Secure subnet new client alert | A new tracked client matches a secure subnet prefix                                                         | Client tracking and IP prefixes for secure subnets                                                                               |
+| Blueprint                      | Runs your actions when                                                                                     | Needs                                                                                                                  |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Infrastructure offline alert   | A gateway, switch, or access point stays offline for the set time. The blueprint can also report recovery. | The **Status** sensors in [Network entities](#network-entities)                                                        |
+| AP overload alert              | The client count or channel utilization stays above its limit for the set time.                            | The **Wireless Clients** sensors in [Network entities](#network-entities). Utilization alerts need an external sensor. |
+| Secure subnet new client alert | A new tracked client matches a secure subnet prefix                                                        | Client tracking and IP prefixes for secure subnets                                                                     |
 
 ### Install the blueprints
 
 Install the blueprints separately after the integration.
+Select an import button to open the blueprint in Home Assistant.
 
-To import a blueprint, select an **Import Blueprint** badge. For manual
-import, open **Settings** → **Automations & scenes** → **Blueprints**.
-Select **Import blueprint**. Paste the URL.
+| Blueprint source                                            | Home Assistant                                                                                  |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| [Infrastructure offline alert][yaml-infrastructure-offline] | [![Import Infrastructure offline alert][blueprint-import-badge]][import-infrastructure-offline] |
+| [AP overload alert][yaml-ap-overload]                       | [![Import AP overload alert][blueprint-import-badge]][import-ap-overload]                       |
+| [Secure subnet new client alert][yaml-secure-subnet]        | [![Import Secure subnet new client alert][blueprint-import-badge]][import-secure-subnet]        |
 
-You can also download the YAML files from
-[`blueprints/automation/unifi_insights`](https://github.com/tinkerologie/ha-unifi-insights/tree/main/blueprints/automation/unifi_insights).
-Put the files in `<config>/blueprints/automation/unifi_insights/`.
+[blueprint-import-badge]: https://my.home-assistant.io/badges/blueprint_import.svg
+[import-infrastructure-offline]: https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Ftinkerologie%2Fha-unifi-insights%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Funifi_insights%2Finfrastructure_offline.yaml
+[yaml-infrastructure-offline]: https://github.com/tinkerologie/ha-unifi-insights/blob/main/blueprints/automation/unifi_insights/infrastructure_offline.yaml
+[import-ap-overload]: https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Ftinkerologie%2Fha-unifi-insights%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Funifi_insights%2Fap_overload.yaml
+[yaml-ap-overload]: https://github.com/tinkerologie/ha-unifi-insights/blob/main/blueprints/automation/unifi_insights/ap_overload.yaml
+[import-secure-subnet]: https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Ftinkerologie%2Fha-unifi-insights%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Funifi_insights%2Fsecure_subnet_new_client.yaml
+[yaml-secure-subnet]: https://github.com/tinkerologie/ha-unifi-insights/blob/main/blueprints/automation/unifi_insights/secure_subnet_new_client.yaml
+
+#### Import with a URL
+
+1. Copy the link from the **Blueprint source** column.
+2. Open **Settings** → **Automations & scenes** → **Blueprints**.
+3. Select **Import blueprint**.
+4. Paste the URL.
+
+To install from a file, download it from the
+[blueprints folder](blueprints/automation/unifi_insights).
+Put it in `<config>/blueprints/automation/unifi_insights/`.
 `<config>` is the folder that contains `configuration.yaml`.
 
-| Infrastructure offline alert | [![Import Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Ftinkerologie%2Fha-unifi-insights%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Funifi_insights%2Finfrastructure_offline.yaml) | `https://github.com/tinkerologie/ha-unifi-insights/blob/main/blueprints/automation/unifi_insights/infrastructure_offline.yaml` |
-| AP overload alert | [![Import Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Ftinkerologie%2Fha-unifi-insights%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Funifi_insights%2Fap_overload.yaml) | `https://github.com/tinkerologie/ha-unifi-insights/blob/main/blueprints/automation/unifi_insights/ap_overload.yaml` |
-| Secure subnet new client alert | [![Import Blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Ftinkerologie%2Fha-unifi-insights%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Funifi_insights%2Fsecure_subnet_new_client.yaml) | `https://github.com/tinkerologie/ha-unifi-insights/blob/main/blueprints/automation/unifi_insights/secure_subnet_new_client.yaml` |
+#### Create an automation
 
-Open the Blueprints page. It lists three blueprints with names that start
-with "UniFi Insights -". Create an automation from a blueprint.
-Enter its inputs.
+1. Open the **Blueprints** page.
+2. Find a blueprint with a name that starts with "UniFi Insights -".
+3. Create an automation from that blueprint.
+4. Enter its inputs.
 
 ### Blueprint inputs
 
@@ -1009,17 +1040,22 @@ and do not create entities.
 | UniFi Protect Status     | `custom:unifi-insights-protect-status-card`    | Live UniFi Protect camera, doorbell, chime and NVR status summary       |
 | UniFi Event Timeline     | `custom:unifi-insights-timeline-card`          | Recent UniFi Protect security and device activity timeline              |
 
-Home Assistant keeps dashboard resources in storage by default. In this
-mode, the integration adds the card resources automatically. You can see
-them in **Settings → Dashboards → Resources**.
+Home Assistant keeps dashboard resources in storage by default.
+In this mode, the integration adds the card resources automatically.
+To see the resources, open **Settings → Dashboards → Resources**.
 
-After you install or update the integration, refresh the browser page. In
-the Home Assistant app, close the app and open it again.
+After you install or update the integration, refresh the browser page.
+If you use the Home Assistant app, close it. Then open it again.
 
-If your dashboard resources are in YAML, the integration loads the cards
-as extra frontend modules. A card can then show **Custom element doesn't
-exist** when the dashboard loads first. To prevent this, add one resource
-to `configuration.yaml`. Then restart Home Assistant.
+### Dashboard resources in YAML
+
+If you use YAML for dashboard resources, the integration loads the cards
+as extra frontend modules. If the dashboard loads first, it can show
+**Custom element doesn't exist**.
+
+To prevent this error, add the resource below to `configuration.yaml`.
+Set the text after `v=` to the installed version. Then restart Home Assistant.
+This resource loads all six cards.
 
 ```yaml
 lovelace:
@@ -1028,26 +1064,29 @@ lovelace:
       type: module
 ```
 
-The browser keeps this file for a long time. The text after `v=` tells the
-browser when to get a new copy. Use the installed integration version.
-After each integration update, change this text to the new version. Then
-restart Home Assistant and refresh the browser page. If you do not change
-it, the browser can load the old cards, or the cards can fail to load.
+The browser uses the text after `v=` to decide when to get a new copy.
+If the value stays the same, the browser can load old cards or fail to load them.
 
-This one resource loads all six cards.
+After each integration update, follow these steps.
+
+1. Change the text after `v=` to the new integration version.
+2. Restart Home Assistant.
+3. Refresh the browser page.
 
 ### Dashboard cards in YAML
 
 You can also add a card in the dashboard code editor. Use the type from
 the table above. All other options are optional.
 
-The topology card with the default settings:
+#### Topology card
+
+Use this example for the default settings.
 
 ```yaml
 type: custom:unifi-insights-topology-card
 ```
 
-The topology card for one site, with some options:
+Use this example to set options for one site.
 
 ```yaml
 type: custom:unifi-insights-topology-card
@@ -1065,8 +1104,12 @@ kinds:
 
 For all topology options, see [Network topology card](#network-topology-card).
 
-The Site Health, Internet Activity, Device Performance and Event Timeline
-cards use the same options:
+#### Site cards
+
+The **UniFi Site Health**, **UniFi Internet Activity**, **UniFi Device Performance**,
+and **UniFi Event Timeline** cards use the same options.
+
+**UniFi Site Health**
 
 ```yaml
 type: custom:unifi-insights-site-health-card
@@ -1075,25 +1118,35 @@ entry_id: 01JABCDEFGHJKMNPQRSTVWXYZ0
 site_id: 88f7af54-98f8-306a-a1c7-c9349722b1f6
 ```
 
+**UniFi Internet Activity**
+
 ```yaml
 type: custom:unifi-insights-internet-activity-card
 ```
+
+**UniFi Device Performance**
 
 ```yaml
 type: custom:unifi-insights-performance-card
 ```
 
+**UniFi Event Timeline**
+
 ```yaml
 type: custom:unifi-insights-timeline-card
 ```
 
-The Protect Status card uses a config entry and no site:
+#### Protect Status card
+
+The **UniFi Protect Status** card uses only the config entry.
 
 ```yaml
 type: custom:unifi-insights-protect-status-card
 title: Cameras
 entry_id: 01JABCDEFGHJKMNPQRSTVWXYZ0
 ```
+
+#### Options for site and Protect cards
 
 | Option     | Values                           | Default                         |
 | ---------- | -------------------------------- | ------------------------------- |
@@ -1103,7 +1156,7 @@ entry_id: 01JABCDEFGHJKMNPQRSTVWXYZ0
 
 - Set `entry_id` and `site_id` together. The Protect Status card needs
   only `entry_id`.
-- Without these options, a card selects the site only if there is one site.
+- With no options, a site card selects the site only if there is one site.
 - The example IDs are not real. To get your IDs, select the site in the
   card editor. Then select **Show code editor**.
 
@@ -1212,19 +1265,42 @@ action: unifi_insights.refresh_data
 
 ### Common problems
 
-| Problem                           | Solution                                                                                                                                                                                                                                                                                          |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cannot connect                    | Make sure that Home Assistant can reach the console URL. For a self-signed certificate, reconfigure the entry. Turn off **Verify SSL Certificate**.                                                                                                                                               |
-| Authentication failed             | Make sure that the API key is valid. Get a new key from the console or UniFi Site Manager if necessary.                                                                                                                                                                                           |
-| Integration API not available     | A self-hosted Network application does not provide the UniFi Integration API. Use a UniFi OS console.                                                                                                                                                                                             |
-| No Protect entities               | Make sure that Protect runs on the same console. Make sure that the API key can access Protect.                                                                                                                                                                                                   |
-| Entities missing                  | Make sure that the devices are adopted and online in UniFi.                                                                                                                                                                                                                                       |
-| Storage sensors unavailable       | Some firmware versions do not report NVR storage through the public Protect API.                                                                                                                                                                                                                  |
-| Many orphaned client entities     | Turn off **Enable Client Control**.                                                                                                                                                                                                                                                               |
-| Wake button does nothing          | Make sure that the device has Wake-on-LAN enabled. Examine the Home Assistant host network and VLAN. See the Wake-on-LAN instructions for more information.                                                                                                                                       |
-| Duplicate entities                | UniFi Insights and the official UniFi integrations can create entities for the same device. Disable the duplicate entities that you do not use.                                                                                                                                                   |
-| Card not in the **Add card** list | Refresh the browser page, or close and open the Home Assistant app. Make sure that **Settings → Dashboards → Resources** shows the `/unifi_insights/` entries. If your resources are in YAML, add the resource, or change its `v=` text after an update. See [Dashboard cards](#dashboard-cards). |
-| Custom element doesn't exist      | Refresh the browser page. If your resources are in YAML, add the resource, or change its `v=` text after an update. See [Dashboard cards](#dashboard-cards).                                                                                                                                      |
+#### The console does not connect
+
+- **Cannot connect.** Make sure that Home Assistant can reach the console URL.
+  If the console uses a self-signed certificate, reconfigure the entry.
+  Turn off **Verify SSL Certificate**.
+- **Authentication failed.** Make sure that the API key is valid. If necessary,
+  get a new key from the console or UniFi Site Manager.
+- **Integration API not available.** Use a UniFi OS console. A self-hosted
+  Network application does not provide the UniFi Integration API.
+
+#### Entities are missing or unavailable
+
+- **No Protect entities.** Make sure that Protect runs on the same console.
+  Make sure that the API key can access Protect.
+- **Entities are missing.** Make sure that the devices are adopted and online in UniFi.
+- **Storage sensors are unavailable.** Some firmware versions do not report
+  NVR storage through the public Protect API.
+- **Too many unused client entities.** Turn off **Enable Client Control**.
+- **Duplicate entities.** UniFi Insights and the official UniFi integrations
+  can create entities for the same device. Disable the duplicate entities
+  that you do not use.
+- **Wake button does nothing.** Make sure that Wake-on-LAN is on for the
+  device. Check the Home Assistant host network and VLAN.
+  See [Wake-on-LAN buttons](#wake-on-lan-buttons).
+
+#### Dashboard cards do not load
+
+If **Add card** does not show a card, refresh the browser page. In the Home
+Assistant app, close the app. Then open it again.
+
+If you use the default storage mode, check **Settings → Dashboards → Resources**.
+Make sure that the list includes the `/unifi_insights/` entries.
+
+If a card shows **Custom element doesn't exist**, refresh the browser page.
+If you use YAML resources, add the resource from [Dashboard resources in YAML](#dashboard-resources-in-yaml).
+After an update, change its `v=` value to the installed integration version.
 
 ### Remote console access denied (HTTP 403)
 
@@ -1233,7 +1309,7 @@ Cloud Connector. Personal Site Manager API keys work only with consoles that
 the key's account owns. Delegated accounts, including view-only accounts and
 accounts with reported Super Admin access, can receive HTTP 403.
 
-Use a key from the console owner, an organisation API key, or a
+Use a key from the console owner, an organization API key, or a
 [Local connection](#local-connection) with a key created on the console.
 UniFi Insights cannot grant access to the console's applications.
 
@@ -1261,7 +1337,7 @@ give the project terms and describe the design of the integration.
 
 ## License
 
-This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
+This project uses the Apache License 2.0. See the [license](LICENSE).
 
 ## Disclaimer
 
