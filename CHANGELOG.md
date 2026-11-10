@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.11.1] - 2026-11-10
+
 ### Documentation
 
 - Add ASD-STE100 Issue 9 to the contributor guide. Update the glossary and the setup instructions. [#478](https://github.com/tinkerologie/ha-unifi-insights/issues/478)
