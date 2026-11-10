@@ -178,6 +178,8 @@ EMPTY_PROTECT: Final[Mapping[str, Mapping[str, Any]]] = ReadOnlyDict(
             "link_stations",
             "alarm_hubs",
             "sirens",
+            "speakers",
+            "external_arm_profiles",
             "doorlocks",
             "viewports",
             "liveviews",

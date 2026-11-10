@@ -1624,6 +1624,7 @@ def test_motion_hits_the_camera_before_a_light_with_the_same_id() -> None:
         ("chime", "chimes"),
         ("doorlock", "doorlocks"),
         ("viewport", "viewports"),
+        ("speaker", "speakers"),
     ],
 )
 def test_shallow_frames_replace_nested_objects(model_key: str, collection: str) -> None:

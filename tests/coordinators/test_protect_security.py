@@ -19,6 +19,7 @@ from unifi_official_api.protect.models import (
     Fob,
     LinkStation,
     Siren,
+    Speaker,
 )
 
 from custom_components.unifi_insights.const import (
@@ -49,6 +50,7 @@ from tests.fixtures.library_responses import (
     SAMPLE_ALARM_HUB_TAMPER_EVENT,
     SAMPLE_KEYPAD_FOB,
     SAMPLE_SIREN,
+    SAMPLE_SPEAKER,
     SAMPLE_THREAD_LINK_STATION,
 )
 from tests.fixtures.protect_ws import send_device, send_event
@@ -68,6 +70,7 @@ _SECURITY_FAMILIES = [
     ("link_stations", "_fetch_link_stations", LinkStation, SAMPLE_THREAD_LINK_STATION),
     ("alarm_hubs", "_fetch_alarm_hubs", LinkStation, SAMPLE_ALARM_HUB),
     ("sirens", "_fetch_sirens", Siren, SAMPLE_SIREN),
+    ("speakers", "_fetch_speakers", Speaker, SAMPLE_SPEAKER),
 ]
 
 
@@ -127,6 +130,9 @@ class TestProtectSecurityDeviceFamilies:
         elif collection == "sirens":
             assert stored["sirenStatus"]["isActive"] is False
             assert stored["volume"] == 50
+        elif collection == "speakers":
+            assert stored["volume"] == 80
+            assert stored["isMicEnabled"] is True
         else:
             assert "threadState" in stored
 
@@ -150,6 +156,9 @@ class TestProtectSecurityDeviceFamilies:
         require_not_none(client).sirens.get_all_result = AsyncMock(
             return_value=protect_list([Siren.model_validate(SAMPLE_SIREN)])
         )
+        require_not_none(client).speakers.get_all_result = AsyncMock(
+            return_value=protect_list([Speaker.model_validate(SAMPLE_SPEAKER)])
+        )
 
         data = await coordinator._async_update_data()
 
@@ -157,6 +166,7 @@ class TestProtectSecurityDeviceFamilies:
         assert set(data["link_stations"]) == {"link_station_thread"}
         assert set(data["alarm_hubs"]) == {"alarm_hub_1"}
         assert set(data["sirens"]) == {"siren_1"}
+        assert set(data["speakers"]) == {"speaker_1"}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

@@ -43,6 +43,7 @@ from unifi_official_api.protect.endpoints.chimes import ChimesEndpoint
 from unifi_official_api.protect.models import (
     Camera,
     Chime,
+    ExternalArmProfile,
     Light,
     LiveView,
     Sensor,
@@ -90,7 +91,7 @@ from tests.fixtures.coordinator_clients import (
     _create_mock_protect_client,
     protect_list,
 )
-from tests.fixtures.library_responses import SAMPLE_SIREN
+from tests.fixtures.library_responses import SAMPLE_EXTERNAL_ARM_PROFILE, SAMPLE_SIREN
 from tests.fixtures.protect_ws import send_device, send_event
 
 if TYPE_CHECKING:
@@ -845,6 +846,15 @@ class TestActionCommands:
                 (SIREN_ID, 50),
                 {},
             ),
+            (
+                "async_stop_speaker_siren",
+                ("speaker_1",),
+                {},
+                "speakers",
+                "stop_siren",
+                ("speaker_1",),
+                {},
+            ),
         ],
     )
     async def test_action_sends_one_request(
@@ -946,6 +956,145 @@ class TestActionCommands:
         seeded_owners.protect_client.sirens.stop.assert_awaited_once_with(SIREN_ID)
         siren = seeded_owners.facade.data["protect"]["sirens"][SIREN_ID]
         assert siren["sirenStatus"]["isActive"] is False
+
+    async def test_stop_speaker_siren_400_translates_to_unavailable(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A 400 from speakers.stop_siren translates to the specific error."""
+        protect = seeded_owners.protect
+        seeded_owners.protect_client.speakers.stop_siren.side_effect = (
+            UniFiResponseError("Offline or old firmware", 400)
+        )
+
+        with pytest.raises(HomeAssistantError) as err:
+            await protect.async_stop_speaker_siren("speaker_1")
+
+        assert err.value.translation_domain == DOMAIN
+        assert err.value.translation_key == "speaker_siren_stop_unavailable"
+
+    async def test_stop_speaker_siren_generic_failure_translates_to_command_failed(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A 500 from speakers.stop_siren translates to command_failed."""
+        protect = seeded_owners.protect
+        seeded_owners.protect_client.speakers.stop_siren.side_effect = (
+            UniFiResponseError("Server error", 500)
+        )
+
+        with pytest.raises(HomeAssistantError) as err:
+            await protect.async_stop_speaker_siren("speaker_1")
+
+        assert err.value.translation_domain == DOMAIN
+        assert err.value.translation_key == "command_failed"
+
+    @pytest.mark.parametrize(
+        ("command", "method", "target_state"),
+        [
+            ("async_arm_external_profile", "arm", "armed"),
+            ("async_disarm_external_profile", "disarm", "disarmed"),
+        ],
+    )
+    async def test_external_profile_action_applies_overlay_and_refreshes(
+        self,
+        seeded_owners: SeededOwners,
+        command: str,
+        method: str,
+        target_state: str,
+    ) -> None:
+        """Arming and disarming an external profile publishes the overlay."""
+        protect = seeded_owners.protect
+        protect.data["external_arm_profiles"]["profile_1"] = copy.deepcopy(
+            SAMPLE_EXTERNAL_ARM_PROFILE
+        )
+        profile_data = {**SAMPLE_EXTERNAL_ARM_PROFILE, "state": target_state}
+        model = ExternalArmProfile.model_validate(profile_data)
+        endpoint = getattr(seeded_owners.protect_client.external_arm_profiles, method)
+        endpoint.return_value = model
+
+        with patch.object(protect, "async_request_refresh", AsyncMock()) as refresh:
+            await getattr(protect, command)("profile_1")
+
+        endpoint.assert_awaited_once_with("profile_1")
+        assert (
+            protect.data["external_arm_profiles"]["profile_1"]["state"] == target_state
+        )
+        refresh.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ("command", "method"),
+        [
+            ("async_arm_external_profile", "arm"),
+            ("async_disarm_external_profile", "disarm"),
+        ],
+    )
+    async def test_external_profile_action_failure_skips_overlay_and_refresh(
+        self,
+        seeded_owners: SeededOwners,
+        command: str,
+        method: str,
+    ) -> None:
+        """A failed arm or disarm raises command_failed and updates nothing."""
+        protect = seeded_owners.protect
+        getattr(
+            seeded_owners.protect_client.external_arm_profiles, method
+        ).side_effect = UniFiResponseError("Failed", 500)
+
+        with (
+            patch.object(protect, "async_request_refresh", AsyncMock()) as refresh,
+            pytest.raises(HomeAssistantError) as err,
+        ):
+            await getattr(protect, command)("profile_1")
+
+        assert err.value.translation_key == "command_failed"
+        refresh.assert_not_awaited()
+        assert "profile_1" not in protect.data.get("external_arm_profiles", {})
+
+    async def test_fetch_external_arm_profiles_when_flag_enabled(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """When NVR has useExternalAlarmManager True, profiles are fetched."""
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_model = ExternalArmProfile.model_validate(SAMPLE_EXTERNAL_ARM_PROFILE)
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.return_value = protect_list([profile_model])
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "profile_1" in protect.data["external_arm_profiles"]
+        assert (
+            protect.data["external_arm_profiles"]["profile_1"]["title"] == "Perimeter"
+        )
+
+    async def test_reconcile_external_arm_profiles_clears_when_flag_false(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """When useExternalAlarmManager is false, profiles collection is cleared."""
+        protect = seeded_owners.protect
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        }
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": False
+        }
+
+        await protect._reconcile_external_arm_profiles()
+
+        assert protect.data["external_arm_profiles"] == {}
+
+    async def test_fetch_external_arm_profiles_404_marks_unsupported(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """HTTP 404 marks external_arm_profiles unsupported."""
+        protect = seeded_owners.protect
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.side_effect = UniFiNotFoundError("Not found", 404)
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "external_arm_profiles" in protect._unsupported_until
 
 
 SESSION = TalkbackSession(

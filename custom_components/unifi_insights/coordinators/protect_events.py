@@ -47,6 +47,7 @@ from custom_components.unifi_insights.const import (
     DEVICE_TYPE_NVR,
     DEVICE_TYPE_SENSOR,
     DEVICE_TYPE_SIREN,
+    DEVICE_TYPE_SPEAKER,
     DEVICE_TYPE_VIEWER,
     DEVICE_TYPE_VIEWPORT,
     DIGITAL_INPUT_EVENT_TYPES_BY_STATE,
@@ -76,6 +77,7 @@ type Family = Literal[
     "link_stations",
     "alarm_hubs",
     "sirens",
+    "speakers",
 ]
 type GuardedFamily = Literal["nvrs", "sirens"]
 
@@ -91,6 +93,7 @@ FAMILIES: Final[tuple[Family, ...]] = (
     "link_stations",
     "alarm_hubs",
     "sirens",
+    "speakers",
 )
 
 # Bounded auto-off for the event-derived motion, smart-detect and ring
@@ -214,6 +217,7 @@ _SHALLOW_FRAME_COLLECTIONS: Final[dict[str, str]] = {
     DEVICE_TYPE_CHIME: "chimes",
     DEVICE_TYPE_DOORLOCK: "doorlocks",
     DEVICE_TYPE_VIEWPORT: "viewports",
+    DEVICE_TYPE_SPEAKER: "speakers",
 }
 
 # Every model key a device frame is applied for; any other is ignored.
@@ -1378,7 +1382,7 @@ def _apply_fetched(run: _Run, request: RequestStamp, outcome: Fetched) -> None:
                 "Protect coordinator: Successfully fetched NVR: %s",
                 next(iter(items)),
             )
-    elif family in ("fobs", "link_stations", "alarm_hubs", "sirens"):
+    elif family in ("fobs", "link_stations", "alarm_hubs", "sirens", "speakers"):
         run.log(
             logging.DEBUG,
             "Protect coordinator: Successfully fetched %d %s",

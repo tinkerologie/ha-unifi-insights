@@ -177,6 +177,9 @@ def seed_protect_client(client: NonCallableMagicMock) -> None:
     )
     client.chimes.get_all_result.return_value = protect_list([_two_doorbell_chime()])
     client.nvr.get.return_value = copy.deepcopy(SAMPLE_NVR)
+    client.speakers.get_all_result.return_value = protect_list([])
+    client.external_arm_profiles.get_all_result.return_value = protect_list([])
+    client.external_arm_profiles.get_all.return_value = []
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

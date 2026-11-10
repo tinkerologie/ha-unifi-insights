@@ -25,6 +25,7 @@ from .const import (
     DEVICE_TYPE_LINK_STATION,
     DEVICE_TYPE_NVR,
     DEVICE_TYPE_SENSOR,
+    DEVICE_TYPE_SPEAKER,
     DOMAIN,
     MANUFACTURER,
     MOBILITY_DEVICE_PREFIX,
@@ -387,7 +388,7 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
 
         # Match cameras and NVRs to network devices by MAC
         should_match_mac = (
-            device_type in (DEVICE_TYPE_CAMERA, DEVICE_TYPE_NVR)
+            device_type in (DEVICE_TYPE_CAMERA, DEVICE_TYPE_NVR, DEVICE_TYPE_SPEAKER)
             and "mac" in lookup_device_data
         )
         if should_match_mac:

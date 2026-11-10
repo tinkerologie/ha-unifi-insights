@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add `speaker_stop_siren` button entity for polled UniFi Protect speakers to stop an active siren when running UniFi Protect v7.4.96 or later. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
+- Add `alarm_control_panel` entities for UniFi Protect external arm profiles when an NVR enables the external alarm manager (Protect v7.4.96+), supporting arm away and disarm actions; profile creation, editing, deletion and PIN management remain managed exclusively in UniFi OS. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
 - Add diagnostic problem binary sensor `sensor_mounted_incorrectly` for Protect UP-Sense sensors to report incorrect mounting orientation when running UniFi Protect v7.4.96 or later. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
 - Support `antiFlicker` video mode option across Protect camera select entities and `unifi_insights.set_video_mode` service action. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
 

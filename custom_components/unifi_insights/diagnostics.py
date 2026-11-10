@@ -139,6 +139,7 @@ WIFI_TO_REDACT = TO_REDACT | {"name"}
 # Hotspot vouchers: voucher codes are guest credentials; the note ("name" or
 # "note") can name a guest.
 VOUCHER_TO_REDACT = TO_REDACT | {"code", "name", "note"}
+EXTERNAL_PROFILE_TO_REDACT: Final[frozenset[str]] = frozenset({"pin_code", "pin"})
 
 # Port forwards: the forward target, the allowed source and the WAN-side
 # destination locate hosts inside and outside the network.
@@ -323,6 +324,15 @@ def _redact_coordinator_data(data: Any) -> Any:
             redacted[section] = {
                 site_id: async_redact_data(site_records, to_redact)
                 for site_id, site_records in records.items()
+            }
+
+    protect = redacted.get("protect")
+    if isinstance(protect, dict):
+        profiles = protect.get("external_arm_profiles")
+        if isinstance(profiles, dict):
+            protect["external_arm_profiles"] = {
+                profile_id: async_redact_data(profile, EXTERNAL_PROFILE_TO_REDACT)
+                for profile_id, profile in profiles.items()
             }
 
     # Per-device statistics carry a copy of that device's client records.

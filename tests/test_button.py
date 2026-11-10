@@ -30,6 +30,7 @@ from custom_components.unifi_insights.button import (
     UnifiProtectChimePlayButton,
     UnifiProtectPTZPatrolStartButton,
     UnifiProtectPTZPatrolStopButton,
+    UnifiProtectSpeakerStopSirenButton,
     _connected_client_macs,
     _registered_wake_macs,
     async_setup_entry,
@@ -595,6 +596,64 @@ class TestUnifiProtectPTZButtons:
         protect = protect_owner(mock_coordinator)
         protect.async_stop_ptz_patrol.assert_awaited_once_with("camera1")
 
+    async def test_speaker_stop_siren_button_init(
+        self, hass: HomeAssistant, mock_coordinator
+    ):
+        """Test speaker stop-siren button initialization."""
+        button = UnifiProtectSpeakerStopSirenButton(
+            coordinator=mock_coordinator,
+            speaker_id="speaker1",
+        )
+        assert button._device_id == "speaker1"
+        assert button._attr_translation_key == "speaker_stop_siren"
+        assert button.unique_id == "unifi_insights_speaker_speaker1_stop_siren"
+
+    async def test_speaker_stop_siren_button_press(
+        self, hass: HomeAssistant, mock_coordinator
+    ):
+        """Test speaker stop-siren button press."""
+        button = UnifiProtectSpeakerStopSirenButton(
+            coordinator=mock_coordinator,
+            speaker_id="speaker1",
+        )
+        await button.async_press()
+        protect = protect_owner(mock_coordinator)
+        protect.async_stop_speaker_siren.assert_awaited_once_with("speaker1")
+
+    async def test_speaker_stop_siren_button_press_400_exception(
+        self, hass: HomeAssistant, mock_coordinator
+    ):
+        """Test speaker stop-siren button press with 400 error."""
+        button = UnifiProtectSpeakerStopSirenButton(
+            coordinator=mock_coordinator,
+            speaker_id="speaker1",
+        )
+        protect = protect_owner(mock_coordinator)
+        protect.async_stop_speaker_siren.side_effect = HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="speaker_siren_stop_unavailable",
+        )
+        with pytest.raises(HomeAssistantError) as err:
+            await button.async_press()
+        assert err.value.translation_key == "speaker_siren_stop_unavailable"
+
+    async def test_speaker_stop_siren_button_press_generic_exception(
+        self, hass: HomeAssistant, mock_coordinator
+    ):
+        """Test speaker stop-siren button press with generic error."""
+        button = UnifiProtectSpeakerStopSirenButton(
+            coordinator=mock_coordinator,
+            speaker_id="speaker1",
+        )
+        protect = protect_owner(mock_coordinator)
+        protect.async_stop_speaker_siren.side_effect = HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="command_failed",
+        )
+        with pytest.raises(HomeAssistantError) as err:
+            await button.async_press()
+        assert err.value.translation_key == "command_failed"
+
 
 class TestAsyncSetupEntry:
     """Tests for async_setup_entry."""
@@ -650,6 +709,13 @@ class TestAsyncSetupEntry:
                     "chime1": {
                         "id": "chime1",
                         "name": "Front Door Chime",
+                        "state": "CONNECTED",
+                    },
+                },
+                "speakers": {
+                    "speaker1": {
+                        "id": "speaker1",
+                        "name": "Yard Speaker",
                         "state": "CONNECTED",
                     },
                 },
@@ -729,6 +795,24 @@ class TestAsyncSetupEntry:
         ]
         assert len(ptz_start_buttons) > 0
         assert len(ptz_stop_buttons) > 0
+
+    async def test_setup_entry_creates_speaker_buttons(
+        self, hass: HomeAssistant, mock_coordinator, mock_config_entry
+    ):
+        """Test that setup creates speaker stop-siren buttons."""
+        added_entities: list = []
+        add_entities = EntityCollector(added_entities)
+        await async_setup_entry(hass, mock_config_entry, add_entities)
+
+        speaker_buttons = [
+            e
+            for e in added_entities
+            if isinstance(e, UnifiProtectSpeakerStopSirenButton)
+        ]
+        assert len(speaker_buttons) == 1
+        assert (
+            speaker_buttons[0].unique_id == "unifi_insights_speaker_speaker1_stop_siren"
+        )
 
     async def test_setup_entry_without_protect_client(
         self, hass: HomeAssistant, mock_coordinator, mock_config_entry

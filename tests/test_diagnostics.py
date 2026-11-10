@@ -594,6 +594,81 @@ def test_redact_coordinator_data_hides_thread_ids_and_tamper_user() -> None:
         assert secret not in text
 
 
+def test_redact_coordinator_data_redacts_external_arm_profile_pin() -> None:
+    """External arm profiles keep title and state, but pin and pin_code are redacted."""
+    data = {
+        "protect": {
+            "external_arm_profiles": {
+                "profile_1": {
+                    "id": "profile_1",
+                    "title": "Perimeter",
+                    "state": "disarmed",
+                    "pin_code": "SECRET_PIN_1234",
+                    "pin": "SECRET_PIN_5678",
+                    "has_pin": True,
+                    "alarm_ids": ["alarm_1"],
+                    "nested": {
+                        "pin_code": "NESTED_PIN_9999",
+                        "pin": "NESTED_PIN_0000",
+                    },
+                }
+            }
+        }
+    }
+
+    redacted = _redact_coordinator_data(data)
+
+    profile = redacted["protect"]["external_arm_profiles"]["profile_1"]
+    assert profile["title"] == "Perimeter"
+    assert profile["state"] == "disarmed"
+    assert profile["pin_code"] == REDACTED
+    assert profile["pin"] == REDACTED
+    assert profile["nested"]["pin_code"] == REDACTED
+    assert profile["nested"]["pin"] == REDACTED
+    assert "SECRET_PIN_1234" not in json.dumps(redacted)
+    assert "SECRET_PIN_5678" not in json.dumps(redacted)
+    assert "NESTED_PIN_9999" not in json.dumps(redacted)
+
+
+async def test_diagnostics_public_export_redacts_external_arm_profile_pin(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    enable_custom_integrations,
+) -> None:
+    """Public diagnostics export redacts sentinel PIN values from profiles."""
+    coordinator = init_integration.runtime_data.coordinator
+    profile_data = {
+        "profile_1": {
+            "id": "profile_1",
+            "title": "Perimeter",
+            "state": "disarmed",
+            "pin_code": "SENTINEL_PIN_CODE_4321",
+            "pin": "SENTINEL_PIN_8765",
+            "has_pin": True,
+            "alarm_ids": ["alarm_1"],
+            "nested": {
+                "pin_code": "SENTINEL_NESTED_PIN_1111",
+            },
+        }
+    }
+    coordinator.data = with_protect_collection(
+        coordinator.data, "external_arm_profiles", profile_data
+    )
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
+
+    prof = diagnostics["data"]["protect"]["external_arm_profiles"]["profile_1"]
+    assert prof["title"] == "Perimeter"
+    assert prof["state"] == "disarmed"
+    assert prof["pin_code"] == REDACTED
+    assert prof["pin"] == REDACTED
+    assert prof["nested"]["pin_code"] == REDACTED
+    raw_text = json.dumps(diagnostics, default=str)
+    assert "SENTINEL_PIN_CODE_4321" not in raw_text
+    assert "SENTINEL_PIN_8765" not in raw_text
+    assert "SENTINEL_NESTED_PIN_1111" not in raw_text
+
+
 def test_redact_coordinator_data_keeps_siren_state_and_hides_ids() -> None:
     """A siren record keeps the state worth debugging and loses its identifier."""
     data = {"protect": {"sirens": {"siren_1": copy.deepcopy(SAMPLE_SIREN)}}}

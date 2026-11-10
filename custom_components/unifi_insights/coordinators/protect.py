@@ -34,6 +34,7 @@ from unifi_official_api.protect.talkback import (
 )
 
 from custom_components.unifi_insights.const import DOMAIN, SCAN_INTERVAL_PROTECT
+from custom_components.unifi_insights.data_transforms import get_field
 from custom_components.unifi_insights.probe import is_malformed_response
 
 from .base import CommandFailure, UnifiInsightsBaseCoordinator, async_execute_command
@@ -84,7 +85,9 @@ if TYPE_CHECKING:
     )
     from .protect_ws import Stream
 
-type _DeviceFamily = Literal["fobs", "link_stations", "alarm_hubs", "sirens"]
+type _DeviceFamily = Literal[
+    "fobs", "link_stations", "alarm_hubs", "sirens", "speakers"
+]
 
 # The RTSPS channels Protect renders for a camera, heaviest first.
 type StreamQuality = Literal["high", "medium", "low"]
@@ -241,6 +244,8 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
             "link_stations": {},
             "alarm_hubs": {},
             "sirens": {},
+            "speakers": {},
+            "external_arm_profiles": {},
             "doorlocks": {},
             "viewports": {},
             "liveviews": {},
@@ -642,6 +647,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         except ConfigEntryAuthFailed:
             self.config_entry.async_start_reauth(self.hass)
         await self._reconcile_sirens()
+        await self._reconcile_external_arm_profiles()
 
     async def _reconcile_sirens(self) -> None:
         """
@@ -975,6 +981,11 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
             await self._fetch_link_stations()
             await self._fetch_alarm_hubs()
             await self._fetch_sirens()
+            await self._fetch_speakers()
+            if self._any_nvr_uses_external_alarm_manager():
+                await self._fetch_external_arm_profiles()
+            elif self.data.get("external_arm_profiles"):
+                self.data = {**self.data, "external_arm_profiles": {}}
 
             self._available = True
             self.data = {**self.data, "last_update": datetime.now(tz=UTC)}
@@ -986,7 +997,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
                 "Protect coordinator: Update complete - "
                 "%d cameras, %d lights, %d sensors, %d NVRs, "
                 "%d chimes, %d viewers, %d liveviews, "
-                "%d fobs, %d link stations, %d alarm hubs, %d sirens",
+                "%d fobs, %d link stations, %d alarm hubs, %d sirens, %d speakers",
                 len(self.data["cameras"]),
                 len(self.data["lights"]),
                 len(self.data["sensors"]),
@@ -998,6 +1009,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
                 len(self.data["link_stations"]),
                 len(self.data["alarm_hubs"]),
                 len(self.data["sirens"]),
+                len(self.data["speakers"]),
             )
 
             return self.data
@@ -1272,6 +1284,89 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
     async def _fetch_sirens(self) -> None:
         """Fetch siren data (the endpoint is absent on older Protect versions)."""
         await self._fetch_device_family("sirens")
+
+    async def _fetch_speakers(self) -> None:
+        """Fetch speaker data (endpoint is absent on older Protect versions)."""
+        await self._fetch_device_family("speakers")
+
+    def _any_nvr_uses_external_alarm_manager(self) -> bool:
+        """Return True if any NVR in Protect data uses external alarm manager."""
+        nvrs = self.data.get("nvrs")
+        if not isinstance(nvrs, dict):
+            return False
+        for nvr in nvrs.values():
+            if not isinstance(nvr, dict):
+                continue
+            flags = nvr.get("featureFlags") or nvr.get("feature_flags")
+            if isinstance(flags, dict) and get_field(
+                flags,
+                "useExternalAlarmManager",
+                "use_external_alarm_manager",
+                default=False,
+            ):
+                return True
+        return False
+
+    async def _reconcile_external_arm_profiles(self) -> None:
+        """Reconcile external arm profiles on the 30s timer when enabled on an NVR."""
+        if not self._any_nvr_uses_external_alarm_manager():
+            if self.data.get("external_arm_profiles"):
+                self.data = {**self.data, "external_arm_profiles": {}}
+                self.async_update_listeners()
+            return
+
+        before = self.data.get("external_arm_profiles", {})
+        await self._fetch_external_arm_profiles()
+        if self.data.get("external_arm_profiles") != before:
+            self.async_update_listeners()
+
+    async def _fetch_external_arm_profiles(self) -> None:
+        """
+        Fetch external arm profiles.
+
+        Replaced as a whole; no device registry entries.
+        """
+        if not self.protect_client:
+            return
+
+        retry_at = self._unsupported_until.get("external_arm_profiles")
+        if retry_at is not None and time.monotonic() < retry_at:
+            return
+
+        endpoint = getattr(self.protect_client, "external_arm_profiles", None)
+        if endpoint is None:
+            return
+
+        answered = "external_arm_profiles" in self._answered_families
+        _LOGGER.debug("Protect coordinator: Fetching external_arm_profiles")
+        try:
+            result = await endpoint.get_all_result()
+            profiles: dict[str, Any] = {}
+            for profile_model in result.records:
+                profile = self._model_to_dict(profile_model)
+                profile_id = profile.get("id")
+                if profile_id:
+                    profiles[profile_id] = profile
+            self._answered_families.add("external_arm_profiles")
+            self._log_family_fetch_recovery("external_arm_profiles")
+            self.data = {**self.data, "external_arm_profiles": profiles}
+            _LOGGER.debug(
+                "Protect coordinator: Successfully fetched %d external arm profiles",
+                len(result.records),
+            )
+        except UniFiNotFoundError:
+            if answered:
+                return
+            self._mark_family_unsupported("external_arm_profiles", "HTTP 404")
+        except UniFiResponseError as err:
+            if not answered and err.status_code < HTTPStatus.MULTIPLE_CHOICES:
+                self._mark_family_unsupported(
+                    "external_arm_profiles", "non-JSON response"
+                )
+                return
+            self._log_family_fetch_error("external_arm_profiles", err)
+        except Exception as err:
+            self._log_family_fetch_error("external_arm_profiles", err)
 
     def _log_family_fetch_error(self, collection: str, err: Exception) -> None:
         """Report a family outage once while retaining details on later polls."""
@@ -1698,6 +1793,49 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
             siren_id,
         )
         self.mark_siren_stopped(siren_id)
+
+    async def async_stop_speaker_siren(self, speaker_id: str) -> None:
+        """Stop siren on a speaker."""
+        speakers = self._client.speakers
+
+        async def _stop() -> None:
+            try:
+                await speakers.stop_siren(speaker_id)
+            except UniFiResponseError as err:
+                if err.status_code == HTTPStatus.BAD_REQUEST:
+                    raise HomeAssistantError(
+                        translation_domain=DOMAIN,
+                        translation_key="speaker_siren_stop_unavailable",
+                    ) from err
+                raise
+
+        await self._async_command(
+            f"Unable to stop siren on speaker {speaker_id}", _stop
+        )
+
+    async def async_arm_external_profile(self, profile_id: str) -> None:
+        """Arm an external arm profile."""
+        profile = await self._async_command(
+            f"Unable to arm external profile {profile_id}",
+            self._client.external_arm_profiles.arm,
+            profile_id,
+        )
+        self._publish_overlay(
+            "external_arm_profiles", profile_id, self._model_to_dict(profile)
+        )
+        await self._async_reconcile()
+
+    async def async_disarm_external_profile(self, profile_id: str) -> None:
+        """Disarm an external arm profile."""
+        profile = await self._async_command(
+            f"Unable to disarm external profile {profile_id}",
+            self._client.external_arm_profiles.disarm,
+            profile_id,
+        )
+        self._publish_overlay(
+            "external_arm_profiles", profile_id, self._model_to_dict(profile)
+        )
+        await self._async_reconcile()
 
     async def async_start_camera_talkback(
         self, camera_id: str, media_url: str

@@ -214,6 +214,8 @@ DEVICE_TYPE_ALARM_HUB: Final = "alarm_hub"
 # Sirens are keyed "sirens" in the coordinator data. "siren" is also the
 # WebSocket modelKey (spec sirenModelKey), so one constant serves both.
 DEVICE_TYPE_SIREN: Final = "siren"
+DEVICE_TYPE_SPEAKER: Final = "speaker"
+MODEL_KEY_SPEAKER: Final = "speaker"
 
 # Protect WebSocket modelKey values that differ from the device types above.
 # Link stations and alarm hubs share one modelKey; there is no "alarmHub" key.

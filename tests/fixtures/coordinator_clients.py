@@ -294,10 +294,20 @@ def _create_mock_protect_client() -> MagicMock:
     )
 
     # Protect 7.3.70 security device families
-    for family in ("fobs", "link_stations", "alarm_hubs", "sirens"):
+    for family in ("fobs", "link_stations", "alarm_hubs", "sirens", "speakers"):
         endpoint = MagicMock()
         endpoint.get_all_result = AsyncMock(return_value=protect_list([]))
+        if family == "speakers":
+            endpoint.stop_siren = AsyncMock(return_value=True)
         setattr(client, family, endpoint)
+
+    client.external_arm_profiles = MagicMock()
+    client.external_arm_profiles.get_all_result = AsyncMock(
+        return_value=protect_list([])
+    )
+    client.external_arm_profiles.get_all = AsyncMock(return_value=[])
+    client.external_arm_profiles.arm = AsyncMock()
+    client.external_arm_profiles.disarm = AsyncMock()
     # WebSocket support
     client.get_host_id = AsyncMock(return_value="nvr1")
     client.websocket = MagicMock()
