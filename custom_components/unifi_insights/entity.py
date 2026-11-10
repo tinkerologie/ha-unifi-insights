@@ -347,7 +347,6 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         super().__init__(coordinator, context=FacadeOwner.PROTECT)
         self._device_type = device_type
         self._device_id = device_id
-        self._entity_type = entity_type
 
         collection = f"{device_type}s"
         device_data = protect_device(coordinator.data, collection, device_id) or {}

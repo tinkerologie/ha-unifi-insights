@@ -1752,10 +1752,15 @@ def _digital_setup(hass: Any, data: Any | None = None) -> tuple[Any, Any, list[A
     return entry, facade, added
 
 
-def _digital_entities(added: list[Any]) -> dict[tuple[str, str], Any]:
-    """Return the added digital-input entities keyed by camera and input."""
+def _digital_unique_id(camera_id: str, input_key: str) -> str:
+    """Return the public unique id of one camera digital-input entity."""
+    return f"{DOMAIN}_camera_{camera_id}_digital_input_{input_key}_event"
+
+
+def _digital_entities(added: list[Any]) -> dict[str, Any]:
+    """Return the added digital-input entities keyed by their unique id."""
     return {
-        (entity._camera_id, entity._input_key): entity
+        entity.unique_id: entity
         for entity in added
         if isinstance(entity, event_platform.UnifiProtectCameraDigitalInputEventEntity)
     }
@@ -1838,7 +1843,7 @@ async def test_later_digital_input_frame_fires_on_the_existing_entity(
         hass, protect_digital_input_signal(entry.entry_id), _input_payload()
     )
     await hass.async_block_till_done()
-    entity = _digital_entities(added)[("camera1", "0")]
+    entity = _digital_entities(added)[_digital_unique_id("camera1", "0")]
     await _added(entity)
 
     with (
@@ -1871,7 +1876,10 @@ async def test_second_channel_creates_a_second_entity(hass: Any) -> None:
     )
     await hass.async_block_till_done()
 
-    assert set(_digital_entities(added)) == {("camera1", "0"), ("camera1", "1")}
+    assert set(_digital_entities(added)) == {
+        _digital_unique_id("camera1", "0"),
+        _digital_unique_id("camera1", "1"),
+    }
     assert len(added) == 2
 
 
@@ -1953,18 +1961,23 @@ async def test_registry_rows_are_restored_including_absent_and_disabled(
 
     entities = _digital_entities(added)
     assert set(entities) == {
-        ("camera1", "0"),
-        ("camera2", "AlarmIn_1"),
-        ("camera3", "2"),
+        _digital_unique_id("camera1", "0"),
+        _digital_unique_id("camera2", "AlarmIn_1"),
+        _digital_unique_id("camera3", "2"),
     }
     assert len(added) == 3
-    assert entities[("camera1", "0")].unique_id == present.unique_id
-    assert entities[("camera2", "AlarmIn_1")].unique_id == absent.unique_id
+    assert entities[_digital_unique_id("camera1", "0")].unique_id == present.unique_id
+    assert entities[_digital_unique_id("camera2", "AlarmIn_1")].unique_id == (
+        absent.unique_id
+    )
     # The absent camera is not evidence that the entity was deleted.
-    assert entities[("camera2", "AlarmIn_1")].available is False
-    assert entities[("camera2", "AlarmIn_1")].device_info["name"] == "Camera camera2"
+    assert entities[_digital_unique_id("camera2", "AlarmIn_1")].available is False
+    assert (
+        entities[_digital_unique_id("camera2", "AlarmIn_1")].device_info["name"]
+        == "Camera camera2"
+    )
     # A disabled row is rebuilt; Home Assistant keeps its disabled_by value.
-    assert entities[("camera3", "2")].unique_id == disabled.unique_id
+    assert entities[_digital_unique_id("camera3", "2")].unique_id == disabled.unique_id
     disabled_row = er.async_get(hass).async_get(disabled.entity_id)
     assert disabled_row is not None
     assert disabled_row.disabled_by is not None
@@ -2006,7 +2019,7 @@ async def test_restored_entity_receives_later_frames_without_duplicate_add(
     event_platform.async_setup_protect_digital_input_events(
         hass, entry, _collector(added)
     )
-    entity = _digital_entities(added)[("camera1", "0")]
+    entity = _digital_entities(added)[_digital_unique_id("camera1", "0")]
     await _added(entity)
 
     with (
@@ -2047,7 +2060,7 @@ async def test_setup_replays_no_stored_event(hass: Any) -> None:
     event_platform.async_setup_protect_digital_input_events(
         hass, entry, _collector(added)
     )
-    entity = _digital_entities(added)[("camera1", "0")]
+    entity = _digital_entities(added)[_digital_unique_id("camera1", "0")]
 
     with (
         patch.object(entity, "_trigger_event") as trigger,

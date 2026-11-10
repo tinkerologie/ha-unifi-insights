@@ -527,7 +527,6 @@ class UnifiInsightsPoePowerCycleButton(UnifiInsightsEntity, ButtonEntity):
         )
         super().__init__(coordinator, description, site_id, device_id)
         self._port_idx = port_idx
-        self._port_label = port_label
         self._attr_unique_id = f"{site_id}_{device_id}_port{port_idx}_poe_power_cycle"
         self._attr_translation_placeholders = {"port_label": port_label}
 
