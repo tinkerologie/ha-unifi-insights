@@ -91,8 +91,6 @@ CONF_SITE_IDS: Final = "site_ids"  # Empty/absent means every site
 CONF_TRACK_SUBSCRIBERS: Final = "track_subscribers"
 CONF_CARRIER_ACTIONS: Final = "carrier_actions"
 DEFAULT_TRACK_CLIENTS: Final = False
-DEFAULT_TRACK_WIFI_CLIENTS: Final = False
-DEFAULT_TRACK_WIRED_CLIENTS: Final = False
 DEFAULT_CLIENT_CONTROL: Final = True
 DEFAULT_TRACK_SUBSCRIBERS: Final = False
 DEFAULT_CARRIER_ACTIONS: Final = False
@@ -120,12 +118,6 @@ ACCESS_CONFIG_KEYS: Final = (
     CONF_ACCESS_WEBHOOK_ENDPOINT_ID,
     CONF_ACCESS_WEBHOOK_SECRET,
 )
-# Access has no version endpoint in the official API, so these minimums are
-# checked against the Access application version the user reports, and each
-# feature is also detected by its own endpoint response.
-ACCESS_MIN_VERSION_NOTIFICATIONS: Final = (1, 20, 11)
-ACCESS_MIN_VERSION_EMERGENCY_LOCK_RULES: Final = (1, 24, 6)
-ACCESS_MIN_VERSION_WEBHOOKS: Final = (2, 2, 10)
 # Access state is polled and refreshed after each command. Door lock state
 # changes outside Home Assistant, so the poll is the authoritative fallback.
 SCAN_INTERVAL_ACCESS = timedelta(seconds=30)
@@ -204,9 +196,6 @@ MAX_CONSECUTIVE_MISSING_POLLS: Final = 3
 TIMELINE_MAX_HOURS: Final = 24
 
 
-UNIFI_API_HEADERS = {"Accept": "application/json", "Content-Type": "application/json"}
-
-
 # Device types
 DEVICE_TYPE_CAMERA: Final = "camera"
 DEVICE_TYPE_LIGHT: Final = "light"
@@ -264,7 +253,6 @@ ATTR_MIC_ENABLED: Final = "mic_enabled"
 ATTR_HDR_MODE: Final = "hdr_mode"
 ATTR_VIDEO_MODE: Final = "video_mode"
 ATTR_LAST_MOTION: Final = "last_motion"
-ATTR_SMART_DETECT_TYPES: Final = "smart_detect_types"
 ATTR_STATUS_LIGHT: Final = "status_light"
 ATTR_HIGH_FPS_MODE: Final = "high_fps_mode"
 
@@ -287,22 +275,11 @@ SERVICE_PTZ_MOVE: Final = "ptz_move"
 
 SERVICE_PTZ_PATROL: Final = "ptz_patrol"
 
-# Service descriptions
-SERVICE_PTZ_MOVE_DESCRIPTION: Final = "Move a PTZ camera to a preset position."
-SERVICE_PTZ_PATROL_DESCRIPTION: Final = "Start or stop a PTZ camera patrol."
-
-# Camera states
-CAMERA_STATE_CONNECTED: Final = "CONNECTED"
-
 # Camera types
-CAMERA_TYPE_REGULAR: Final = "regular"
 CAMERA_TYPE_DOORBELL: Final = "doorbell"
 CAMERA_TYPE_DOORBELL_WITH_PACKAGE_DETECTION: Final = "doorbell_with_package_detection"
-CAMERA_TYPE_CAMERA_WITH_PACKAGE_DETECTION: Final = "camera_with_package_detection"
 CAMERA_TYPE_DOORBELL_MAIN: Final = "doorbell_main"
 CAMERA_TYPE_DOORBELL_PACKAGE: Final = "doorbell_package"
-CAMERA_TYPE_CAMERA_MAIN: Final = "camera_main"
-CAMERA_TYPE_CAMERA_PACKAGE: Final = "camera_package"
 
 # HDR modes
 HDR_MODE_AUTO: Final = "auto"
@@ -375,7 +352,6 @@ ATTR_BREACH_EVENT_COUNT: Final = "breach_event_count"
 # NVR attributes
 ATTR_NVR_ID: Final = "nvr_id"
 ATTR_NVR_NAME: Final = "nvr_name"
-ATTR_NVR_STATE: Final = "nvr_state"
 ATTR_NVR_VERSION: Final = "nvr_version"
 ATTR_NVR_STORAGE_USED: Final = "storage_used"
 ATTR_NVR_STORAGE_TOTAL: Final = "storage_total"
@@ -413,14 +389,10 @@ SERVICE_REMOVE_CLIENTS: Final = "remove_clients"
 SERVICE_GENERATE_VOUCHER: Final = "generate_voucher"
 SERVICE_DELETE_VOUCHER: Final = "delete_voucher"
 SERVICE_EXPORT_NETWORK_RULES: Final = "export_network_rules"
-SERVICE_LIST_VOUCHERS: Final = "list_vouchers"
 # Default voucher name required by UniFi Network API when note is omitted
 DEFAULT_VOUCHER_NAME: Final = "Home Assistant"
 
 # UniFi Protect Services
-SERVICE_PTZ_GOTO_PRESET: Final = "ptz_goto_preset"
-SERVICE_PTZ_START_PATROL: Final = "ptz_start_patrol"
-SERVICE_PTZ_STOP_PATROL: Final = "ptz_stop_patrol"
 SERVICE_TRIGGER_ALARM: Final = "trigger_alarm"
 SERVICE_SET_LIVEVIEW: Final = "set_liveview"
 SERVICE_CREATE_LIVEVIEW: Final = "create_liveview"
@@ -428,12 +400,6 @@ SERVICE_CREATE_LIVEVIEW: Final = "create_liveview"
 # UniFi Carrier Fabric Services
 SERVICE_CARRIER_SUSPEND_SUBSCRIBER: Final = "carrier_suspend_subscriber"
 SERVICE_CARRIER_RESUME_SUBSCRIBER: Final = "carrier_resume_subscriber"
-
-# Port actions
-PORT_ACTION_POWER_CYCLE: Final = "POWER_CYCLE"
-
-# Client actions
-CLIENT_ACTION_AUTHORIZE_GUEST: Final = "AUTHORIZE_GUEST_ACCESS"
 
 # Viewer attributes
 ATTR_VIEWER_ID: Final = "viewer_id"

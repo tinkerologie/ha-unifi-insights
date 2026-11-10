@@ -21,7 +21,6 @@ from unifi_official_api.protect.models.files import TalkbackSession
 from unifi_official_api.protect.talkback import TalkbackStream
 
 from custom_components.unifi_insights.const import (
-    CAMERA_STATE_CONNECTED,
     DOMAIN,
 )
 from custom_components.unifi_insights.media_player import (
@@ -106,14 +105,14 @@ class TestAsyncSetupEntry:
                 "cam_top": {
                     "id": "cam_top",
                     "name": "Top Level Speaker Camera",
-                    "state": CAMERA_STATE_CONNECTED,
+                    "state": "CONNECTED",
                     "hasSpeaker": True,
                     "speakerVolume": 80,
                 },
                 "cam_nested": {
                     "id": "cam_nested",
                     "name": "Nested Flag Speaker Camera",
-                    "state": CAMERA_STATE_CONNECTED,
+                    "state": "CONNECTED",
                     "hasSpeaker": False,
                     "featureFlags": {"hasSpeaker": True},
                     "speakerVolume": 60,
@@ -121,21 +120,21 @@ class TestAsyncSetupEntry:
                 "cam_removable": {
                     "id": "cam_removable",
                     "name": "Removable Speaker Camera",
-                    "state": CAMERA_STATE_CONNECTED,
+                    "state": "CONNECTED",
                     "featureFlags": {"hasRemovableSpeaker": True},
                     "volume": 40,
                 },
                 "cam_no_speaker": {
                     "id": "cam_no_speaker",
                     "name": "No Speaker Camera",
-                    "state": CAMERA_STATE_CONNECTED,
+                    "state": "CONNECTED",
                     "hasSpeaker": False,
                     "featureFlags": {"hasSpeaker": False, "hasRemovableSpeaker": False},
                 },
                 "cam_non_bool": {
                     "id": "cam_non_bool",
                     "name": "Non Boolean Flag Camera",
-                    "state": CAMERA_STATE_CONNECTED,
+                    "state": "CONNECTED",
                     "hasSpeaker": "truthy_string",
                     "featureFlags": {"hasSpeaker": 1},
                 },
@@ -169,12 +168,12 @@ class TestAsyncSetupEntry:
                 "cam_none": {
                     "id": "cam_none",
                     "name": "No Speaker",
-                    "state": CAMERA_STATE_CONNECTED,
+                    "state": "CONNECTED",
                 },
                 "cam_false": {
                     "id": "cam_false",
                     "hasSpeaker": False,
-                    "state": CAMERA_STATE_CONNECTED,
+                    "state": "CONNECTED",
                 },
             },
         )
@@ -223,7 +222,7 @@ class TestAsyncSetupEntry:
                 "cam1": {
                     "id": "cam1",
                     "name": "Initial Camera",
-                    "state": CAMERA_STATE_CONNECTED,
+                    "state": "CONNECTED",
                     "hasSpeaker": True,
                 }
             },
@@ -253,7 +252,7 @@ class TestAsyncSetupEntry:
             {
                 "id": "cam2",
                 "name": "New Camera",
-                "state": CAMERA_STATE_CONNECTED,
+                "state": "CONNECTED",
                 "hasSpeaker": True,
             },
         )
@@ -285,7 +284,7 @@ class TestUnifiProtectCameraSpeaker:
                     "cam1": {
                         "id": "cam1",
                         "name": "Front Door Camera",
-                        "state": CAMERA_STATE_CONNECTED,
+                        "state": "CONNECTED",
                         "hasSpeaker": True,
                         "speakerVolume": 75,
                         "type": "UVC G4 Doorbell Pro",
@@ -329,7 +328,7 @@ class TestUnifiProtectCameraSpeaker:
             "cam1",
             {
                 "id": "cam1",
-                "state": CAMERA_STATE_CONNECTED,
+                "state": "CONNECTED",
                 "hasSpeaker": True,
                 "speakerSettings": {"speakerVolume": 85, "volume": 50},
                 "speakerVolume": 70,
@@ -345,7 +344,7 @@ class TestUnifiProtectCameraSpeaker:
             "cam1",
             {
                 "id": "cam1",
-                "state": CAMERA_STATE_CONNECTED,
+                "state": "CONNECTED",
                 "hasSpeaker": True,
                 "speakerSettings": {"volume": 55},
                 "speakerVolume": 70,
@@ -361,7 +360,7 @@ class TestUnifiProtectCameraSpeaker:
             "cam1",
             {
                 "id": "cam1",
-                "state": CAMERA_STATE_CONNECTED,
+                "state": "CONNECTED",
                 "hasSpeaker": True,
                 "speakerVolume": 65,
             },
@@ -392,7 +391,7 @@ class TestUnifiProtectCameraSpeaker:
             "cam1",
             {
                 "id": "cam1",
-                "state": CAMERA_STATE_CONNECTED,
+                "state": "CONNECTED",
                 "hasSpeaker": True,
             },
         )
@@ -431,7 +430,7 @@ class TestUnifiProtectCameraSpeaker:
 
         # Protect coordinator unavailable
         mock_coordinator.data = with_protect_fields(
-            mock_coordinator.data, "cameras", "cam1", state=CAMERA_STATE_CONNECTED
+            mock_coordinator.data, "cameras", "cam1", state="CONNECTED"
         )
         set_availability(mock_coordinator, protect=False)
         assert entity.available is False
