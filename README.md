@@ -1000,14 +1000,106 @@ and do not create entities.
 2. Select **Add card**.
 3. Search for the card name.
 
-| Card                     | Shows                                                                   |
-| ------------------------ | ----------------------------------------------------------------------- |
-| UniFi Topology           | Interactive network topology of a UniFi site                            |
-| UniFi Site Health        | Compact site health summary with WAN, gateway, device and client status |
-| UniFi Internet Activity  | Historical WAN download/upload activity and live gateway throughput     |
-| UniFi Device Performance | Infrastructure CPU, memory, PoE, client load and throughput summary     |
-| UniFi Protect Status     | Live UniFi Protect camera, doorbell, chime and NVR status summary       |
-| UniFi Event Timeline     | Recent UniFi Protect security and device activity timeline              |
+| Card                     | Type                                           | Shows                                                                   |
+| ------------------------ | ---------------------------------------------- | ----------------------------------------------------------------------- |
+| UniFi Topology           | `custom:unifi-insights-topology-card`          | Interactive network topology of a UniFi site                            |
+| UniFi Site Health        | `custom:unifi-insights-site-health-card`       | Compact site health summary with WAN, gateway, device and client status |
+| UniFi Internet Activity  | `custom:unifi-insights-internet-activity-card` | Historical WAN download/upload activity and live gateway throughput     |
+| UniFi Device Performance | `custom:unifi-insights-performance-card`       | Infrastructure CPU, memory, PoE, client load and throughput summary     |
+| UniFi Protect Status     | `custom:unifi-insights-protect-status-card`    | Live UniFi Protect camera, doorbell, chime and NVR status summary       |
+| UniFi Event Timeline     | `custom:unifi-insights-timeline-card`          | Recent UniFi Protect security and device activity timeline              |
+
+Home Assistant keeps dashboard resources in storage by default. In this
+mode, the integration adds the card resources automatically. You can see
+them in **Settings → Dashboards → Resources**.
+
+After you install or update the integration, refresh the browser page. In
+the Home Assistant app, close the app and open it again.
+
+If your dashboard resources are in YAML, the integration loads the cards
+as extra frontend modules. A card can then show **Custom element doesn't
+exist** when the dashboard loads first. To prevent this, add one resource
+to `configuration.yaml`. Then restart Home Assistant.
+
+```yaml
+lovelace:
+  resources:
+    - url: /unifi_insights/topology-card.js
+      type: module
+```
+
+This one resource loads all six cards.
+
+### Dashboard cards in YAML
+
+You can also add a card in the dashboard code editor. Use the type from
+the table above. All other options are optional.
+
+The topology card with the default settings:
+
+```yaml
+type: custom:unifi-insights-topology-card
+```
+
+The topology card for one site, with some options:
+
+```yaml
+type: custom:unifi-insights-topology-card
+entry_id: 01JABCDEFGHJKMNPQRSTVWXYZ0
+site_id: 88f7af54-98f8-306a-a1c7-c9349722b1f6
+title: Home network
+view: graph
+layout: tiered
+clients: expanded
+kinds:
+  - gateway
+  - switch
+  - access_point
+```
+
+For all topology options, see [Network topology card](#network-topology-card).
+
+The Site Health, Internet Activity, Device Performance and Event Timeline
+cards use the same options:
+
+```yaml
+type: custom:unifi-insights-site-health-card
+title: Home network health
+entry_id: 01JABCDEFGHJKMNPQRSTVWXYZ0
+site_id: 88f7af54-98f8-306a-a1c7-c9349722b1f6
+```
+
+```yaml
+type: custom:unifi-insights-internet-activity-card
+```
+
+```yaml
+type: custom:unifi-insights-performance-card
+```
+
+```yaml
+type: custom:unifi-insights-timeline-card
+```
+
+The Protect Status card uses a config entry and no site:
+
+```yaml
+type: custom:unifi-insights-protect-status-card
+title: Cameras
+entry_id: 01JABCDEFGHJKMNPQRSTVWXYZ0
+```
+
+| Option     | Values                           | Default                         |
+| ---------- | -------------------------------- | ------------------------------- |
+| `title`    | text                             | the card name                   |
+| `entry_id` | the ID of the UniFi config entry | the only entry, if there is one |
+| `site_id`  | the ID of the UniFi site         | the only site, if there is one  |
+
+- Set `entry_id` and `site_id` together. The Protect Status card needs
+  only `entry_id`.
+- Without these options, a card selects the site only if there is one site.
+- The example IDs are not real. To get your IDs, select the site in the
+  card editor. Then select **Show code editor**.
 
 ### Network topology card
 
@@ -1114,17 +1206,19 @@ action: unifi_insights.refresh_data
 
 ### Common problems
 
-| Problem                       | Solution                                                                                                                                                    |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cannot connect                | Make sure that Home Assistant can reach the console URL. For a self-signed certificate, reconfigure the entry. Turn off **Verify SSL Certificate**.         |
-| Authentication failed         | Make sure that the API key is valid. Get a new key from the console or UniFi Site Manager if necessary.                                                     |
-| Integration API not available | A self-hosted Network application does not provide the UniFi Integration API. Use a UniFi OS console.                                                       |
-| No Protect entities           | Make sure that Protect runs on the same console. Make sure that the API key can access Protect.                                                             |
-| Entities missing              | Make sure that the devices are adopted and online in UniFi.                                                                                                 |
-| Storage sensors unavailable   | Some firmware versions do not report NVR storage through the public Protect API.                                                                            |
-| Many orphaned client entities | Turn off **Enable Client Control**.                                                                                                                         |
-| Wake button does nothing      | Make sure that the device has Wake-on-LAN enabled. Examine the Home Assistant host network and VLAN. See the Wake-on-LAN instructions for more information. |
-| Duplicate entities            | UniFi Insights and the official UniFi integrations can create entities for the same device. Disable the duplicate entities that you do not use.             |
+| Problem                           | Solution                                                                                                                                                                                                                                                 |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cannot connect                    | Make sure that Home Assistant can reach the console URL. For a self-signed certificate, reconfigure the entry. Turn off **Verify SSL Certificate**.                                                                                                      |
+| Authentication failed             | Make sure that the API key is valid. Get a new key from the console or UniFi Site Manager if necessary.                                                                                                                                                  |
+| Integration API not available     | A self-hosted Network application does not provide the UniFi Integration API. Use a UniFi OS console.                                                                                                                                                    |
+| No Protect entities               | Make sure that Protect runs on the same console. Make sure that the API key can access Protect.                                                                                                                                                          |
+| Entities missing                  | Make sure that the devices are adopted and online in UniFi.                                                                                                                                                                                              |
+| Storage sensors unavailable       | Some firmware versions do not report NVR storage through the public Protect API.                                                                                                                                                                         |
+| Many orphaned client entities     | Turn off **Enable Client Control**.                                                                                                                                                                                                                      |
+| Wake button does nothing          | Make sure that the device has Wake-on-LAN enabled. Examine the Home Assistant host network and VLAN. See the Wake-on-LAN instructions for more information.                                                                                              |
+| Duplicate entities                | UniFi Insights and the official UniFi integrations can create entities for the same device. Disable the duplicate entities that you do not use.                                                                                                          |
+| Card not in the **Add card** list | Refresh the browser page, or close and open the Home Assistant app. Make sure that **Settings → Dashboards → Resources** shows the `/unifi_insights/` entries. If your resources are in YAML, add the resource. See [Dashboard cards](#dashboard-cards). |
+| Custom element doesn't exist      | Refresh the browser page. If your resources are in YAML, add the resource. See [Dashboard cards](#dashboard-cards).                                                                                                                                      |
 
 ### Remote console access denied (HTTP 403)
 
