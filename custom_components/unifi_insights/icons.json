@@ -343,6 +343,12 @@
           "off": "mdi:door-closed"
         }
       },
+      "sensor_mounted_incorrectly": {
+        "default": "mdi:alert-circle",
+        "state": {
+          "off": "mdi:check-circle"
+        }
+      },
       "alarm_hub_device_tamper": {
         "default": "mdi:shield-alert",
         "state": {
