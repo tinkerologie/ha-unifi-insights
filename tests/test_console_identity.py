@@ -25,7 +25,6 @@ from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api import UniFiResponseError
 
 from custom_components.unifi_insights import (
-    _first_site_id,
     _is_console_device,
     async_migrate_entry,
     async_setup_entry,
@@ -1038,8 +1037,7 @@ async def test_no_mac_flow_uses_host_when_default_site_comes_first(
 ) -> None:
     """Keep console identity independent of default and non-default site IDs.
 
-    The site-order utility still returns the first non-default site, while
-    the configuration flow uses the actual host when no console MAC is found.
+    The configuration flow uses the actual host when no console MAC is found.
     """
     # No stored identity: a stored one would rightly take precedence over a
     # freshly derived host, which would hide what the flow derived.
@@ -1092,10 +1090,6 @@ async def test_no_mac_flow_uses_host_when_default_site_comes_first(
         await hass.async_block_till_done()
 
     assert entry.data[CONF_CONSOLE_ID] == "https://192.168.1.1"
-    # Inventory ordering remains available without establishing identity.
-    coordinator = MagicMock()
-    coordinator.data = {"sites": {"default": {}, "site-b": {}}}
-    assert _first_site_id(coordinator) == "site-b"
 
 
 class TestConsoleDeviceDetection:
@@ -1134,19 +1128,6 @@ class TestConsoleDeviceDetection:
 
     def test_plain_switch_is_not_a_console(self):
         assert not _is_console_device({"model": "USW Pro Max 24", "type": None})
-
-    def test_first_site_id_skips_the_default_placeholder(self):
-        """A real site id is a stable identity; "default" is not."""
-        coordinator = MagicMock()
-        coordinator.data = {"sites": {"default": {}, "88f7af54-98f8": {}}}
-
-        assert _first_site_id(coordinator) == "88f7af54-98f8"
-
-    def test_first_site_id_handles_unloaded_coordinator(self):
-        coordinator = MagicMock()
-        coordinator.data = None
-
-        assert _first_site_id(coordinator) is None
 
 
 async def test_migration_version_guard_and_unique_id_collision(
@@ -1343,12 +1324,7 @@ async def test_console_identity_extra_coverage_branches(
 ) -> None:
     """Cover site lookup, device parsing, setup fallback, and Protect edge cases."""
 
-    # 1. _first_site_id when sites is not a dict
-    coord = MagicMock()
-    coord.data = {"sites": "not_a_dict"}
-    assert _first_site_id(coord) is None
-
-    # 2. Local setup uses the host, with non-dict site devices handled defensively.
+    # 1. Local setup uses the host, with non-dict site devices handled defensively.
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="UniFi Insights (Local)",

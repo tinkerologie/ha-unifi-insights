@@ -78,7 +78,6 @@ from .data_transforms import (
     NetworkDeviceFacts,
     _field,
     always_true,
-    bytes_to_bits_per_second,
     count_active_vouchers,
     device_facts,
     find_storage_mount,
@@ -194,18 +193,6 @@ def format_uptime(seconds: int | None) -> str | None:
     if hours > 0:
         return f"{hours}h {minutes}m"
     return f"{minutes}m"
-
-
-def bytes_to_megabits(bytes_per_sec: float | None) -> float | None:
-    """Convert bytes per second to megabits per second."""
-    if bytes_per_sec is None:
-        return None
-    return round(bytes_per_sec * 8 / 1_000_000, 2)
-
-
-def bytes_to_bits(bytes_per_sec: float | None) -> float | None:
-    """Convert bytes per second to bits per second."""
-    return bytes_to_bits_per_second(bytes_per_sec)
 
 
 def _get_temperature_entry_value(
@@ -332,20 +319,6 @@ def _bytes_to_gb(bytes_value: int | None) -> float | None:
     if bytes_value is None:
         return None
     return round(bytes_value / (1024**3), 2)
-
-
-def _has_storage_info(nvr_data: dict[str, Any]) -> bool:
-    """Return True when at least one valid capacity signal exists."""
-    storage = normalize_nvr_storage(nvr_data)
-    return any(
-        value is not None
-        for value in (
-            storage.used_bytes,
-            storage.total_bytes,
-            storage.available_bytes,
-            storage.used_percent,
-        )
-    )
 
 
 def _get_storage_bytes(nvr_data: dict[str, Any], field: str) -> int | None:

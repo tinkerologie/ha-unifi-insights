@@ -93,7 +93,6 @@ from custom_components.unifi_insights.innerspace_transforms import (
     correlate_innerspace_devices,
     transform_innerspace_device,
 )
-from custom_components.unifi_insights.sensor import bytes_to_bits
 from custom_components.unifi_insights.service_targets import _mac_key
 from tests.fixtures.library_responses import (
     SAMPLE_NETWORK_DEVICE,
@@ -1206,9 +1205,7 @@ def test_numeric_primitives(value: Any, bits: Any, from_bytes: Any) -> None:
 
 
 def test_converters_delegate_to_the_shared_primitive() -> None:
-    """The sensor and dashboard converters use the validated primitive."""
-    assert bytes_to_bits(12) == 96
-    assert bytes_to_bits(None) is None
+    """The dashboard converter uses the validated primitive."""
     assert bits_per_second_to_int(bytes_to_bits_per_second(12)) == 96
     assert isinstance(bits_per_second_to_int(12.5), int)
     assert bits_per_second_to_int(bytes_to_bits_per_second(float("nan"))) is None
