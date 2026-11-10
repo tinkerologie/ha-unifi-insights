@@ -4,7 +4,7 @@ Seeded real command owners over autospecced UniFi clients (ADR-010).
 
 The second adapter for command tests. The coordinators are the real config,
 device, Protect and facade classes; only the API clients are replaced, by
-``unittest.mock.create_autospec`` of the real ``unifi_official_api`` 3.0.0
+``unittest.mock.create_autospec`` of the real ``unifi_official_api``
 client and endpoint classes. Calling a method the library does not have, or
 calling one with arguments its signature does not accept, fails the test,
 which a hand-written fake or a bare ``MagicMock`` would let pass.
@@ -28,6 +28,7 @@ from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
 from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api.network import UniFiNetworkClient
 from unifi_official_api.network.models.device import LegacyPortMetrics
+from unifi_official_api.network.models.stats import StatisticsSource
 from unifi_official_api.protect import UniFiProtectClient
 
 from custom_components.unifi_insights.const import (
@@ -159,6 +160,8 @@ def seed_network_client(client: NonCallableMagicMock) -> None:
     client.devices.get_statistics.return_value = {}
     client.devices.get_port_metrics.return_value = LegacyPortMetrics()
     client.get_site_report.return_value = []
+    client.stats.get_source.return_value = StatisticsSource("LEGACY")
+    client.stats.get_recent_series.return_value = []
 
 
 def seed_protect_client(client: NonCallableMagicMock) -> None:

@@ -5,6 +5,11 @@ import copy
 from typing import Any
 
 from unifi_official_api.network.models.device import Device
+from unifi_official_api.network.models.stats import (
+    StatisticsSource,
+    StatsSeries,
+    StatsSeriesBucket,
+)
 
 # Network API responses
 SAMPLE_SITE = {
@@ -490,3 +495,64 @@ class MockUniFiTimeoutError(Exception):
 
 class MockUniFiAPIError(Exception):
     """Mock API error."""
+
+
+# Statistics engine fixtures
+SAMPLE_STATS_SOURCE_MODERN = StatisticsSource("MODERN")
+SAMPLE_STATS_SOURCE_LEGACY = StatisticsSource("LEGACY")
+
+SAMPLE_INTEGRATION_SITE_1 = {
+    "id": "88f7af54-1111-2222-3333-444455556666",
+    "name": "Primary Site",
+    "desc": "Primary Site Desc",
+    "internalReference": "default",
+}
+SAMPLE_LEGACY_SITE_RECORD_1 = {
+    "_id": "ab632056-1111-2222-3333-444455556666",
+    "external_id": "88f7af54-1111-2222-3333-444455556666",
+    "name": "default",
+    "desc": "Primary Site Desc",
+    "legacy_id": "600ee7a7c6aeaa055108e111",
+}
+SAMPLE_STATS_SERIES_SITE_1 = StatsSeries(
+    siteId="ab632056-1111-2222-3333-444455556666",
+    series=[
+        StatsSeriesBucket(
+            timestamp=1790373600000,
+            duration=300000,
+            rxBytes=1000.0,
+            txBytes=2000.0,
+        ),
+        StatsSeriesBucket(
+            timestamp=1790373900000,
+            duration=270216,
+            rxBytes=500.0,
+            txBytes=1000.0,
+        ),
+    ],
+)
+
+SAMPLE_INTEGRATION_SITE_2 = {
+    "id": "99f8ba65-7777-8888-9999-000011112222",
+    "name": "Secondary Site",
+    "desc": "Secondary Site Desc",
+    "internalReference": "site_two",
+}
+SAMPLE_LEGACY_SITE_RECORD_2 = {
+    "_id": "cd743167-7777-8888-9999-000011112222",
+    "external_id": "99f8ba65-7777-8888-9999-000011112222",
+    "name": "site_two",
+    "desc": "Secondary Site Desc",
+    "legacy_id": "600ee7a7c6aeaa055108e222",
+}
+SAMPLE_STATS_SERIES_SITE_2 = StatsSeries(
+    siteId="cd743167-7777-8888-9999-000011112222",
+    series=[
+        StatsSeriesBucket(
+            timestamp=1790373600000,
+            duration=300000,
+            rxBytes=3000.0,
+            txBytes=4000.0,
+        ),
+    ],
+)

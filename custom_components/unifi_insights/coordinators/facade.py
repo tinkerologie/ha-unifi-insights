@@ -113,6 +113,7 @@ class FacadeData(TypedDict):
     client_links: ReadOnly[SiteSection]
     internet_activity: ReadOnly[SiteSection]
     internet_activity_unavailable: ReadOnly[AbstractSet[str]]
+    internet_activity_status: ReadOnly[SiteSection]
     # From the device coordinator
     devices: ReadOnly[SiteSection]
     clients: ReadOnly[SiteSection]
@@ -151,6 +152,7 @@ _CONFIG_SECTIONS: Final = (
     "network_info",
     "client_links",
     "internet_activity",
+    "internet_activity_status",
 )
 # The device coordinator's sections, passed through by reference.
 _DEVICE_SECTIONS: Final = (

@@ -12,6 +12,7 @@ from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api.exceptions import UniFiUnsupportedError
 from unifi_official_api.innerspace import InnerSpaceProject
+from unifi_official_api.network.models.stats import StatisticsSource
 
 from custom_components.unifi_insights.const import (
     CONF_CONNECTION_TYPE,
@@ -97,6 +98,11 @@ def _create_mock_network_client() -> MagicMock:
     client.reports = MagicMock()
     client.reports.get_site_report = AsyncMock(return_value=[])
     client.get_site_report = AsyncMock(return_value=[])
+
+    # Setup stats namespace
+    client.stats = MagicMock()
+    client.stats.get_source = AsyncMock(return_value=StatisticsSource("LEGACY"))
+    client.stats.get_recent_series = AsyncMock(return_value=[])
 
     # Legacy methods (keeping for backwards compatibility in tests)
     client.restart_device = AsyncMock(return_value=True)

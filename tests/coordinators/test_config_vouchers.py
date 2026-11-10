@@ -31,6 +31,7 @@ from unifi_official_api import (
 )
 from unifi_official_api.network import UniFiNetworkClient
 from unifi_official_api.network.endpoints.vouchers import VouchersEndpoint
+from unifi_official_api.network.models.stats import StatisticsSource
 from unifi_official_api.network.models.voucher import Voucher
 from unifi_official_api.validation import parse_record
 
@@ -333,6 +334,8 @@ async def voucher_flow(
     client.sites.get_all = AsyncMock(
         return_value=[_create_mock_model({"id": "site1", "name": "Default"})]
     )
+    client.stats.get_source = AsyncMock(return_value=StatisticsSource("LEGACY"))
+    client.stats.get_recent_series = AsyncMock(return_value=[])
     for endpoint, method in (
         ("sites", "get_legacy_all"),
         ("wifi", "get_all"),
