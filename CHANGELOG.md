@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Raise `unifi-official-api` to 3.2.0, adding support for UniFi Protect 7.4.96 speaker stop-siren and external arm profiles. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
 - Gate local NVR alarm control panel discovery and availability on `featureFlags.useExternalAlarmManager` in UniFi Protect v7.4.96+. When external alarm manager is enabled on an NVR, its local panel is hidden or made unavailable. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
 - Map UniFi Protect HTTP 409 Conflict during camera talkback session startup to a translated error informing the user that a talkback session is already in progress. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
 

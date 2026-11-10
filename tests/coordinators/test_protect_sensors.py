@@ -1568,7 +1568,8 @@ class TestSensorModelTimestampCoercion:
                 "isMountedIncorrectly": True,
             }
         )
-        assert sensor.model_dump().get("isMountedIncorrectly") is True
+        assert sensor.is_mounted_incorrectly is True
+        assert sensor.model_dump(by_alias=True).get("isMountedIncorrectly") is True
 
 
 class TestBoundedEscalationPropagatesOnMainPoll:
