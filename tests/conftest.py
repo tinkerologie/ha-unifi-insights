@@ -12,6 +12,7 @@ from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api.exceptions import UniFiUnsupportedError
 from unifi_official_api.innerspace import InnerSpaceProject
+from unifi_official_api.network.models.stats import StatisticsSource
 
 from custom_components.unifi_insights.const import (
     CONF_CONNECTION_TYPE,
@@ -97,6 +98,11 @@ def _create_mock_network_client() -> MagicMock:
     client.reports = MagicMock()
     client.reports.get_site_report = AsyncMock(return_value=[])
     client.get_site_report = AsyncMock(return_value=[])
+
+    # Setup stats namespace
+    client.stats = MagicMock()
+    client.stats.get_source = AsyncMock(return_value=StatisticsSource("LEGACY"))
+    client.stats.get_recent_series = AsyncMock(return_value=[])
 
     # Legacy methods (keeping for backwards compatibility in tests)
     client.restart_device = AsyncMock(return_value=True)
@@ -256,9 +262,26 @@ def mock_innerspace_client() -> Generator[MagicMock]:
     """Return a mocked UniFi InnerSpace client."""
     client = _create_mock_innerspace_client()
 
-    with patch(
-        "custom_components.unifi_insights.UniFiInnerSpaceClient",
-        MagicMock(return_value=client),
+    # Create a mock class that works as both regular init and async context manager
+    mock_class = MagicMock()
+    async_cm = MagicMock()
+    async_cm.__aenter__ = AsyncMock(return_value=client)
+    async_cm.__aexit__ = AsyncMock(return_value=None)
+    mock_class.return_value = async_cm
+
+    for attr in dir(client):
+        if not attr.startswith("_"):
+            setattr(mock_class.return_value, attr, getattr(client, attr))
+
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiInnerSpaceClient",
+            mock_class,
+        ),
+        patch(
+            "custom_components.unifi_insights.UniFiInnerSpaceClient",
+            MagicMock(return_value=client),
+        ),
     ):
         yield client
 

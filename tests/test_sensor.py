@@ -25,6 +25,11 @@ from homeassistant.helpers.entity_registry import (
 )
 from homeassistant.helpers.typing import UNDEFINED
 from pytest_homeassistant.common import MockConfigEntry
+from unifi_official_api.network.models.stats import (
+    StatisticsSource,
+    StatsSeries,
+    StatsSeriesBucket,
+)
 from unifi_official_api.protect.models.sensor import (
     Sensor as ProtectSensorModel,
 )
@@ -34,6 +39,10 @@ from custom_components.unifi_insights.const import (
     CONF_CONSOLE_ID,
     CONNECTION_TYPE_LOCAL,
     DOMAIN,
+)
+from custom_components.unifi_insights.coordinators.config import WINDOW_1D_MS
+from custom_components.unifi_insights.dashboard_snapshots import (
+    build_internet_activity_snapshot,
 )
 from custom_components.unifi_insights.data_transforms import get_site_gateway_id
 from custom_components.unifi_insights.sensor import (
@@ -80,6 +89,7 @@ from custom_components.unifi_insights.sensor import (
     get_network_device_temperature,
 )
 from tests.fixtures.assertions import patch_attribute, require_not_none
+from tests.fixtures.command_owners import async_shutdown_owners, build_seeded_owners
 from tests.fixtures.entities import EntityCollector
 from tests.fixtures.facade_data import (
     facade_data,
@@ -4840,6 +4850,137 @@ class TestUnifiSiteInternetActivitySensor:
             unique_id="console_site1_" + desc.key,
         )
         assert sensor.available is expected_available
+
+    async def test_modern_stats_end_to_end_regression(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Real coordinators turn modern series into eight sensors and a snapshot."""
+        owners = build_seeded_owners(hass)
+        try:
+            site_id = "site_modern"
+            stats_site_id = "00000000-0000-4000-8000-0000000000a1"
+            client = owners.network_client
+            client.sites.get_all.return_value = [
+                {"id": site_id, "name": "Default", "internalReference": "default"}
+            ]
+            client.sites.get_legacy_all.return_value = [
+                {"_id": stats_site_id, "external_id": site_id, "name": "default"}
+            ]
+            client.stats.get_source = AsyncMock(return_value=StatisticsSource("MODERN"))
+            client.stats.get_recent_series = AsyncMock(return_value=[])
+            owners.config._stats_source = None
+            owners.config._stats_source_expires_at = 0.0
+
+            # First refresh: a modern console with no history publishes nothing.
+            await owners.config.async_refresh()
+            assert owners.config.data["internet_activity"] == {}
+            known_keys: set[tuple[str, ...]] = set()
+            assert (
+                _discover_site_internet_activity_sensors(
+                    owners.facade,
+                    known_keys,
+                    hass=hass,
+                    entry=owners.entry,
+                    namespace="console",
+                )
+                == []
+            )
+
+            # Second refresh: publish typed modern series at the library boundary.
+            async def _series(
+                *,
+                schema: str,
+                site_id: str,
+                period: str,
+                end_ms: int,
+                values: Any,
+            ) -> list[Any]:
+                assert schema == "wanBySite"
+                assert site_id == stats_site_id
+                assert values == ("rxBytes", "txBytes")
+                offsets = {
+                    "DAY": 600_000,
+                    "WEEK": 2 * WINDOW_1D_MS,
+                    "MONTH": 10 * WINDOW_1D_MS,
+                }
+                totals = {
+                    "DAY": (1500.0, 3000.0),
+                    "WEEK": (2500.0, 3500.0),
+                    "MONTH": (4500.0, 5500.0),
+                }
+                rx, tx = totals[period]
+                return [
+                    StatsSeries(
+                        siteId=stats_site_id,
+                        series=[
+                            StatsSeriesBucket(
+                                timestamp=end_ms - offsets[period],
+                                duration=300000,
+                                rxBytes=rx,
+                                txBytes=tx,
+                            )
+                        ],
+                    )
+                ]
+
+            client.stats.get_recent_series = AsyncMock(side_effect=_series)
+            await owners.config.async_refresh()
+
+            sensors = _discover_site_internet_activity_sensors(
+                owners.facade,
+                known_keys,
+                hass=hass,
+                entry=owners.entry,
+                namespace="console",
+            )
+            assert len(sensors) == 8
+            expected_values = {
+                "internet_download_1h": 1500,
+                "internet_upload_1h": 3000,
+                "internet_download_1d": 1500,
+                "internet_upload_1d": 3000,
+                "internet_download_1w": 2500,
+                "internet_upload_1w": 3500,
+                "internet_download_1m": 4500,
+                "internet_upload_1m": 5500,
+            }
+            for sensor in sensors:
+                key = sensor.entity_description.key
+                assert sensor.unique_id == f"console_{site_id}_{key}"
+                assert sensor.available is True
+                assert sensor.native_value == expected_values[key]
+
+            snapshot = build_internet_activity_snapshot(
+                owners.facade.data,
+                entry_id=owners.entry.entry_id,
+                site_id=site_id,
+                entity_registry=er.async_get(hass),
+            )
+            assert snapshot["status"] == "ok"
+            windows = snapshot["windows"]
+            assert windows["1h"]["download_bytes"] == 1500
+            assert windows["1h"]["upload_bytes"] == 3000
+            assert windows["1d"]["download_bytes"] == 1500
+            assert windows["1d"]["upload_bytes"] == 3000
+            assert windows["1w"]["download_bytes"] == 2500
+            assert windows["1w"]["upload_bytes"] == 3500
+            assert windows["1m"]["download_bytes"] == 4500
+            assert windows["1m"]["upload_bytes"] == 5500
+
+            status = owners.facade.data["internet_activity_status"][site_id]
+            assert status["source"] == "modern"
+            assert status["reason"] == "ok"
+
+            calls = client.stats.get_recent_series.await_args_list
+            assert [call.kwargs["period"] for call in calls] == [
+                "DAY",
+                "WEEK",
+                "MONTH",
+            ]
+            assert len({call.kwargs["end_ms"] for call in calls}) == 1
+            assert all(call.kwargs["site_id"] == stats_site_id for call in calls)
+        finally:
+            await async_shutdown_owners(owners)
 
 
 class TestSensorAdditionalCoverageGaps:

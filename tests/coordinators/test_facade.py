@@ -1394,6 +1394,7 @@ def test_build_facade_data_passes_the_owners_sections_through() -> None:
         "sites": {"site1": {"id": "site1"}},
         "latest_vouchers": {"site1": {"id": "v1"}},
         "internet_activity_unavailable": {"site1"},
+        "internet_activity_status": {"site1": {"source": "legacy", "reason": "ok"}},
     }
     facts = {"site1": build_site_network_facts({}, {})}
     device = {
@@ -1416,7 +1417,12 @@ def test_build_facade_data_passes_the_owners_sections_through() -> None:
     )
 
     assert type(snapshot) is ReadOnlyDict
-    for key in ("sites", "latest_vouchers", "internet_activity_unavailable"):
+    for key in (
+        "sites",
+        "latest_vouchers",
+        "internet_activity_unavailable",
+        "internet_activity_status",
+    ):
         assert snapshot[key] is config[key], key
     assert snapshot["devices"] is device["devices"]
     assert snapshot["stats"] is device["stats"]

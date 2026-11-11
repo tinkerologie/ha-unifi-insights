@@ -45,10 +45,12 @@ from custom_components.unifi_insights.data_transforms import (
 )
 from custom_components.unifi_insights.diagnostics import (
     ACCESS_TO_REDACT,
+    MAX_DIAGNOSTICS_COUNT,
     TO_REDACT,
     _access_diagnostics,
     _redact_coordinator_data,
     async_get_config_entry_diagnostics,
+    build_internet_activity_status_diagnostics,
 )
 from tests.fixtures.facade_data import frozen, with_protect_collection, with_sections
 from tests.fixtures.library_responses import (
@@ -1856,3 +1858,129 @@ async def test_innerspace_diagnostics_falls_back_to_explicit_owner(
     assert section["innerspace_owner_present"] is True
     assert section["refresh_failure"] is None
     assert section["probe"] == {}
+
+
+async def test_internet_activity_status_diagnostics_privacy_and_structure(
+    hass: HomeAssistant,
+) -> None:
+    """Assert internet_activity_status in diagnostics preserves privacy,
+    bounded counts, and allowlist."""
+    raw_status = {
+        "site_secret_alpha_999": {
+            "source": "modern",
+            "reason": "ok",
+            "counts": {"day": {"received": 24, "usable": 24, "skipped": 0}},
+            "raw_site_id": "site_secret_alpha_999",
+            "timestamps": [1700000000000],
+            "rx_bytes": 123456789,
+        },
+        "site_secret_beta_888": {
+            "source": "legacy",
+            "reason": "no_usable_buckets",
+            "counts": {"5minutes": {"received": 12, "usable": 0, "skipped": 12}},
+            "tx_bytes": 987654321,
+        },
+    }
+    entry = MockConfigEntry(domain=DOMAIN)
+    entry.runtime_data = _runtime(None)
+    entry.runtime_data.coordinator = SimpleNamespace(
+        data={"internet_activity_status": raw_status},
+        network_client=None,
+        protect_client=None,
+    )
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    status_diag = diagnostics["internet_activity_status"]
+
+    assert isinstance(status_diag, list)
+    assert len(status_diag) == 2
+
+    # Ensure raw site IDs and bytes/timestamps are NOT exposed
+    diag_str = str(status_diag)
+    assert "site_secret_alpha_999" not in diag_str
+    assert "site_secret_beta_888" not in diag_str
+    assert "123456789" not in diag_str
+    assert "987654321" not in diag_str
+    assert "raw_site_id" not in diag_str
+
+    # Check generic site_index and safe allowlisted fields
+    site0 = status_diag[0]
+    assert site0["site_index"] == 0
+    assert site0["source"] in ("modern", "legacy")
+    assert site0["reason"] in ("ok", "no_usable_buckets")
+    assert set(site0.keys()) == {"site_index", "source", "reason", "counts"}
+
+
+async def test_internet_activity_status_diagnostics_missing_facade_defaults_gracefully(
+    hass: HomeAssistant,
+) -> None:
+    """Assert internet_activity_status defaults gracefully when missing from facade."""
+    entry = MockConfigEntry(domain=DOMAIN)
+    entry.runtime_data = _runtime(None)
+    entry.runtime_data.coordinator = SimpleNamespace(
+        data={},
+        network_client=None,
+        protect_client=None,
+    )
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    assert diagnostics["internet_activity_status"] == []
+
+
+def test_internet_activity_status_diagnostics_malformed_and_bounded() -> None:
+    """Malformed entries are skipped, unknown labels collapse, counts are bounded."""
+    raw_status: Any = {
+        "site_a": {
+            "source": "site_a-secret-source",
+            "reason": "site_a-secret-reason",
+            "counts": {
+                "DAY": {
+                    "received": True,
+                    "usable": "site_a-secret-count",
+                    "skipped": -5,
+                },
+                "5minutes": {
+                    "received": MAX_DIAGNOSTICS_COUNT + 1,
+                    "usable": float("inf"),
+                    "skipped": float("nan"),
+                },
+                "unknown_label": {"received": 1},
+                "not_a_mapping": "site_a-secret-metrics",
+            },
+        },
+        "site_b": "site_b-secret-entry",
+        "site_c": {
+            "source": "legacy",
+            "reason": "ok",
+            "counts": "site_c-secret-counts",
+        },
+    }
+
+    summaries = build_internet_activity_status_diagnostics(raw_status)
+
+    assert len(summaries) == 2
+    summary = summaries[0]
+    assert summary["site_index"] == 0
+    assert summary["source"] == "other"
+    assert summary["reason"] == "other"
+    assert summary["counts"]["DAY"] == {"received": 0, "usable": 0, "skipped": 0}
+    assert summary["counts"]["5minutes"] == {
+        "received": MAX_DIAGNOSTICS_COUNT,
+        "usable": 0,
+        "skipped": 0,
+    }
+    assert summary["counts"]["other"] == {"received": 1, "usable": 0, "skipped": 0}
+    assert "not_a_mapping" not in summary["counts"]
+    assert summaries[1]["site_index"] == 2
+    assert summaries[1]["source"] == "legacy"
+    assert summaries[1]["counts"] == {}
+    rendered = str(summaries)
+    assert "site_a-secret" not in rendered
+    assert "site_b-secret" not in rendered
+    assert "site_c-secret" not in rendered
+
+
+def test_internet_activity_status_diagnostics_non_mapping() -> None:
+    """A non-mapping status section exports nothing."""
+    assert build_internet_activity_status_diagnostics(None) == []
+    assert build_internet_activity_status_diagnostics("not-a-mapping") == []

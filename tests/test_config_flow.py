@@ -10,6 +10,7 @@ from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api import (
+    ConnectionType,
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiNotFoundError,
@@ -23,6 +24,7 @@ from custom_components.unifi_insights.config_flow import (
     UnifiInsightsOptionsFlow,
 )
 from custom_components.unifi_insights.const import (
+    CONF_ACCESS_TOKEN,
     CONF_CONNECTION_TYPE,
     CONF_CONSOLE_ID,
     CONF_SITE_IDS,
@@ -31,6 +33,7 @@ from custom_components.unifi_insights.const import (
     DOMAIN,
 )
 from tests.fixtures.assertions import require_not_none
+from tests.fixtures.innerspace import build_innerspace_project
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -2025,13 +2028,467 @@ async def _submit_local_flow(hass: HomeAssistant) -> config_entries.ConfigFlowRe
 
 
 @pytest.mark.parametrize(
-    ("network", "protect", "expected_errors"),
+    ("network_sites", "protect_cameras", "protect_nvr"),
+    [
+        ([], [], None),  # empty
+        (
+            UniFiNotFoundError("404", status_code=404),
+            UniFiNotFoundError("404", status_code=404),
+            None,
+        ),  # 404
+        (
+            UniFiAuthenticationError("401", status_code=401),
+            UniFiAuthenticationError("401", status_code=401),
+            None,
+        ),  # 401
+        (
+            UniFiTimeoutError("timeout"),
+            UniFiTimeoutError("timeout"),
+            None,
+        ),  # timeout
+    ],
+    ids=["empty", "404", "401", "timeout"],
+)
+async def test_local_flow_success_innerspace_only_console(
+    hass: HomeAssistant,
+    mock_innerspace_client: MagicMock,
+    network_sites: object,
+    protect_cameras: object,
+    protect_nvr: object,
+) -> None:
+    """Test local flow succeeds for InnerSpace-only console.
+
+    Network and Protect probes are unusable.
+    """
+    mock_innerspace_client.get_project.return_value = build_innerspace_project(
+        project_id="proj-1", name="Main Floor"
+    )
+
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+            return_value=_make_client_context(
+                sites=[] if isinstance(network_sites, Exception) else network_sites,
+                sites_side_effect=network_sites
+                if isinstance(network_sites, Exception)
+                else None,
+            ),
+        ),
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiProtectClient",
+            return_value=_protect_context(
+                cameras=protect_cameras,
+                nvr=protect_nvr,
+            ),
+        ),
+        patch("custom_components.unifi_insights.config_flow.LocalAuth"),
+        patch(
+            "custom_components.unifi_insights.async_setup_entry",
+            return_value=True,
+        ),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_CONNECTION_TYPE: CONNECTION_TYPE_LOCAL},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_HOST: "https://192.168.1.1",
+                CONF_API_KEY: "test_api_key",
+                CONF_VERIFY_SSL: False,
+            },
+        )
+
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        assert result["title"] == "UniFi Insights (Local)"
+        assert result["result"].unique_id == "https://192.168.1.1"
+        assert CONF_CONSOLE_ID not in result["result"].data
+        assert result["result"].data[CONF_HOST] == "https://192.168.1.1"
+        assert result["result"].data[CONF_API_KEY] == "test_api_key"
+
+
+async def test_local_flow_innerspace_only_duplicate_rejection(
+    hass: HomeAssistant,
+    mock_innerspace_client: MagicMock,
+) -> None:
+    """Duplicate host for an InnerSpace-only console aborts with already_configured."""
+    existing_entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="UniFi Insights (Local)",
+        unique_id="https://192.168.1.1",
+        data={
+            CONF_CONNECTION_TYPE: CONNECTION_TYPE_LOCAL,
+            CONF_HOST: "https://192.168.1.1",
+            CONF_API_KEY: "existing_key",
+        },
+    )
+    existing_entry.add_to_hass(hass)
+
+    mock_innerspace_client.get_project.return_value = build_innerspace_project()
+
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+            return_value=_make_client_context(sites=[]),
+        ),
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiProtectClient",
+            return_value=_protect_context(cameras=[]),
+        ),
+        patch("custom_components.unifi_insights.config_flow.LocalAuth"),
+    ):
+        result = await _submit_local_flow(hass)
+
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
+async def test_local_flow_innerspace_only_unsafe_host_rejected(
+    hass: HomeAssistant,
+    mock_innerspace_client: MagicMock,
+) -> None:
+    """An InnerSpace-only console with a credential-equivalent host reports.
+
+    The error reported is console_identity_unavailable.
+    """
+    mock_innerspace_client.get_project.return_value = build_innerspace_project()
+
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+            return_value=_make_client_context(sites=[]),
+        ),
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiProtectClient",
+            return_value=_protect_context(cameras=[]),
+        ),
+        patch("custom_components.unifi_insights.config_flow.LocalAuth"),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_CONNECTION_TYPE: CONNECTION_TYPE_LOCAL},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_HOST: "test_api_key",
+                CONF_API_KEY: "test_api_key",
+                CONF_VERIFY_SSL: False,
+            },
+        )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {"base": "console_identity_unavailable"}
+    assert len(hass.config_entries.async_entries(DOMAIN)) == 0
+
+
+async def test_local_flow_innerspace_only_access_token_handling(
+    hass: HomeAssistant,
+    mock_innerspace_client: MagicMock,
+) -> None:
+    """InnerSpace-only console validates Access token.
+
+    Reports field error on invalid token.
+    """
+    mock_innerspace_client.get_project.return_value = build_innerspace_project()
+
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+            return_value=_make_client_context(sites=[]),
+        ),
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiProtectClient",
+            return_value=_protect_context(cameras=[]),
+        ),
+        patch("custom_components.unifi_insights.config_flow.LocalAuth"),
+        patch(
+            "custom_components.unifi_insights.config_flow.UnifiInsightsConfigFlow._async_validate_access",
+            AsyncMock(return_value="access_invalid_auth"),
+        ),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_CONNECTION_TYPE: CONNECTION_TYPE_LOCAL},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_HOST: "https://192.168.1.1",
+                CONF_API_KEY: "test_api_key",
+                CONF_VERIFY_SSL: False,
+                CONF_ACCESS_TOKEN: "bad_token",
+            },
+        )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {CONF_ACCESS_TOKEN: "access_invalid_auth"}
+
+
+async def test_innerspace_not_constructed_when_network_or_protect_available(
+    hass: HomeAssistant,
+) -> None:
+    """InnerSpace client is not constructed when Network or Protect is available."""
+    mock_innerspace_cls = MagicMock()
+
+    # Network available
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+            return_value=_make_client_context(
+                sites=[MagicMock(id="default", name="Default")]
+            ),
+        ),
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiProtectClient",
+            return_value=_protect_context(cameras=[]),
+        ),
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiInnerSpaceClient",
+            mock_innerspace_cls,
+        ),
+        patch("custom_components.unifi_insights.config_flow.LocalAuth"),
+        patch(
+            "custom_components.unifi_insights.async_setup_entry",
+            return_value=True,
+        ),
+    ):
+        await _submit_local_flow(hass)
+        mock_innerspace_cls.assert_not_called()
+
+    # Protect available
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+            return_value=_make_client_context(sites=[]),
+        ),
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiProtectClient",
+            return_value=_protect_context(
+                cameras=[MagicMock(id="cam1", name="Doorbell")]
+            ),
+        ),
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiInnerSpaceClient",
+            mock_innerspace_cls,
+        ),
+        patch("custom_components.unifi_insights.config_flow.LocalAuth"),
+        patch(
+            "custom_components.unifi_insights.async_setup_entry",
+            return_value=True,
+        ),
+    ):
+        await _submit_local_flow(hass)
+        mock_innerspace_cls.assert_not_called()
+
+
+async def test_innerspace_client_construction_parameters(
+    hass: HomeAssistant,
+) -> None:
+    """InnerSpace client receives correct mode, session, and timeouts."""
+    mock_innerspace_cls = MagicMock()
+    mock_inner_client = MagicMock()
+    mock_inner_client.get_project = AsyncMock(return_value=build_innerspace_project())
+    inner_cm = MagicMock()
+    inner_cm.__aenter__ = AsyncMock(return_value=mock_inner_client)
+    inner_cm.__aexit__ = AsyncMock(return_value=None)
+    mock_innerspace_cls.return_value = inner_cm
+
+    # Test Local construction
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+            return_value=_make_client_context(sites=[]),
+        ),
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiProtectClient",
+            return_value=_protect_context(cameras=[]),
+        ),
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiInnerSpaceClient",
+            mock_innerspace_cls,
+        ),
+        patch("custom_components.unifi_insights.config_flow.LocalAuth"),
+        patch(
+            "custom_components.unifi_insights.async_setup_entry",
+            return_value=True,
+        ),
+    ):
+        await _submit_local_flow(hass)
+
+    mock_innerspace_cls.assert_called_once()
+    local_kwargs = mock_innerspace_cls.call_args.kwargs
+    assert local_kwargs["base_url"] == "https://192.168.1.1"
+    assert local_kwargs["connection_type"] == ConnectionType.LOCAL
+    assert local_kwargs["timeout"] == 30
+    assert local_kwargs["session"] is not None
+
+    mock_innerspace_cls.reset_mock()
+
+    # Test Remote construction
+    discovery_cm = _make_client_context(get_hosts=[_remote_host()])
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+            side_effect=[discovery_cm, _make_client_context(sites=[])],
+        ),
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiProtectClient",
+            return_value=_protect_context(cameras=[]),
+        ),
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiInnerSpaceClient",
+            mock_innerspace_cls,
+        ),
+        patch("custom_components.unifi_insights.config_flow.ApiKeyAuth"),
+        patch(
+            "custom_components.unifi_insights.async_setup_entry",
+            return_value=True,
+        ),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_CONNECTION_TYPE: CONNECTION_TYPE_REMOTE},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_API_KEY: "test_api_key"},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_CONSOLE_ID: "console123"},
+        )
+
+    mock_innerspace_cls.assert_called_once()
+    remote_kwargs = mock_innerspace_cls.call_args.kwargs
+    assert remote_kwargs["console_id"] == "console123"
+    assert remote_kwargs["connection_type"] == ConnectionType.REMOTE
+    assert remote_kwargs["timeout"] == 30
+    assert remote_kwargs["session"] is not None
+
+
+async def test_remote_flow_success_innerspace_only_console(
+    hass: HomeAssistant,
+    mock_innerspace_client: MagicMock,
+) -> None:
+    """Test remote flow succeeds for InnerSpace-only console with cloud ID."""
+    discovery_cm = _make_client_context(get_hosts=[_remote_host(host_id="console123")])
+    validation_net_cm = _make_client_context(sites=[])
+    mock_innerspace_client.get_project.return_value = build_innerspace_project()
+
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+            side_effect=[discovery_cm, validation_net_cm],
+        ),
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiProtectClient",
+            return_value=_protect_context(cameras=[]),
+        ),
+        patch("custom_components.unifi_insights.config_flow.ApiKeyAuth"),
+        patch(
+            "custom_components.unifi_insights.async_setup_entry",
+            return_value=True,
+        ),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_CONNECTION_TYPE: CONNECTION_TYPE_REMOTE},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_API_KEY: "test_api_key"},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_CONSOLE_ID: "console123"},
+        )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["title"] == "UniFi - Dream Router 7"
+    assert result["result"].unique_id == "console123"
+    assert result["data"] == {
+        CONF_CONNECTION_TYPE: CONNECTION_TYPE_REMOTE,
+        CONF_CONSOLE_ID: "console123",
+        CONF_API_KEY: "test_api_key",
+    }
+
+
+async def test_remote_flow_innerspace_only_duplicate_rejection(
+    hass: HomeAssistant,
+    mock_innerspace_client: MagicMock,
+) -> None:
+    """Test remote duplicate console aborts with already_configured."""
+    existing_entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="console123",
+        data={
+            CONF_CONNECTION_TYPE: CONNECTION_TYPE_REMOTE,
+            CONF_CONSOLE_ID: "console123",
+            CONF_API_KEY: "old_key",
+        },
+    )
+    existing_entry.add_to_hass(hass)
+
+    discovery_cm = _make_client_context(get_hosts=[_remote_host(host_id="console123")])
+    mock_innerspace_client.get_project.return_value = build_innerspace_project()
+
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+            side_effect=[discovery_cm, _make_client_context(sites=[])],
+        ),
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiProtectClient",
+            return_value=_protect_context(cameras=[]),
+        ),
+        patch("custom_components.unifi_insights.config_flow.ApiKeyAuth"),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_CONNECTION_TYPE: CONNECTION_TYPE_REMOTE},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_API_KEY: "test_api_key"},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_CONSOLE_ID: "console123"},
+        )
+
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
+@pytest.mark.parametrize(
+    ("network", "protect", "expected_errors", "innerspace_err"),
     [
         # A 5xx is temporary, not an unknown error.
         (
             {"sites_side_effect": UniFiResponseError("Bad gateway", status_code=502)},
             {"cameras": UniFiNotFoundError("Not found", status_code=404)},
             {"base": "cannot_connect"},
+            None,
         ),
         # A temporary Protect failure outranks a Network 401: the key may be
         # fine on a Protect-only console.
@@ -2039,12 +2496,14 @@ async def _submit_local_flow(hass: HomeAssistant) -> config_entries.ConfigFlowRe
             {"sites_side_effect": UniFiAuthenticationError("No", status_code=401)},
             {"cameras": UniFiTimeoutError("Timed out")},
             {"base": "cannot_connect"},
+            None,
         ),
         # The empty-camera NVR probe's own server error.
         (
             {"sites": []},
             {"nvr": UniFiResponseError("Unavailable", status_code=503)},
             {"base": "cannot_connect"},
+            None,
         ),
         # No sites and a successful answer without an NVR record:
         # api_unsupported, as before.
@@ -2052,6 +2511,7 @@ async def _submit_local_flow(hass: HomeAssistant) -> config_entries.ConfigFlowRe
             {"sites": []},
             {"nvr": UniFiNotFoundError("NVR not found", status_code=200)},
             {"base": "api_unsupported"},
+            None,
         ),
         # No sites and an NVR record that failed to parse.
         (
@@ -2062,18 +2522,58 @@ async def _submit_local_flow(hass: HomeAssistant) -> config_entries.ConfigFlowRe
                 )
             },
             {"base": "site_parse_error"},
+            None,
         ),
         # An unexpected NVR probe error.
         (
             {"sites": []},
             {"nvr": RuntimeError("unexpected")},
             {"base": "unknown"},
+            None,
         ),
         # No sites and no NVR record at all: the invalid_auth fallback.
         (
             {"sites": []},
             {"nvr": None},
             {CONF_API_KEY: "invalid_auth"},
+            None,
+        ),
+        # InnerSpace timeout outranking Network 401.
+        (
+            {"sites_side_effect": UniFiAuthenticationError("No", status_code=401)},
+            {"cameras": []},
+            {"base": "cannot_connect"},
+            UniFiTimeoutError("InnerSpace timeout"),
+        ),
+        # InnerSpace 401 or 403 maps to invalid_auth.
+        (
+            {"sites": []},
+            {"cameras": []},
+            {CONF_API_KEY: "invalid_auth"},
+            UniFiAuthenticationError("Forbidden", status_code=403),
+        ),
+        # InnerSpace malformed project maps to site_parse_error.
+        (
+            {"sites": []},
+            {"cameras": []},
+            {"base": "site_parse_error"},
+            UniFiResponseError(
+                "InnerSpace malformed response", status_code=200, response_body=None
+            ),
+        ),
+        # InnerSpace unexpected error maps to unknown.
+        (
+            {"sites": []},
+            {"cameras": []},
+            {"base": "unknown"},
+            RuntimeError("InnerSpace unexpected"),
+        ),
+        # InnerSpace 502 unreachable maps to cannot_connect.
+        (
+            {"sites": []},
+            {"cameras": []},
+            {"base": "cannot_connect"},
+            UniFiResponseError("Bad gateway", status_code=502),
         ),
     ],
     ids=[
@@ -2084,15 +2584,25 @@ async def _submit_local_flow(hass: HomeAssistant) -> config_entries.ConfigFlowRe
         "nvr-malformed",
         "nvr-unexpected",
         "no-nvr-record",
+        "network-401-innerspace-timeout",
+        "innerspace-403",
+        "innerspace-malformed",
+        "innerspace-unexpected",
+        "innerspace-502",
     ],
 )
 async def test_local_flow_classifies_probe_errors(
     hass: HomeAssistant,
+    mock_innerspace_client: MagicMock,
+    *,
     network: dict[str, object],
     protect: dict[str, object],
     expected_errors: dict[str, str],
+    innerspace_err: Exception | None,
 ) -> None:
     """Local validation maps probe results to the right form error."""
+    if innerspace_err is not None:
+        mock_innerspace_client.get_project.side_effect = innerspace_err
     with (
         patch(
             "custom_components.unifi_insights.config_flow.UniFiNetworkClient",

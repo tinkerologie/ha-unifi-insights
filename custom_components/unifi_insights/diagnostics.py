@@ -7,7 +7,7 @@ import logging
 import re
 from collections.abc import Mapping
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.components.diagnostics import REDACTED, async_redact_data
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
@@ -726,6 +726,96 @@ def _access_diagnostics(coordinator: UnifiInsightsAccessCoordinator) -> dict[str
     }
 
 
+KNOWN_INTERNET_ACTIVITY_SOURCES: Final = frozenset({"legacy", "modern", "unknown"})
+KNOWN_INTERNET_ACTIVITY_REASONS: Final = frozenset(
+    {
+        "ok",
+        "empty_response",
+        "no_usable_buckets",
+        "unrecognised_shape",
+        "unsupported",
+        "method_missing",
+        "failed",
+        "site_not_resolved",
+        "permission_denied",
+    }
+)
+KNOWN_INTERNET_ACTIVITY_REQUEST_LABELS: Final = frozenset(
+    {
+        "5minutes",
+        "hourly",
+        "daily",
+        "DAY",
+        "WEEK",
+        "MONTH",
+    }
+)
+MAX_DIAGNOSTICS_COUNT: Final = 100000
+
+
+def build_internet_activity_status_diagnostics(
+    raw_status: Any,
+) -> list[dict[str, Any]]:
+    """Build a safe allowlisted bounded summary of internet activity status."""
+    if not isinstance(raw_status, Mapping):
+        return []
+
+    summaries: list[dict[str, Any]] = []
+    for idx, (_, status_entry) in enumerate(
+        sorted(raw_status.items(), key=lambda kv: str(kv[0]))
+    ):
+        if not isinstance(status_entry, Mapping):
+            continue
+
+        raw_source = status_entry.get("source")
+        source = (
+            raw_source if raw_source in KNOWN_INTERNET_ACTIVITY_SOURCES else "other"
+        )
+
+        raw_reason = status_entry.get("reason")
+        reason = (
+            raw_reason if raw_reason in KNOWN_INTERNET_ACTIVITY_REASONS else "other"
+        )
+
+        raw_counts = status_entry.get("counts")
+        counts_dict: dict[str, dict[str, int]] = {}
+        if isinstance(raw_counts, Mapping):
+            for label, metrics in raw_counts.items():
+                safe_label = (
+                    label
+                    if label in KNOWN_INTERNET_ACTIVITY_REQUEST_LABELS
+                    else "other"
+                )
+                if not isinstance(metrics, Mapping):
+                    continue
+
+                def _bound(val: Any) -> int:
+                    if isinstance(val, bool) or not isinstance(val, (int, float)):
+                        return 0
+                    try:
+                        n = int(val)
+                    except ValueError, OverflowError:
+                        return 0
+                    return min(max(0, n), MAX_DIAGNOSTICS_COUNT)
+
+                counts_dict[safe_label] = {
+                    "received": _bound(metrics.get("received")),
+                    "usable": _bound(metrics.get("usable")),
+                    "skipped": _bound(metrics.get("skipped")),
+                }
+
+        summaries.append(
+            {
+                "site_index": idx,
+                "source": source,
+                "reason": reason,
+                "counts": counts_dict,
+            }
+        )
+
+    return summaries
+
+
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: UnifiInsightsConfigEntry | CarrierFabricConfigEntry
 ) -> dict[str, Any]:
@@ -820,6 +910,7 @@ async def async_get_config_entry_diagnostics(
     # The read model repeats devices and stats as frozen records, which the
     # MAC pass cannot walk into; the raw sections already carry it all.
     facade_data.pop(NETWORK_FACTS_KEY, None)
+    raw_status = facade_data.pop("internet_activity_status", None)
     innerspace_snapshot = facade_data.pop("innerspace", None)
     innerspace_coord = getattr(data, "innerspace_coordinator", None)
     if not isinstance(innerspace_snapshot, Mapping) and innerspace_coord is not None:
@@ -830,6 +921,9 @@ async def async_get_config_entry_diagnostics(
         "websocket": websocket_info,
         "entry": async_redact_data(entry.as_dict(), TO_REDACT),
         "data": _redact_coordinator_data(facade_data),
+        "internet_activity_status": build_internet_activity_status_diagnostics(
+            raw_status
+        ),
     }
     diagnostics_data["innerspace"] = build_innerspace_diagnostics_summary(
         innerspace_snapshot if isinstance(innerspace_snapshot, Mapping) else {},
