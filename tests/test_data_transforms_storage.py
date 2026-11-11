@@ -215,6 +215,16 @@ def test_model_pipeline_omitted_sizes_and_literal_health(healthy: Any) -> None:
     assert NVR(id="nvr1").model_dump()["storage_info"] is None
 
 
+def test_nvr_model_serializes_external_alarm_manager_flag() -> None:
+    """The useExternalAlarmManager feature flag survives NVR model serialization."""
+    nvr = NVR.model_validate(
+        {"id": "nvr1", "featureFlags": {"useExternalAlarmManager": True}}
+    )
+    serialized = nvr.model_dump(by_alias=True)
+    assert serialized["featureFlags"] == {"useExternalAlarmManager": True}
+    assert nvr.model_dump()["feature_flags"] == {"useExternalAlarmManager": True}
+
+
 def test_explicit_storage_model_serialization() -> None:
     """Explicit models, extra aliases and Python/JSON alias modes preserve omissions."""
     model = StorageInfo.model_validate(

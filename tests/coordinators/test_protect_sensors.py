@@ -1560,6 +1560,17 @@ class TestSensorModelTimestampCoercion:
         assert sensor.open_status_changed_at is None
         assert sensor.motion_detected_at is None
 
+    def test_mounted_incorrectly_extra_field_preserved(self) -> None:
+        sensor = Sensor.model_validate(
+            {
+                "id": "s1",
+                "mac": "aa:bb",
+                "isMountedIncorrectly": True,
+            }
+        )
+        assert sensor.is_mounted_incorrectly is True
+        assert sensor.model_dump(by_alias=True).get("isMountedIncorrectly") is True
+
 
 class TestBoundedEscalationPropagatesOnMainPoll:
     """Finding 4 (MAJOR): a sustained /sensors outage must fail the poll.
@@ -1837,3 +1848,30 @@ class TestRefreshWaiterPaths:
             await owner_task
 
         notify_mock.assert_not_called()
+
+
+class TestProtectSensorMountedIncorrectly:
+    """Test Protect 7.4.96 isMountedIncorrectly handling in coordinator."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_sensors_preserves_is_mounted_incorrectly(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ) -> None:
+        """Protect 7.4.96 isMountedIncorrectly extra field is preserved."""
+        sensor = Sensor.model_validate(
+            {
+                "id": "sensor_mounted",
+                "name": "Orientation Sensor",
+                "mac": "AA:BB:CC:DD:EE:77",
+                "state": "CONNECTED",
+                "isMountedIncorrectly": True,
+            }
+        )
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
+            return_value=protect_list([sensor])
+        )
+        await coordinator._fetch_sensors()
+        assert (
+            coordinator.data["sensors"]["sensor_mounted"]["isMountedIncorrectly"]
+            is True
+        )

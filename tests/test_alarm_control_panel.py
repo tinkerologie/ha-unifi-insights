@@ -20,7 +20,10 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant.components.alarm_control_panel import AlarmControlPanelEntityFeature
+from homeassistant.components.alarm_control_panel import (
+    AlarmControlPanelEntityFeature,
+    AlarmControlPanelState,
+)
 from homeassistant.const import ATTR_ENTITY_ID, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
@@ -33,12 +36,13 @@ from unifi_official_api import (
 from unifi_official_api.protect.endpoints.arm_profiles import (
     ArmProfilesEndpoint,
 )
-from unifi_official_api.protect.models import NVR
+from unifi_official_api.protect.models import NVR, ExternalArmProfile
 
 from custom_components.unifi_insights import alarm_control_panel as panel_platform
 from custom_components.unifi_insights.alarm_control_panel import (
     ARM_MODE_TO_STATE,
     PARALLEL_UPDATES,
+    UnifiProtectExternalArmProfileAlarmControlPanel,
     UnifiProtectNvrAlarmControlPanel,
     _arm_mode,
     _epoch_ms_to_iso,
@@ -51,7 +55,12 @@ from tests.fixtures.facade_data import (
     set_availability,
     with_protect_device,
 )
-from tests.fixtures.library_responses import SAMPLE_NVR, SAMPLE_NVR_WITH_ARM_MODE
+from tests.fixtures.library_responses import (
+    SAMPLE_EXTERNAL_ARM_PROFILE,
+    SAMPLE_EXTERNAL_ARM_PROFILE_2,
+    SAMPLE_NVR,
+    SAMPLE_NVR_WITH_ARM_MODE,
+)
 from tests.fixtures.protect_ws import FakeProtectWebSocket
 
 if TYPE_CHECKING:
@@ -804,17 +813,69 @@ async def test_reconcile_notifies_only_when_the_nvr_changed(
     listener.assert_called_once()
 
 
-async def test_reconcile_skips_an_nvr_without_arm_mode(
+async def test_reconcile_reads_nvr_but_skips_local_probe_without_arm_mode(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry, protect_client: MagicMock
 ) -> None:
-    """Older firmware has no arm mode to reconcile, so nothing is requested."""
+    """Read NVR feature flags without probing for a local arm mode."""
     await _setup(hass, mock_config_entry, protect_client, nvr=_nvr_without_arm_mode())
     protect = mock_config_entry.runtime_data.protect_coordinator
+    polls_before = protect_client.nvr.get.await_count
+    protect_client.arm_profiles.get_all.reset_mock()
+
+    await protect._reconcile_nvr_arm_mode()
+
+    assert protect_client.nvr.get.await_count == polls_before + 1
+    protect_client.arm_profiles.get_all.assert_not_awaited()
+
+
+async def test_reconcile_reads_the_nvr_while_none_is_cached(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry, protect_client: MagicMock
+) -> None:
+    """A failed first NVR read is retried on the timer, not only by the poll."""
+    await _setup(hass, mock_config_entry, protect_client, nvr=_nvr())
+    protect = mock_config_entry.runtime_data.protect_coordinator
+    protect.data["nvrs"] = {}
+    listener = MagicMock()
+    protect.async_add_listener(listener)
     polls_before = protect_client.nvr.get.await_count
 
     await protect._reconcile_nvr_arm_mode()
 
-    assert protect_client.nvr.get.await_count == polls_before
+    assert protect_client.nvr.get.await_count == polls_before + 1
+    assert protect.data["nvrs"]
+    listener.assert_called_once()
+
+
+async def test_overlapping_nvr_reads_keep_the_newer_answer(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry, protect_client: MagicMock
+) -> None:
+    """A slow older NVR read cannot replace the breach a newer read found."""
+    await _setup(hass, mock_config_entry, protect_client, nvr=_nvr(status="armed"))
+    protect = mock_config_entry.runtime_data.protect_coordinator
+    release = asyncio.Event()
+    reads = 0
+
+    async def get_nvr() -> NVR:
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            await release.wait()
+            return NVR.model_validate(_nvr(status="disarmed"))
+        return NVR.model_validate(
+            _nvr(status="breach", breachDetectedAt=ARMED_AT_MS, breachEventCount=1)
+        )
+
+    protect_client.nvr.get = AsyncMock(side_effect=get_nvr)
+    older = hass.async_create_task(protect._fetch_nvr())
+    await asyncio.sleep(0)
+    newer = hass.async_create_task(protect._fetch_nvr())
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(older, newer)
+
+    assert reads == 2
+    (nvr,) = protect.data["nvrs"].values()
+    assert nvr["armMode"]["status"] == "breach"
 
 
 async def test_reconcile_tick_includes_the_nvr(
@@ -1268,3 +1329,333 @@ async def test_nvr_read_started_after_a_frame_is_applied(
     await hass.async_block_till_done()
 
     assert protect.data["nvrs"]["nvr_1"]["armMode"]["status"] == "breach"
+
+
+def test_external_alarm_manager_availability_matrix() -> None:
+    """The panel is available only when useExternalAlarmManager is false or missing."""
+    coord_missing = _unit_coordinator(SAMPLE_NVR_WITH_ARM_MODE)
+    panel_missing = UnifiProtectNvrAlarmControlPanel(coord_missing, "nvr_1")
+    assert panel_missing.available is True
+
+    coord_empty = _unit_coordinator({**SAMPLE_NVR_WITH_ARM_MODE, "featureFlags": {}})
+    panel_empty = UnifiProtectNvrAlarmControlPanel(coord_empty, "nvr_1")
+    assert panel_empty.available is True
+
+    coord_false = _unit_coordinator(
+        {**SAMPLE_NVR_WITH_ARM_MODE, "featureFlags": {"useExternalAlarmManager": False}}
+    )
+    panel_false = UnifiProtectNvrAlarmControlPanel(coord_false, "nvr_1")
+    assert panel_false.available is True
+
+    coord_true = _unit_coordinator(
+        {**SAMPLE_NVR_WITH_ARM_MODE, "featureFlags": {"useExternalAlarmManager": True}}
+    )
+    panel_true = UnifiProtectNvrAlarmControlPanel(coord_true, "nvr_1")
+    assert panel_true.available is False
+
+
+async def test_external_alarm_manager_skips_discovery(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry, protect_client: MagicMock
+) -> None:
+    """An NVR reporting useExternalAlarmManager true skips local panel discovery."""
+    nvr_external = {**_nvr(), "featureFlags": {"useExternalAlarmManager": True}}
+    await _setup(hass, mock_config_entry, protect_client, nvr=nvr_external)
+    assert hass.states.async_entity_ids("alarm_control_panel") == []
+
+
+async def test_external_alarm_manager_transitions_unavailable_and_back(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry, protect_client: MagicMock
+) -> None:
+    """A panel turns unavailable when external manager is enabled, and back."""
+    await _setup(hass, mock_config_entry, protect_client, nvr=_nvr())
+    assert _state(hass) == "disarmed"
+
+    protect_client.nvr.get = AsyncMock(
+        return_value=NVR.model_validate(
+            {**_nvr(), "featureFlags": {"useExternalAlarmManager": True}}
+        )
+    )
+    await mock_config_entry.runtime_data.protect_coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert _state(hass) == STATE_UNAVAILABLE
+
+    protect_client.nvr.get = AsyncMock(
+        return_value=NVR.model_validate(
+            {**_nvr(), "featureFlags": {"useExternalAlarmManager": False}}
+        )
+    )
+    await mock_config_entry.runtime_data.protect_coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert _state(hass) == "disarmed"
+
+
+async def test_external_arm_profile_discovery_multiple_profiles(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry, protect_client: MagicMock
+) -> None:
+    """Discover multiple external arm profile panels grouped under the NVR."""
+    nvr_external = {**_nvr(), "featureFlags": {"useExternalAlarmManager": True}}
+    protect_client.external_arm_profiles.get_all_result = AsyncMock(
+        return_value=MagicMock(
+            records=[
+                ExternalArmProfile.model_validate(SAMPLE_EXTERNAL_ARM_PROFILE),
+                ExternalArmProfile.model_validate(SAMPLE_EXTERNAL_ARM_PROFILE_2),
+            ]
+        )
+    )
+    await _setup(hass, mock_config_entry, protect_client, nvr=nvr_external)
+
+    ent_reg = er.async_get(hass)
+    dev_reg = dr.async_get(hass)
+
+    e1_id = ent_reg.async_get_entity_id(
+        "alarm_control_panel",
+        DOMAIN,
+        f"{DOMAIN}_nvr_nvr_1_external_arm_profile_profile_1",
+    )
+    e2_id = ent_reg.async_get_entity_id(
+        "alarm_control_panel",
+        DOMAIN,
+        f"{DOMAIN}_nvr_nvr_1_external_arm_profile_profile_2",
+    )
+    assert e1_id is not None
+    assert e2_id is not None
+
+    e1_entry = ent_reg.async_get(e1_id)
+    assert e1_entry is not None
+    assert e1_entry.device_id is not None
+    nvr_device = dev_reg.async_get(e1_entry.device_id)
+    assert nvr_device is not None
+    assert (DOMAIN, "protect_nvr_nvr_1") in nvr_device.identifiers
+
+    s1 = hass.states.get(e1_id)
+    assert s1 is not None
+    assert s1.state == "armed_away"
+    assert s1.attributes["has_pin"] is True
+    assert s1.attributes["alarm_ids"] == ["alarm_1", "alarm_2"]
+    assert "pin_code" not in s1.attributes
+
+    s2 = hass.states.get(e2_id)
+    assert s2 is not None
+    assert s2.state == "disarmed"
+    assert s2.attributes["has_pin"] is False
+
+
+@pytest.mark.parametrize(
+    ("raw_state", "expected"),
+    [
+        ("disarmed", AlarmControlPanelState.DISARMED),
+        ("arming", AlarmControlPanelState.ARMING),
+        ("armed", AlarmControlPanelState.ARMED_AWAY),
+        ("breaching", AlarmControlPanelState.PENDING),
+        ("breached", AlarmControlPanelState.TRIGGERED),
+        ("unknown_xyz", None),
+    ],
+)
+def test_external_arm_profile_state_mapping(
+    raw_state: str, expected: AlarmControlPanelState | None
+) -> None:
+    """Profile states map per specification: breaching->pending, breached->triggered."""
+    coord = MagicMock()
+    coord.data = {
+        "protect": {
+            "available": True,
+            "nvrs": {"nvr_1": {"featureFlags": {"useExternalAlarmManager": True}}},
+            "external_arm_profiles": {
+                "p1": {"id": "p1", "title": "P1", "state": raw_state}
+            },
+        }
+    }
+    panel = UnifiProtectExternalArmProfileAlarmControlPanel(coord, "nvr_1", "p1")
+    assert panel.alarm_state == expected
+
+
+def test_external_arm_profile_attributes_and_pin_exclusion() -> None:
+    """Profile attributes expose metadata and never pin_code."""
+    coord = MagicMock()
+    coord.data = {
+        "protect": {
+            "available": True,
+            "nvrs": {"nvr_1": {"featureFlags": {"useExternalAlarmManager": True}}},
+            "external_arm_profiles": {
+                "p1": {
+                    "id": "p1",
+                    "title": "Perimeter",
+                    "state": "armed",
+                    "has_pin": True,
+                    "alarm_ids": ["a1", "a2"],
+                    "state_set_at": "2026-04-10T12:00:00Z",
+                    "state_promotion_due_at": "2026-04-10T12:01:00Z",
+                    "active_breach_id": 42,
+                    "pin_code": "1234",
+                    "pin": "1234",
+                }
+            },
+        }
+    }
+    panel = UnifiProtectExternalArmProfileAlarmControlPanel(coord, "nvr_1", "p1")
+    assert panel.name == "Perimeter"
+    assert panel.code_arm_required is False
+    assert panel.supported_features == AlarmControlPanelEntityFeature.ARM_AWAY
+
+    attrs = panel.extra_state_attributes
+    assert attrs is not None
+    assert attrs["has_pin"] is True
+    assert attrs["alarm_ids"] == ["a1", "a2"]
+    assert attrs["state_set_at"] == "2026-04-10T12:00:00Z"
+    assert attrs["state_promotion_due_at"] == "2026-04-10T12:01:00Z"
+    assert attrs["active_breach_id"] == 42
+    assert "pin_code" not in attrs
+    assert "pin" not in attrs
+
+
+async def test_external_arm_profile_arm_and_disarm_service_calls(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry, protect_client: MagicMock
+) -> None:
+    """Calling arm_away and disarm delegates to the coordinator commands."""
+    nvr_external = {**_nvr(), "featureFlags": {"useExternalAlarmManager": True}}
+    protect_client.external_arm_profiles.get_all_result = AsyncMock(
+        return_value=MagicMock(
+            records=[
+                ExternalArmProfile.model_validate(SAMPLE_EXTERNAL_ARM_PROFILE),
+            ]
+        )
+    )
+    protect_client.external_arm_profiles.arm = AsyncMock(
+        return_value=ExternalArmProfile.model_validate(
+            {**SAMPLE_EXTERNAL_ARM_PROFILE, "state": "armed"}
+        )
+    )
+    protect_client.external_arm_profiles.disarm = AsyncMock(
+        return_value=ExternalArmProfile.model_validate(
+            {**SAMPLE_EXTERNAL_ARM_PROFILE, "state": "disarmed"}
+        )
+    )
+    await _setup(hass, mock_config_entry, protect_client, nvr=nvr_external)
+
+    ent_reg = er.async_get(hass)
+    entity_id = ent_reg.async_get_entity_id(
+        "alarm_control_panel",
+        DOMAIN,
+        f"{DOMAIN}_nvr_nvr_1_external_arm_profile_profile_1",
+    )
+    assert entity_id is not None
+
+    await hass.services.async_call(
+        "alarm_control_panel",
+        "alarm_arm_away",
+        {ATTR_ENTITY_ID: entity_id},
+        blocking=True,
+    )
+    protect_client.external_arm_profiles.arm.assert_awaited_once_with("profile_1")
+
+    await hass.services.async_call(
+        "alarm_control_panel",
+        "alarm_disarm",
+        {ATTR_ENTITY_ID: entity_id},
+        blocking=True,
+    )
+    protect_client.external_arm_profiles.disarm.assert_awaited_once_with("profile_1")
+
+
+async def test_external_arm_profile_profile_removal_transitions_unavailable(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry, protect_client: MagicMock
+) -> None:
+    """A profile that disappears turns unavailable without being removed."""
+    nvr_external = {**_nvr(), "featureFlags": {"useExternalAlarmManager": True}}
+    protect_client.external_arm_profiles.get_all_result = AsyncMock(
+        return_value=MagicMock(
+            records=[
+                ExternalArmProfile.model_validate(SAMPLE_EXTERNAL_ARM_PROFILE),
+            ]
+        )
+    )
+    await _setup(hass, mock_config_entry, protect_client, nvr=nvr_external)
+
+    ent_reg = er.async_get(hass)
+    entity_id = ent_reg.async_get_entity_id(
+        "alarm_control_panel",
+        DOMAIN,
+        f"{DOMAIN}_nvr_nvr_1_external_arm_profile_profile_1",
+    )
+    assert entity_id is not None
+    state_before = hass.states.get(entity_id)
+    assert state_before is not None
+    assert state_before.state == "armed_away"
+
+    # Now the profile disappears from the response
+    protect_client.external_arm_profiles.get_all_result = AsyncMock(
+        return_value=MagicMock(records=[])
+    )
+    await mock_config_entry.runtime_data.protect_coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    # Entity is not removed from registry, but state is unavailable
+    assert ent_reg.async_get(entity_id) is not None
+    state_after = hass.states.get(entity_id)
+    assert state_after is not None
+    assert state_after.state == STATE_UNAVAILABLE
+
+
+def test_external_arm_profile_edge_cases() -> None:
+    """Cover edge cases: missing profile, non-dict flags, non-str state, etc."""
+    # Coord with protect unavailable
+    coord_unavail = MagicMock()
+    coord_unavail.data = {
+        "availability": {"protect": False},
+        "protect": {
+            "available": False,
+            "nvrs": {"nvr_1": {"featureFlags": {"useExternalAlarmManager": True}}},
+            "external_arm_profiles": {"p1": {"id": "p1", "title": "P1"}},
+        },
+    }
+    panel_unavail = UnifiProtectExternalArmProfileAlarmControlPanel(
+        coord_unavail, "nvr_1", "p1"
+    )
+    assert panel_unavail.available is False
+
+    # Coord where nvr has external manager False
+    coord_nvr_false = MagicMock()
+    coord_nvr_false.data = {
+        "protect": {
+            "available": True,
+            "nvrs": {"nvr_1": {"featureFlags": {"useExternalAlarmManager": False}}},
+            "external_arm_profiles": {"p1": {"id": "p1", "title": "P1"}},
+        },
+    }
+    panel_nvr_false = UnifiProtectExternalArmProfileAlarmControlPanel(
+        coord_nvr_false, "nvr_1", "p1"
+    )
+    assert panel_nvr_false.available is False
+
+    # Panel with missing profile
+    coord_no_prof = MagicMock()
+    coord_no_prof.data = {
+        "protect": {
+            "available": True,
+            "nvrs": {"nvr_1": {"featureFlags": {"useExternalAlarmManager": True}}},
+            "external_arm_profiles": {},
+        },
+    }
+    panel_no_prof = UnifiProtectExternalArmProfileAlarmControlPanel(
+        coord_no_prof, "nvr_1", "p1"
+    )
+    assert panel_no_prof.name is None
+    assert panel_no_prof.alarm_state is None
+    assert panel_no_prof.extra_state_attributes is None
+
+    # Panel with profile having empty/no title and non-str state
+    coord_bad_state = MagicMock()
+    coord_bad_state.data = {
+        "protect": {
+            "available": True,
+            "nvrs": {"nvr_1": {"featureFlags": {"useExternalAlarmManager": True}}},
+            "external_arm_profiles": {"p1": {"id": "p1", "title": "", "state": 123}},
+        },
+    }
+    panel_bad_state = UnifiProtectExternalArmProfileAlarmControlPanel(
+        coord_bad_state, "nvr_1", "p1"
+    )
+    assert panel_bad_state.name is None
+    assert panel_bad_state.alarm_state is None

@@ -34,6 +34,9 @@ from unifi_official_api.protect.talkback import (
 )
 
 from custom_components.unifi_insights.const import DOMAIN, SCAN_INTERVAL_PROTECT
+from custom_components.unifi_insights.data_transforms import (
+    any_nvr_uses_external_alarm_manager,
+)
 from custom_components.unifi_insights.probe import is_malformed_response
 
 from .base import CommandFailure, UnifiInsightsBaseCoordinator, async_execute_command
@@ -47,6 +50,7 @@ from .protect_events import (
     CommandOverlay,
     DispatchDigitalInput,
     Escalate,
+    ExternalArmProfilesDisabled,
     Fetched,
     Instant,
     Log,
@@ -62,6 +66,7 @@ from .protect_events import (
     TransientError,
     begin_request,
     initial_state,
+    is_stale_profile_read,
     normalize_camera,
     reconcile,
 )
@@ -84,7 +89,9 @@ if TYPE_CHECKING:
     )
     from .protect_ws import Stream
 
-type _DeviceFamily = Literal["fobs", "link_stations", "alarm_hubs", "sirens"]
+type _DeviceFamily = Literal[
+    "fobs", "link_stations", "alarm_hubs", "sirens", "speakers"
+]
 
 # The RTSPS channels Protect renders for a camera, heaviest first.
 type StreamQuality = Literal["high", "medium", "low"]
@@ -224,9 +231,15 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         # Families already reported once as unsupported (logged at INFO the
         # first time only, not on every hourly re-probe).
         self._unsupported_logged: set[str] = set()
+        # Strictly increasing sequence stamped on each external arm profile
+        # read before its await, so overlapping reads order by issue even when
+        # the monotonic clock returns the same value for two of them.
+        self._profile_read_seq: int = 0
         # Monotonic time before which the global alarm manager is not asked
         # about again (see `_probe_global_alarm_manager`).
         self._global_alarm_manager_probe_after: float = 0.0
+        # Serialises NVR reads (see `_fetch_nvr`).
+        self._nvr_read_lock = asyncio.Lock()
         # Consecutive probes that gave no answer, for the one warning.
         self._global_alarm_manager_probe_failures: int = 0
         self.data: dict[str, Any] = {
@@ -241,6 +254,8 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
             "link_stations": {},
             "alarm_hubs": {},
             "sirens": {},
+            "speakers": {},
+            "external_arm_profiles": {},
             "doorlocks": {},
             "viewports": {},
             "liveviews": {},
@@ -523,16 +538,17 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         countdown ends, and a breach is raised by an alarm. WebSocket frames
         from the whole console keep pushing the main poll back, so without
         this the alarm control panel could read stale for as long as the
-        console is busy. The global alarm manager question is asked here too,
-        for the same reason. Nothing is fetched for an NVR that reports no
-        arm mode, and listeners are only notified when something changed.
+        console is busy. The same read discovers external management when
+        the flag first appears or is re-enabled, including on NVRs without
+        a local arm mode.
         """
-        if not self._nvr_has_arm_mode():
-            return
-        before = (self.data["nvrs"], self.data["global_alarm_manager"])
-        await self._fetch_nvr()
+        before_nvr = self.data["nvrs"]
+        before_global_manager = self.data["global_alarm_manager"]
+        published = await self._fetch_nvr()
         await self._probe_global_alarm_manager()
-        if (self.data["nvrs"], self.data["global_alarm_manager"]) != before:
+        if self.data["global_alarm_manager"] != before_global_manager or (
+            not published and self.data["nvrs"] != before_nvr
+        ):
             self.async_update_listeners()
 
     async def _probe_global_alarm_manager(self) -> None:
@@ -642,6 +658,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         except ConfigEntryAuthFailed:
             self.config_entry.async_start_reauth(self.hass)
         await self._reconcile_sirens()
+        await self._reconcile_external_arm_profiles()
 
     async def _reconcile_sirens(self) -> None:
         """
@@ -881,7 +898,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
 
     def _apply_reporting_errors(
         self, event: ReconcilerInput, report: Callable[[Exception], None]
-    ) -> bool:
+    ) -> Step | None:
         """
         Apply a REST answer; report an unexpected failure like a fetch error.
 
@@ -890,11 +907,10 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         whole Protect poll. A failed step commits nothing.
         """
         try:
-            self._apply(event)
+            return self._apply(event)
         except Exception as err:
             report(err)
-            return False
-        return True
+            return None
 
     @callback
     def _on_websocket_event_message(self, message: Any) -> None:
@@ -975,6 +991,11 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
             await self._fetch_link_stations()
             await self._fetch_alarm_hubs()
             await self._fetch_sirens()
+            await self._fetch_speakers()
+            if self._any_nvr_uses_external_alarm_manager():
+                await self._fetch_external_arm_profiles()
+            else:
+                self._disable_external_arm_profiles()
 
             self._available = True
             self.data = {**self.data, "last_update": datetime.now(tz=UTC)}
@@ -986,7 +1007,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
                 "Protect coordinator: Update complete - "
                 "%d cameras, %d lights, %d sensors, %d NVRs, "
                 "%d chimes, %d viewers, %d liveviews, "
-                "%d fobs, %d link stations, %d alarm hubs, %d sirens",
+                "%d fobs, %d link stations, %d alarm hubs, %d sirens, %d speakers",
                 len(self.data["cameras"]),
                 len(self.data["lights"]),
                 len(self.data["sensors"]),
@@ -998,6 +1019,7 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
                 len(self.data["link_stations"]),
                 len(self.data["alarm_hubs"]),
                 len(self.data["sirens"]),
+                len(self.data["speakers"]),
             )
 
             return self.data
@@ -1134,34 +1156,43 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
                 len(result.records),
             )
 
-    async def _fetch_nvr(self) -> None:
+    async def _fetch_nvr(self) -> bool:
         """
-        Fetch NVR data.
+        Fetch NVR data and return whether invalidation notified listeners.
 
         A frame for the NVR that lands while the request is out is newer than
         the answer (an arm mode that has just changed, for one), so the
         reconciler drops the answer then.
         """
         if not self.protect_client:
-            return
+            return False
 
-        _LOGGER.debug("Protect coordinator: Fetching NVR")
-        stamp = begin_request(self._events, "nvrs", self._now())
-        outcome: RestOutcome
-        try:
-            nvr = self._model_to_dict(await self.protect_client.nvr.get())
-            nvr_id = nvr.get("id")
-            outcome = Fetched({nvr_id: nvr} if nvr_id else {})
-        except UniFiNotFoundError:
-            outcome = NotFound()
-        except Exception as err:
-            _LOGGER.debug("Protect coordinator: Error fetching NVR: %s", err)
-            return
-        self._apply_reporting_errors(
-            RestBatch(stamp, outcome),
-            lambda err: _LOGGER.debug(
-                "Protect coordinator: Error fetching NVR: %s", err
-            ),
+        # The main poll and the reconcile timer both read the NVR, and the
+        # reconciler does not order two REST answers for it: an older answer
+        # landing last would replace a newer one (a breach read as disarmed).
+        # One read at a time, each stamped once it holds the lock, keeps the
+        # answers in the order they were read.
+        async with self._nvr_read_lock:
+            _LOGGER.debug("Protect coordinator: Fetching NVR")
+            stamp = begin_request(self._events, "nvrs", self._now())
+            outcome: RestOutcome
+            try:
+                nvr = self._model_to_dict(await self.protect_client.nvr.get())
+                nvr_id = nvr.get("id")
+                outcome = Fetched({nvr_id: nvr} if nvr_id else {})
+            except UniFiNotFoundError:
+                outcome = NotFound()
+            except Exception as err:
+                _LOGGER.debug("Protect coordinator: Error fetching NVR: %s", err)
+                return False
+            step = self._apply_reporting_errors(
+                RestBatch(stamp, outcome),
+                lambda err: _LOGGER.debug(
+                    "Protect coordinator: Error fetching NVR: %s", err
+                ),
+            )
+        return step is not None and any(
+            isinstance(effect, PublishUpdate) for effect in step.effects
         )
 
     async def _fetch_chimes(self) -> None:
@@ -1273,6 +1304,123 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         """Fetch siren data (the endpoint is absent on older Protect versions)."""
         await self._fetch_device_family("sirens")
 
+    async def _fetch_speakers(self) -> None:
+        """Fetch speaker data (endpoint is absent on older Protect versions)."""
+        await self._fetch_device_family("speakers")
+
+    def _any_nvr_uses_external_alarm_manager(self) -> bool:
+        """Return True if any NVR in Protect data uses external alarm manager."""
+        return any_nvr_uses_external_alarm_manager(self.data.get("nvrs"))
+
+    async def _reconcile_external_arm_profiles(self) -> None:
+        """Reconcile external arm profiles on the 30s timer when enabled on an NVR."""
+        if not self._any_nvr_uses_external_alarm_manager():
+            self._disable_external_arm_profiles()
+            return
+
+        before = self.data.get("external_arm_profiles", {})
+        await self._fetch_external_arm_profiles()
+        if self.data.get("external_arm_profiles") != before:
+            self.async_update_listeners()
+
+    @callback
+    def _disable_external_arm_profiles(self) -> None:
+        """
+        Clear the external arm profiles and invalidate any in-flight read.
+
+        The reconciler bumps the external_arm_profiles generation while it
+        clears the collection, so a profile read already in flight when the
+        ``useExternalAlarmManager`` flag turned off is dropped when it answers
+        and cannot restore the cleared profiles.
+        """
+        self._apply(ExternalArmProfilesDisabled())
+
+    async def _fetch_external_arm_profiles(self) -> None:
+        """
+        Fetch external arm profiles.
+
+        Routed through the pure reconciler with ``Fetched(profiles, complete=...)``
+        (ADR-012). Each read takes a strictly increasing request sequence before
+        its await, so overlapping reads order by issue rather than by the
+        monotonic clock (two reads can share a clock value).
+
+        An arm/disarm command increments the external_arm_profiles generation in
+        the reconciler; an in-flight poll stamped prior to the command detects the
+        generation change on completion and drops its stale reading so it cannot
+        overwrite the optimistic command overlay. A 404 or non-JSON answer marks
+        the endpoint unsupported only when the read is not stale and the family
+        has not answered yet, both decided after the await on live state: a stale
+        first read that a newer read overtook must neither mark the family
+        unsupported nor change the cache.
+        """
+        if not self.protect_client:
+            return
+
+        retry_at = self._unsupported_until.get("external_arm_profiles")
+        if retry_at is not None and time.monotonic() < retry_at:
+            return
+
+        endpoint = getattr(self.protect_client, "external_arm_profiles", None)
+        if endpoint is None:
+            return
+
+        _LOGGER.debug("Protect coordinator: Fetching external_arm_profiles")
+        self._profile_read_seq += 1
+        stamp = begin_request(
+            self._events,
+            "external_arm_profiles",
+            self._now(),
+            seq=self._profile_read_seq,
+        )
+        try:
+            result = await endpoint.get_all_result()
+        except UniFiNotFoundError:
+            if is_stale_profile_read(self._events, stamp):
+                return
+            if "external_arm_profiles" in self._answered_families:
+                self._apply(RestBatch(stamp, NotFound()))
+            else:
+                self._mark_family_unsupported("external_arm_profiles", "HTTP 404")
+            return
+        except UniFiResponseError as err:
+            if is_stale_profile_read(self._events, stamp):
+                return
+            if (
+                err.status_code >= HTTPStatus.MULTIPLE_CHOICES
+                or "external_arm_profiles" in self._answered_families
+            ):
+                self._log_family_fetch_error("external_arm_profiles", err)
+            else:
+                self._mark_family_unsupported(
+                    "external_arm_profiles", "non-JSON response"
+                )
+            return
+        except Exception as err:
+            if not is_stale_profile_read(self._events, stamp):
+                self._log_family_fetch_error("external_arm_profiles", err)
+            return
+
+        if is_stale_profile_read(self._events, stamp):
+            return
+        self._answered_families.add("external_arm_profiles")
+        self._log_family_fetch_recovery("external_arm_profiles")
+        self._unsupported_until.pop("external_arm_profiles", None)
+
+        profiles: dict[str, Any] = {}
+        for profile_model in result.records:
+            profile = self._model_to_dict(profile_model)
+            profile_id = profile.get("id")
+            if profile_id:
+                profiles[profile_id] = profile
+
+        _LOGGER.debug(
+            "Protect coordinator: Successfully fetched %d external arm profiles "
+            "(complete=%s)",
+            len(result.records),
+            result.complete,
+        )
+        self._apply(RestBatch(stamp, Fetched(profiles, complete=result.complete)))
+
     def _log_family_fetch_error(self, collection: str, err: Exception) -> None:
         """Report a family outage once while retaining details on later polls."""
         log = _LOGGER.debug if collection in self._failed_families else _LOGGER.warning
@@ -1365,26 +1513,6 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
                 reason,
                 UNSUPPORTED_RESOURCE_RETRY,
             )
-
-    def get_camera(self, camera_id: str) -> dict[str, Any] | None:
-        """Get camera data by ID."""
-        result = self.data.get("cameras", {}).get(camera_id)
-        return result if isinstance(result, dict) else None
-
-    def get_light(self, light_id: str) -> dict[str, Any] | None:
-        """Get light data by ID."""
-        result = self.data.get("lights", {}).get(light_id)
-        return result if isinstance(result, dict) else None
-
-    def get_sensor(self, sensor_id: str) -> dict[str, Any] | None:
-        """Get sensor data by ID."""
-        result = self.data.get("sensors", {}).get(sensor_id)
-        return result if isinstance(result, dict) else None
-
-    def get_nvr(self, nvr_id: str) -> dict[str, Any] | None:
-        """Get NVR data by ID."""
-        result = self.data.get("nvrs", {}).get(nvr_id)
-        return result if isinstance(result, dict) else None
 
     @callback
     def mark_siren_stopped(self, siren_id: str) -> None:
@@ -1719,6 +1847,49 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         )
         self.mark_siren_stopped(siren_id)
 
+    async def async_stop_speaker_siren(self, speaker_id: str) -> None:
+        """Stop siren on a speaker."""
+        speakers = self._client.speakers
+
+        async def _stop() -> None:
+            try:
+                await speakers.stop_siren(speaker_id)
+            except UniFiResponseError as err:
+                if err.status_code == HTTPStatus.BAD_REQUEST:
+                    raise HomeAssistantError(
+                        translation_domain=DOMAIN,
+                        translation_key="speaker_siren_stop_unavailable",
+                    ) from err
+                raise
+
+        await self._async_command(
+            f"Unable to stop siren on speaker {speaker_id}", _stop
+        )
+
+    async def async_arm_external_profile(self, profile_id: str) -> None:
+        """Arm an external arm profile."""
+        profile = await self._async_command(
+            f"Unable to arm external profile {profile_id}",
+            self._client.external_arm_profiles.arm,
+            profile_id,
+        )
+        self._publish_overlay(
+            "external_arm_profiles", profile_id, self._model_to_dict(profile)
+        )
+        await self._async_reconcile()
+
+    async def async_disarm_external_profile(self, profile_id: str) -> None:
+        """Disarm an external arm profile."""
+        profile = await self._async_command(
+            f"Unable to disarm external profile {profile_id}",
+            self._client.external_arm_profiles.disarm,
+            profile_id,
+        )
+        self._publish_overlay(
+            "external_arm_profiles", profile_id, self._model_to_dict(profile)
+        )
+        await self._async_reconcile()
+
     async def async_start_camera_talkback(
         self, camera_id: str, media_url: str
     ) -> TalkbackStream:
@@ -1733,6 +1904,19 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
                 camera_id
             )
         except Exception as err:
+            if (
+                isinstance(err, UniFiResponseError)
+                and err.status_code == HTTPStatus.CONFLICT
+            ):
+                _LOGGER.warning(
+                    "Talkback session already in progress for %s: %s",
+                    camera_id,
+                    err,
+                )
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="talkback_session_in_progress",
+                ) from err
             detail = err.message if is_malformed_response(err) else type(err).__name__
             _LOGGER.warning("Talkback session failed for %s: %s", camera_id, detail)
             raise HomeAssistantError(

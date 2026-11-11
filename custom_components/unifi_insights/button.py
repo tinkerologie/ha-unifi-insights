@@ -35,6 +35,7 @@ from .const import (
     DEFAULT_VOUCHER_NAME,
     DEVICE_TYPE_CAMERA,
     DEVICE_TYPE_CHIME,
+    DEVICE_TYPE_SPEAKER,
     DOMAIN,
     MANUFACTURER,
 )
@@ -451,6 +452,19 @@ async def async_setup_entry(
                         )
                     )
 
+            # Add speaker stop-siren buttons
+            speakers = protect_collection(coordinator.data, "speakers") or {}
+            for speaker_id in speakers:
+                speaker_key = (speaker_id, "speaker_stop_siren")
+                if speaker_key not in known_button_keys:
+                    known_button_keys.add(speaker_key)
+                    entities.append(
+                        UnifiProtectSpeakerStopSirenButton(
+                            coordinator=coordinator,
+                            speaker_id=speaker_id,
+                        )
+                    )
+
         if entities:
             _LOGGER.info("Adding %d UniFi Insights buttons", len(entities))
             async_add_entities(entities)
@@ -527,7 +541,6 @@ class UnifiInsightsPoePowerCycleButton(UnifiInsightsEntity, ButtonEntity):
         )
         super().__init__(coordinator, description, site_id, device_id)
         self._port_idx = port_idx
-        self._port_label = port_label
         self._attr_unique_id = f"{site_id}_{device_id}_port{port_idx}_poe_power_cycle"
         self._attr_translation_placeholders = {"port_label": port_label}
 
@@ -784,6 +797,29 @@ class UnifiProtectPTZPatrolStopButton(UnifiProtectEntity, ButtonEntity):
         protect = self.coordinator.require_protect_coordinator()
         await protect.async_stop_ptz_patrol(self._device_id)
         _LOGGER.info("Successfully stopped PTZ patrol for camera %s", self._device_id)
+
+
+class UnifiProtectSpeakerStopSirenButton(UnifiProtectEntity, ButtonEntity):
+    """Button to stop siren on a UniFi Protect speaker."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "speaker_stop_siren"
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsFacadeCoordinator,
+        speaker_id: str,
+    ) -> None:
+        """Initialize the button."""
+        super().__init__(coordinator, DEVICE_TYPE_SPEAKER, speaker_id, "stop_siren")
+
+    async def async_press(self) -> None:
+        """Stop siren on the speaker."""
+        _LOGGER.debug("Stopping siren on speaker %s", self._device_id)
+
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_stop_speaker_siren(self._device_id)
+        _LOGGER.info("Successfully stopped siren on speaker %s", self._device_id)
 
 
 class UnifiGenerateVoucherButton(UnifiSiteEntity, ButtonEntity):

@@ -410,6 +410,54 @@ SAMPLE_KEYPAD_FOB = {
 
 # Redacted capture of a live UP-Siren-PoE (Protect 7.3.70). The id, MAC and guid
 # are fakes; every other value is as the console reported it.
+SAMPLE_SPEAKER = {
+    "id": "speaker_1",
+    "modelKey": "speaker",
+    "state": "CONNECTED",
+    "name": "Yard Horn",
+    "type": "UP-Speaker",
+    "mac": "AABBCC000006",
+    "volume": 80,
+    "micVolume": 100,
+    "isMicEnabled": True,
+}
+
+SAMPLE_EXTERNAL_ARM_PROFILE = {
+    "id": "profile_1",
+    "title": "Perimeter",
+    "state": "armed",
+    "state_set_at": "2026-04-10T12:00:00Z",
+    "state_promotion_due_at": "2026-04-10T12:01:00Z",
+    "created_at": "2026-04-01T10:00:00Z",
+    "created_by": "user_1",
+    "updated_at": "2026-04-10T12:00:00Z",
+    "updated_by": "user_1",
+    "activation_delay": 60,
+    "deactivation_delay": 30,
+    "active_breach_id": None,
+    "alarm_ids": ["alarm_1", "alarm_2"],
+    "has_pin": True,
+    "schedule": None,
+}
+
+SAMPLE_EXTERNAL_ARM_PROFILE_2 = {
+    "id": "profile_2",
+    "title": "Interior",
+    "state": "disarmed",
+    "state_set_at": "2026-04-10T12:00:00Z",
+    "state_promotion_due_at": None,
+    "created_at": "2026-04-01T10:00:00Z",
+    "created_by": "user_1",
+    "updated_at": "2026-04-10T12:00:00Z",
+    "updated_by": "user_1",
+    "activation_delay": 0,
+    "deactivation_delay": 0,
+    "active_breach_id": None,
+    "alarm_ids": ["alarm_3"],
+    "has_pin": False,
+    "schedule": None,
+}
+
 SAMPLE_SIREN = {
     "id": "siren_1",
     "modelKey": "siren",

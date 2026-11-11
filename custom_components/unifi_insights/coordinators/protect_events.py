@@ -47,6 +47,7 @@ from custom_components.unifi_insights.const import (
     DEVICE_TYPE_NVR,
     DEVICE_TYPE_SENSOR,
     DEVICE_TYPE_SIREN,
+    DEVICE_TYPE_SPEAKER,
     DEVICE_TYPE_VIEWER,
     DEVICE_TYPE_VIEWPORT,
     DIGITAL_INPUT_EVENT_TYPES_BY_STATE,
@@ -58,7 +59,10 @@ from custom_components.unifi_insights.const import (
     SCAN_INTERVAL_PROTECT,
     TIMELINE_MAX_HOURS,
 )
-from custom_components.unifi_insights.data_transforms import get_field
+from custom_components.unifi_insights.data_transforms import (
+    any_nvr_uses_external_alarm_manager,
+    get_field,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -76,8 +80,10 @@ type Family = Literal[
     "link_stations",
     "alarm_hubs",
     "sirens",
+    "speakers",
+    "external_arm_profiles",
 ]
-type GuardedFamily = Literal["nvrs", "sirens"]
+type GuardedFamily = Literal["nvrs", "sirens", "external_arm_profiles"]
 
 # Every family the registry clean-up watches, in the order it walks them.
 FAMILIES: Final[tuple[Family, ...]] = (
@@ -91,6 +97,7 @@ FAMILIES: Final[tuple[Family, ...]] = (
     "link_stations",
     "alarm_hubs",
     "sirens",
+    "speakers",
 )
 
 # Bounded auto-off for the event-derived motion, smart-detect and ring
@@ -214,6 +221,7 @@ _SHALLOW_FRAME_COLLECTIONS: Final[dict[str, str]] = {
     DEVICE_TYPE_CHIME: "chimes",
     DEVICE_TYPE_DOORLOCK: "doorlocks",
     DEVICE_TYPE_VIEWPORT: "viewports",
+    DEVICE_TYPE_SPEAKER: "speakers",
 }
 
 # Every model key a device frame is applied for; any other is ignored.
@@ -508,6 +516,13 @@ class FamilyTracking:
     previous_ids: frozenset[str] = frozenset()
     # Device id -> polls in a row it has been missing.
     missing_polls: Mapping[str, int] = field(default_factory=dict)
+    # Request sequence of the last applied read for the family, used to drop
+    # an older reading that lands after a newer one. The sequence is a
+    # strictly increasing integer the coordinator assigns before each read's
+    # await, so two reads stamped at the same monotonic instant still order
+    # by issue. Only the external arm profile reads can overlap, so only that
+    # family sets it (None until the first read is applied).
+    last_applied_seq: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -539,8 +554,10 @@ def initial_state() -> ReconcilerState:
         sensors={},
         tamper={},
         siren_stops={},
-        ws_generation={"nvrs": 0, "sirens": 0},
-        families={family: FamilyTracking() for family in FAMILIES},
+        ws_generation={"nvrs": 0, "sirens": 0, "external_arm_profiles": 0},
+        families={
+            family: FamilyTracking() for family in (*FAMILIES, "external_arm_profiles")
+        },
     )
 
 
@@ -573,6 +590,9 @@ class RequestStamp:
     at: float
     # The family's WebSocket generation then (None for unguarded families).
     ws_generation: int | None
+    # The coordinator's strictly increasing read sequence, assigned before the
+    # await (None for families whose reads never overlap).
+    seq: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -637,6 +657,11 @@ class SirenStopped:
 
 
 @dataclass(frozen=True, slots=True)
+class ExternalArmProfilesDisabled:
+    """The NVR stopped using the external alarm manager: profiles are cleared."""
+
+
+@dataclass(frozen=True, slots=True)
 class CommandOverlay:
     """A successful write's fields, laid over the record (ADR-010)."""
 
@@ -653,6 +678,7 @@ type ReconcilerInput = (
     | StreamReconnected
     | PollCompleted
     | SirenStopped
+    | ExternalArmProfilesDisabled
     | CommandOverlay
 )
 
@@ -711,14 +737,27 @@ class Step:
     effects: tuple[Effect, ...]
 
 
-def begin_request(state: ReconcilerState, family: Family, now: Instant) -> RequestStamp:
-    """Stamp a REST request; call it before the request's await."""
-    return RequestStamp(family, now.monotonic, _generation(state, family))
+def begin_request(
+    state: ReconcilerState,
+    family: Family,
+    now: Instant,
+    *,
+    seq: int | None = None,
+) -> RequestStamp:
+    """
+    Stamp a REST request; call it before the request's await.
+
+    ``seq`` is the coordinator's strictly increasing read sequence for the
+    family, used to order overlapping reads regardless of the monotonic clock.
+    Only the external arm profile reads can overlap, so only they need one;
+    every other family leaves it None.
+    """
+    return RequestStamp(family, now.monotonic, _generation(state, family), seq)
 
 
 def _generation(state: ReconcilerState, family: Family) -> int | None:
     """Return the family's WebSocket generation, or None if it has none."""
-    if family in ("nvrs", "sirens"):
+    if family in ("nvrs", "sirens", "external_arm_profiles"):
         return state.ws_generation.get(family)
     return None
 
@@ -857,10 +896,23 @@ def reconcile(
             _evict_missing_devices(run)
         case SirenStopped():
             _apply_siren_stop(run, event.siren_id)
+        case ExternalArmProfilesDisabled():
+            _apply_external_profiles_disabled(run)
         case CommandOverlay():
             _apply_overlay(run, event)
         case _:  # pragma: no cover - exhaustive
             assert_never(event)
+
+    # Commit the NVR change and profile invalidation in one step, before any
+    # listener runs or a profile request can resume.
+    previous_nvrs = cache.get("nvrs")
+    nvrs = run.data.get("nvrs")
+    if (
+        nvrs is not previous_nvrs
+        and any_nvr_uses_external_alarm_manager(previous_nvrs)
+        and not any_nvr_uses_external_alarm_manager(nvrs)
+    ):
+        _apply_external_profiles_disabled(run)
     return run.step()
 
 
@@ -920,6 +972,9 @@ def _apply_device_frame(run: _Run, frame: DeviceFrame) -> bool:
             ),
         )
         existing = run.records(guarded).get(device_id, {})
+        if guarded == "nvrs":
+            existing = _canonical_nvr_flags(existing)
+            fields = _canonical_nvr_flags(fields)
         run.put(guarded, device_id, deep_merge(existing, fields))
         if guarded == "sirens":
             _apply_siren_stop_guards(run)
@@ -943,6 +998,23 @@ def _apply_device_frame(run: _Run, frame: DeviceFrame) -> bool:
     # poll waits for a quiet stream.
     run.effects.append(PublishUpdate(mark_success=True))
     return True
+
+
+def _canonical_nvr_flags(record: dict[str, Any]) -> dict[str, Any]:
+    """Put REST and frame flag aliases on the same path before a deep merge."""
+    flags = record.get("featureFlags", record.get("feature_flags"))
+    if "feature_flags" not in record and not (
+        isinstance(flags, dict) and "use_external_alarm_manager" in flags
+    ):
+        return record
+    result = dict(record)
+    result.pop("feature_flags", None)
+    if isinstance(flags, dict) and "use_external_alarm_manager" in flags:
+        flags = dict(flags)
+        external = flags.pop("use_external_alarm_manager")
+        flags.setdefault("useExternalAlarmManager", external)
+    result["featureFlags"] = flags
+    return result
 
 
 def _stamp_sensor_groups(run: _Run, sensor_id: str, fields: Mapping[str, Any]) -> None:
@@ -1323,19 +1395,26 @@ def _apply_rest_batch(run: _Run, batch: RestBatch) -> None:
     family = request.family
     match outcome:
         case TransientError():
+            if is_stale_profile_read(run.state, request):
+                return
             if not _absorb_transient_error(run, family, outcome.error):
                 run.effects.append(Escalate())
                 return
         case NotFound():
             # The endpoint answered, so the session is alive: end any streak.
+            if is_stale_profile_read(run.state, request):
+                return
             run.set_family(family, replace(run.family(family), fetch_errors=0))
             _update_collection(run, family, {}, is_404=True)
         case Fetched():
-            _apply_fetched(run, request, outcome)
+            if not _apply_fetched(run, request, outcome):
+                return
         case NoAnswer():
             pass
         case _:  # pragma: no cover - exhaustive
             assert_never(outcome)
+
+    _mark_profile_read_applied(run, request)
 
     if family in _REBUILT_LATCH_STARTS:
         _drop_rebuilt_latches(run, family)
@@ -1345,7 +1424,40 @@ def _apply_rest_batch(run: _Run, batch: RestBatch) -> None:
         _apply_siren_stop_guards(run)
 
 
-def _apply_fetched(run: _Run, request: RequestStamp, outcome: Fetched) -> None:
+def is_stale_profile_read(state: ReconcilerState, request: RequestStamp) -> bool:
+    """
+    Return True when an external arm profile read was overtaken in flight.
+
+    Two sources overtake a profile read. An arm/disarm command overlay - or
+    the external alarm manager flag turning off - advances the family's
+    generation, and a newer read that has already been applied advances its
+    ``last_applied_seq``. An outcome (answer or error) for either an older
+    generation or an older request must never be applied: it would restore
+    state a command or a newer read already superseded.
+
+    The read order is the coordinator's strictly increasing request sequence
+    (``seq``), not the monotonic clock (``at``), so two reads stamped at the
+    same instant still order by issue.
+    """
+    if request.family != "external_arm_profiles":
+        return False
+    if _generation(state, request.family) != request.ws_generation:
+        return True
+    last = state.families[request.family].last_applied_seq
+    return last is not None and request.seq is not None and request.seq <= last
+
+
+def _mark_profile_read_applied(run: _Run, request: RequestStamp) -> None:
+    """Record the request sequence of the last applied external arm profile read."""
+    if request.family != "external_arm_profiles":
+        return
+    run.set_family(
+        request.family,
+        replace(run.family(request.family), last_applied_seq=request.seq),
+    )
+
+
+def _apply_fetched(run: _Run, request: RequestStamp, outcome: Fetched) -> bool:
     """Apply a list endpoint's answer, unless a frame overtook the request."""
     family = request.family
     if _generation(run.state, family) != request.ws_generation:
@@ -1358,6 +1470,13 @@ def _apply_fetched(run: _Run, request: RequestStamp, outcome: Fetched) -> None:
                 "while it was being fetched; keeping it instead of the "
                 "older reading",
             )
+        elif family == "external_arm_profiles":
+            run.log(
+                logging.DEBUG,
+                "Protect coordinator: an external arm profile command "
+                "completed while profiles were being fetched; keeping the "
+                "command state instead of the older reading",
+            )
         else:
             run.log(
                 logging.DEBUG,
@@ -1365,7 +1484,15 @@ def _apply_fetched(run: _Run, request: RequestStamp, outcome: Fetched) -> None:
                 "it was being fetched; keeping it instead of the older reading",
                 family,
             )
-        return
+        return False
+    if is_stale_profile_read(run.state, request):
+        # The generation matched, so only a newer read overtook this one.
+        run.log(
+            logging.DEBUG,
+            "Protect coordinator: a newer external arm profile reading was "
+            "already applied; dropping the older reading",
+        )
+        return False
     run.set_family(family, replace(run.family(family), fetch_errors=0))
     items: Mapping[str, dict[str, Any]] = outcome.items
     if family == "sensors":
@@ -1378,13 +1505,21 @@ def _apply_fetched(run: _Run, request: RequestStamp, outcome: Fetched) -> None:
                 "Protect coordinator: Successfully fetched NVR: %s",
                 next(iter(items)),
             )
-    elif family in ("fobs", "link_stations", "alarm_hubs", "sirens"):
+    elif family in (
+        "fobs",
+        "link_stations",
+        "alarm_hubs",
+        "sirens",
+        "speakers",
+        "external_arm_profiles",
+    ):
         run.log(
             logging.DEBUG,
             "Protect coordinator: Successfully fetched %d %s",
             len(items),
             family,
         )
+    return True
 
 
 def _absorb_transient_error(run: _Run, family: Family, error: Exception) -> bool:
@@ -1486,6 +1621,15 @@ def _update_collection(
                 "Protect coordinator: %s endpoint returned 404; no devices configured",
                 family,
             )
+        return
+
+    if family == "external_arm_profiles" and not is_404:
+        # A real empty answer means the console has no profiles, which is a
+        # legitimate state to show at once. A 404 is an error, not an empty
+        # list, so it falls through to the bounded preserve window below like
+        # every other guarded family.
+        run.replace(family, {})
+        run.set_family(family, replace(tracking, empty_fetches=0))
         return
 
     count = tracking.empty_fetches + 1
@@ -1905,6 +2049,30 @@ def _apply_siren_stop_guards(run: _Run) -> None:
 # --- command overlays ----------------------------------------------------------
 
 
+def _apply_external_profiles_disabled(run: _Run) -> None:
+    """
+    Clear the external arm profiles and invalidate any in-flight read.
+
+    Turning the ``useExternalAlarmManager`` flag off advances the family's
+    generation exactly as an arm/disarm overlay does, so a profile read that
+    was already in flight and answers afterwards is dropped instead of
+    restoring the cleared collection. Listeners are notified only when there
+    was something to clear.
+    """
+    run.state = replace(
+        run.state,
+        ws_generation=_with(
+            run.state.ws_generation,
+            "external_arm_profiles",
+            run.state.ws_generation.get("external_arm_profiles", 0) + 1,
+        ),
+    )
+    if run.records("external_arm_profiles"):
+        run.replace("external_arm_profiles", {})
+        if not any(isinstance(effect, PublishUpdate) for effect in run.effects):
+            run.effects.append(PublishUpdate(mark_success=False))
+
+
 def _apply_overlay(run: _Run, overlay: CommandOverlay) -> None:
     """Lay a successful write's fields over its record (lists merged into)."""
     records = run.data.get(overlay.collection)
@@ -1916,4 +2084,17 @@ def _apply_overlay(run: _Run, overlay: CommandOverlay) -> None:
         overlay.device_id,
         deep_merge(record, overlay.changes, into_lists=True),
     )
+    match overlay.collection:
+        case "nvrs" | "sirens" | "external_arm_profiles":
+            guarded: GuardedFamily = overlay.collection
+            run.state = replace(
+                run.state,
+                ws_generation=_with(
+                    run.state.ws_generation,
+                    guarded,
+                    run.state.ws_generation.get(guarded, 0) + 1,
+                ),
+            )
+        case _:
+            pass
     run.effects.append(PublishUpdate(mark_success=False))

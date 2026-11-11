@@ -36,7 +36,6 @@ from .access_webhook import (
     async_unload_access_webhook,
 )
 from .console_identity import (
-    first_non_default_site_id,
     is_console_device,
     normalize_console_namespace,
     normalize_mac,
@@ -359,18 +358,6 @@ def _raise_for_setup_probes(
 # Re-exported under its original private name: the config flow and this module
 # must agree on what a console is, so the definition lives in one place now.
 _is_console_device = is_console_device
-
-
-def _first_site_id(config_coordinator: UnifiInsightsConfigCoordinator) -> str | None:
-    """Return the first non-default site ID in coordinator API order."""
-    data = getattr(config_coordinator, "data", None)
-    if not isinstance(data, dict):
-        return None
-    sites = data.get("sites")
-    if not isinstance(sites, dict):
-        return None
-    # dict order is the API's site order, which is what the flow sees too.
-    return first_non_default_site_id(sites)
 
 
 async def _async_setup_carrier_fabric_entry(

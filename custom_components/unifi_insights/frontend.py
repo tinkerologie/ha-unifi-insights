@@ -25,8 +25,6 @@ _LOGGER = logging.getLogger(__name__)
 
 FRONTEND_URL_BASE: Final = f"/{DOMAIN}"
 FRONTEND_PATH: Final = Path(__file__).parent / "frontend"
-CARD_URL: Final = f"{FRONTEND_URL_BASE}/topology-card.js"
-CARD_PATH: Final = FRONTEND_PATH / "topology-card.js"
 CARD_FILES: Final = (
     "topology-card.js",
     "site-health-card.js",

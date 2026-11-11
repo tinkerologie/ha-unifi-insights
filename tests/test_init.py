@@ -983,7 +983,7 @@ async def test_remove_wifi_device_after_its_site_is_deselected(
     mock_network_client.wifi.get_all.side_effect = lambda site_id: wifi_by_site[site_id]
     await _setup(hass, mock_config_entry)
     coordinator = mock_config_entry.runtime_data.config_coordinator
-    assert "wifi-branch" in coordinator.get_wifi_networks("branch")
+    assert "wifi-branch" in coordinator.data["wifi"]["branch"]
 
     # While the branch site is polled its network is live.
     response = await _remove_device_via_ui(
@@ -1029,7 +1029,7 @@ async def test_remove_wifi_device_refused_while_polled_site_provides_it(
     ]
     await _setup(hass, mock_config_entry)
     coordinator = mock_config_entry.runtime_data.config_coordinator
-    assert "wifi-main" in coordinator.get_wifi_networks("default")
+    assert "wifi-main" in coordinator.data["wifi"]["default"]
 
     response = await _remove_device_via_ui(
         hass, hass_ws_client, mock_config_entry, "wifi_wifi-main"

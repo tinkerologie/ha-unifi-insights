@@ -646,7 +646,7 @@ class TestRuleReconciliation:
         await config.async_set_firewall_rule_enabled(SITE_ID, "rule1", enabled=True)
 
         assert config.last_update_success is True
-        assert not config.firewall_available(SITE_ID)
+        assert ("firewall_rules", SITE_ID) in config.failed_sections
         assert set(config._rule_refresh_retries) == {("firewall_rules", SITE_ID)}
 
     @pytest.mark.parametrize(
@@ -1275,8 +1275,8 @@ class TestUnifiConfigCoordinator:
     ):
         """A failed WiFi/firewall fetch keeps that section's data and flags it."""
         await coordinator.async_refresh()
-        assert coordinator.wifi_available("default") is True
-        assert coordinator.firewall_available("default") is True
+        assert ("wifi", "default") not in coordinator.failed_sections
+        assert ("firewall_rules", "default") not in coordinator.failed_sections
         previous = copy.deepcopy(coordinator.data[section])
         assert previous["default"]
 
@@ -1294,16 +1294,12 @@ class TestUnifiConfigCoordinator:
         # working, but the failed section is not reported as fresh.
         assert coordinator.last_update_success is True
         assert coordinator.data[section] == previous
-        section_flag = {
-            "wifi": coordinator.wifi_available,
-            "firewall_rules": coordinator.firewall_available,
-        }
-        assert section_flag[section]("default") is False
-        assert section_flag[other_section]("default") is True
+        assert (section, "default") in coordinator.failed_sections
+        assert (other_section, "default") not in coordinator.failed_sections
 
         setattr(getattr(coordinator.network_client, namespace), method, working)
         await coordinator.async_refresh()
-        assert section_flag[section]("default") is True
+        assert (section, "default") not in coordinator.failed_sections
 
     @pytest.mark.asyncio
     async def test_optional_section_failure_is_per_site(
@@ -1321,8 +1317,8 @@ class TestUnifiConfigCoordinator:
         coordinator.network_client.wifi.get_all = AsyncMock(side_effect=get_all)
         await coordinator.async_refresh()
 
-        assert coordinator.wifi_available("default") is True
-        assert coordinator.wifi_available("site2") is False
+        assert ("wifi", "default") not in coordinator.failed_sections
+        assert ("wifi", "site2") in coordinator.failed_sections
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("endpoint", ["wifi.get_all", "firewall.list_rules"])
@@ -1373,7 +1369,7 @@ class TestUnifiConfigCoordinator:
         assert wifi["qr_code"].startswith("WIFI:T:WPA;S:MainWiFi;P:")
         assert list(result["vpn_clients"]["default"]) == ["vpn1"]
         assert result["firewall_rules"]["default"] == {}
-        assert coordinator.firewall_available("default") is True
+        assert ("firewall_rules", "default") not in coordinator.failed_sections
 
     @pytest.mark.asyncio
     async def test_async_update_data_drops_sites_that_disappeared(
@@ -1687,66 +1683,6 @@ class TestUnifiConfigCoordinator:
         result = coordinator.get_site_ids()
         assert set(result) == {"default", "site2"}
 
-    def test_get_wifi_networks(self, coordinator: UnifiInsightsConfigCoordinator):
-        """Test getting WiFi networks for a site."""
-        coordinator.data["wifi"] = {
-            "default": {"wifi1": {"id": "wifi1", "name": "MainWiFi"}}
-        }
-        result = coordinator.get_wifi_networks("default")
-        assert "wifi1" in result
-
-    def test_get_wifi_networks_missing_site(
-        self, coordinator: UnifiInsightsConfigCoordinator
-    ):
-        """Test getting WiFi networks for missing site."""
-        result = coordinator.get_wifi_networks("nonexistent")
-        assert result == {}
-
-    def test_get_firewall_rules(self, coordinator: UnifiInsightsConfigCoordinator):
-        """Test getting firewall rules for a site."""
-        coordinator.data["firewall_rules"] = {
-            "default": {"rule1": {"id": "rule1", "name": "Block Instagram"}}
-        }
-        result = coordinator.get_firewall_rules("default")
-        assert "rule1" in result
-
-    def test_get_firewall_rules_missing_site(
-        self, coordinator: UnifiInsightsConfigCoordinator
-    ):
-        """Test getting firewall rules for missing site."""
-        result = coordinator.get_firewall_rules("nonexistent")
-        assert result == {}
-
-    def test_get_policy_based_routes(self, coordinator: UnifiInsightsConfigCoordinator):
-        """Test getting policy-based routes for a site."""
-        coordinator.data["policy_based_routes"] = {
-            "default": {"route1": {"id": "route1", "description": "Route to VPN"}}
-        }
-        result = coordinator.get_policy_based_routes("default")
-        assert "route1" in result
-
-    def test_get_policy_based_routes_missing_site(
-        self, coordinator: UnifiInsightsConfigCoordinator
-    ) -> None:
-        """Test getting policy-based routes for missing site."""
-        result = coordinator.get_policy_based_routes("nonexistent")
-        assert result == {}
-
-    def test_get_vpn_clients(self, coordinator: UnifiInsightsConfigCoordinator) -> None:
-        """Test getting VPN clients for a site."""
-        coordinator.data["vpn_clients"] = {
-            "default": {"client1": {"_id": "client1", "name": "Privado VPN"}}
-        }
-        result = coordinator.get_vpn_clients("default")
-        assert "client1" in result
-
-    def test_get_vpn_clients_missing_site(
-        self, coordinator: UnifiInsightsConfigCoordinator
-    ) -> None:
-        """Test getting VPN clients for missing site."""
-        result = coordinator.get_vpn_clients("nonexistent")
-        assert result == {}
-
     @pytest.mark.asyncio
     async def test_async_update_data_skips_none_site_id(
         self, coordinator: UnifiInsightsConfigCoordinator
@@ -2002,7 +1938,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        ("data_key", "endpoint_attr", "list_method"),
         RULE_SECTION_PARAMS,
     )
     async def test_rule_section_fetched_by_internal_reference(
@@ -2011,7 +1947,6 @@ class TestUnifiConfigCoordinator:
         data_key: str,
         endpoint_attr: str,
         list_method: str,
-        avail_method: str,
     ) -> None:
         """Rule sections are fetched with internalReference and keyed by id."""
         site1 = _create_mock_model(
@@ -2042,13 +1977,12 @@ class TestUnifiConfigCoordinator:
         assert [c.args[0] for c in mock_fn.await_args_list] == ["default", "branch"]
         assert result[data_key]["default"] == {"rule-1": record1}
         assert result[data_key]["site2"] == {"rule-2": record2}
-        avail_fn = getattr(coordinator, avail_method)
-        assert avail_fn("default") is True
-        assert avail_fn("site2") is True
+        assert (data_key, "default") not in coordinator.failed_sections
+        assert (data_key, "site2") not in coordinator.failed_sections
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        ("data_key", "endpoint_attr", "list_method"),
         RULE_SECTION_PARAMS,
     )
     async def test_rule_section_ignores_fuzzy_legacy_mapping(
@@ -2057,7 +1991,6 @@ class TestUnifiConfigCoordinator:
         data_key: str,
         endpoint_attr: str,
         list_method: str,
-        avail_method: str,
     ) -> None:
         """Rule sections ignore fuzzy legacy mapping from get_legacy_all."""
         site1 = _create_mock_model(
@@ -2081,7 +2014,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        ("data_key", "endpoint_attr", "list_method"),
         RULE_SECTION_PARAMS,
     )
     async def test_rule_section_without_internal_reference_is_empty_and_available(
@@ -2090,7 +2023,6 @@ class TestUnifiConfigCoordinator:
         data_key: str,
         endpoint_attr: str,
         list_method: str,
-        avail_method: str,
     ) -> None:
         """Without internalReference, fetch is skipped and data is empty."""
         endpoint = getattr(coordinator.network_client, endpoint_attr)
@@ -2100,13 +2032,12 @@ class TestUnifiConfigCoordinator:
         mock_fn.assert_not_awaited()
         assert result[data_key]["default"] == {}
         assert result[data_key]["site2"] == {}
-        avail_fn = getattr(coordinator, avail_method)
-        assert avail_fn("default") is True
-        assert avail_fn("site2") is True
+        assert (data_key, "default") not in coordinator.failed_sections
+        assert (data_key, "site2") not in coordinator.failed_sections
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        ("data_key", "endpoint_attr", "list_method"),
         RULE_SECTION_PARAMS,
     )
     @pytest.mark.parametrize(
@@ -2125,7 +2056,6 @@ class TestUnifiConfigCoordinator:
         data_key: str,
         endpoint_attr: str,
         list_method: str,
-        avail_method: str,
         *,
         error: Exception,
     ) -> None:
@@ -2139,12 +2069,11 @@ class TestUnifiConfigCoordinator:
 
         result = await coordinator._async_update_data()
         assert result[data_key]["default"] == {}
-        avail_fn = getattr(coordinator, avail_method)
-        assert avail_fn("default") is True
+        assert (data_key, "default") not in coordinator.failed_sections
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        ("data_key", "endpoint_attr", "list_method"),
         RULE_SECTION_PARAMS,
     )
     async def test_rule_section_transient_failure_keeps_previous_data(
@@ -2153,7 +2082,6 @@ class TestUnifiConfigCoordinator:
         data_key: str,
         endpoint_attr: str,
         list_method: str,
-        avail_method: str,
     ) -> None:
         """Transient failure preserves data and toggles available until recovery."""
         site = _create_mock_model(
@@ -2168,8 +2096,7 @@ class TestUnifiConfigCoordinator:
 
         res1 = await coordinator._async_update_data()
         assert res1[data_key]["default"] == {"r1": rec}
-        avail_fn = getattr(coordinator, avail_method)
-        assert avail_fn("default") is True
+        assert (data_key, "default") not in coordinator.failed_sections
 
         setattr(
             endpoint,
@@ -2178,18 +2105,18 @@ class TestUnifiConfigCoordinator:
         )
         res2 = await coordinator._async_update_data()
         assert res2[data_key]["default"] == {"r1": rec}
-        assert avail_fn("default") is False
+        assert (data_key, "default") in coordinator.failed_sections
 
         setattr(
             endpoint, list_method, AsyncMock(return_value=[_create_mock_model(rec)])
         )
         res3 = await coordinator._async_update_data()
         assert res3[data_key]["default"] == {"r1": rec}
-        assert avail_fn("default") is True
+        assert (data_key, "default") not in coordinator.failed_sections
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        ("data_key", "endpoint_attr", "list_method"),
         RULE_SECTION_PARAMS,
     )
     async def test_rule_section_failure_is_per_site(
@@ -2198,7 +2125,6 @@ class TestUnifiConfigCoordinator:
         data_key: str,
         endpoint_attr: str,
         list_method: str,
-        avail_method: str,
     ) -> None:
         """Failure on site A does not affect availability on site B."""
         site_a = _create_mock_model(
@@ -2223,14 +2149,13 @@ class TestUnifiConfigCoordinator:
         setattr(endpoint, list_method, AsyncMock(side_effect=_side_effect))
 
         result = await coordinator._async_update_data()
-        avail_fn = getattr(coordinator, avail_method)
-        assert avail_fn("site_a") is False
-        assert avail_fn("site_b") is True
+        assert (data_key, "site_a") in coordinator.failed_sections
+        assert (data_key, "site_b") not in coordinator.failed_sections
         assert result[data_key]["site_b"] == {"rb": rec_b}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        ("data_key", "endpoint_attr", "list_method"),
         RULE_SECTION_PARAMS,
     )
     async def test_rule_section_401_triggers_reauth(
@@ -2239,7 +2164,6 @@ class TestUnifiConfigCoordinator:
         data_key: str,
         endpoint_attr: str,
         list_method: str,
-        avail_method: str,
     ) -> None:
         """401 error during rule fetch triggers reauthentication."""
         site = _create_mock_model(
@@ -2260,7 +2184,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        ("data_key", "endpoint_attr", "list_method"),
         RULE_SECTION_PARAMS,
     )
     async def test_rule_sections_pruned_with_sites(
@@ -2269,7 +2193,6 @@ class TestUnifiConfigCoordinator:
         data_key: str,
         endpoint_attr: str,
         list_method: str,
-        avail_method: str,
     ) -> None:
         """Removed sites are pruned from rule sections, leaving empty dict."""
         site1 = _create_mock_model(
@@ -2415,9 +2338,9 @@ class TestUnifiConfigCoordinator:
         )
         await coord._async_update_data()
         assert coord.data["internet_activity"] == {}
-        assert coord.internet_activity_available("site1") is True
+        assert ("internet_activity", "site1") not in coord.failed_sections
         assert coord.wifi_available("site1") is True
-        assert coord.firewall_available("site1") is True
+        assert ("firewall_rules", "site1") not in coord.failed_sections
 
         # 2. Successful fetch populates windows
         async def _report_ok(
@@ -2431,22 +2354,21 @@ class TestUnifiConfigCoordinator:
             "rx_bytes": 4096,
             "tx_bytes": 2048,
         }
-        assert coord.internet_activity_available("site1") is True
+        assert ("internet_activity", "site1") not in coord.failed_sections
 
         # 3. Transient failure retains prior data and marks section unavailable
         mock_network_client.reports.get_site_report = AsyncMock(
             side_effect=UniFiTimeoutError("Timeout")
         )
         await coord._async_update_data()
-        coord.last_update_success = True
-        assert coord.internet_activity_available("site1") is False
+        assert ("internet_activity", "site1") in coord.failed_sections
         assert "site1" in coord.data["internet_activity_unavailable"]
         assert coord.data["internet_activity"]["site1"]["1h"] == {
             "rx_bytes": 4096,
             "tx_bytes": 2048,
         }
         assert coord.wifi_available("site1") is True
-        assert coord.firewall_available("site1") is True
+        assert ("firewall_rules", "site1") not in coord.failed_sections
 
         # 4. Later success replaces data and clears the unavailable marker
         async def _report_recovered(
@@ -2468,7 +2390,7 @@ class TestUnifiConfigCoordinator:
         ]
         assert len(recovered) == 1
         assert "Internet activity" in recovered[0].getMessage()
-        assert coord.internet_activity_available("site1") is True
+        assert ("internet_activity", "site1") not in coord.failed_sections
         assert "site1" not in coord.data["internet_activity_unavailable"]
         assert coord.data["internet_activity"]["site1"]["1h"] == {
             "rx_bytes": 8192,

@@ -392,6 +392,16 @@
     "alarm_control_panel": {
       "nvr_alarm": {
         "name": "Alarm"
+      },
+      "external_arm_profile": {
+        "name": "External arm profile",
+        "state": {
+          "disarmed": "Disarmed",
+          "arming": "Arming",
+          "armed_away": "Armed away",
+          "pending": "Pending",
+          "triggered": "Triggered"
+        }
       }
     },
     "sensor": {
@@ -801,6 +811,9 @@
       "sensor_leak_external": {
         "name": "External Leak Detection"
       },
+      "sensor_mounted_incorrectly": {
+        "name": "Mounted Incorrectly"
+      },
       "alarm_hub_device_tamper": {
         "name": "Tamper Detection"
       },
@@ -850,6 +863,9 @@
       },
       "ptz_patrol_stop": {
         "name": "Stop PTZ patrol"
+      },
+      "speaker_stop_siren": {
+        "name": "Stop siren"
       }
     },
     "camera": {
@@ -937,7 +953,8 @@
           "sport": "Fast motion",
           "slow_shutter": "Low light",
           "lpr_reflex": "License plates (reflective)",
-          "lpr_none_reflex": "License plates (non-reflective)"
+          "lpr_none_reflex": "License plates (non-reflective)",
+          "anti_flicker": "Anti-flicker"
         }
       },
       "ringtone": {
@@ -1070,6 +1087,9 @@
     },
     "talkback_session_invalid": {
       "message": "Failed to create a talkback session for the camera."
+    },
+    "talkback_session_in_progress": {
+      "message": "A talkback session is already in progress for this camera."
     },
     "talkback_unsupported_codec_or_scheme": {
       "message": "The camera talkback stream URL scheme or codec is not supported."
@@ -1412,6 +1432,9 @@
     },
     "carrier_target_ambiguous": {
       "message": "Target {target} matches a device in more than one config entry. Target the subscriber's entity or device instead."
+    },
+    "speaker_siren_stop_unavailable": {
+      "message": "The speaker is offline or its firmware does not support sirens."
     }
   }
 }

@@ -37,10 +37,8 @@ from custom_components.unifi_insights.client_wake import select_wake_history
 from custom_components.unifi_insights.const import CONF_CONSOLE_ID, DOMAIN
 from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
-    NetworkDeviceFacts,
     SiteNetworkFacts,
     build_innerspace_view,
-    device_facts,
     get_site_gateway_id,
     innerspace_correlation_key,
     innerspace_view_inputs,
@@ -180,6 +178,8 @@ EMPTY_PROTECT: Final[Mapping[str, Mapping[str, Any]]] = ReadOnlyDict(
             "link_stations",
             "alarm_hubs",
             "sirens",
+            "speakers",
+            "external_arm_profiles",
             "doorlocks",
             "viewports",
             "liveviews",
@@ -521,12 +521,6 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
             site_manager_host_id=self._site_manager_host_id,
             now=datetime.now(tz=UTC),
         )
-
-    def get_device_facts(
-        self, site_id: str, device_id: str
-    ) -> NetworkDeviceFacts | None:
-        """Return the read-model facts of one network device, or None."""
-        return device_facts(self.data, site_id, device_id)
 
     def get_site_gateway_id(self, site_id: str) -> str | None:
         """Return the ID of a site's gateway device, or None."""

@@ -22,7 +22,6 @@ from custom_components.unifi_insights.const import (
     ATTR_CAMERA_TYPE,
     ATTR_IS_PACKAGE_CAMERA,
     ATTR_PARENT_CAMERA_ID,
-    CAMERA_STATE_CONNECTED,
     DEVICE_TYPE_CAMERA,
     DOMAIN,
 )
@@ -105,7 +104,7 @@ class TestAsyncSetupEntry:
                 "camera1": {
                     "id": "camera1",
                     "name": "Test Camera",
-                    "state": CAMERA_STATE_CONNECTED,
+                    "state": "CONNECTED",
                 }
             },
         )
@@ -179,7 +178,7 @@ class TestUnifiProtectCamera:
                     "camera1": {
                         "id": "camera1",
                         "name": "Test Camera",
-                        "state": CAMERA_STATE_CONNECTED,
+                        "state": "CONNECTED",
                         "mac": "AA:BB:CC:DD:EE:FF",
                         "type": "UVC-G4-Pro",
                         "firmwareVersion": "1.0.0",
@@ -270,7 +269,7 @@ class TestUnifiProtectCamera:
         attrs = camera._attr_extra_state_attributes
         assert attrs[ATTR_CAMERA_ID] == "camera1"
         assert attrs[ATTR_CAMERA_NAME] == "Test Camera"
-        assert attrs[ATTR_CAMERA_STATE] == CAMERA_STATE_CONNECTED
+        assert attrs[ATTR_CAMERA_STATE] == "CONNECTED"
         assert attrs[ATTR_CAMERA_TYPE] == "regular"
         assert attrs[ATTR_IS_PACKAGE_CAMERA] is False
         assert attrs[ATTR_PARENT_CAMERA_ID] is None

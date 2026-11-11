@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
+from unifi_official_api.protect.models.camera import Camera
 
 from custom_components.unifi_insights.const import (
     DEVICE_TYPE_CAMERA,
@@ -488,6 +489,7 @@ class TestUnifiProtectVideoModeSelect:
             ("slow_shutter", "slowShutter"),
             ("lpr_reflex", "lprReflex"),
             ("lpr_none_reflex", "lprNoneReflex"),
+            ("anti_flicker", "antiFlicker"),
         ],
     )
     async def test_async_select_option_success(
@@ -598,6 +600,29 @@ class TestUnifiProtectVideoModeSelect:
             require_not_none(entity.extra_state_attributes)["video_mode"] == "default"
         )
 
+    def test_camera_model_anti_flicker(self, mock_coordinator: MagicMock) -> None:
+        """A real Camera model with antiFlicker maps correctly."""
+        camera = Camera.model_validate(
+            {
+                "id": "cam_af",
+                "name": "Anti-flicker Camera",
+                "mac": "AA:BB:CC:DD:EE:02",
+                "state": "CONNECTED",
+                "videoMode": "antiFlicker",
+            }
+        )
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "cameras",
+            {"cam_af": camera.model_dump(by_alias=True)},
+        )
+        entity = UnifiProtectVideoModeSelect(mock_coordinator, "cam_af")
+        assert entity.state == "anti_flicker"
+        assert (
+            require_not_none(entity.extra_state_attributes)["video_mode"]
+            == "antiFlicker"
+        )
+
 
 class TestLprVideoModeStates:
     """Exercise camera API responses through the real HA state machine."""
@@ -658,6 +683,7 @@ class TestLprVideoModeStates:
             "slow_shutter",
             "lpr_reflex",
             "lpr_none_reflex",
+            "anti_flicker",
         ]
 
         # Public HA service validation rejects legacy select keys before I/O.

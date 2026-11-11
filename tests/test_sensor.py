@@ -79,12 +79,9 @@ from custom_components.unifi_insights.sensor import (
     _get_port_label,
     _get_storage_bytes,
     _has_protect_stat,
-    _has_storage_info,
     _migrate_sensor_units,
     _outlet_has_metering,
     async_setup_entry,
-    bytes_to_bits,
-    bytes_to_megabits,
     format_uptime,
     get_network_device_temperature,
 )
@@ -315,50 +312,6 @@ class TestFormatUptime:
     def test_format_uptime_zero(self):
         """Test format_uptime with zero."""
         assert format_uptime(0) == "0m"
-
-
-class TestBytesToMegabits:
-    """Tests for bytes_to_megabits function."""
-
-    def test_bytes_to_megabits_none(self):
-        """Test bytes_to_megabits with None."""
-        assert bytes_to_megabits(None) is None
-
-    def test_bytes_to_megabits_zero(self):
-        """Test bytes_to_megabits with zero."""
-        assert bytes_to_megabits(0) == 0.0
-
-    def test_bytes_to_megabits_calculation(self):
-        """Test bytes_to_megabits calculation."""
-        # 1,000,000 bytes/sec = 8 Mbps
-        assert bytes_to_megabits(1000000) == 8.0
-
-    def test_bytes_to_megabits_rounding(self):
-        """Test bytes_to_megabits rounding."""
-        # 125000 bytes/sec = 1 Mbps
-        assert bytes_to_megabits(125000) == 1.0
-
-
-class TestBytesToBits:
-    """Tests for bytes_to_bits function."""
-
-    def test_bytes_to_bits_none(self):
-        """Test bytes_to_bits with None."""
-        assert bytes_to_bits(None) is None
-
-    def test_bytes_to_bits_zero(self):
-        """Test bytes_to_bits with zero."""
-        assert bytes_to_bits(0) == 0
-
-    def test_bytes_to_bits_calculation(self):
-        """Test bytes_to_bits calculation."""
-        # 1000 bytes/sec = 8000 bits/sec
-        assert bytes_to_bits(1000) == 8000
-
-    def test_bytes_to_bits_large_value(self):
-        """Test bytes_to_bits with large value."""
-        # 1,000,000 bytes/sec = 8,000,000 bits/sec
-        assert bytes_to_bits(1000000) == 8000000
 
 
 class TestGetClientType:
@@ -2089,56 +2042,6 @@ class TestUnifiProtectSensorAttributes:
         assert attrs["battery_low"] is False
 
 
-class TestHasStorageInfo:
-    """Tests for _has_storage_info helper function."""
-
-    def test_has_storage_info_with_direct_camel_case(self):
-        """Test _has_storage_info with direct camelCase fields."""
-        assert _has_storage_info({"storageUsedBytes": 100}) is True
-        assert _has_storage_info({"storageTotalBytes": 100}) is True
-
-    def test_has_storage_info_with_snake_case(self):
-        """Test _has_storage_info with snake_case fields."""
-        assert _has_storage_info({"storage_used_bytes": 100}) is True
-        assert _has_storage_info({"storage_total_bytes": 100}) is True
-
-    def test_has_storage_info_with_nested_used_size(self):
-        """Test _has_storage_info with nested storageInfo.usedSize."""
-        assert _has_storage_info({"storageInfo": {"usedSize": 100}}) is True
-
-    def test_has_storage_info_with_nested_total_size(self):
-        """Test _has_storage_info with nested storageInfo.totalSize."""
-        assert _has_storage_info({"storageInfo": {"totalSize": 100}}) is True
-
-    def test_has_storage_info_with_nested_used_size_snake(self):
-        """Test _has_storage_info with nested storageInfo.used_size."""
-        assert _has_storage_info({"storageInfo": {"used_size": 100}}) is True
-
-    def test_has_storage_info_with_nested_total_size_snake(self):
-        """Test _has_storage_info with nested storageInfo.total_size."""
-        assert _has_storage_info({"storageInfo": {"total_size": 100}}) is True
-
-    def test_has_storage_info_returns_false_for_empty(self):
-        """Test _has_storage_info returns False when no storage info."""
-        assert _has_storage_info({}) is False
-        assert _has_storage_info({"other_field": 123}) is False
-
-    def test_has_storage_info_with_non_dict_storage_info(self):
-        """Test _has_storage_info with non-dict storageInfo."""
-        assert _has_storage_info({"storageInfo": "not a dict"}) is False
-        assert _has_storage_info({"storageInfo": None}) is False
-
-    def test_has_storage_info_with_percentage_only(self):
-        """Test _has_storage_info when the NVR reports only a used percentage."""
-        assert _has_storage_info({"storage": {"used": 42}}) is True
-        assert _calculate_storage_percent({"storage": {"used": 42}}) == 42.0
-
-    def test_has_storage_info_with_available_only(self):
-        """Test _has_storage_info when the NVR reports only available bytes."""
-        assert _has_storage_info({"storageAvailableBytes": 500}) is True
-        assert _has_storage_info({"storageInfo": {"availableSize": 500}}) is True
-
-
 class TestGetStorageBytes:
     """Tests for _get_storage_bytes helper function."""
 
@@ -2229,6 +2132,10 @@ class TestNVRStorageHelpers:
         assert _bytes_to_gb(None) is None
         # Small value
         assert _bytes_to_gb(1000000) == 0.0
+
+    def test_calculate_storage_percent_with_percentage_only(self):
+        """A percentage-only NVR record still yields a used percentage."""
+        assert _calculate_storage_percent({"storage": {"used": 42}}) == 42.0
 
     def test_calculate_storage_percent(self):
         """Test storage percentage calculation."""
@@ -5003,11 +4910,6 @@ class TestSensorAdditionalCoverageGaps:
             )
             is None
         )
-
-    def test_has_storage_info_total_size_fallback(self) -> None:
-        """Test _has_storage_info when only total_size is present."""
-        data = {"storageInfo": {"total_size": 1000}}
-        assert _has_storage_info(data) is True
 
     def test_outlet_has_metering_invalid_caps(self) -> None:
         """Test _outlet_has_metering when outlet_caps cannot be parsed as int."""

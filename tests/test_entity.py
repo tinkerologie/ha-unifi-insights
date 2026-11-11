@@ -12,6 +12,7 @@ from custom_components.unifi_insights.const import (
     DEVICE_TYPE_CAMERA,
     DEVICE_TYPE_LIGHT,
     DEVICE_TYPE_SENSOR,
+    DEVICE_TYPE_SPEAKER,
     DOMAIN,
     MANUFACTURER,
 )
@@ -944,6 +945,32 @@ class TestUnifiProtectEntity:
         device_info = entity.device_info
         identifiers = require_not_none(device_info).get("identifiers", set())
         # Should match network device site1_device1
+        assert (DOMAIN, "site1_device1") in identifiers
+
+    @pytest.mark.parametrize("mac", ["aabbccddeeff", "AABB.CCDD.EEFF"])
+    async def test_protect_entity_speaker_network_device_matching(
+        self, hass: HomeAssistant, mock_coordinator: MagicMock, mac: str
+    ) -> None:
+        """Protect MAC spellings match the Network address as in the registry."""
+        mock_coordinator.data = with_protect_device(
+            mock_coordinator.data,
+            "speakers",
+            "speaker1",
+            {
+                "id": "speaker1",
+                "name": "Yard Speaker",
+                "state": "CONNECTED",
+                "mac": mac,
+            },
+        )
+
+        entity = UnifiProtectEntity(
+            coordinator=mock_coordinator,
+            device_type=DEVICE_TYPE_SPEAKER,
+            device_id="speaker1",
+        )
+
+        identifiers = require_not_none(entity.device_info).get("identifiers", set())
         assert (DOMAIN, "site1_device1") in identifiers
 
     async def test_protect_entity_no_network_match(

@@ -20,6 +20,7 @@ from unifi_official_api.access.models import AccessDevice, AccessDoor, AccessUse
 from unifi_official_api.const import SENSITIVE_CREDENTIAL_KEYS
 from unifi_official_api.innerspace import InnerSpaceAccessPoint, InnerSpaceFloorPlan
 from unifi_official_api.network.models.client import Client
+from unifi_official_api.protect.models import ExternalArmProfile
 
 from custom_components.unifi_insights import CarrierFabricData
 from custom_components.unifi_insights.const import (
@@ -56,6 +57,7 @@ from tests.fixtures.facade_data import frozen, with_protect_collection, with_sec
 from tests.fixtures.library_responses import (
     SAMPLE_ALARM_HUB,
     SAMPLE_ALARM_HUB_TAMPER_EVENT,
+    SAMPLE_EXTERNAL_ARM_PROFILE,
     SAMPLE_SIREN,
     SAMPLE_THREAD_LINK_STATION,
     SAMPLE_UDM_PRO_OVERVIEW,
@@ -592,6 +594,90 @@ def test_redact_coordinator_data_hides_thread_ids_and_tamper_user() -> None:
     text = str(redacted)
     for secret in ("Installer", "Home Thread", "0011223344556677", "1a2b"):
         assert secret not in text
+
+
+def test_redact_coordinator_data_redacts_external_arm_profile_pin() -> None:
+    """External arm profiles keep title and state, but pin and pin_code are redacted."""
+    data = {
+        "protect": {
+            "external_arm_profiles": {
+                "profile_1": {
+                    "id": "profile_1",
+                    "title": "Perimeter",
+                    "state": "disarmed",
+                    "pin_code": "SECRET_PIN_1234",
+                    "pin": "SECRET_PIN_5678",
+                    "has_pin": True,
+                    "alarm_ids": ["alarm_1"],
+                    "nested": {
+                        "pin_code": "NESTED_PIN_9999",
+                        "pin": "NESTED_PIN_0000",
+                        "pinCode": "CAMEL_PIN_1234",
+                        "createdBy": "CAMEL_CREATOR",
+                        "updatedBy": "CAMEL_UPDATER",
+                    },
+                }
+            }
+        }
+    }
+
+    redacted = _redact_coordinator_data(data)
+
+    profile = redacted["protect"]["external_arm_profiles"]["profile_1"]
+    assert profile["title"] == "Perimeter"
+    assert profile["state"] == "disarmed"
+    assert profile["pin_code"] == REDACTED
+    assert profile["pin"] == REDACTED
+    assert profile["nested"]["pin_code"] == REDACTED
+    for field in ("pin", "pinCode", "createdBy", "updatedBy"):
+        assert profile["nested"][field] == REDACTED
+    assert "SECRET_PIN_1234" not in json.dumps(redacted)
+    assert "SECRET_PIN_5678" not in json.dumps(redacted)
+    assert "NESTED_PIN_9999" not in json.dumps(redacted)
+
+
+async def test_diagnostics_public_export_redacts_external_arm_profile_identity(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    enable_custom_integrations,
+) -> None:
+    """Redact SDK user identifiers and PINs from cached records on export."""
+    coordinator = init_integration.runtime_data.coordinator
+    record = ExternalArmProfile.model_validate(
+        {
+            **SAMPLE_EXTERNAL_ARM_PROFILE,
+            "created_by": "PROFILE_CREATOR_SENTINEL",
+            "updated_by": "PROFILE_UPDATER_SENTINEL",
+        }
+    ).model_dump(by_alias=True)
+    coordinator.data = with_protect_collection(
+        coordinator.data,
+        "external_arm_profiles",
+        {
+            "profile_1": {
+                **record,
+                "pin": "PROFILE_PIN_SENTINEL",
+                "nested": {"pin_code": "NESTED_PIN_SENTINEL"},
+            }
+        },
+    )
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, init_integration)
+
+    prof = diagnostics["data"]["protect"]["external_arm_profiles"]["profile_1"]
+    assert prof["title"] == record["title"]
+    assert prof["state"] == record["state"]
+    assert prof["created_by"] == REDACTED
+    assert prof["updated_by"] == REDACTED
+    assert prof["pin"] == REDACTED
+    assert prof["nested"]["pin_code"] == REDACTED
+    assert record["created_by"] == "PROFILE_CREATOR_SENTINEL"
+    assert record["updated_by"] == "PROFILE_UPDATER_SENTINEL"
+    raw_text = json.dumps(diagnostics, default=str)
+    assert "PROFILE_CREATOR_SENTINEL" not in raw_text
+    assert "PROFILE_UPDATER_SENTINEL" not in raw_text
+    assert "PROFILE_PIN_SENTINEL" not in raw_text
+    assert "NESTED_PIN_SENTINEL" not in raw_text
 
 
 def test_redact_coordinator_data_keeps_siren_state_and_hides_ids() -> None:

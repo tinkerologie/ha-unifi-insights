@@ -22,8 +22,13 @@ from .const import (
     ATTR_WILL_BE_ARMED_AT,
     DEVICE_TYPE_NVR,
 )
-from .data_transforms import owner_available, protect_collection
-from .entity import UnifiProtectEntity
+from .data_transforms import (
+    owner_available,
+    protect_collection,
+    protect_device,
+    uses_external_alarm_manager,
+)
+from .entity import UnifiProtectEntity, get_field
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -44,6 +49,14 @@ ARM_MODE_TO_STATE: Final[dict[str, AlarmControlPanelState]] = {
     "arming": AlarmControlPanelState.ARMING,
     "armed": AlarmControlPanelState.ARMED_AWAY,
     "breach": AlarmControlPanelState.TRIGGERED,
+}
+
+EXTERNAL_PROFILE_STATE_TO_STATE: Final[dict[str, AlarmControlPanelState]] = {
+    "disarmed": AlarmControlPanelState.DISARMED,
+    "arming": AlarmControlPanelState.ARMING,
+    "armed": AlarmControlPanelState.ARMED_AWAY,
+    "breaching": AlarmControlPanelState.PENDING,
+    "breached": AlarmControlPanelState.TRIGGERED,
 }
 
 
@@ -90,20 +103,29 @@ async def async_setup_entry(
         return
 
     known_nvr_ids: set[str] = set()
+    known_profile_keys: set[tuple[str, str]] = set()
 
     @callback
     def async_discover_panels() -> None:
-        """Add a panel for each NVR that reports an armMode."""
-        new_entities: list[UnifiProtectNvrAlarmControlPanel] = []
+        """Add a panel for each NVR armMode, or external profile panels."""
+        new_entities: list[AlarmControlPanelEntity] = []
         nvrs = protect_collection(coordinator.data, "nvrs") or {}
         for nvr_id, nvr_data in nvrs.items():
-            # Firmware that predates the Alarm Manager has no armMode, and an
-            # NVR that gains one on an upgrade is picked up on a later update.
-            # While the UniFi global alarm manager is enabled (or not yet
-            # known to be off) there is no panel, and it appears once that is
-            # known to be off. A panel is never removed when armMode goes away
-            # again, or when the global alarm manager is switched on: it turns
-            # unavailable instead.
+            if uses_external_alarm_manager(nvr_data):
+                profiles = (
+                    protect_collection(coordinator.data, "external_arm_profiles") or {}
+                )
+                for profile_id in profiles:
+                    prof_key = (nvr_id, profile_id)
+                    if prof_key not in known_profile_keys:
+                        known_profile_keys.add(prof_key)
+                        new_entities.append(
+                            UnifiProtectExternalArmProfileAlarmControlPanel(
+                                coordinator, nvr_id, profile_id
+                            )
+                        )
+                continue
+
             if (
                 nvr_id in known_nvr_ids
                 or _arm_mode(nvr_data) is None
@@ -147,15 +169,17 @@ class UnifiProtectNvrAlarmControlPanel(UnifiProtectEntity, AlarmControlPanelEnti
         """
         Return True while the panel shows a state that can be trusted.
 
-        That needs Protect to be reachable, the NVR to report an armMode and
-        the UniFi global alarm manager to be known to be off, because Protect's
-        own arm state does not follow it. An NVR has no ``state`` field, so the
-        base class check, which wants "CONNECTED", would never pass.
+        That needs Protect to be reachable, the NVR to report an armMode,
+        the NVR not to use an external alarm manager, and the UniFi global alarm
+        manager to be known to be off, because Protect's own arm state does not
+        follow it. An NVR has no ``state`` field, so the base class check, which
+        wants "CONNECTED", would never pass.
         """
         return (
             owner_available(self.coordinator.data, "protect")
             and _arm_mode(self.device_data) is not None
             and _global_alarm_manager_is_off(self.coordinator)
+            and not uses_external_alarm_manager(self.device_data)
         )
 
     @property
@@ -218,3 +242,104 @@ class UnifiProtectNvrAlarmControlPanel(UnifiProtectEntity, AlarmControlPanelEnti
         """Disarm the alarm."""
         _ = code
         await self.coordinator.require_protect_coordinator().async_disarm_alarm()
+
+
+class UnifiProtectExternalArmProfileAlarmControlPanel(
+    UnifiProtectEntity, AlarmControlPanelEntity
+):
+    """The UniFi Protect External Arm Profile as an alarm control panel."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "external_arm_profile"
+    _attr_code_arm_required = False
+    _attr_code_format = None
+    _attr_supported_features = AlarmControlPanelEntityFeature.ARM_AWAY
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsFacadeCoordinator,
+        nvr_id: str,
+        profile_id: str,
+    ) -> None:
+        """Initialize the external arm profile panel."""
+        super().__init__(
+            coordinator, DEVICE_TYPE_NVR, nvr_id, f"external_arm_profile_{profile_id}"
+        )
+        self._profile_id = profile_id
+
+    @property
+    def name(self) -> str | None:
+        """Return the name from the profile title."""
+        profile = self._profile_data
+        if profile and (title := profile.get("title")):
+            return str(title)
+        return None
+
+    @property
+    def available(self) -> bool:
+        """
+        Return True while the profile panel is available.
+
+        Requires Protect to be reachable, the NVR to use external alarm manager,
+        and the profile to be present in coordinator data. When a profile is
+        missing, it turns unavailable without being removed.
+        """
+        if not owner_available(self.coordinator.data, "protect"):
+            return False
+        nvr = protect_device(self.coordinator.data, "nvrs", self._device_id)
+        if not uses_external_alarm_manager(nvr):
+            return False
+        return self._profile_data is not None
+
+    @property
+    def _profile_data(self) -> dict[str, Any] | None:
+        """Return profile data from coordinator data."""
+        # A single-record lookup: protect_collection copies the whole
+        # collection, which every panel would repeat on every state read.
+        record = protect_device(
+            self.coordinator.data, "external_arm_profiles", self._profile_id
+        )
+        return record if isinstance(record, dict) else None
+
+    @property
+    def alarm_state(self) -> AlarmControlPanelState | None:
+        """Return the alarm state, or None (unknown) for an unrecognised status."""
+        profile = self._profile_data
+        if profile is None:
+            return None
+        state = profile.get("state")
+        raw_state = getattr(state, "value", state)
+        if not isinstance(raw_state, str):
+            return None
+        return EXTERNAL_PROFILE_STATE_TO_STATE.get(raw_state.lower())
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return the extra state attributes (never exposing pin_code)."""
+        profile = self._profile_data
+        if profile is None:
+            return None
+        attrs = {
+            "has_pin": get_field(profile, "hasPin", "has_pin"),
+            "alarm_ids": get_field(profile, "alarmIds", "alarm_ids"),
+            "state_set_at": get_field(profile, "stateSetAt", "state_set_at"),
+            "state_promotion_due_at": get_field(
+                profile, "statePromotionDueAt", "state_promotion_due_at"
+            ),
+            "active_breach_id": get_field(
+                profile, "activeBreachId", "active_breach_id"
+            ),
+        }
+        return {key: value for key, value in attrs.items() if value is not None}
+
+    async def async_alarm_arm_away(self, code: str | None = None) -> None:
+        """Arm the external profile."""
+        _ = code
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_arm_external_profile(self._profile_id)
+
+    async def async_alarm_disarm(self, code: str | None = None) -> None:
+        """Disarm the external profile."""
+        _ = code
+        protect = self.coordinator.require_protect_coordinator()
+        await protect.async_disarm_external_profile(self._profile_id)

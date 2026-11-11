@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import itertools
 import logging
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -39,6 +40,7 @@ from custom_components.unifi_insights.coordinators.protect_events import (
     DispatchDigitalInput,
     Escalate,
     EventFrame,
+    ExternalArmProfilesDisabled,
     Fetched,
     Instant,
     Log,
@@ -153,7 +155,14 @@ class Result:
 def cache(**collections: Any) -> dict[str, Any]:
     """Return a coordinator cache with every collection, overlaid by ``collections``."""
     base: dict[str, Any] = {
-        name: {} for name in (*FAMILIES, "doorlocks", "viewports", "liveviews")
+        name: {}
+        for name in (
+            *FAMILIES,
+            "doorlocks",
+            "viewports",
+            "liveviews",
+            "external_arm_profiles",
+        )
     }
     base["events"] = {}
     base["protect_info"] = {}
@@ -169,10 +178,11 @@ def run(
     """Feed ``ops`` into the reconciler, checking it never mutates its inputs."""
     result = Result(state or initial_state(), seed)
     stamps: dict[str, RequestStamp] = {}
+    seq = itertools.count(1)
     for op in ops:
         if isinstance(op, Begin):
             stamps[op.key or op.family] = begin_request(
-                result.state, op.family, at(op.t)
+                result.state, op.family, at(op.t), seq=next(seq)
             )
             continue
         if isinstance(op, Answer):
@@ -863,6 +873,39 @@ def test_tamper_event_without_metadata_records_nothing_but_ids() -> None:
     assert result.cache["alarm_hubs"]["h1"]["alarmHub"]["deviceTamperStatus"] == (
         "normal"
     )
+
+
+def test_sensor_tamper_state_comes_from_device_state_not_event() -> None:
+    """A sensor tamper event frame without finish does not change sensor_tamper;
+    a later device frame or REST poll with isTamperingDetected: false clears it."""
+    initial_sensor = {"id": "s1", "isOpened": False, "isTamperingDetected": True}
+    result = run(
+        cache(sensors={"s1": initial_sensor}),
+        [
+            (1.0, event("sensorTamper", "e1", device="s1", start=1000)),
+        ],
+    )
+    assert result.cache["sensors"]["s1"]["isTamperingDetected"] is True
+
+    result_dev = run(
+        result.cache,
+        [(2.0, device("sensor", "s1", isTamperingDetected=False))],
+        state=result.state,
+    )
+    assert result_dev.cache["sensors"]["s1"]["isTamperingDetected"] is False
+
+    result_poll = run(
+        result.cache,
+        [
+            *poll(
+                "sensors",
+                Fetched({"s1": {"id": "s1", "isTamperingDetected": False}}),
+                3.0,
+            )
+        ],
+        state=result.state,
+    )
+    assert result_poll.cache["sensors"]["s1"]["isTamperingDetected"] is False
 
 
 # --- siren stop racing a poll -------------------------------------------------
@@ -1591,6 +1634,7 @@ def test_motion_hits_the_camera_before_a_light_with_the_same_id() -> None:
         ("chime", "chimes"),
         ("doorlock", "doorlocks"),
         ("viewport", "viewports"),
+        ("speaker", "speakers"),
     ],
 )
 def test_shallow_frames_replace_nested_objects(model_key: str, collection: str) -> None:
@@ -2351,12 +2395,18 @@ def test_overlay_for_an_unknown_record_does_nothing(seed: dict[str, Any]) -> Non
 
 @pytest.mark.parametrize(
     ("family", "generation"),
-    [("nvrs", 0), ("sirens", 0), ("cameras", None), ("alarm_hubs", None)],
+    [
+        ("nvrs", 0),
+        ("sirens", 0),
+        ("cameras", None),
+        ("alarm_hubs", None),
+        ("external_arm_profiles", 0),
+    ],
 )
 def test_begin_request_stamps_time_and_generation(
     family: Family, generation: int | None
 ) -> None:
-    """Only NVRs and sirens carry a WebSocket generation."""
+    """NVRs, sirens and external arm profiles carry a generation."""
     stamp = begin_request(initial_state(), family, at(7.0))
     assert stamp == RequestStamp(family, 7.0, generation)
 
@@ -2367,3 +2417,204 @@ def test_poll_boundaries_without_work_return_the_same_cache() -> None:
     result = run(seed, [(0.0, PollStarted()), (1.0, PollCompleted())])
     assert result.cache is seed
     assert result.effects() == []
+
+
+def test_external_profiles_command_overtakes_older_answer() -> None:
+    """
+    An arm/disarm command overlay landing while fetch is out beats the
+    older answer.
+    """
+    seed = cache(external_arm_profiles={"p1": {"id": "p1", "state": "disarmed"}})
+    result = run(
+        seed,
+        [
+            Begin("external_arm_profiles", 1.0),
+            (2.0, CommandOverlay("external_arm_profiles", "p1", {"state": "armed"})),
+            Answer(
+                "external_arm_profiles",
+                Fetched({"p1": {"id": "p1", "state": "disarmed"}}, complete=True),
+                3.0,
+            ),
+        ],
+    )
+    assert result.cache["external_arm_profiles"]["p1"]["state"] == "armed"
+    assert any(
+        "external arm profile command" in line for line in result.logs(logging.DEBUG)
+    )
+    assert dict(result.state.ws_generation)["external_arm_profiles"] == 1
+
+    # A subsequent read requested after the command still applies
+    result2 = run(
+        result.cache,
+        [
+            Begin("external_arm_profiles", 4.0),
+            Answer(
+                "external_arm_profiles",
+                Fetched({"p1": {"id": "p1", "state": "disarmed"}}, complete=True),
+                5.0,
+            ),
+        ],
+        state=result.state,
+    )
+    assert result2.cache["external_arm_profiles"]["p1"]["state"] == "disarmed"
+
+
+def test_external_arm_profiles_complete_empty_response_clears_cache() -> None:
+    """A complete response with 0 profiles clears the cache immediately."""
+    seed = cache(external_arm_profiles={"p1": {"id": "p1", "state": "disarmed"}})
+    result = run(
+        seed,
+        [
+            Begin("external_arm_profiles", 1.0),
+            Answer(
+                "external_arm_profiles",
+                Fetched({}, complete=True),
+                2.0,
+            ),
+        ],
+    )
+    assert result.cache["external_arm_profiles"] == {}
+
+
+def test_external_arm_profiles_stale_404_does_not_clear_the_overlay() -> None:
+    """A 404 that raced an arm command is dropped, so the overlay stays."""
+    seed = cache(external_arm_profiles={"p1": {"id": "p1", "state": "disarmed"}})
+    result = run(
+        seed,
+        [
+            Begin("external_arm_profiles", 1.0),
+            (2.0, CommandOverlay("external_arm_profiles", "p1", {"state": "armed"})),
+            Answer("external_arm_profiles", NotFound(), 3.0),
+        ],
+    )
+    assert result.cache["external_arm_profiles"]["p1"]["state"] == "armed"
+    assert dict(result.state.ws_generation)["external_arm_profiles"] == 1
+
+
+def test_external_arm_profiles_stale_transient_error_is_dropped() -> None:
+    """A transient error that raced an arm command is dropped, not absorbed."""
+    seed = cache(external_arm_profiles={"p1": {"id": "p1", "state": "disarmed"}})
+    result = run(
+        seed,
+        [
+            Begin("external_arm_profiles", 1.0),
+            (2.0, CommandOverlay("external_arm_profiles", "p1", {"state": "armed"})),
+            Answer("external_arm_profiles", TransientError(BoomError("down")), 3.0),
+        ],
+    )
+    assert result.cache["external_arm_profiles"]["p1"]["state"] == "armed"
+    assert result.state.families["external_arm_profiles"].fetch_errors == 0
+    assert result.effects(Escalate) == []
+
+
+def test_external_arm_profiles_404_preserves_cache_within_the_window() -> None:
+    """A 404 on an answered endpoint keeps the cached profiles for three polls."""
+    seed = cache(external_arm_profiles={"p1": {"id": "p1", "state": "disarmed"}})
+    result = run(
+        seed,
+        [
+            Begin("external_arm_profiles", 1.0),
+            Answer("external_arm_profiles", NotFound(), 2.0),
+        ],
+    )
+    assert result.cache["external_arm_profiles"] == {
+        "p1": {"id": "p1", "state": "disarmed"}
+    }
+    assert result.state.families["external_arm_profiles"].empty_fetches == 1
+
+
+def test_external_arm_profiles_older_incomplete_read_does_not_merge_back() -> None:
+    """
+    A newer complete read removes a profile; the older incomplete read that
+    lands afterwards must not merge it back.
+    """
+    p1 = {"id": "p1", "state": "disarmed"}
+    p2 = {"id": "p2", "state": "disarmed"}
+    seed = cache(external_arm_profiles={"p1": p1, "p2": p2})
+    result = run(
+        seed,
+        [
+            Begin("external_arm_profiles", 1.0, key="older"),
+            Begin("external_arm_profiles", 2.0, key="newer"),
+            Answer("newer", Fetched({"p1": p1}, complete=True), 3.0),
+            Answer("older", Fetched({"p1": p1, "p2": p2}, complete=False), 4.0),
+        ],
+    )
+    assert "p2" not in result.cache["external_arm_profiles"]
+    assert any(
+        "newer external arm profile reading" in line
+        for line in result.logs(logging.DEBUG)
+    )
+
+
+def test_external_arm_profiles_equal_timestamps_later_read_wins() -> None:
+    """A later read stamped at the same instant still applies over an earlier one."""
+    p1_old = {"id": "p1", "state": "disarmed"}
+    p1_new = {"id": "p1", "state": "armed"}
+    seed = cache(external_arm_profiles={"p1": p1_old})
+    result = run(
+        seed,
+        [
+            Begin("external_arm_profiles", 1.0, key="older"),
+            Begin("external_arm_profiles", 1.0, key="newer"),
+            Answer("older", Fetched({"p1": p1_old}, complete=True), 2.0),
+            Answer("newer", Fetched({"p1": p1_new}, complete=True), 3.0),
+        ],
+    )
+    assert result.cache["external_arm_profiles"]["p1"]["state"] == "armed"
+
+
+def test_external_arm_profiles_disabled_invalidates_the_inflight_read() -> None:
+    """The flag turning off clears the profiles and drops the older reading."""
+    seed = cache(external_arm_profiles={"p1": {"id": "p1", "state": "disarmed"}})
+    result = run(
+        seed,
+        [
+            Begin("external_arm_profiles", 1.0),
+            (2.0, ExternalArmProfilesDisabled()),
+            Answer(
+                "external_arm_profiles",
+                Fetched({"p1": {"id": "p1", "state": "disarmed"}}, complete=True),
+                3.0,
+            ),
+        ],
+    )
+    assert result.cache["external_arm_profiles"] == {}
+    assert dict(result.state.ws_generation)["external_arm_profiles"] == 1
+
+
+@pytest.mark.parametrize("family", ["nvrs", "sirens"])
+def test_nvr_and_siren_command_overlays_bump_their_generation(
+    family: GuardedFamily,
+) -> None:
+    """A command overlay on an NVR or siren drops an older in-flight answer."""
+    seed = cache(**{family: {"d1": {"id": "d1", "name": "old"}}})
+    result = run(
+        seed,
+        [
+            Begin(family, 1.0),
+            (2.0, CommandOverlay(family, "d1", {"name": "commanded"})),
+            Answer(family, Fetched({"d1": {"id": "d1", "name": "stale"}}), 3.0),
+        ],
+    )
+    assert dict(result.state.ws_generation)[family] == 1
+    assert result.cache[family]["d1"]["name"] == "commanded"
+
+
+def test_a_profile_command_does_not_affect_another_family() -> None:
+    """An arm overlay bumps only the profile generation, not the NVR's."""
+    seed = cache(
+        nvrs={"n1": {"id": "n1", "name": "old"}},
+        external_arm_profiles={"p1": {"id": "p1", "state": "disarmed"}},
+    )
+    result = run(
+        seed,
+        [
+            Begin("nvrs", 1.0),
+            (2.0, CommandOverlay("external_arm_profiles", "p1", {"state": "armed"})),
+            Answer("nvrs", Fetched({"n1": {"id": "n1", "name": "rest"}}), 3.0),
+        ],
+    )
+    assert result.cache["nvrs"]["n1"]["name"] == "rest"
+    assert dict(result.state.ws_generation)["nvrs"] == 0
+    assert dict(result.state.ws_generation)["external_arm_profiles"] == 1

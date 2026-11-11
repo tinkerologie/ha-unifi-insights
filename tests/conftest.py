@@ -201,9 +201,11 @@ def _create_mock_protect_client() -> MagicMock:
     client.update_viewer = AsyncMock(return_value=True)
 
     # Protect 7.3.70 security device families (empty by default)
-    for family in ("fobs", "link_stations", "alarm_hubs", "sirens"):
+    for family in ("fobs", "link_stations", "alarm_hubs", "sirens", "speakers"):
         endpoint = MagicMock()
         endpoint.get_all_result = AsyncMock(return_value=protect_list([]))
+        if family == "speakers":
+            endpoint.stop_siren = AsyncMock(return_value=True)
         setattr(client, family, endpoint)
 
     # WebSocket support (real-time device updates, additive to polling)
