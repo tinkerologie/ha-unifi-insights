@@ -453,6 +453,48 @@ def test_aggregate_modern_internet_activity_windows_zero_and_missing() -> None:
     assert res_tx["1h"] == {"tx_bytes": 7}
 
 
+@pytest.mark.parametrize(
+    "invalid",
+    [-5, float("nan"), float("inf"), float("-inf"), True, "100", 10**400],
+)
+def test_aggregate_modern_windows_ignore_invalid_byte_values(invalid: object) -> None:
+    """Invalid raw rx/tx values from the console never enter the totals.
+
+    The buckets go through the library model, as on a real refresh, so this
+    pins the contract the aggregator relies on: invalid values arrive as None.
+    """
+    now_ms = 1_000_000_000
+
+    def bucket(rx: object, tx: object) -> StatsSeriesBucket:
+        return StatsSeriesBucket.model_validate(
+            {
+                "timestamp": now_ms - 1000,
+                "duration": 300000,
+                "rxBytes": rx,
+                "txBytes": tx,
+            }
+        )
+
+    good = bucket(10.0, 20.0)
+
+    rx_bad = aggregate_modern_internet_activity_windows(
+        [good, bucket(invalid, 5.0)], [], [], now_ms=now_ms
+    )
+    assert rx_bad["1h"] == {"rx_bytes": 10, "tx_bytes": 25}
+
+    tx_bad = aggregate_modern_internet_activity_windows(
+        [good, bucket(5.0, invalid)], [], [], now_ms=now_ms
+    )
+    assert tx_bad["1h"] == {"rx_bytes": 15, "tx_bytes": 20}
+
+    # A bucket whose only values are invalid adds nothing to either direction,
+    # and a window built only from such buckets is left out.
+    only_bad = aggregate_modern_internet_activity_windows(
+        [bucket(invalid, invalid)], [], [], now_ms=now_ms
+    )
+    assert only_bad == {}
+
+
 @pytest.mark.asyncio
 async def test_async_fetch_site_modern_internet_activity_ok() -> None:
     """Test modern fetch sequence requesting DAY, WEEK, MONTH."""

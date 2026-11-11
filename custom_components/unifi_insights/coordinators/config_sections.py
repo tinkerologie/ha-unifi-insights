@@ -897,24 +897,13 @@ def _sum_modern_window(
     for bucket in buckets:
         if bucket.timestamp < cutoff_ms or bucket.timestamp > now_ms:
             continue
-        rx = bucket.rx_bytes
-        if (
-            rx is not None
-            and not isinstance(rx, bool)
-            and isinstance(rx, (int, float))
-            and math.isfinite(rx)
-            and rx >= 0
-        ):
-            rx_values.append(float(rx))
-        tx = bucket.tx_bytes
-        if (
-            tx is not None
-            and not isinstance(tx, bool)
-            and isinstance(tx, (int, float))
-            and math.isfinite(tx)
-            and tx >= 0
-        ):
-            tx_values.append(float(tx))
+        # StatsSeriesBucket already turns missing, bool, non-numeric, negative,
+        # non-finite and oversized byte values into None and keeps a real 0,
+        # so None is the only value to skip here.
+        if bucket.rx_bytes is not None:
+            rx_values.append(bucket.rx_bytes)
+        if bucket.tx_bytes is not None:
+            tx_values.append(bucket.tx_bytes)
 
     if not rx_values and not tx_values:
         return None
