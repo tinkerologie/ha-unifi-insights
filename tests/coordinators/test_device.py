@@ -28,6 +28,8 @@ from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api import (
+    ApiKeyAuth,
+    ConnectionType,
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiNotFoundError,
@@ -36,6 +38,7 @@ from unifi_official_api import (
     UniFiTimeoutError,
     UniFiValidationError,
 )
+from unifi_official_api.network import UniFiNetworkClient
 from unifi_official_api.network.endpoints.devices import DevicesEndpoint
 from unifi_official_api.network.models import LegacyPortMetrics, PortBytesMetrics
 
@@ -97,6 +100,7 @@ from tests.fixtures.coordinator_clients import (
     _create_mock_network_client,
     _create_mock_protect_client,
 )
+from tests.fixtures.http_fakes import FakeQueuedSession
 from tests.fixtures.library_responses import (
     SAMPLE_PDU_DEVICE,
     SAMPLE_PDU_LEGACY_DEVICE,
@@ -5781,3 +5785,221 @@ class TestAccessPointRadioDetails:
 
         assert result["radio_details"] == {}
         assert coordinator._radio_details_last_attempt == {}
+
+
+# --- Network device status LEDs (#504) ---------------------------------------
+
+
+@pytest.fixture
+async def led_owners(seeded_owners: SeededOwners) -> SeededOwners:
+    """Seed a classic LED capability on a non-outlet Network device."""
+    endpoint = seeded_owners.network_client.devices
+    endpoint.get_all.return_value = [{**AP_DEVICE, "state": "ONLINE"}]
+    endpoint.get.return_value = {}
+    endpoint.get_legacy_site_devices.return_value = [
+        {"mac": AP_DEVICE["mac"], "_id": "legacy-ap", "led_override": "off"}
+    ]
+    endpoint.set_led_override.return_value = True
+    await seeded_owners.device.async_refresh()
+    return seeded_owners
+
+
+async def test_led_write_publishes_and_waits_for_poll_confirmation(
+    led_owners: SeededOwners,
+) -> None:
+    """Hold the latest mode over stale reads without editing existing snapshots."""
+    owner = led_owners.device
+    endpoint = led_owners.network_client.devices
+    original = owner.data
+    legacy = endpoint.get_legacy_site_devices.return_value[0]
+    assert original["devices"][SITE_ID][AP_ID]["_id"] == "legacy-ap"
+    assert original["devices"][SITE_ID][AP_ID]["led_override"] == "off"
+
+    clock = MagicMock()
+    clock.monotonic.return_value = 100.0
+    with (
+        patch.object(device_coordinator_module, "time", clock),
+        patch.object(owner, "async_request_refresh") as refresh,
+    ):
+        assert await owner.async_set_led_override(SITE_ID, AP_ID, mode="on")
+        endpoint.set_led_override.assert_awaited_once_with("default", "legacy-ap", "on")
+        refresh.assert_awaited_once()
+        assert owner.data["devices"][SITE_ID][AP_ID]["led_override"] == "on"
+        assert original["devices"][SITE_ID][AP_ID]["led_override"] == "off"
+        assert legacy["led_override"] == "off"
+
+        await owner.async_refresh()
+        assert owner.data["devices"][SITE_ID][AP_ID]["led_override"] == "on"
+
+        endpoint.get_legacy_site_devices.return_value = []
+        await owner.async_refresh()
+        assert "led_override" not in owner.data["devices"][SITE_ID][AP_ID]
+        assert (SITE_ID, AP_ID) in owner._pending_led_writes
+
+        endpoint.get_legacy_site_devices.return_value = [legacy]
+        await owner.async_refresh()
+        assert owner.data["devices"][SITE_ID][AP_ID]["led_override"] == "on"
+
+        clock.monotonic.return_value = 150.0
+        await owner.async_set_led_override(SITE_ID, AP_ID, mode="default")
+        clock.monotonic.return_value = 209.0
+        await owner.async_refresh()
+        assert owner.data["devices"][SITE_ID][AP_ID]["led_override"] == "default"
+
+        clock.monotonic.return_value = 210.0
+        await owner.async_refresh()
+        assert owner.data["devices"][SITE_ID][AP_ID]["led_override"] == "off"
+        assert not owner._pending_led_writes
+
+        await owner.async_set_led_override(SITE_ID, AP_ID, mode="on")
+        endpoint.get_legacy_site_devices.return_value = [
+            {**legacy, "led_override": "on"}
+        ]
+        await owner.async_refresh()
+        assert not owner._pending_led_writes
+        assert owner.data["devices"][SITE_ID][AP_ID]["led_override"] == "on"
+
+
+@pytest.mark.parametrize(
+    ("record", "site_id", "translation_key"),
+    [
+        (None, SITE_ID, "command_failed"),
+        ({"_id": "legacy-ap"}, SITE_ID, "command_failed"),
+        ({"_id": "legacy-ap", "led_override": "invalid"}, SITE_ID, "command_failed"),
+        ({"led_override": "off"}, SITE_ID, "command_failed"),
+        ({"_id": " ", "led_override": "off"}, SITE_ID, "command_failed"),
+        (
+            {"_id": "legacy-ap", "led_override": "off"},
+            "missing",
+            "legacy_site_not_found",
+        ),
+    ],
+)
+async def test_led_write_requires_classic_site_and_device(
+    led_owners: SeededOwners,
+    record: dict[str, Any] | None,
+    site_id: str,
+    translation_key: str,
+) -> None:
+    """Fail before I/O, publication or refresh for incomplete target data."""
+    owner = led_owners.device
+    owner.data = {**owner.data, "devices": {SITE_ID: {AP_ID: record} if record else {}}}
+    before = owner.data
+    with (
+        patch.object(owner, "async_request_refresh") as refresh,
+        pytest.raises(HomeAssistantError) as error,
+    ):
+        await owner.async_set_led_override(site_id, AP_ID, mode="on")
+    assert error.value.translation_key == translation_key
+    led_owners.network_client.devices.set_led_override.assert_not_awaited()
+    refresh.assert_not_awaited()
+    assert owner.data is before
+    assert not owner._pending_led_writes
+
+
+@pytest.mark.parametrize("raises", [False, True])
+async def test_led_rejected_write_does_not_publish(
+    led_owners: SeededOwners, *, raises: bool
+) -> None:
+    """Leave state alone when the SDK rejects the command."""
+    owner = led_owners.device
+    endpoint = led_owners.network_client.devices
+    endpoint.set_led_override.return_value = False
+    if raises:
+        endpoint.set_led_override.side_effect = UniFiConnectionError("offline")
+    before = owner.data
+    with (
+        patch.object(owner, "async_request_refresh") as refresh,
+        pytest.raises(HomeAssistantError) as error,
+    ):
+        await owner.async_set_led_override(SITE_ID, AP_ID, mode="on")
+    assert error.value.translation_key == "command_failed"
+    refresh.assert_not_awaited()
+    assert owner.data is before
+    assert not owner._pending_led_writes
+
+
+async def test_led_pending_write_survives_failure_and_drops_when_device_leaves(
+    led_owners: SeededOwners,
+) -> None:
+    """Keep a successful overlay on failed refresh and forget absent devices."""
+    owner = led_owners.device
+    endpoint = led_owners.network_client.devices
+    await owner.async_set_led_override(SITE_ID, AP_ID, mode="on")
+    before = owner.data
+    endpoint.get_all.side_effect = UniFiConnectionError("offline")
+    await owner.async_refresh()
+    assert owner.data is before
+    assert (SITE_ID, AP_ID) in owner._pending_led_writes
+
+    endpoint.get_all.side_effect = None
+    endpoint.get_all.return_value = []
+    endpoint.get_legacy_site_devices.return_value = []
+    await owner.async_refresh()
+    assert not owner._pending_led_writes
+
+
+async def test_led_write_waits_for_inflight_refresh(led_owners: SeededOwners) -> None:
+    """A refresh that already owns the lock completes before the LED command."""
+    owner = led_owners.device
+    endpoint = led_owners.network_client.devices
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    async def read_devices(_site_id: str) -> list[dict[str, Any]]:
+        started.set()
+        await finish.wait()
+        return [{**AP_DEVICE, "state": "ONLINE"}]
+
+    endpoint.get_all.side_effect = read_devices
+    poll = asyncio.create_task(owner.async_refresh())
+    await started.wait()
+    write = asyncio.create_task(owner.async_set_led_override(SITE_ID, AP_ID, mode="on"))
+    try:
+        await asyncio.sleep(0)
+        endpoint.set_led_override.assert_not_awaited()
+    finally:
+        finish.set()
+        await asyncio.gather(poll, write)
+    assert owner.data["devices"][SITE_ID][AP_ID]["led_override"] == "on"
+
+
+@pytest.mark.parametrize(
+    ("connection_type", "url"),
+    [
+        (
+            ConnectionType.LOCAL,
+            "https://192.168.1.1/proxy/network/api/s/default/rest/device/legacy-ap",
+        ),
+        (
+            ConnectionType.REMOTE,
+            "https://api.ui.com/v1/connector/consoles/test-console/network/api/s/default/rest/device/legacy-ap",
+        ),
+    ],
+)
+async def test_led_command_sdk_http_boundary(
+    led_owners: SeededOwners, connection_type: ConnectionType, url: str
+) -> None:
+    """Send exactly one LED field using the SDK's local or connector route."""
+    session = FakeQueuedSession([{"meta": {"rc": "ok"}, "data": []}])
+    local = connection_type is ConnectionType.LOCAL
+    async with UniFiNetworkClient(
+        auth=ApiKeyAuth(api_key="test-key"),
+        base_url="https://192.168.1.1" if local else None,
+        connection_type=connection_type,
+        console_id=None if local else "test-console",
+        session=session,  # type: ignore[arg-type]
+    ) as client:
+        owner = led_owners.device
+        with (
+            patch.object(owner, "network_client", client),
+            patch.object(owner, "async_request_refresh"),
+        ):
+            await owner.async_set_led_override(SITE_ID, AP_ID, mode="on")
+
+    assert len(session.requests) == 1
+    request = session.requests[0]
+    assert (request["method"], request["url"], request["json"]) == (
+        "PUT",
+        url,
+        {"led_override": "on"},
+    )

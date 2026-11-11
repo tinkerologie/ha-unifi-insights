@@ -555,3 +555,43 @@ class TestComputePortRatesBranches:
         assert (
             "port_rates" not in mock_device_coordinator.data["stats"]["site1"]["dev1"]
         )
+
+
+@pytest.mark.parametrize(
+    ("legacy_fields", "expected"),
+    [
+        (
+            {"_id": "legacy-ap", "led_override": "off"},
+            {"_id": "legacy-ap", "led_override": "off"},
+        ),
+        (
+            {"_id": "legacy-ap", "led_override": "default"},
+            {"_id": "legacy-ap", "led_override": "default"},
+        ),
+        (
+            {"_id": "legacy-ap", "led_override": "on"},
+            {"_id": "legacy-ap", "led_override": "on"},
+        ),
+        ({"_id": "", "led_override": "on"}, {"led_override": "on"}),
+        ({"_id": "legacy-switch"}, {}),
+        ({"_id": "legacy-ap", "led_override": ["invalid"]}, {}),
+    ],
+)
+def test_merge_legacy_led_capability(
+    legacy_fields: dict[str, Any], expected: dict[str, Any]
+) -> None:
+    """Copy only a reported LED mode and its classic ID into the v1 record."""
+    before = {**legacy_fields}
+    device: dict[str, Any] = {"id": "v1-device"}
+    UnifiInsightsDeviceCoordinator._merge_legacy_led_data(device, legacy_fields)
+    assert device == {"id": "v1-device", **expected}
+    assert legacy_fields == before
+
+
+def test_legacy_primary_keeps_led_capability() -> None:
+    """A fallback device already carries its original classic fields."""
+    device = UnifiInsightsDeviceCoordinator._legacy_device_to_v1_dict(
+        {"mac": "00:11:22:33:44:55", "_id": "legacy-ap", "led_override": "on"}
+    )
+    assert device["_id"] == "legacy-ap"
+    assert device["led_override"] == "on"

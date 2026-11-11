@@ -234,6 +234,7 @@ Use the UniFi app to install firmware.
 | _WAN name_ Connection                                        | Binary sensor  | Internet connection state of each WAN (DHCP, static or PPPoE)                          |
 | _Tunnel name_ Site-to-Site VPN                               | Binary sensor  | Connection state of each site-to-site VPN tunnel                                       |
 | WAN IP Address, WAN Uptime                                   | Sensor         | Gateway, disabled by default                                                           |
+| LED                                                          | Light          | Turn a Network device status LED on or off. The site default shows as unknown.         |
 | WiFi _network name_                                          | Switch         | Turn a Wi-Fi network on or off                                                         |
 | _Policy name_                                                | Switch         | Turn a user-defined firewall policy on or off                                          |
 | _Route name_                                                 | Switch         | Turn a policy-based route on or off                                                    |

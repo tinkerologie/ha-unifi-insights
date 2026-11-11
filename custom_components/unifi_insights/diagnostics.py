@@ -81,6 +81,7 @@ TO_REDACT = {
     "ssid",
     "essid",
     # Device identifiers
+    "_id",
     "serial",
     "serialNumber",
     "hardwareId",
