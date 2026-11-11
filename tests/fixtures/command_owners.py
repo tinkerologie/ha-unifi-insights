@@ -159,7 +159,7 @@ def seed_network_client(client: NonCallableMagicMock) -> None:
     ]
     client.devices.get_statistics.return_value = {}
     client.devices.get_port_metrics.return_value = LegacyPortMetrics()
-    client.get_site_report.return_value = []
+    client.reports.get_site_report.return_value = []
     client.stats.get_source.return_value = StatisticsSource("LEGACY")
     client.stats.get_recent_series.return_value = []
 
