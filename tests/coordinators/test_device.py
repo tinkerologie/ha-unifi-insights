@@ -58,9 +58,11 @@ from custom_components.unifi_insights.coordinators.device import (
     MAX_STATS_REUSE_POLLS,
     OUTLET_WRITE_GUARD_SECONDS,
     OutletPayloadProvenance,
+    PendingLedWrite,
     PendingOutletWrite,
     UnifiInsightsDeviceCoordinator,
     _build_outlet_overrides,
+    _hold_led_writes,
     _is_table_outlet,
     evaluate_outlet_payload_provenance,
     get_device_port,
@@ -6003,3 +6005,61 @@ async def test_led_command_sdk_http_boundary(
         url,
         {"led_override": "on"},
     )
+
+
+def test_led_holds_only_writes_for_the_current_site() -> None:
+    """Keep multiple writes on their own site, even if another site shares an ID."""
+    devices = {"ap1": {"led_override": "off"}, "ap2": {"led_override": "default"}}
+    own_writes = {
+        ("site-a", "ap1"): PendingLedWrite("on", 100.0),
+        ("site-a", "ap2"): PendingLedWrite("off", 100.0),
+    }
+    pending = {**own_writes, ("site-b", "ap1"): PendingLedWrite("default", 100.0)}
+
+    updated, kept = _hold_led_writes("site-a", devices, pending, 101.0)
+
+    assert updated == {"ap1": {"led_override": "on"}, "ap2": {"led_override": "off"}}
+    assert kept == own_writes
+    assert devices == {
+        "ap1": {"led_override": "off"},
+        "ap2": {"led_override": "default"},
+    }
+
+
+async def test_led_pending_write_clears_when_all_sites_leave(
+    led_owners: SeededOwners,
+) -> None:
+    """Forget pending writes when the selected site list is empty."""
+    owner = led_owners.device
+    await owner.async_set_led_override(SITE_ID, AP_ID, mode="on")
+    assert (SITE_ID, AP_ID) in owner._pending_led_writes
+
+    led_owners.config.data = {**led_owners.config.data, "sites": {}}
+    await owner.async_refresh()
+
+    assert owner.data["devices"] == {}
+    assert not owner._pending_led_writes
+    root = owner.data
+    owner._publish_led_override(SITE_ID, AP_ID, "off")
+    assert owner.data is root
+
+
+@pytest.mark.parametrize("legacy_read_fails", [False, True])
+async def test_led_capability_requires_a_matching_legacy_device(
+    led_owners: SeededOwners, *, legacy_read_fails: bool
+) -> None:
+    """Drop LED data when the legacy record disappears or its read fails."""
+    owner = led_owners.device
+    endpoint = led_owners.network_client.devices
+    endpoint.get_legacy_site_devices.return_value = [
+        {"mac": "00:00:00:00:00:03", "_id": "other-ap", "led_override": "on"}
+    ]
+    if legacy_read_fails:
+        endpoint.get_legacy_site_devices.side_effect = UniFiConnectionError("offline")
+
+    await owner.async_refresh()
+
+    assert owner.last_update_success
+    record = owner.data["devices"][SITE_ID][AP_ID]
+    assert "led_override" not in record
+    assert "_id" not in record
