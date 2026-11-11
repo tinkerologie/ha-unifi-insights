@@ -776,6 +776,12 @@ async def test_network_led_state_and_actions_without_protect(
     assert error.value.translation_key == "command_failed"
     assert state() == "off"
 
+    network.devices.get_legacy_site_devices.return_value = [
+        {**legacy, "_id": "  ", "led_override": "off"}
+    ]
+    await owner.async_refresh()
+    assert state() == "unavailable"
+
     network.devices.get_legacy_site_devices.return_value = [legacy]
     await owner.async_refresh()
     assert state() == "unavailable"

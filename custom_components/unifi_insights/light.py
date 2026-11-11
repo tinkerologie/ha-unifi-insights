@@ -31,6 +31,7 @@ from .const import (
 from .data_transforms import (
     MAX_LED_LEVEL,
     MIN_LED_LEVEL,
+    is_legacy_led_device_id,
     is_network_led_override,
     protect_collection,
     protect_device,
@@ -154,9 +155,12 @@ class UnifiNetworkLedLight(UnifiInsightsEntity, LightEntity):
 
     @property
     def available(self) -> bool:
-        """Return whether the device still reports a supported LED mode."""
-        return super().available and is_network_led_override(
-            (self.device_data or {}).get("led_override")
+        """Return whether the device reports a supported mode and write ID."""
+        record = self.device_data or {}
+        return (
+            super().available
+            and is_network_led_override(record.get("led_override"))
+            and is_legacy_led_device_id(record.get("led_device_id"))
         )
 
     @property

@@ -562,17 +562,27 @@ class TestComputePortRatesBranches:
     [
         (
             {"_id": "legacy-ap", "led_override": "off"},
-            {"_id": "legacy-ap", "led_override": "off"},
+            {"led_device_id": "legacy-ap", "led_override": "off"},
         ),
         (
             {"_id": "legacy-ap", "led_override": "default"},
-            {"_id": "legacy-ap", "led_override": "default"},
+            {"led_device_id": "legacy-ap", "led_override": "default"},
         ),
         (
             {"_id": "legacy-ap", "led_override": "on"},
-            {"_id": "legacy-ap", "led_override": "on"},
+            {"led_device_id": "legacy-ap", "led_override": "on"},
         ),
         ({"_id": "", "led_override": "on"}, {"led_override": "on"}),
+        ({"_id": "  ", "led_override": "on"}, {"led_override": "on"}),
+        ({"_id": 123, "led_override": "on"}, {"led_override": "on"}),
+        ({"_id": "../device", "led_override": "on"}, {"led_override": "on"}),
+        (
+            {"_id": "b6d677f0-14cf-4ec6-8ab3-c8bfdb15f2b2", "led_override": "off"},
+            {
+                "led_device_id": "b6d677f0-14cf-4ec6-8ab3-c8bfdb15f2b2",
+                "led_override": "off",
+            },
+        ),
         ({"_id": "legacy-switch"}, {}),
         ({"_id": "legacy-ap", "led_override": ["invalid"]}, {}),
     ],
@@ -594,4 +604,5 @@ def test_legacy_primary_keeps_led_capability() -> None:
         {"mac": "00:11:22:33:44:55", "_id": "legacy-ap", "led_override": "on"}
     )
     assert device["_id"] == "legacy-ap"
+    assert device["led_device_id"] == "legacy-ap"
     assert device["led_override"] == "on"

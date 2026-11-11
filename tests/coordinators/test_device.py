@@ -40,7 +40,11 @@ from unifi_official_api import (
 )
 from unifi_official_api.network import UniFiNetworkClient
 from unifi_official_api.network.endpoints.devices import DevicesEndpoint
-from unifi_official_api.network.models import LegacyPortMetrics, PortBytesMetrics
+from unifi_official_api.network.models import (
+    Device,
+    LegacyPortMetrics,
+    PortBytesMetrics,
+)
 
 from custom_components.unifi_insights.const import (
     DOMAIN,
@@ -5814,7 +5818,7 @@ async def test_led_write_publishes_and_waits_for_poll_confirmation(
     endpoint = led_owners.network_client.devices
     original = owner.data
     legacy = endpoint.get_legacy_site_devices.return_value[0]
-    assert original["devices"][SITE_ID][AP_ID]["_id"] == "legacy-ap"
+    assert original["devices"][SITE_ID][AP_ID]["led_device_id"] == "legacy-ap"
     assert original["devices"][SITE_ID][AP_ID]["led_override"] == "off"
 
     clock = MagicMock()
@@ -5866,12 +5870,16 @@ async def test_led_write_publishes_and_waits_for_poll_confirmation(
     ("record", "site_id", "translation_key"),
     [
         (None, SITE_ID, "command_failed"),
-        ({"_id": "legacy-ap"}, SITE_ID, "command_failed"),
-        ({"_id": "legacy-ap", "led_override": "invalid"}, SITE_ID, "command_failed"),
-        ({"led_override": "off"}, SITE_ID, "command_failed"),
-        ({"_id": " ", "led_override": "off"}, SITE_ID, "command_failed"),
+        ({"led_device_id": "legacy-ap"}, SITE_ID, "command_failed"),
         (
-            {"_id": "legacy-ap", "led_override": "off"},
+            {"led_device_id": "legacy-ap", "led_override": "invalid"},
+            SITE_ID,
+            "command_failed",
+        ),
+        ({"led_override": "off"}, SITE_ID, "command_failed"),
+        ({"led_device_id": " ", "led_override": "off"}, SITE_ID, "command_failed"),
+        (
+            {"led_device_id": "legacy-ap", "led_override": "off"},
             "missing",
             "legacy_site_not_found",
         ),
@@ -6051,6 +6059,9 @@ async def test_led_capability_requires_a_matching_legacy_device(
     """Drop LED data when the legacy record disappears or its read fails."""
     owner = led_owners.device
     endpoint = led_owners.network_client.devices
+    endpoint.get_all.return_value = [
+        Device.model_validate({**AP_DEVICE, "state": "ONLINE", "led_override": "off"})
+    ]
     endpoint.get_legacy_site_devices.return_value = [
         {"mac": "00:00:00:00:00:03", "_id": "other-ap", "led_override": "on"}
     ]
@@ -6062,4 +6073,50 @@ async def test_led_capability_requires_a_matching_legacy_device(
     assert owner.last_update_success
     record = owner.data["devices"][SITE_ID][AP_ID]
     assert "led_override" not in record
-    assert "_id" not in record
+    assert "led_device_id" not in record
+
+
+@pytest.mark.parametrize("classic_id", [None, "../other-ap", "classic-ap"])
+async def test_led_write_identifier_comes_from_the_matching_legacy_record(
+    led_owners: SeededOwners, classic_id: str | None
+) -> None:
+    """Ignore the extra identifier on the v1 SDK model."""
+    owner = led_owners.device
+    endpoint = led_owners.network_client.devices
+    other_mac = "00:00:00:00:00:03"
+    endpoint.get_all.return_value = [
+        Device.model_validate(
+            {
+                **AP_DEVICE,
+                "macAddress": AP_DEVICE["mac"],
+                "mac": other_mac,
+                "state": "ONLINE",
+                "led_override": "on",
+                "led_device_id": "injected",
+                "_id": "v1-extra",
+            }
+        )
+    ]
+    classic = {"mac": AP_DEVICE["mac"], "led_override": "off"}
+    if classic_id is not None:
+        classic["_id"] = classic_id
+    endpoint.get_legacy_site_devices.return_value = [
+        classic,
+        {"mac": other_mac, "_id": "other-ap", "led_override": "on"},
+    ]
+
+    await owner.async_refresh()
+
+    record = owner.data["devices"][SITE_ID][AP_ID]
+    assert record["led_override"] == "off"
+    assert record["_id"] == "v1-extra"
+    if classic_id == "classic-ap":
+        assert record["led_device_id"] == classic_id
+        await owner.async_set_led_override(SITE_ID, AP_ID, mode="on")
+        endpoint.set_led_override.assert_awaited_once_with("default", classic_id, "on")
+    else:
+        assert "led_device_id" not in record
+        with pytest.raises(HomeAssistantError) as error:
+            await owner.async_set_led_override(SITE_ID, AP_ID, mode="on")
+        assert error.value.translation_key == "command_failed"
+        endpoint.set_led_override.assert_not_awaited()

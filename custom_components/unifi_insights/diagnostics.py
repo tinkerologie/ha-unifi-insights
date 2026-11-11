@@ -82,6 +82,7 @@ TO_REDACT = {
     "essid",
     # Device identifiers
     "_id",
+    "led_device_id",
     "serial",
     "serialNumber",
     "hardwareId",

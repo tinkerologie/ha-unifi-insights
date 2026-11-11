@@ -49,6 +49,7 @@ from custom_components.unifi_insights.data_transforms import (
     _has_feature,
     build_site_network_facts,
     device_facts,
+    is_legacy_led_device_id,
     is_network_led_override,
     normalize_legacy_storage,
     normalize_legacy_wans,
@@ -1018,6 +1019,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
         ``device_id_is_mac()`` correctly skips id-addressed endpoints for it.
         """
         mapped: dict[str, Any] = dict(legacy)
+        cls._merge_legacy_led_data(mapped, legacy)
 
         # Ensure macAddress is populated from mac for the merge helpers
         mac = legacy.get("mac")
@@ -1165,12 +1167,18 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             device_dict["ports"] = ports
 
     @staticmethod
-    def _merge_legacy_led_data(device: dict[str, Any], legacy: dict[str, Any]) -> None:
-        """Copy the LED capability and its classic write identifier."""
-        if is_network_led_override(mode := legacy.get("led_override")):
+    def _merge_legacy_led_data(
+        device: dict[str, Any], legacy: dict[str, Any] | None
+    ) -> None:
+        """Publish LED capability and its write identifier from the classic record."""
+        device.pop("led_override", None)
+        device.pop("led_device_id", None)
+        if legacy is not None and is_network_led_override(
+            mode := legacy.get("led_override")
+        ):
             device["led_override"] = mode
-            if legacy_id := legacy.get("_id"):
-                device["_id"] = legacy_id
+            if is_legacy_led_device_id(legacy_id := legacy.get("_id")):
+                device["led_device_id"] = legacy_id
 
     @classmethod
     def _merge_legacy_outlet_data(
@@ -1797,9 +1805,15 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             raw_device_id = device.get("id")
             if raw_device_id is None:
                 continue
+            if not legacy_as_primary:
+                led_mac = self._normalize_mac(
+                    device.get("macAddress", device.get("mac"))
+                )
+                led_source = (
+                    legacy_devices_by_mac.get(led_mac) if led_mac is not None else None
+                )
+                self._merge_legacy_led_data(device, led_source)
             raw_source = self._legacy_device_for(device, legacy_devices_by_mac)
-            if not legacy_as_primary and raw_source is not None:
-                self._merge_legacy_led_data(device, raw_source)
             raw_outlet_arrays[str(raw_device_id)] = _raw_outlet_arrays(
                 raw_source if raw_source is not None else device
             )
@@ -2303,12 +2317,10 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
         )
         async with self._debounced_refresh.async_lock():
             device = self.get_device(site_id, device_id) or {}
-            legacy_id = device.get("_id")
-            if (
-                not is_network_led_override(device.get("led_override"))
-                or not isinstance(legacy_id, str)
-                or not legacy_id.strip()
-            ):
+            legacy_id = device.get("led_device_id")
+            if not is_network_led_override(
+                device.get("led_override")
+            ) or not is_legacy_led_device_id(legacy_id):
                 raise HomeAssistantError(
                     translation_domain=DOMAIN, translation_key="command_failed"
                 )

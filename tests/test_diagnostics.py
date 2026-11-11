@@ -2074,7 +2074,11 @@ def test_internet_activity_status_diagnostics_non_mapping() -> None:
 
 def test_diagnostics_redacts_classic_device_id_on_network_led() -> None:
     """Export the LED mode without the device's classic write identifier."""
-    raw = {"devices": {"site": {"ap": {"_id": "classic-ap-id", "led_override": "off"}}}}
+    raw = {
+        "devices": {
+            "site": {"ap": {"led_device_id": "classic-ap-id", "led_override": "off"}}
+        }
+    }
     record = _redact_coordinator_data(raw)["devices"]["site"]["ap"]
-    assert record == {"_id": REDACTED, "led_override": "off"}
-    assert raw["devices"]["site"]["ap"]["_id"] == "classic-ap-id"
+    assert record == {"led_device_id": REDACTED, "led_override": "off"}
+    assert raw["devices"]["site"]["ap"]["led_device_id"] == "classic-ap-id"
