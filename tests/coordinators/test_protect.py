@@ -1086,6 +1086,37 @@ class TestActionCommands:
 
         assert protect.data["external_arm_profiles"] == {}
 
+    @pytest.mark.parametrize(
+        ("nvrs", "expected"),
+        [
+            pytest.param(None, False, id="nvrs-missing"),
+            pytest.param([], False, id="nvrs-not-a-dict"),
+            pytest.param({"nvr_1": None}, False, id="only-a-non-dict-nvr"),
+            pytest.param(
+                {
+                    "nvr_1": "malformed",
+                    "nvr_2": {"featureFlags": {"useExternalAlarmManager": True}},
+                },
+                True,
+                id="non-dict-nvr-skipped",
+            ),
+            pytest.param(
+                {"nvr_1": {"feature_flags": {"use_external_alarm_manager": True}}},
+                True,
+                id="snake-case-flags",
+            ),
+            pytest.param({"nvr_1": {"featureFlags": None}}, False, id="flags-null"),
+        ],
+    )
+    def test_any_nvr_uses_external_alarm_manager_guards(
+        self, seeded_owners: SeededOwners, nvrs: Any, *, expected: bool
+    ) -> None:
+        """Malformed NVR data never enables external profiles, and is skipped."""
+        protect = seeded_owners.protect
+        protect.data["nvrs"] = nvrs
+
+        assert protect._any_nvr_uses_external_alarm_manager() is expected
+
     async def test_fetch_external_arm_profiles_404_marks_unsupported(
         self, seeded_owners: SeededOwners
     ) -> None:
