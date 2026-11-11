@@ -1185,7 +1185,7 @@ async def test_reauth_remote_innerspace_only_success_and_failure(
             "denied", status_code=403
         )
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id luxuries" if False else "flow_id"],
+            result["flow_id"],
             user_input={CONF_API_KEY: "denied_key"},
         )
         assert result["type"] == FlowResultType.FORM
