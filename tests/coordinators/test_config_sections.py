@@ -670,7 +670,6 @@ async def test_async_update_site_internet_activity_integration() -> None:
 
     # Success case
     async def mock_fetch_success(**kwargs: Any) -> Any:
-
         return InternetActivityFetchResult(
             data={"1h": {"rx_bytes": 100, "tx_bytes": 200}},
             status={"source": "modern", "reason": "ok", "counts": {}},
@@ -697,7 +696,6 @@ async def test_async_update_site_internet_activity_integration() -> None:
 
     # Failure case retains prior data
     async def mock_fetch_fail(**kwargs: Any) -> Any:
-
         return InternetActivityFetchResult(
             data=None,
             status={"source": "modern", "reason": "failed", "counts": {}},
