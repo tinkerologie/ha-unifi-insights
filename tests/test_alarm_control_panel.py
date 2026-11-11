@@ -875,6 +875,38 @@ async def test_reconcile_reads_the_nvr_while_none_is_cached(
     listener.assert_called_once()
 
 
+async def test_overlapping_nvr_reads_keep_the_newer_answer(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry, protect_client: MagicMock
+) -> None:
+    """A slow older NVR read cannot replace the breach a newer read found."""
+    await _setup(hass, mock_config_entry, protect_client, nvr=_nvr(status="armed"))
+    protect = mock_config_entry.runtime_data.protect_coordinator
+    release = asyncio.Event()
+    reads = 0
+
+    async def get_nvr() -> NVR:
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            await release.wait()
+            return NVR.model_validate(_nvr(status="disarmed"))
+        return NVR.model_validate(
+            _nvr(status="breach", breachDetectedAt=ARMED_AT_MS, breachEventCount=1)
+        )
+
+    protect_client.nvr.get = AsyncMock(side_effect=get_nvr)
+    older = hass.async_create_task(protect._fetch_nvr())
+    await asyncio.sleep(0)
+    newer = hass.async_create_task(protect._fetch_nvr())
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(older, newer)
+
+    assert reads == 2
+    (nvr,) = protect.data["nvrs"].values()
+    assert nvr["armMode"]["status"] == "breach"
+
+
 async def test_reconcile_tick_includes_the_nvr(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry, protect_client: MagicMock
 ) -> None:

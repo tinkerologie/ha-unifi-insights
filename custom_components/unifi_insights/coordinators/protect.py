@@ -236,6 +236,8 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         # Monotonic time before which the global alarm manager is not asked
         # about again (see `_probe_global_alarm_manager`).
         self._global_alarm_manager_probe_after: float = 0.0
+        # Serialises NVR reads (see `_fetch_nvr`).
+        self._nvr_read_lock = asyncio.Lock()
         # Consecutive probes that gave no answer, for the one warning.
         self._global_alarm_manager_probe_failures: int = 0
         self.data: dict[str, Any] = {
@@ -1168,24 +1170,30 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         if not self.protect_client:
             return
 
-        _LOGGER.debug("Protect coordinator: Fetching NVR")
-        stamp = begin_request(self._events, "nvrs", self._now())
-        outcome: RestOutcome
-        try:
-            nvr = self._model_to_dict(await self.protect_client.nvr.get())
-            nvr_id = nvr.get("id")
-            outcome = Fetched({nvr_id: nvr} if nvr_id else {})
-        except UniFiNotFoundError:
-            outcome = NotFound()
-        except Exception as err:
-            _LOGGER.debug("Protect coordinator: Error fetching NVR: %s", err)
-            return
-        self._apply_reporting_errors(
-            RestBatch(stamp, outcome),
-            lambda err: _LOGGER.debug(
-                "Protect coordinator: Error fetching NVR: %s", err
-            ),
-        )
+        # The main poll and the reconcile timer both read the NVR, and the
+        # reconciler does not order two REST answers for it: an older answer
+        # landing last would replace a newer one (a breach read as disarmed).
+        # One read at a time, each stamped once it holds the lock, keeps the
+        # answers in the order they were read.
+        async with self._nvr_read_lock:
+            _LOGGER.debug("Protect coordinator: Fetching NVR")
+            stamp = begin_request(self._events, "nvrs", self._now())
+            outcome: RestOutcome
+            try:
+                nvr = self._model_to_dict(await self.protect_client.nvr.get())
+                nvr_id = nvr.get("id")
+                outcome = Fetched({nvr_id: nvr} if nvr_id else {})
+            except UniFiNotFoundError:
+                outcome = NotFound()
+            except Exception as err:
+                _LOGGER.debug("Protect coordinator: Error fetching NVR: %s", err)
+                return
+            self._apply_reporting_errors(
+                RestBatch(stamp, outcome),
+                lambda err: _LOGGER.debug(
+                    "Protect coordinator: Error fetching NVR: %s", err
+                ),
+            )
 
     async def _fetch_chimes(self) -> None:
         """Fetch chime data."""
