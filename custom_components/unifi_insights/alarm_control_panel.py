@@ -301,18 +301,16 @@ class UnifiProtectExternalArmProfileAlarmControlPanel(
         nvr = protect_device(self.coordinator.data, "nvrs", self._device_id)
         if not _uses_external_alarm_manager(nvr):
             return False
-        profiles = (
-            protect_collection(self.coordinator.data, "external_arm_profiles") or {}
-        )
-        return self._profile_id in profiles
+        return self._profile_data is not None
 
     @property
     def _profile_data(self) -> dict[str, Any] | None:
         """Return profile data from coordinator data."""
-        profiles = (
-            protect_collection(self.coordinator.data, "external_arm_profiles") or {}
+        # A single-record lookup: protect_collection copies the whole
+        # collection, which every panel would repeat on every state read.
+        record = protect_device(
+            self.coordinator.data, "external_arm_profiles", self._profile_id
         )
-        record = profiles.get(self._profile_id)
         return record if isinstance(record, dict) else None
 
     @property
