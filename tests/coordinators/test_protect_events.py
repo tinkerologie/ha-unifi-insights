@@ -2583,6 +2583,24 @@ def test_external_arm_profiles_disabled_invalidates_the_inflight_read() -> None:
     assert dict(result.state.ws_generation)["external_arm_profiles"] == 1
 
 
+@pytest.mark.parametrize("family", ["nvrs", "sirens"])
+def test_nvr_and_siren_command_overlays_bump_their_generation(
+    family: GuardedFamily,
+) -> None:
+    """A command overlay on an NVR or siren drops an older in-flight answer."""
+    seed = cache(**{family: {"d1": {"id": "d1", "name": "old"}}})
+    result = run(
+        seed,
+        [
+            Begin(family, 1.0),
+            (2.0, CommandOverlay(family, "d1", {"name": "commanded"})),
+            Answer(family, Fetched({"d1": {"id": "d1", "name": "stale"}}), 3.0),
+        ],
+    )
+    assert dict(result.state.ws_generation)[family] == 1
+    assert result.cache[family]["d1"]["name"] == "commanded"
+
+
 def test_a_profile_command_does_not_affect_another_family() -> None:
     """An arm overlay bumps only the profile generation, not the NVR's."""
     seed = cache(
