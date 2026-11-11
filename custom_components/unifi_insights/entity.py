@@ -50,6 +50,7 @@ from .data_transforms import (
     get_site_gateway_id,
     network_device,
     network_device_stats,
+    normalize_mac,
     owner_available,
     protect_device,
     site_record,
@@ -68,6 +69,13 @@ if TYPE_CHECKING:
     from .coordinators.carrier_fabric import UnifiInsightsCarrierFabricCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _registry_mac(value: object) -> str | None:
+    """Use the device registry's MAC spelling for cross-API device matching."""
+    if not isinstance(value, str):
+        return None
+    return normalize_mac(dr.format_mac(value.strip()))
 
 
 def device_has_feature(device_data: dict[str, Any], *features_to_match: str) -> bool:
@@ -379,38 +387,41 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         network_site_id = None
         matched_network_device: Mapping[str, Any] = {}
 
-        # For cameras and NVRs, try to find a matching network device by MAC address
+        # Try to match the Protect device to its Network record by MAC address
         # This ensures devices like UDM-Pro show as a single device in HA
         # Use the original device ID for MAC lookup in case of dual-camera
         lookup_device_id = original_device_id if parent_camera_id else device_id
         lookup_record = protect_device(coordinator.data, collection, lookup_device_id)
         lookup_device_data = device_data if lookup_record is None else lookup_record
 
-        # Match cameras and NVRs to network devices by MAC
-        should_match_mac = (
-            device_type in (DEVICE_TYPE_CAMERA, DEVICE_TYPE_NVR, DEVICE_TYPE_SPEAKER)
-            and "mac" in lookup_device_data
-        )
-        if should_match_mac:
-            device_mac = lookup_device_data.get("mac")
-            if device_mac:
-                # Search for a network device with the same MAC
-                for site_id, devices in coordinator.data["devices"].items():
-                    for net_device_id, net_device in devices.items():
-                        if net_device.get("macAddress") == device_mac:
-                            network_device_id = net_device_id
-                            network_site_id = site_id
-                            matched_network_device = net_device
-                            _LOGGER.debug(
-                                "Matched network device %s at site %s for %s %s",
-                                net_device_id,
-                                site_id,
-                                device_type,
-                                lookup_device_id,
-                            )
-                            break
-                    if network_device_id:
+        if device_type in (
+            DEVICE_TYPE_CAMERA,
+            DEVICE_TYPE_NVR,
+            DEVICE_TYPE_SPEAKER,
+        ) and (
+            device_mac := _registry_mac(
+                get_field(lookup_device_data, "mac", "macAddress", "mac_address")
+            )
+        ):
+            for site_id, devices in coordinator.data["devices"].items():
+                for net_device_id, net_device in devices.items():
+                    network_mac = _registry_mac(
+                        get_field(net_device, "macAddress", "mac_address", "mac")
+                    )
+                    if network_mac == device_mac:
+                        network_device_id = net_device_id
+                        network_site_id = site_id
+                        matched_network_device = net_device
+                        _LOGGER.debug(
+                            "Matched network device %s at site %s for %s %s",
+                            net_device_id,
+                            site_id,
+                            device_type,
+                            lookup_device_id,
+                        )
                         break
+                if network_device_id:
+                    break
 
         # Create device info based on whether we found a matching network device
         device_info: dict[str, Any]
@@ -441,7 +452,12 @@ class UnifiProtectEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
 
             # Add network connections
             device_info["connections"] = {
-                (CONNECTION_NETWORK_MAC, matched_network_device.get("macAddress"))
+                (
+                    CONNECTION_NETWORK_MAC,
+                    get_field(
+                        matched_network_device, "macAddress", "mac_address", "mac"
+                    ),
+                )
             }
 
             _LOGGER.debug(

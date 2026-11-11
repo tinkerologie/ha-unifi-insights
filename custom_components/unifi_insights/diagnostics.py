@@ -139,7 +139,9 @@ WIFI_TO_REDACT = TO_REDACT | {"name"}
 # Hotspot vouchers: voucher codes are guest credentials; the note ("name" or
 # "note") can name a guest.
 VOUCHER_TO_REDACT = TO_REDACT | {"code", "name", "note"}
-EXTERNAL_PROFILE_TO_REDACT: Final[frozenset[str]] = frozenset({"pin_code", "pin"})
+EXTERNAL_PROFILE_TO_REDACT: Final[frozenset[str]] = frozenset(
+    {"pin", "pin_code", "pinCode", "created_by", "createdBy", "updated_by", "updatedBy"}
+)
 
 # Port forwards: the forward target, the allowed source and the WAN-side
 # destination locate hosts inside and outside the network.

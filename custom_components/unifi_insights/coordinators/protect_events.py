@@ -59,7 +59,10 @@ from custom_components.unifi_insights.const import (
     SCAN_INTERVAL_PROTECT,
     TIMELINE_MAX_HOURS,
 )
-from custom_components.unifi_insights.data_transforms import get_field
+from custom_components.unifi_insights.data_transforms import (
+    any_nvr_uses_external_alarm_manager,
+    get_field,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -899,6 +902,17 @@ def reconcile(
             _apply_overlay(run, event)
         case _:  # pragma: no cover - exhaustive
             assert_never(event)
+
+    # Commit the NVR change and profile invalidation in one step, before any
+    # listener runs or a profile request can resume.
+    previous_nvrs = cache.get("nvrs")
+    nvrs = run.data.get("nvrs")
+    if (
+        nvrs is not previous_nvrs
+        and any_nvr_uses_external_alarm_manager(previous_nvrs)
+        and not any_nvr_uses_external_alarm_manager(nvrs)
+    ):
+        _apply_external_profiles_disabled(run)
     return run.step()
 
 
@@ -958,6 +972,9 @@ def _apply_device_frame(run: _Run, frame: DeviceFrame) -> bool:
             ),
         )
         existing = run.records(guarded).get(device_id, {})
+        if guarded == "nvrs":
+            existing = _canonical_nvr_flags(existing)
+            fields = _canonical_nvr_flags(fields)
         run.put(guarded, device_id, deep_merge(existing, fields))
         if guarded == "sirens":
             _apply_siren_stop_guards(run)
@@ -981,6 +998,23 @@ def _apply_device_frame(run: _Run, frame: DeviceFrame) -> bool:
     # poll waits for a quiet stream.
     run.effects.append(PublishUpdate(mark_success=True))
     return True
+
+
+def _canonical_nvr_flags(record: dict[str, Any]) -> dict[str, Any]:
+    """Put REST and frame flag aliases on the same path before a deep merge."""
+    flags = record.get("featureFlags", record.get("feature_flags"))
+    if "feature_flags" not in record and not (
+        isinstance(flags, dict) and "use_external_alarm_manager" in flags
+    ):
+        return record
+    result = dict(record)
+    result.pop("feature_flags", None)
+    if isinstance(flags, dict) and "use_external_alarm_manager" in flags:
+        flags = dict(flags)
+        external = flags.pop("use_external_alarm_manager")
+        flags.setdefault("useExternalAlarmManager", external)
+    result["featureFlags"] = flags
+    return result
 
 
 def _stamp_sensor_groups(run: _Run, sensor_id: str, fields: Mapping[str, Any]) -> None:
@@ -2035,7 +2069,8 @@ def _apply_external_profiles_disabled(run: _Run) -> None:
     )
     if run.records("external_arm_profiles"):
         run.replace("external_arm_profiles", {})
-        run.effects.append(PublishUpdate(mark_success=False))
+        if not any(isinstance(effect, PublishUpdate) for effect in run.effects):
+            run.effects.append(PublishUpdate(mark_success=False))
 
 
 def _apply_overlay(run: _Run, overlay: CommandOverlay) -> None:

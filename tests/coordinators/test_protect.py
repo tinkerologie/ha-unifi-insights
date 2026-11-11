@@ -72,6 +72,7 @@ from custom_components.unifi_insights.coordinators.protect import (
     protect_digital_input_signal,
 )
 from custom_components.unifi_insights.coordinators.protect_events import (
+    DeviceFrame,
     Family,
     PollCompleted,
     PollStarted,
@@ -93,7 +94,11 @@ from tests.fixtures.coordinator_clients import (
     _create_mock_protect_client,
     protect_list,
 )
-from tests.fixtures.library_responses import SAMPLE_EXTERNAL_ARM_PROFILE, SAMPLE_SIREN
+from tests.fixtures.library_responses import (
+    SAMPLE_EXTERNAL_ARM_PROFILE,
+    SAMPLE_NVR,
+    SAMPLE_SIREN,
+)
 from tests.fixtures.protect_ws import send_device, send_event
 
 if TYPE_CHECKING:
@@ -1621,6 +1626,76 @@ class TestActionCommands:
         await fetch_task
 
         assert protect.data["external_arm_profiles"] == {}
+
+    @pytest.mark.parametrize("source", ["websocket", "websocket_snake_case", "rest"])
+    async def test_nvr_change_discards_profile_reads_before_notifying(
+        self, seeded_owners: SeededOwners, source: str
+    ) -> None:
+        """A normal NVR update clears profiles and invalidates an older read."""
+        protect = seeded_owners.protect
+        nvr = {
+            **SAMPLE_NVR,
+            "featureFlags": {"useExternalAlarmManager": True},
+        }
+        protect.data["nvrs"] = {"nvr_1": nvr}
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        }
+        profile = ExternalArmProfile.model_validate(SAMPLE_EXTERNAL_ARM_PROFILE)
+        started, resume = asyncio.Event(), asyncio.Event()
+
+        async def gated_read() -> ProtectListResult[Any]:
+            started.set()
+            await resume.wait()
+            return protect_list([profile])
+
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.side_effect = gated_read
+        observations: list[dict[str, Any]] = []
+        remove_listener = protect.async_add_listener(
+            lambda: observations.append(protect.data["external_arm_profiles"])
+        )
+        task = asyncio.create_task(protect._fetch_external_arm_profiles())
+        await started.wait()
+        try:
+            if source == "rest":
+                # An NVR with external management may have no local arm mode.
+                # A complete REST answer can also remove the feature flag.
+                seeded_owners.protect_client.nvr.get.return_value = {
+                    **nvr,
+                    "featureFlags": {},
+                }
+                await protect._reconcile_nvr_arm_mode()
+            else:
+                flags = (
+                    {"feature_flags": {"use_external_alarm_manager": False}}
+                    if source == "websocket_snake_case"
+                    else {"featureFlags": {"useExternalAlarmManager": False}}
+                )
+                protect._apply(DeviceFrame("nvr", "nvr_1", flags))
+            assert len(observations) == 1
+            assert all(snapshot == {} for snapshot in observations)
+            assert protect.data["external_arm_profiles"] == {}
+
+            # Re-enable while the old read is still in flight. Its reply is
+            # stale even though the manager is enabled again when it arrives.
+            if source == "rest":
+                seeded_owners.protect_client.nvr.get.return_value = nvr
+                await protect._reconcile_nvr_arm_mode()
+                assert protect._any_nvr_uses_external_alarm_manager()
+            else:
+                protect._apply(DeviceFrame("nvr", "nvr_1", nvr))
+        finally:
+            remove_listener()
+            resume.set()
+            await task
+
+        assert protect.data["external_arm_profiles"] == {}
+        assert "external_arm_profiles" not in protect._answered_families
+        endpoint.get_all_result.side_effect = None
+        endpoint.get_all_result.return_value = protect_list([profile])
+        await protect._fetch_external_arm_profiles()
+        assert "profile_1" in protect.data["external_arm_profiles"]
 
 
 SESSION = TalkbackSession(

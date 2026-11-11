@@ -22,6 +22,7 @@ from custom_components.unifi_insights.data_transforms import (
     site_record,
     site_section,
     site_section_available,
+    uses_external_alarm_manager,
 )
 
 if TYPE_CHECKING:
@@ -387,3 +388,35 @@ def test_site_section_available(
 ) -> None:
     """A listed section reads its capture; anything else, the config owner's."""
     assert site_section_available(data, site_id, section) is expected
+
+
+@pytest.mark.parametrize(
+    ("nvr", "expected"),
+    [
+        (None, False),
+        ("garbage", False),
+        ({}, False),
+        ({"featureFlags": None}, False),
+        ({"featureFlags": "garbage"}, False),
+        ({"featureFlags": {}}, False),
+        ({"featureFlags": {"useExternalAlarmManager": False}}, False),
+        ({"featureFlags": {"useExternalAlarmManager": True}}, True),
+        ({"featureFlags": {"useExternalAlarmManager": "false"}}, False),
+        ({"feature_flags": {"use_external_alarm_manager": True}}, True),
+    ],
+    ids=[
+        "none",
+        "string",
+        "no-flags",
+        "null-flags",
+        "string-flags",
+        "empty-flags",
+        "flag-off",
+        "flag-on",
+        "malformed-string-flag",
+        "snake-case-flag-on",
+    ],
+)
+def test_external_alarm_manager_helper(nvr: Any, *, expected: bool) -> None:
+    """Only a true useExternalAlarmManager flag in a flags dict counts."""
+    assert uses_external_alarm_manager(nvr) is expected

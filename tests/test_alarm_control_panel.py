@@ -46,7 +46,6 @@ from custom_components.unifi_insights.alarm_control_panel import (
     UnifiProtectNvrAlarmControlPanel,
     _arm_mode,
     _epoch_ms_to_iso,
-    _uses_external_alarm_manager,
     async_setup_entry,
 )
 from custom_components.unifi_insights.const import DOMAIN
@@ -230,36 +229,6 @@ def test_nvr_model_without_arm_mode_reads_none() -> None:
 def test_arm_mode_helper_rejects_anything_but_a_dict(nvr: Any) -> None:
     """Only an armMode dict counts as the NVR reporting an arm mode."""
     assert _arm_mode(nvr) is None
-
-
-@pytest.mark.parametrize(
-    ("nvr", "expected"),
-    [
-        (None, False),
-        ("garbage", False),
-        ({}, False),
-        ({"featureFlags": None}, False),
-        ({"featureFlags": "garbage"}, False),
-        ({"featureFlags": {}}, False),
-        ({"featureFlags": {"useExternalAlarmManager": False}}, False),
-        ({"featureFlags": {"useExternalAlarmManager": True}}, True),
-        ({"feature_flags": {"use_external_alarm_manager": True}}, True),
-    ],
-    ids=[
-        "none",
-        "string",
-        "no-flags",
-        "null-flags",
-        "string-flags",
-        "empty-flags",
-        "flag-off",
-        "flag-on",
-        "snake-case-flag-on",
-    ],
-)
-def test_external_alarm_manager_helper(nvr: Any, *, expected: bool) -> None:
-    """Only a true useExternalAlarmManager flag in a flags dict counts."""
-    assert _uses_external_alarm_manager(nvr) is expected
 
 
 def test_arm_mode_helper_returns_the_dict() -> None:
@@ -844,17 +813,19 @@ async def test_reconcile_notifies_only_when_the_nvr_changed(
     listener.assert_called_once()
 
 
-async def test_reconcile_skips_an_nvr_without_arm_mode(
+async def test_reconcile_reads_nvr_but_skips_local_probe_without_arm_mode(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry, protect_client: MagicMock
 ) -> None:
-    """Older firmware has no arm mode to reconcile, so nothing is requested."""
+    """Read NVR feature flags without probing for a local arm mode."""
     await _setup(hass, mock_config_entry, protect_client, nvr=_nvr_without_arm_mode())
     protect = mock_config_entry.runtime_data.protect_coordinator
     polls_before = protect_client.nvr.get.await_count
+    protect_client.arm_profiles.get_all.reset_mock()
 
     await protect._reconcile_nvr_arm_mode()
 
-    assert protect_client.nvr.get.await_count == polls_before
+    assert protect_client.nvr.get.await_count == polls_before + 1
+    protect_client.arm_profiles.get_all.assert_not_awaited()
 
 
 async def test_reconcile_reads_the_nvr_while_none_is_cached(
@@ -1629,10 +1600,6 @@ async def test_external_arm_profile_profile_removal_transitions_unavailable(
 
 def test_external_arm_profile_edge_cases() -> None:
     """Cover edge cases: missing profile, non-dict flags, non-str state, etc."""
-    # _uses_external_alarm_manager edge cases
-    assert _uses_external_alarm_manager(None) is False
-    assert _uses_external_alarm_manager({"featureFlags": None}) is False
-
     # Coord with protect unavailable
     coord_unavail = MagicMock()
     coord_unavail.data = {

@@ -739,6 +739,25 @@ def rule_record(
     return _record(data, kind, site_id, rule_id)
 
 
+def uses_external_alarm_manager(nvr: object) -> bool:
+    """Return whether the NVR reports external alarm management as enabled."""
+    if not isinstance(nvr, Mapping):
+        return False
+    flags = nvr.get("featureFlags") or nvr.get("feature_flags")
+    return (
+        isinstance(flags, Mapping)
+        and get_field(flags, "useExternalAlarmManager", "use_external_alarm_manager")
+        is True
+    )
+
+
+def any_nvr_uses_external_alarm_manager(nvrs: object) -> bool:
+    """Return whether any NVR in the collection uses external alarm management."""
+    return isinstance(nvrs, Mapping) and any(
+        uses_external_alarm_manager(nvr) for nvr in nvrs.values()
+    )
+
+
 def protect_device(
     data: Mapping[str, Any], collection: str, device_id: str
 ) -> Mapping[str, Any] | None:

@@ -22,7 +22,12 @@ from .const import (
     ATTR_WILL_BE_ARMED_AT,
     DEVICE_TYPE_NVR,
 )
-from .data_transforms import owner_available, protect_collection, protect_device
+from .data_transforms import (
+    owner_available,
+    protect_collection,
+    protect_device,
+    uses_external_alarm_manager,
+)
 from .entity import UnifiProtectEntity, get_field
 
 if TYPE_CHECKING:
@@ -66,23 +71,6 @@ def _global_alarm_manager_is_off(coordinator: UnifiInsightsFacadeCoordinator) ->
     return coordinator.data["protect"].get("global_alarm_manager") is False
 
 
-def _uses_external_alarm_manager(nvr: Any) -> bool:
-    """Return whether the NVR uses an external alarm manager."""
-    if not isinstance(nvr, dict):
-        return False
-    feature_flags = nvr.get("featureFlags") or nvr.get("feature_flags")
-    if not isinstance(feature_flags, dict):
-        return False
-    return bool(
-        get_field(
-            feature_flags,
-            "useExternalAlarmManager",
-            "use_external_alarm_manager",
-            default=False,
-        )
-    )
-
-
 def _arm_mode(nvr: Any) -> dict[str, Any] | None:
     """Return the NVR's armMode, or None when it has none (older firmware)."""
     arm_mode = nvr.get("armMode") if isinstance(nvr, dict) else None
@@ -123,7 +111,7 @@ async def async_setup_entry(
         new_entities: list[AlarmControlPanelEntity] = []
         nvrs = protect_collection(coordinator.data, "nvrs") or {}
         for nvr_id, nvr_data in nvrs.items():
-            if _uses_external_alarm_manager(nvr_data):
+            if uses_external_alarm_manager(nvr_data):
                 profiles = (
                     protect_collection(coordinator.data, "external_arm_profiles") or {}
                 )
@@ -191,7 +179,7 @@ class UnifiProtectNvrAlarmControlPanel(UnifiProtectEntity, AlarmControlPanelEnti
             owner_available(self.coordinator.data, "protect")
             and _arm_mode(self.device_data) is not None
             and _global_alarm_manager_is_off(self.coordinator)
-            and not _uses_external_alarm_manager(self.device_data)
+            and not uses_external_alarm_manager(self.device_data)
         )
 
     @property
@@ -299,7 +287,7 @@ class UnifiProtectExternalArmProfileAlarmControlPanel(
         if not owner_available(self.coordinator.data, "protect"):
             return False
         nvr = protect_device(self.coordinator.data, "nvrs", self._device_id)
-        if not _uses_external_alarm_manager(nvr):
+        if not uses_external_alarm_manager(nvr):
             return False
         return self._profile_data is not None
 
