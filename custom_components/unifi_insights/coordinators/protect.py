@@ -537,8 +537,13 @@ class UnifiInsightsProtectCoordinator(UnifiInsightsBaseCoordinator):
         console is busy. The global alarm manager question is asked here too,
         for the same reason. Nothing is fetched for an NVR that reports no
         arm mode, and listeners are only notified when something changed.
+
+        While no NVR is cached (the first read failed), the NVR is read here
+        too: the busy console that keeps pushing the main poll back would
+        otherwise keep both alarm panel kinds undiscovered after the NVR is
+        reachable again.
         """
-        if not self._nvr_has_arm_mode():
+        if self.data["nvrs"] and not self._nvr_has_arm_mode():
             return
         before = (self.data["nvrs"], self.data["global_alarm_manager"])
         await self._fetch_nvr()

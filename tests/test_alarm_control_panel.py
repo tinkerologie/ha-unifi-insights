@@ -857,6 +857,24 @@ async def test_reconcile_skips_an_nvr_without_arm_mode(
     assert protect_client.nvr.get.await_count == polls_before
 
 
+async def test_reconcile_reads_the_nvr_while_none_is_cached(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry, protect_client: MagicMock
+) -> None:
+    """A failed first NVR read is retried on the timer, not only by the poll."""
+    await _setup(hass, mock_config_entry, protect_client, nvr=_nvr())
+    protect = mock_config_entry.runtime_data.protect_coordinator
+    protect.data["nvrs"] = {}
+    listener = MagicMock()
+    protect.async_add_listener(listener)
+    polls_before = protect_client.nvr.get.await_count
+
+    await protect._reconcile_nvr_arm_mode()
+
+    assert protect_client.nvr.get.await_count == polls_before + 1
+    assert protect.data["nvrs"]
+    listener.assert_called_once()
+
+
 async def test_reconcile_tick_includes_the_nvr(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry, protect_client: MagicMock
 ) -> None:
