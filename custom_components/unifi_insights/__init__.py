@@ -583,6 +583,7 @@ async def async_setup_entry(
         entry=entry,
         network_available=network_available,
         innerspace_available=innerspace_available,
+        initial_sites=sites if network_available else None,
     )
 
     # 2. Device coordinator - fast updates (30 seconds) for devices, stats

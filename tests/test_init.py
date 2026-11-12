@@ -3,7 +3,7 @@
 
 import logging
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from homeassistant.components import websocket_api
@@ -1182,6 +1182,50 @@ def _set_protect(client: MagicMock, cameras: object, nvr: object = None) -> None
 
 
 _SITES = [{"id": "default", "name": "Default"}]
+
+
+@pytest.mark.usefixtures(
+    "mock_protect_client", "mock_local_auth", "enable_custom_integrations"
+)
+@pytest.mark.parametrize(
+    "failure",
+    [
+        UniFiResponseError("Non-JSON", status_code=200, response_body="<html></html>"),
+        UniFiNotFoundError(),
+        UniFiAuthenticationError("Unauthorized", status_code=401),
+    ],
+    ids=["html", "not-found", "unauthorized"],
+)
+async def test_setup_uses_probe_sites_and_network_recovers_after_poll_failure(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_network_client: MagicMock,
+    failure: Exception,
+) -> None:
+    """Consume the probe listing once, then recover if the first real poll fails."""
+    sites = mock_network_client.sites.get_all
+    sites.side_effect = [_SITES, failure, _SITES]
+    mock_config_entry.add_to_hass(hass)
+
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert mock_config_entry.state is ConfigEntryState.LOADED
+    sites.assert_awaited_once_with(expected_unsupported=True)
+    coordinator = mock_config_entry.runtime_data.config_coordinator
+    assert coordinator.get_site_ids() == ["default"]
+    original = coordinator.data
+
+    await coordinator.async_refresh()
+    assert not coordinator.last_update_success
+    assert coordinator.network_available
+    assert coordinator.data is original
+
+    await coordinator.async_refresh()
+    assert coordinator.last_update_success
+    assert coordinator.get_site_ids() == ["default"]
+    assert sites.await_args_list == [call(expected_unsupported=True), call(), call()]
+    assert not hass.config_entries.flow.async_progress_by_handler(DOMAIN)
 
 
 @pytest.mark.parametrize(

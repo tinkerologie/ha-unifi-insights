@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recover Network entities automatically when the Network sites endpoint briefly fails during a reboot or update on a console that also runs Protect or InnerSpace. During normal polling, a temporary 401 from that endpoint gets one retry before Home Assistant asks for new credentials. [#505](https://github.com/tinkerologie/ha-unifi-insights/issues/505)
 - Clear cached external alarm profiles as soon as the NVR disables external management and discard profile reads still in flight. Redact profile creator and updater identifiers in diagnostics. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
 - Match Protect cameras, NVRs, and speakers to their Network devices when the APIs use different MAC address formats. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
 - Allow Local and Remote add, reauth, and reconfigure flows to accept InnerSpace-only consoles by probing InnerSpace when Network and Protect are not available. Local creation requires a safe console identity, reporting `console_identity_unavailable` when an unsafe or credential-equivalent host is supplied. Derived from source review and verified with mocked-client tests. [#500](https://github.com/tinkerologie/ha-unifi-insights/issues/500)

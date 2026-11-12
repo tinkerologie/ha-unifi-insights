@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.update_coordinator import UpdateFailed
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
@@ -83,6 +84,7 @@ if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import CALLBACK_TYPE, HomeAssistant
     from unifi_official_api.network import UniFiNetworkClient
+    from unifi_official_api.network.models import Site
     from unifi_official_api.network.models.voucher import Voucher
     from unifi_official_api.protect import UniFiProtectClient
 
@@ -157,6 +159,7 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
         *,
         network_available: bool = True,
         innerspace_available: bool = False,
+        initial_sites: list[Site] | None = None,
     ) -> None:
         """Initialize the config coordinator."""
         super().__init__(
@@ -168,6 +171,9 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
             update_interval=SCAN_INTERVAL_CONFIG,
         )
         self._network_available = network_available
+        self._initial_sites = initial_sites
+        self._network_confirmed = initial_sites is not None
+        self._sites_unauthorized_seen = False
         self._innerspace_available = innerspace_available
         self.data: dict[str, Any] = {
             "sites": {},
@@ -398,34 +404,59 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
             now_ms=now_ms,
         )
 
+    async def _async_fetch_sites(self) -> list[Site]:
+        """List sites while distinguishing a missing app from a failed poll."""
+        if not self._network_available:
+            return []
+
+        if self._initial_sites is not None:
+            # Setup already fetched these sites. Reusing them avoids a second
+            # availability decision between the probe and the first refresh.
+            sites, self._initial_sites = self._initial_sites, None
+            return sites
+
+        other_app_available = (
+            self.protect_client is not None or self._innerspace_available
+        )
+        previous_unauthorized = self._sites_unauthorized_seen
+        self._sites_unauthorized_seen = False
+        try:
+            sites = await self.network_client.sites.get_all()
+        except (UniFiAuthenticationError, UniFiResponseError) as err:
+            if (
+                other_app_available
+                and not self._network_confirmed
+                and (
+                    isinstance(err, (UniFiNotFoundError, UniFiAuthenticationError))
+                    or err.status_code == HTTPStatus.OK
+                )
+            ):
+                self._network_available = False
+                _LOGGER.debug(
+                    "Config coordinator: Unconfirmed Network unavailable: %s", err
+                )
+                return []
+
+            if (
+                other_app_available
+                and isinstance(err, UniFiAuthenticationError)
+                and err.status_code == HTTPStatus.UNAUTHORIZED
+            ):
+                # Both a booting console and a revoked key can return 401.
+                # Only consecutive 401s count as persistent rejection.
+                self._sites_unauthorized_seen = True
+                if not previous_unauthorized:
+                    msg = "Retrying Network sites on the next poll after HTTP 401"
+                    raise UpdateFailed(msg) from err
+            raise
+
+        self._network_confirmed = True
+        return sites
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch configuration data from API."""
         try:
-            sites_models = []
-            if self._network_available:
-                other_app_available = (
-                    self.protect_client is not None or self._innerspace_available
-                )
-                try:
-                    sites_models = await self.network_client.sites.get_all()
-                except (UniFiNotFoundError, UniFiAuthenticationError) as err:
-                    if other_app_available:
-                        self._network_available = False
-                        _LOGGER.debug(
-                            "Config coordinator: Network API not available: %s", err
-                        )
-                    else:
-                        raise
-                except UniFiResponseError as err:
-                    if not other_app_available or err.status_code != HTTPStatus.OK:
-                        raise
-                    self._network_available = False
-                    _LOGGER.debug(
-                        "Config coordinator: sites endpoint returned non-JSON "
-                        "(status %s)",
-                        err.status_code,
-                    )
-
+            sites_models = await self._async_fetch_sites()
             site_list = [self._model_to_dict(s) for s in sites_models]
             all_sites: dict[str, dict[str, Any]] = {
                 site["id"]: site for site in site_list if site.get("id")
@@ -723,6 +754,9 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
             self._handle_timeout_error(err)
         except UniFiResponseError as err:
             self._handle_response_error(err)
+        except UpdateFailed:
+            self._available = False
+            raise
         except Exception as err:
             self._handle_generic_error(err)
 

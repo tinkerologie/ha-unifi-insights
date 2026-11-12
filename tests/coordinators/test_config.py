@@ -958,17 +958,26 @@ class TestProtectOnlyPollingBehavior:
         assert data["sites"] == {}
         network_client.sites.get_all.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_config_coordinator_marks_network_unavailable_on_non_json(
-        self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            UniFiResponseError(
+                "Non-JSON", status_code=200, response_body="<html></html>"
+            ),
+            UniFiNotFoundError(),
+            UniFiAuthenticationError("Unauthorized", status_code=401),
+        ],
+        ids=["html", "not-found", "unauthorized"],
+    )
+    async def test_unconfirmed_network_can_be_absent(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+        failure: Exception,
     ) -> None:
-        """Test sites.get_all non-JSON error marks network unavailable."""
+        """Continue to support a Protect-only console whose Network API never worked."""
         network_client = _create_site_listing_client()
-        network_client.sites.get_all = AsyncMock(
-            side_effect=UniFiResponseError(
-                "Response is not JSON", status_code=200, response_body="<html></html>"
-            )
-        )
+        network_client.sites.get_all.side_effect = failure
 
         coordinator = UnifiInsightsConfigCoordinator(
             hass=hass,
@@ -980,8 +989,128 @@ class TestProtectOnlyPollingBehavior:
 
         data = await coordinator._async_update_data()
 
-        assert coordinator._network_available is False
+        assert coordinator.network_available is False
         assert data["sites"] == {}
+
+    @pytest.mark.asyncio
+    async def test_empty_sites_response_confirms_network(
+        self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
+    ) -> None:
+        """An empty successful listing prevents a later 404 from disabling Network."""
+        network_client = _create_site_listing_client()
+        coordinator = UnifiInsightsConfigCoordinator(
+            hass=hass,
+            network_client=network_client,
+            protect_client=MagicMock(),
+            entry=mock_config_entry,
+            network_available=True,
+        )
+        await coordinator._async_update_data()
+
+        network_client.sites.get_all = AsyncMock(
+            side_effect=UniFiNotFoundError("Not found", status_code=404)
+        )
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+        assert coordinator.network_available is True
+
+    @pytest.mark.parametrize("protect", [True, False], ids=["protect", "innerspace"])
+    @pytest.mark.parametrize("status_code", [200, 404, 401])
+    async def test_network_sites_recover_on_the_next_scheduled_poll(
+        self,
+        hass: HomeAssistant,
+        mock_network_client: MagicMock,
+        mock_config_entry: MockConfigEntry,
+        *,
+        protect: bool,
+        status_code: int,
+    ) -> None:
+        """Retain last-good sites and let the HA timer recover after reboot errors."""
+        coordinator = UnifiInsightsConfigCoordinator(
+            hass=hass,
+            network_client=mock_network_client,
+            protect_client=MagicMock() if protect else None,
+            entry=mock_config_entry,
+            innerspace_available=not protect,
+        )
+        failures = {
+            200: UniFiResponseError(
+                "Non-JSON", status_code=200, response_body="<html></html>"
+            ),
+            404: UniFiNotFoundError(),
+            401: UniFiAuthenticationError("Unauthorized", status_code=401),
+        }
+        sites = mock_network_client.sites.get_all
+        sites.return_value = [{"id": SITE_ID, "name": "Default"}]
+        await coordinator.async_refresh()
+        original = coordinator.data
+        assert SITE_ID in original["sites"]
+        sites.side_effect = [failures[status_code], sites.return_value]
+        calls = sites.await_count
+        initial_time = dt_util.utcnow()
+        remove_listener = coordinator.async_add_listener(MagicMock())
+        try:
+            async_fire_time_changed(hass, initial_time + 2 * SCAN_INTERVAL_CONFIG)
+            await hass.async_block_till_done(wait_background_tasks=True)
+            assert sites.await_count == calls + 1
+            assert isinstance(coordinator.last_exception, UpdateFailed)
+            assert coordinator.last_update_success is False
+            assert not coordinator.available
+            assert coordinator.network_available
+            assert coordinator.data is original
+            assert SITE_ID in coordinator.available_sites
+
+            async_fire_time_changed(hass, initial_time + 4 * SCAN_INTERVAL_CONFIG)
+            await hass.async_block_till_done(wait_background_tasks=True)
+            assert sites.await_count == calls + 2
+            assert coordinator.last_update_success is True
+            assert coordinator.available
+            assert coordinator.network_available
+            assert coordinator.data is not original
+            assert SITE_ID in coordinator.data["sites"]
+        finally:
+            remove_listener()
+            await coordinator.async_shutdown()
+
+    async def test_persistent_sites_401_requests_reauth_after_retry(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A success or non-401 failure breaks the consecutive rejection sequence."""
+        coordinator = seeded_owners.config
+        sites = seeded_owners.network_client.sites.get_all
+        rejected = UniFiAuthenticationError("Unauthorized", status_code=401)
+        sites.side_effect = [
+            rejected,
+            sites.return_value,
+            rejected,
+            UniFiNotFoundError(),
+            rejected,
+            rejected,
+        ]
+
+        with pytest.raises(UpdateFailed) as temporary:
+            await coordinator._async_update_data()
+        assert temporary.value.__cause__ is rejected
+        await coordinator._async_update_data()
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+        with pytest.raises(ConfigEntryAuthFailed) as persistent:
+            await coordinator._async_update_data()
+        assert persistent.value.__cause__ is rejected
+
+    async def test_sites_403_does_not_get_the_boot_retry(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Keep the existing handling for a confirmed sites authorization error."""
+        seeded_owners.network_client.sites.get_all.side_effect = (
+            UniFiAuthenticationError("Forbidden", status_code=403)
+        )
+        with pytest.raises(ConfigEntryAuthFailed):
+            await seeded_owners.config._async_update_data()
 
 
 # --- WiFi QR payloads and legacy site names ----------------------------------
@@ -1527,7 +1656,7 @@ class TestUnifiConfigCoordinator:
         """Test data fetch with auth error on network-only setup."""
         coordinator.protect_client = None
         coordinator.network_client.sites.get_all = AsyncMock(
-            side_effect=UniFiAuthenticationError("Invalid API key")
+            side_effect=UniFiAuthenticationError("Invalid API key", status_code=401)
         )
 
         with pytest.raises(ConfigEntryAuthFailed):
