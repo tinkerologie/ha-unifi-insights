@@ -22,12 +22,12 @@ from custom_components.unifi_insights.const import (
     ATTR_CAMERA_TYPE,
     ATTR_IS_PACKAGE_CAMERA,
     ATTR_PARENT_CAMERA_ID,
-    CAMERA_STATE_CONNECTED,
     DEVICE_TYPE_CAMERA,
     DOMAIN,
 )
 from tests.fixtures.assertions import require_not_none
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
+from tests.fixtures.coordinator_clients import protect_list
 from tests.fixtures.facade_data import (
     with_camera,
     with_protect_collection,
@@ -104,7 +104,7 @@ class TestAsyncSetupEntry:
                 "camera1": {
                     "id": "camera1",
                     "name": "Test Camera",
-                    "state": CAMERA_STATE_CONNECTED,
+                    "state": "CONNECTED",
                 }
             },
         )
@@ -178,7 +178,7 @@ class TestUnifiProtectCamera:
                     "camera1": {
                         "id": "camera1",
                         "name": "Test Camera",
-                        "state": CAMERA_STATE_CONNECTED,
+                        "state": "CONNECTED",
                         "mac": "AA:BB:CC:DD:EE:FF",
                         "type": "UVC-G4-Pro",
                         "firmwareVersion": "1.0.0",
@@ -269,7 +269,7 @@ class TestUnifiProtectCamera:
         attrs = camera._attr_extra_state_attributes
         assert attrs[ATTR_CAMERA_ID] == "camera1"
         assert attrs[ATTR_CAMERA_NAME] == "Test Camera"
-        assert attrs[ATTR_CAMERA_STATE] == CAMERA_STATE_CONNECTED
+        assert attrs[ATTR_CAMERA_STATE] == "CONNECTED"
         assert attrs[ATTR_CAMERA_TYPE] == "regular"
         assert attrs[ATTR_IS_PACKAGE_CAMERA] is False
         assert attrs[ATTR_PARENT_CAMERA_ID] is None
@@ -560,16 +560,18 @@ class TestCameraQualityRegistry:
     @pytest.fixture
     def mock_protect_client(self, mock_protect_client: MagicMock) -> MagicMock:
         """Seed one camera before the integration builds its snapshot."""
-        mock_protect_client.cameras.get_all.return_value = [
-            {
-                "id": "camera1",
-                "name": "Front Door",
-                "state": "CONNECTED",
-                "model": "UVC-G6-Turret",
-                "mac": "11:22:33:44:55:66",
-                "featureFlags": {},
-            }
-        ]
+        mock_protect_client.cameras.get_all_result.return_value = protect_list(
+            [
+                {
+                    "id": "camera1",
+                    "name": "Front Door",
+                    "state": "CONNECTED",
+                    "model": "UVC-G6-Turret",
+                    "mac": "11:22:33:44:55:66",
+                    "featureFlags": {},
+                }
+            ]
+        )
         return mock_protect_client
 
     async def test_extra_channels_are_disabled_and_share_the_device(

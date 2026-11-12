@@ -115,6 +115,7 @@
     "error": {
       "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
       "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
+      "console_access_denied": "UniFi denied this API key access to the selected console's applications (HTTP 403). Site Manager can list consoles that the key cannot access through the Cloud Connector. Personal API keys work only with consoles that the key's account owns. Use an API key from the console owner, an organisation API key, or a Local connection with a key created on the console.",
       "invalid_console_id": "The selected console could not be accessed with this API key.",
       "site_entity_identity_conflict": "Home Assistant could not preserve safe site entity identities. Your saved connection settings remain unchanged. Check the logs for the reason.",
       "no_remote_consoles": "No remote UniFi consoles were found for this API key.",
@@ -124,7 +125,8 @@
       "carrier_missing_scope": "The ISP API key lacks the required Carrier Fabric permissions.",
       "access_invalid_auth": "The UniFi Access token was rejected. Create a new token in Access and try again.",
       "access_cannot_connect": "Could not reach the UniFi Access API. Check the host and port, and that Access is running.",
-      "access_unsupported": "This console did not answer the UniFi Access API. Check that UniFi Access is installed and up to date."
+      "access_unsupported": "This console did not answer the UniFi Access API. Check that UniFi Access is installed and up to date.",
+      "console_identity_unavailable": "Connected, but a stable identity for this console could not be determined. Check the host value."
     },
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_device%]",
@@ -390,6 +392,16 @@
     "alarm_control_panel": {
       "nvr_alarm": {
         "name": "Alarm"
+      },
+      "external_arm_profile": {
+        "name": "External arm profile",
+        "state": {
+          "disarmed": "Disarmed",
+          "arming": "Arming",
+          "armed_away": "Armed away",
+          "pending": "Pending",
+          "triggered": "Triggered"
+        }
       }
     },
     "sensor": {
@@ -802,6 +814,9 @@
       "sensor_leak_external": {
         "name": "External Leak Detection"
       },
+      "sensor_mounted_incorrectly": {
+        "name": "Mounted Incorrectly"
+      },
       "port_sfp_present": {
         "name": "{port_label} SFP module"
       },
@@ -848,6 +863,9 @@
       },
       "client_reconnect": {
         "name": "{client_name} reconnect"
+      },
+      "speaker_stop_siren": {
+        "name": "Stop siren"
       }
     },
     "camera": {
@@ -935,7 +953,8 @@
           "sport": "Fast motion",
           "slow_shutter": "Low light",
           "lpr_reflex": "License plates (reflective)",
-          "lpr_none_reflex": "License plates (non-reflective)"
+          "lpr_none_reflex": "License plates (non-reflective)",
+          "anti_flicker": "Anti-flicker"
         }
       },
       "ringtone": {
@@ -1046,6 +1065,11 @@
         "name": "WiFi QR code"
       }
     },
+    "light": {
+      "led": {
+        "name": "LED"
+      }
+    },
     "lock": {
       "access_door_lock": {
         "name": "Lock"
@@ -1068,6 +1092,9 @@
     },
     "talkback_session_invalid": {
       "message": "Failed to create a talkback session for the camera."
+    },
+    "talkback_session_in_progress": {
+      "message": "A talkback session is already in progress for this camera."
     },
     "talkback_unsupported_codec_or_scheme": {
       "message": "The camera talkback stream URL scheme or codec is not supported."
@@ -1410,6 +1437,9 @@
     },
     "carrier_target_ambiguous": {
       "message": "Target {target} matches a device in more than one config entry. Target the subscriber's entity or device instead."
+    },
+    "speaker_siren_stop_unavailable": {
+      "message": "The speaker is offline or its firmware does not support sirens."
     }
   }
 }

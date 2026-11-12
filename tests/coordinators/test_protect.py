@@ -15,7 +15,9 @@ import asyncio
 import contextlib
 import copy
 import logging
+import time
 from datetime import UTC, datetime, timedelta
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -38,10 +40,12 @@ from unifi_official_api import (
 )
 from unifi_official_api.exceptions import UniFiUnsupportedError
 from unifi_official_api.protect import UniFiProtectClient
+from unifi_official_api.protect.endpoints import ProtectListResult
 from unifi_official_api.protect.endpoints.chimes import ChimesEndpoint
 from unifi_official_api.protect.models import (
     Camera,
     Chime,
+    ExternalArmProfile,
     Light,
     LiveView,
     Sensor,
@@ -68,6 +72,7 @@ from custom_components.unifi_insights.coordinators.protect import (
     protect_digital_input_signal,
 )
 from custom_components.unifi_insights.coordinators.protect_events import (
+    DeviceFrame,
     Family,
     PollCompleted,
     PollStarted,
@@ -87,8 +92,13 @@ from tests.fixtures.coordinator_clients import (
     _create_mock_model,
     _create_mock_network_client,
     _create_mock_protect_client,
+    protect_list,
 )
-from tests.fixtures.library_responses import SAMPLE_SIREN
+from tests.fixtures.library_responses import (
+    SAMPLE_EXTERNAL_ARM_PROFILE,
+    SAMPLE_NVR,
+    SAMPLE_SIREN,
+)
 from tests.fixtures.protect_ws import send_device, send_event
 
 if TYPE_CHECKING:
@@ -109,6 +119,49 @@ async def test_seeded_owners_refresh_through_real_code(
     protect = seeded_owners.facade.data["protect"]
     assert set(protect["cameras"]) == set(DOORBELL_IDS)
     assert protect["nvrs"]
+
+
+@pytest.mark.parametrize("complete", [False, True])
+async def test_camera_poll_uses_its_own_result_during_a_legacy_read(
+    seeded_owners: SeededOwners, *, complete: bool
+) -> None:
+    """An overlapping listing cannot change the evidence for the current poll."""
+    coordinator = seeded_owners.protect
+    client = UniFiProtectClient(
+        auth=ApiKeyAuth(api_key="test-key"),
+        base_url=BASE_URL,
+        connection_type=ConnectionType.LOCAL,
+    )
+    coordinator.protect_client = client
+    first_id, second_id = DOORBELL_IDS
+    retained = coordinator.data["cameras"][second_id]
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def respond(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        nonlocal calls
+        calls += 1
+        first = calls == 1
+        if first:
+            started.set()
+            await release.wait()
+        valid = {"id": first_id, "mac": "00:11:22:33:44:55", "name": "Updated"}
+        return [valid] if first is complete else [valid, {}]
+
+    with patch.object(client, "_get", side_effect=respond):
+        async with asyncio.timeout(5), asyncio.TaskGroup() as tasks:
+            tasks.create_task(coordinator._fetch_cameras())
+            await started.wait()
+            await client.cameras.get_all()
+            assert client.cameras.last_result_complete is not complete
+            release.set()
+
+    assert coordinator.data["cameras"][first_id]["name"] == "Updated"
+    if complete:
+        assert second_id not in coordinator.data["cameras"]
+    else:
+        assert coordinator.data["cameras"][second_id] is retained
 
 
 async def test_seeded_chime_is_paired_with_two_doorbells(
@@ -159,6 +212,7 @@ def test_endpoint_autospec_keeps_instance_attributes() -> None:
 
     assert chimes.last_result_complete is True
     assert chimes.get_all.return_value == []
+    assert chimes.get_all_result.return_value == protect_list()
 
 
 CAMERA_ID = DOORBELL_IDS[0]
@@ -374,7 +428,7 @@ class TestSettingsCommands:
         before = protect.data[collection][record_id]
         snapshot = copy.deepcopy(before)
         listener = _listen(seeded_owners)
-        polls = client.cameras.get_all.await_count
+        polls = client.cameras.get_all_result.await_count
 
         await getattr(protect, command)(*args, **kwargs)
 
@@ -389,7 +443,7 @@ class TestSettingsCommands:
         )
         assert before == snapshot
         listener.assert_called_once_with()
-        assert client.cameras.get_all.await_count == polls
+        assert client.cameras.get_all_result.await_count == polls
 
     async def test_overlay_is_copy_on_write(self, seeded_owners: SeededOwners) -> None:
         """Every ancestor is replaced; retained snapshots keep their contents."""
@@ -571,7 +625,7 @@ class TestChimeCommands:
         chimes = seeded_owners.protect_client.chimes
         old_settings = protect.data["chimes"][CHIME_ID]["ringSettings"]
         snapshot = copy.deepcopy(old_settings)
-        polls = chimes.get_all.await_count
+        polls = chimes.get_all_result.await_count
 
         await getattr(protect, command)(CHIME_ID, value)
 
@@ -582,7 +636,7 @@ class TestChimeCommands:
         assert [entry["cameraId"] for entry in settings] == list(DOORBELL_IDS)
         assert all(entry["ringtoneId"] == "ringtone_default" for entry in settings)
         assert old_settings == snapshot
-        assert chimes.get_all.await_count == polls
+        assert chimes.get_all_result.await_count == polls
 
     async def test_overlay_keeps_entries_that_are_not_records(
         self, seeded_owners: SeededOwners
@@ -601,7 +655,7 @@ class TestChimeCommands:
         """A ringtone write is published, then Protect is refreshed."""
         protect = seeded_owners.protect
         chimes = seeded_owners.protect_client.chimes
-        polls = chimes.get_all.await_count
+        polls = chimes.get_all_result.await_count
         seen: list[Any] = []
         protect.async_add_listener(
             lambda: seen.append(protect.data["chimes"][CHIME_ID]["ringSettings"])
@@ -611,7 +665,7 @@ class TestChimeCommands:
 
         chimes.set_ringtone.assert_awaited_once_with(CHIME_ID, "tone-2")
         assert [entry["ringtoneId"] for entry in seen[0]] == ["tone-2", "tone-2"]
-        assert chimes.get_all.await_count == polls + 1
+        assert chimes.get_all_result.await_count == polls + 1
 
     async def test_ringtone_refresh_failure_keeps_the_write(
         self, seeded_owners: SeededOwners, caplog: pytest.LogCaptureFixture
@@ -799,6 +853,15 @@ class TestActionCommands:
                 (SIREN_ID, 50),
                 {},
             ),
+            (
+                "async_stop_speaker_siren",
+                ("speaker_1",),
+                {},
+                "speakers",
+                "stop_siren",
+                ("speaker_1",),
+                {},
+            ),
         ],
     )
     async def test_action_sends_one_request(
@@ -901,6 +964,739 @@ class TestActionCommands:
         siren = seeded_owners.facade.data["protect"]["sirens"][SIREN_ID]
         assert siren["sirenStatus"]["isActive"] is False
 
+    async def test_stop_speaker_siren_400_translates_to_unavailable(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A 400 from speakers.stop_siren translates to the specific error."""
+        protect = seeded_owners.protect
+        seeded_owners.protect_client.speakers.stop_siren.side_effect = (
+            UniFiResponseError("Offline or old firmware", 400)
+        )
+
+        with pytest.raises(HomeAssistantError) as err:
+            await protect.async_stop_speaker_siren("speaker_1")
+
+        assert err.value.translation_domain == DOMAIN
+        assert err.value.translation_key == "speaker_siren_stop_unavailable"
+
+    async def test_stop_speaker_siren_generic_failure_translates_to_command_failed(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A 500 from speakers.stop_siren translates to command_failed."""
+        protect = seeded_owners.protect
+        seeded_owners.protect_client.speakers.stop_siren.side_effect = (
+            UniFiResponseError("Server error", 500)
+        )
+
+        with pytest.raises(HomeAssistantError) as err:
+            await protect.async_stop_speaker_siren("speaker_1")
+
+        assert err.value.translation_domain == DOMAIN
+        assert err.value.translation_key == "command_failed"
+
+    @pytest.mark.parametrize(
+        ("command", "method", "target_state"),
+        [
+            ("async_arm_external_profile", "arm", "armed"),
+            ("async_disarm_external_profile", "disarm", "disarmed"),
+        ],
+    )
+    async def test_external_profile_action_applies_overlay_and_refreshes(
+        self,
+        seeded_owners: SeededOwners,
+        command: str,
+        method: str,
+        target_state: str,
+    ) -> None:
+        """Arming and disarming an external profile publishes the overlay."""
+        protect = seeded_owners.protect
+        protect.data["external_arm_profiles"]["profile_1"] = copy.deepcopy(
+            SAMPLE_EXTERNAL_ARM_PROFILE
+        )
+        profile_data = {**SAMPLE_EXTERNAL_ARM_PROFILE, "state": target_state}
+        model = ExternalArmProfile.model_validate(profile_data)
+        endpoint = getattr(seeded_owners.protect_client.external_arm_profiles, method)
+        endpoint.return_value = model
+
+        with patch.object(protect, "async_request_refresh", AsyncMock()) as refresh:
+            await getattr(protect, command)("profile_1")
+
+        endpoint.assert_awaited_once_with("profile_1")
+        assert (
+            protect.data["external_arm_profiles"]["profile_1"]["state"] == target_state
+        )
+        refresh.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ("command", "method"),
+        [
+            ("async_arm_external_profile", "arm"),
+            ("async_disarm_external_profile", "disarm"),
+        ],
+    )
+    async def test_external_profile_action_failure_skips_overlay_and_refresh(
+        self,
+        seeded_owners: SeededOwners,
+        command: str,
+        method: str,
+    ) -> None:
+        """A failed arm or disarm raises command_failed and updates nothing."""
+        protect = seeded_owners.protect
+        getattr(
+            seeded_owners.protect_client.external_arm_profiles, method
+        ).side_effect = UniFiResponseError("Failed", 500)
+
+        with (
+            patch.object(protect, "async_request_refresh", AsyncMock()) as refresh,
+            pytest.raises(HomeAssistantError) as err,
+        ):
+            await getattr(protect, command)("profile_1")
+
+        assert err.value.translation_key == "command_failed"
+        refresh.assert_not_awaited()
+        assert "profile_1" not in protect.data.get("external_arm_profiles", {})
+
+    async def test_fetch_external_arm_profiles_when_flag_enabled(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """When NVR has useExternalAlarmManager True, profiles are fetched."""
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_model = ExternalArmProfile.model_validate(SAMPLE_EXTERNAL_ARM_PROFILE)
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.return_value = protect_list([profile_model])
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "profile_1" in protect.data["external_arm_profiles"]
+        assert (
+            protect.data["external_arm_profiles"]["profile_1"]["title"] == "Perimeter"
+        )
+
+    async def test_reconcile_external_arm_profiles_clears_when_flag_false(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """When useExternalAlarmManager is false, profiles collection is cleared."""
+        protect = seeded_owners.protect
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        }
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": False
+        }
+
+        await protect._reconcile_external_arm_profiles()
+
+        assert protect.data["external_arm_profiles"] == {}
+
+    @pytest.mark.parametrize(
+        ("nvrs", "expected"),
+        [
+            pytest.param(None, False, id="nvrs-missing"),
+            pytest.param([], False, id="nvrs-not-a-dict"),
+            pytest.param({"nvr_1": None}, False, id="only-a-non-dict-nvr"),
+            pytest.param(
+                {
+                    "nvr_1": "malformed",
+                    "nvr_2": {"featureFlags": {"useExternalAlarmManager": True}},
+                },
+                True,
+                id="non-dict-nvr-skipped",
+            ),
+            pytest.param(
+                {"nvr_1": {"feature_flags": {"use_external_alarm_manager": True}}},
+                True,
+                id="snake-case-flags",
+            ),
+            pytest.param({"nvr_1": {"featureFlags": None}}, False, id="flags-null"),
+        ],
+    )
+    def test_any_nvr_uses_external_alarm_manager_guards(
+        self, seeded_owners: SeededOwners, nvrs: Any, *, expected: bool
+    ) -> None:
+        """Malformed NVR data never enables external profiles, and is skipped."""
+        protect = seeded_owners.protect
+        protect.data["nvrs"] = nvrs
+
+        assert protect._any_nvr_uses_external_alarm_manager() is expected
+
+    async def test_fetch_external_arm_profiles_404_marks_unsupported(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """HTTP 404 marks external_arm_profiles unsupported."""
+        protect = seeded_owners.protect
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.side_effect = UniFiNotFoundError("Not found", 404)
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "external_arm_profiles" in protect._unsupported_until
+
+    async def test_fetch_external_profiles_overlap_arm_keeps_overlay(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """
+        An in-flight fetch starting while disarmed drops stale response
+        if command completes first.
+
+        A subsequent read requested after the command still applies.
+        """
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_disarmed_data = {
+            **SAMPLE_EXTERNAL_ARM_PROFILE,
+            "state": "disarmed",
+        }
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(profile_disarmed_data)
+        }
+        assert protect.data["external_arm_profiles"]["profile_1"]["state"] == "disarmed"
+
+        read_started = asyncio.Event()
+        read_resume = asyncio.Event()
+
+        disarmed_model = ExternalArmProfile.model_validate(profile_disarmed_data)
+        armed_profile_data = {**SAMPLE_EXTERNAL_ARM_PROFILE, "state": "armed"}
+        armed_model = ExternalArmProfile.model_validate(armed_profile_data)
+
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+
+        async def _gated_get_all_result() -> ProtectListResult[Any]:
+            read_started.set()
+            await read_resume.wait()
+            return protect_list([disarmed_model])
+
+        endpoint.get_all_result = AsyncMock(side_effect=_gated_get_all_result)
+        endpoint.arm = AsyncMock(return_value=armed_model)
+
+        fetch_task = asyncio.create_task(protect._fetch_external_arm_profiles())
+        await read_started.wait()
+
+        with patch.object(protect, "async_request_refresh", AsyncMock()):
+            await protect.async_arm_external_profile("profile_1")
+
+        assert protect.data["external_arm_profiles"]["profile_1"]["state"] == "armed"
+
+        read_resume.set()
+        await fetch_task
+
+        # Read result dropped because command bumped generation; state stays armed
+        assert protect.data["external_arm_profiles"]["profile_1"]["state"] == "armed"
+
+        # A normal read after the command still applies
+        endpoint.get_all_result = AsyncMock(return_value=protect_list([armed_model]))
+        await protect._fetch_external_arm_profiles()
+        assert protect.data["external_arm_profiles"]["profile_1"]["state"] == "armed"
+
+    async def test_fetch_external_profiles_malformed_record_keeps_cached(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """
+        Malformed second record (skipped > 0) preserves the existing second profile.
+        """
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_1 = copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        profile_2 = {
+            **SAMPLE_EXTERNAL_ARM_PROFILE,
+            "id": "profile_2",
+            "title": "Garage",
+        }
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(profile_1),
+            "profile_2": copy.deepcopy(profile_2),
+        }
+
+        updated_profile_1 = {**profile_1, "title": "Perimeter Updated"}
+        model_1 = ExternalArmProfile.model_validate(updated_profile_1)
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.return_value = protect_list([model_1], skipped=1)
+
+        await protect._fetch_external_arm_profiles()
+
+        assert (
+            protect.data["external_arm_profiles"]["profile_1"]["title"]
+            == "Perimeter Updated"
+        )
+        assert "profile_2" in protect.data["external_arm_profiles"]
+        assert protect.data["external_arm_profiles"]["profile_2"]["title"] == "Garage"
+
+    async def test_fetch_external_profiles_invalid_shape_keeps_cached(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """
+        Invalid list shape (complete=False, records=()) preserves all cached profiles.
+        """
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        }
+
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.return_value = ProtectListResult(
+            records=(), skipped=0, shape_valid=False
+        )
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "profile_1" in protect.data["external_arm_profiles"]
+        assert (
+            protect.data["external_arm_profiles"]["profile_1"]["title"] == "Perimeter"
+        )
+
+    async def test_fetch_external_profiles_complete_removes_deleted(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A complete response removes profiles that are no longer reported."""
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_1 = copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        profile_2 = {
+            **SAMPLE_EXTERNAL_ARM_PROFILE,
+            "id": "profile_2",
+            "title": "Garage",
+        }
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(profile_1),
+            "profile_2": copy.deepcopy(profile_2),
+        }
+
+        model_1 = ExternalArmProfile.model_validate(profile_1)
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.return_value = protect_list([model_1], skipped=0)
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "profile_1" in protect.data["external_arm_profiles"]
+        assert "profile_2" not in protect.data["external_arm_profiles"]
+
+    async def test_fetch_external_arm_profiles_404_when_answered_preserves_cache(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A 404 after a successful answer preserves the cached profiles."""
+        protect = seeded_owners.protect
+        protect._answered_families.add("external_arm_profiles")
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        }
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.side_effect = UniFiNotFoundError("Not found", 404)
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "external_arm_profiles" not in protect._unsupported_until
+        assert "profile_1" in protect.data["external_arm_profiles"]
+
+    async def test_fetch_external_arm_profiles_non_json_marks_unsupported(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Non-JSON 200 response marks external_arm_profiles unsupported."""
+        protect = seeded_owners.protect
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.side_effect = UniFiResponseError("HTML", 200)
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "external_arm_profiles" in protect._unsupported_until
+
+    async def test_fetch_external_arm_profiles_non_json_when_answered_logs_error(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A non-JSON 200 after a successful answer logs the error, keeps cache."""
+        protect = seeded_owners.protect
+        protect._answered_families.add("external_arm_profiles")
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        }
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.side_effect = UniFiResponseError("HTML", 200)
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "external_arm_profiles" not in protect._unsupported_until
+        assert "external_arm_profiles" in protect._failed_families
+        assert "profile_1" in protect.data["external_arm_profiles"]
+
+    async def test_fetch_external_arm_profiles_response_error_logged(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """UniFiResponseError with status >= 300 logs family fetch error."""
+        protect = seeded_owners.protect
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.side_effect = UniFiResponseError("Server error", 500)
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "external_arm_profiles" in protect._failed_families
+
+    async def test_fetch_external_arm_profiles_exception_logged(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Generic exception logs family fetch error."""
+        protect = seeded_owners.protect
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.side_effect = RuntimeError("Crash")
+
+        await protect._fetch_external_arm_profiles()
+
+        assert "external_arm_profiles" in protect._failed_families
+
+    async def test_reconcile_external_arm_profiles_notifies_when_changed(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """When profiles change during reconcile, listeners are updated."""
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_model = ExternalArmProfile.model_validate(SAMPLE_EXTERNAL_ARM_PROFILE)
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.return_value = protect_list([profile_model])
+
+        with patch.object(protect, "async_update_listeners") as notify:
+            await protect._reconcile_external_arm_profiles()
+            notify.assert_called_once()
+
+    async def test_reconcile_external_arm_profiles_no_notify_when_unchanged(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """When profiles are unchanged during reconcile, no listener notification."""
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_model = ExternalArmProfile.model_validate(SAMPLE_EXTERNAL_ARM_PROFILE)
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.return_value = protect_list([profile_model])
+        await protect._fetch_external_arm_profiles()
+
+        with patch.object(protect, "async_update_listeners") as notify:
+            await protect._reconcile_external_arm_profiles()
+            notify.assert_not_called()
+
+    async def test_fetch_external_arm_profiles_guards_and_empty_id(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """
+        Cover early returns: no client, unsupported retry window,
+        no endpoint, record without ID.
+        """
+        protect = seeded_owners.protect
+
+        # 1. No protect client
+        with patch.object(protect, "protect_client", None):
+            await protect._fetch_external_arm_profiles()
+
+        # 2. Unsupported retry window active
+        protect._unsupported_until["external_arm_profiles"] = time.monotonic() + 300.0
+        await protect._fetch_external_arm_profiles()
+        protect._unsupported_until.pop("external_arm_profiles", None)
+
+        # 3. No endpoint on client
+        with patch.object(protect, "protect_client", MagicMock(spec=[])):
+            await protect._fetch_external_arm_profiles()
+
+        # 4. Record without id
+        record_without_id = {**SAMPLE_EXTERNAL_ARM_PROFILE, "id": ""}
+        model = ExternalArmProfile.model_validate(record_without_id)
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.return_value = protect_list([model])
+        await protect._fetch_external_arm_profiles()
+
+    async def test_update_data_clears_profiles_when_flag_disabled(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """_async_update_data clears external_arm_profiles when flag becomes false."""
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": False
+        }
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        }
+
+        # Run update
+        await protect._async_update_data()
+        assert protect.data["external_arm_profiles"] == {}
+
+    async def test_stale_404_after_arm_keeps_the_overlay(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A 404 that races an arm command is dropped, so the overlay stays."""
+        protect = seeded_owners.protect
+        protect._answered_families.add("external_arm_profiles")
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        disarmed_data = {**SAMPLE_EXTERNAL_ARM_PROFILE, "state": "disarmed"}
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(disarmed_data)
+        }
+        armed_model = ExternalArmProfile.model_validate(
+            {**SAMPLE_EXTERNAL_ARM_PROFILE, "state": "armed"}
+        )
+
+        read_started = asyncio.Event()
+        read_resume = asyncio.Event()
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        not_found = UniFiNotFoundError("Not found", 404)
+
+        async def _gated_404() -> ProtectListResult[Any]:
+            read_started.set()
+            await read_resume.wait()
+            raise not_found
+
+        endpoint.get_all_result = AsyncMock(side_effect=_gated_404)
+        endpoint.arm = AsyncMock(return_value=armed_model)
+
+        fetch_task = asyncio.create_task(protect._fetch_external_arm_profiles())
+        await read_started.wait()
+
+        with patch.object(protect, "async_request_refresh", AsyncMock()):
+            await protect.async_arm_external_profile("profile_1")
+
+        assert protect.data["external_arm_profiles"]["profile_1"]["state"] == "armed"
+
+        read_resume.set()
+        await fetch_task
+
+        assert protect.data["external_arm_profiles"]["profile_1"]["state"] == "armed"
+
+    async def test_overlapping_reads_older_incomplete_does_not_merge_back(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A newer complete read wins; the older incomplete read is dropped."""
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_1 = copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        profile_2 = {
+            **SAMPLE_EXTERNAL_ARM_PROFILE,
+            "id": "profile_2",
+            "title": "Garage",
+        }
+        protect.data["external_arm_profiles"] = {
+            "profile_1": profile_1,
+            "profile_2": profile_2,
+        }
+        model_1 = ExternalArmProfile.model_validate(profile_1)
+        model_2 = ExternalArmProfile.model_validate(profile_2)
+
+        older_started = asyncio.Event()
+        newer_started = asyncio.Event()
+        older_resume = asyncio.Event()
+        newer_resume = asyncio.Event()
+        calls = 0
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+
+        async def _gated() -> ProtectListResult[Any]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                older_started.set()
+                await older_resume.wait()
+                return protect_list([model_1, model_2], skipped=1)
+            newer_started.set()
+            await newer_resume.wait()
+            return protect_list([model_1], skipped=0)
+
+        endpoint.get_all_result = AsyncMock(side_effect=_gated)
+
+        older_task = asyncio.create_task(protect._fetch_external_arm_profiles())
+        await older_started.wait()
+        newer_task = asyncio.create_task(protect._fetch_external_arm_profiles())
+        await newer_started.wait()
+
+        # The newer (complete) read lands first and removes profile_2.
+        newer_resume.set()
+        await newer_task
+        assert "profile_2" not in protect.data["external_arm_profiles"]
+
+        # The older (incomplete) read lands later and must not merge it back.
+        older_resume.set()
+        await older_task
+        assert "profile_2" not in protect.data["external_arm_profiles"]
+
+    @pytest.mark.parametrize("older_kind", ["not_found", "non_json"])
+    async def test_stale_first_read_does_not_mark_unsupported(
+        self, seeded_owners: SeededOwners, older_kind: str
+    ) -> None:
+        """
+        A first read overtaken by a newer successful read must not mark the
+        endpoint unsupported; the next poll still fetches and keeps profiles.
+        """
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_model = ExternalArmProfile.model_validate(SAMPLE_EXTERNAL_ARM_PROFILE)
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+
+        older_started = asyncio.Event()
+        newer_started = asyncio.Event()
+        older_resume = asyncio.Event()
+        newer_resume = asyncio.Event()
+        calls = 0
+        if older_kind == "not_found":
+            older_error: Exception = UniFiNotFoundError("Not found", 404)
+        else:
+            older_error = UniFiResponseError("HTML", 200)
+
+        async def _gated() -> ProtectListResult[Any]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                older_started.set()
+                await older_resume.wait()
+                raise older_error
+            newer_started.set()
+            await newer_resume.wait()
+            return protect_list([profile_model])
+
+        endpoint.get_all_result = AsyncMock(side_effect=_gated)
+
+        older_task = asyncio.create_task(protect._fetch_external_arm_profiles())
+        await older_started.wait()
+        newer_task = asyncio.create_task(protect._fetch_external_arm_profiles())
+        await newer_started.wait()
+
+        # The newer read succeeds first and applies the profiles.
+        newer_resume.set()
+        await newer_task
+        assert "profile_1" in protect.data["external_arm_profiles"]
+
+        # The older read fails afterwards; it must not mark the endpoint unsupported.
+        older_resume.set()
+        await older_task
+        assert "external_arm_profiles" not in protect._unsupported_until
+        assert "profile_1" in protect.data["external_arm_profiles"]
+
+        # The next poll still fetches and keeps the profiles.
+        endpoint.get_all_result = AsyncMock(return_value=protect_list([profile_model]))
+        await protect._fetch_external_arm_profiles()
+        endpoint.get_all_result.assert_awaited_once()
+        assert "profile_1" in protect.data["external_arm_profiles"]
+
+    async def test_flag_off_invalidates_an_inflight_profile_read(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """The flag turning off clears profiles and drops the older reading."""
+        protect = seeded_owners.protect
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": True
+        }
+        profile_model = ExternalArmProfile.model_validate(SAMPLE_EXTERNAL_ARM_PROFILE)
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        }
+
+        read_started = asyncio.Event()
+        read_resume = asyncio.Event()
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+
+        async def _gated() -> ProtectListResult[Any]:
+            read_started.set()
+            await read_resume.wait()
+            return protect_list([profile_model])
+
+        endpoint.get_all_result = AsyncMock(side_effect=_gated)
+
+        fetch_task = asyncio.create_task(protect._fetch_external_arm_profiles())
+        await read_started.wait()
+
+        protect.data["nvrs"]["nvr_1"]["featureFlags"] = {
+            "useExternalAlarmManager": False
+        }
+        await protect._reconcile_external_arm_profiles()
+        assert protect.data["external_arm_profiles"] == {}
+
+        read_resume.set()
+        await fetch_task
+
+        assert protect.data["external_arm_profiles"] == {}
+
+    @pytest.mark.parametrize("source", ["websocket", "websocket_snake_case", "rest"])
+    async def test_nvr_change_discards_profile_reads_before_notifying(
+        self, seeded_owners: SeededOwners, source: str
+    ) -> None:
+        """A normal NVR update clears profiles and invalidates an older read."""
+        protect = seeded_owners.protect
+        nvr = {
+            **SAMPLE_NVR,
+            "featureFlags": {"useExternalAlarmManager": True},
+        }
+        protect.data["nvrs"] = {"nvr_1": nvr}
+        protect.data["external_arm_profiles"] = {
+            "profile_1": copy.deepcopy(SAMPLE_EXTERNAL_ARM_PROFILE)
+        }
+        profile = ExternalArmProfile.model_validate(SAMPLE_EXTERNAL_ARM_PROFILE)
+        started, resume = asyncio.Event(), asyncio.Event()
+
+        async def gated_read() -> ProtectListResult[Any]:
+            started.set()
+            await resume.wait()
+            return protect_list([profile])
+
+        endpoint = seeded_owners.protect_client.external_arm_profiles
+        endpoint.get_all_result.side_effect = gated_read
+        observations: list[dict[str, Any]] = []
+        remove_listener = protect.async_add_listener(
+            lambda: observations.append(protect.data["external_arm_profiles"])
+        )
+        task = asyncio.create_task(protect._fetch_external_arm_profiles())
+        await started.wait()
+        try:
+            if source == "rest":
+                # An NVR with external management may have no local arm mode.
+                # A complete REST answer can also remove the feature flag.
+                seeded_owners.protect_client.nvr.get.return_value = {
+                    **nvr,
+                    "featureFlags": {},
+                }
+                await protect._reconcile_nvr_arm_mode()
+            else:
+                flags = (
+                    {"feature_flags": {"use_external_alarm_manager": False}}
+                    if source == "websocket_snake_case"
+                    else {"featureFlags": {"useExternalAlarmManager": False}}
+                )
+                protect._apply(DeviceFrame("nvr", "nvr_1", flags))
+            assert len(observations) == 1
+            assert all(snapshot == {} for snapshot in observations)
+            assert protect.data["external_arm_profiles"] == {}
+
+            # Re-enable while the old read is still in flight. Its reply is
+            # stale even though the manager is enabled again when it arrives.
+            if source == "rest":
+                seeded_owners.protect_client.nvr.get.return_value = nvr
+                await protect._reconcile_nvr_arm_mode()
+                assert protect._any_nvr_uses_external_alarm_manager()
+            else:
+                protect._apply(DeviceFrame("nvr", "nvr_1", nvr))
+        finally:
+            remove_listener()
+            resume.set()
+            await task
+
+        assert protect.data["external_arm_profiles"] == {}
+        assert "external_arm_profiles" not in protect._answered_families
+        endpoint.get_all_result.side_effect = None
+        endpoint.get_all_result.return_value = protect_list([profile])
+        await protect._fetch_external_arm_profiles()
+        assert "profile_1" in protect.data["external_arm_profiles"]
+
 
 SESSION = TalkbackSession(
     url="rtp://192.168.1.10:7004",
@@ -982,6 +1778,44 @@ class TestTalkback:
             await seeded_owners.protect.async_start_camera_talkback(CAMERA_ID, "a.mp3")
 
         assert err.value.translation_key == key
+
+    async def test_session_conflict_raises_in_progress_and_preserves_cause(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A 409 response gives the new key and keeps the cause."""
+        create = seeded_owners.protect_client.cameras.create_talkback_session
+        cause = UniFiResponseError("Conflict", status_code=HTTPStatus.CONFLICT)
+        create.side_effect = cause
+        with pytest.raises(HomeAssistantError) as err:
+            await seeded_owners.protect.async_start_camera_talkback(CAMERA_ID, "a.mp3")
+        assert err.value.translation_key == "talkback_session_in_progress"
+        assert err.value.__cause__ is cause
+
+    async def test_session_non_409_response_error_raises_generic_invalid(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A non-409 UniFiResponseError gives the generic key and keeps the cause."""
+        create = seeded_owners.protect_client.cameras.create_talkback_session
+        cause = UniFiResponseError(
+            "Server Error", status_code=HTTPStatus.INTERNAL_SERVER_ERROR
+        )
+        create.side_effect = cause
+        with pytest.raises(HomeAssistantError) as err:
+            await seeded_owners.protect.async_start_camera_talkback(CAMERA_ID, "a.mp3")
+        assert err.value.translation_key == "talkback_session_invalid"
+        assert err.value.__cause__ is cause
+
+    async def test_session_non_response_error_raises_generic_invalid(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """An exception that is not a response error gives the generic key."""
+        create = seeded_owners.protect_client.cameras.create_talkback_session
+        cause = RuntimeError("Unexpected boom")
+        create.side_effect = cause
+        with pytest.raises(HomeAssistantError) as err:
+            await seeded_owners.protect.async_start_camera_talkback(CAMERA_ID, "a.mp3")
+        assert err.value.translation_key == "talkback_session_invalid"
+        assert err.value.__cause__ is cause
 
 
 class TestCameraReads:
@@ -1104,7 +1938,7 @@ class TestUnifiProtectCoordinator:
         """Swallowed family failures log once per streak while polls succeed."""
         caplog.set_level(logging.DEBUG)
         endpoint = getattr(coordinator.protect_client, family)
-        endpoint.get_all.side_effect = error
+        endpoint.get_all_result.side_effect = error
         failure = f"Protect coordinator: Error fetching {family}: {error}"
         recovery = f"Protect coordinator: Fetching {family} recovered"
         for _ in range(4):
@@ -1120,9 +1954,9 @@ class TestUnifiProtectCoordinator:
         # Recovery of this family must not reset another family's outage guard.
         other = "fobs" if family == "chimes" else "chimes"
         other_endpoint = getattr(coordinator.protect_client, other)
-        other_endpoint.get_all.side_effect = error
+        other_endpoint.get_all_result.side_effect = error
         await coordinator.async_refresh()
-        endpoint.get_all.side_effect = None
+        endpoint.get_all_result.side_effect = None
         for _ in range(2):
             await coordinator.async_refresh()
             assert coordinator.last_update_success
@@ -1141,7 +1975,7 @@ class TestUnifiProtectCoordinator:
             == 1
         )
 
-        endpoint.get_all.side_effect = error
+        endpoint.get_all_result.side_effect = error
         for _ in range(2):
             await coordinator.async_refresh()
         assert (
@@ -1195,7 +2029,7 @@ class TestUnifiProtectCoordinator:
         """Absorption and escalation do not add warnings before UpdateFailed."""
         caplog.set_level(logging.INFO)
         require_mock(
-            require_not_none(coordinator.protect_client).cameras.get_all
+            require_not_none(coordinator.protect_client).cameras.get_all_result
         ).side_effect = UniFiTimeoutError("offline")
         for poll in range(MAX_CONSECUTIVE_EMPTY_FETCHES + 4):
             await coordinator.async_refresh()
@@ -1203,13 +2037,13 @@ class TestUnifiProtectCoordinator:
                 poll >= MAX_CONSECUTIVE_EMPTY_FETCHES
             )
         require_mock(
-            require_not_none(coordinator.protect_client).cameras.get_all
+            require_not_none(coordinator.protect_client).cameras.get_all_result
         ).side_effect = None
         await coordinator.async_refresh()
         assert coordinator.last_update_success
         assert sum("recovered" in r.getMessage().lower() for r in caplog.records) == 1
         require_mock(
-            require_not_none(coordinator.protect_client).cameras.get_all
+            require_not_none(coordinator.protect_client).cameras.get_all_result
         ).side_effect = UniFiTimeoutError("offline")
         for _ in range(MAX_CONSECUTIVE_EMPTY_FETCHES + 1):
             await coordinator.async_refresh()
@@ -1645,7 +2479,7 @@ class TestUnifiProtectCoordinator:
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test data fetch with sensors error (should not fail)."""
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
             side_effect=Exception("Sensors failed")
         )
 
@@ -1675,7 +2509,7 @@ class TestUnifiProtectCoordinator:
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test data fetch with chimes error (should not fail)."""
-        require_not_none(coordinator.protect_client).chimes.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).chimes.get_all_result = AsyncMock(
             side_effect=Exception("Chimes failed")
         )
 
@@ -1689,7 +2523,7 @@ class TestUnifiProtectCoordinator:
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test data fetch with viewers error (should not fail)."""
-        require_not_none(coordinator.protect_client).viewers.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).viewers.get_all_result = AsyncMock(
             side_effect=Exception("Viewers failed")
         )
 
@@ -1717,7 +2551,7 @@ class TestUnifiProtectCoordinator:
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test data fetch with auth error."""
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
             side_effect=UniFiAuthenticationError("Invalid API key")
         )
 
@@ -1734,7 +2568,7 @@ class TestUnifiProtectCoordinator:
         blipped endpoint does not take every Protect entity unavailable; past
         that window the error propagates and the coordinator reports failure.
         """
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
             side_effect=UniFiConnectionError("Connection refused")
         )
 
@@ -1986,50 +2820,6 @@ class TestUnifiProtectCoordinator:
                 "device": "camera1",
                 "end": 400,
             }
-
-    def test_get_camera_existing(self, coordinator: UnifiInsightsProtectCoordinator):
-        """Test getting existing camera."""
-        coordinator.data["cameras"] = {"camera1": {"id": "camera1", "name": "Test"}}
-        result = coordinator.get_camera("camera1")
-        assert result == {"id": "camera1", "name": "Test"}
-
-    def test_get_camera_missing(self, coordinator: UnifiInsightsProtectCoordinator):
-        """Test getting missing camera."""
-        result = coordinator.get_camera("nonexistent")
-        assert result is None
-
-    def test_get_light_existing(self, coordinator: UnifiInsightsProtectCoordinator):
-        """Test getting existing light."""
-        coordinator.data["lights"] = {"light1": {"id": "light1", "name": "Test"}}
-        result = coordinator.get_light("light1")
-        assert result == {"id": "light1", "name": "Test"}
-
-    def test_get_light_missing(self, coordinator: UnifiInsightsProtectCoordinator):
-        """Test getting missing light."""
-        result = coordinator.get_light("nonexistent")
-        assert result is None
-
-    def test_get_sensor_existing(self, coordinator: UnifiInsightsProtectCoordinator):
-        """Test getting existing sensor."""
-        coordinator.data["sensors"] = {"sensor1": {"id": "sensor1", "name": "Test"}}
-        result = coordinator.get_sensor("sensor1")
-        assert result == {"id": "sensor1", "name": "Test"}
-
-    def test_get_sensor_missing(self, coordinator: UnifiInsightsProtectCoordinator):
-        """Test getting missing sensor."""
-        result = coordinator.get_sensor("nonexistent")
-        assert result is None
-
-    def test_get_nvr_existing(self, coordinator: UnifiInsightsProtectCoordinator):
-        """Test getting existing NVR."""
-        coordinator.data["nvrs"] = {"nvr1": {"id": "nvr1", "name": "Test"}}
-        result = coordinator.get_nvr("nvr1")
-        assert result == {"id": "nvr1", "name": "Test"}
-
-    def test_get_nvr_missing(self, coordinator: UnifiInsightsProtectCoordinator):
-        """Test getting missing NVR."""
-        result = coordinator.get_nvr("nonexistent")
-        assert result is None
 
     @pytest.mark.asyncio
     async def test_missing_device_eviction(
@@ -2931,7 +3721,7 @@ class TestUnifiProtectCoordinator:
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test sensor fetch handles errors gracefully."""
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
             side_effect=Exception("Sensors error")
         )
 
@@ -2948,8 +3738,8 @@ class TestUnifiProtectCoordinator:
         """Test sensor fetch preserves cached sensors across transient empty polls."""
         cached = {"sensor1": {"id": "sensor1", "state": "CONNECTED"}}
         coordinator.data["sensors"] = cached
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
-            return_value=[]
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
+            return_value=protect_list()
         )
 
         # Polls 1, 2, 3 should preserve cache
@@ -2964,8 +3754,8 @@ class TestUnifiProtectCoordinator:
         """Test sensor cache is cleared after MAX_CONSECUTIVE_EMPTY_FETCHES polls."""
         cached = {"sensor1": {"id": "sensor1", "state": "CONNECTED"}}
         coordinator.data["sensors"] = cached
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
-            return_value=[]
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
+            return_value=protect_list()
         )
 
         # 4 consecutive empty polls exceeds threshold of 3
@@ -2981,7 +3771,7 @@ class TestUnifiProtectCoordinator:
         """Test sensor fetch preserves cached sensors across transient 404s."""
         cached = {"sensor1": {"id": "sensor1", "state": "CONNECTED"}}
         coordinator.data["sensors"] = cached
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
             side_effect=UniFiNotFoundError("Not Found", 404)
         )
 
@@ -2996,7 +3786,7 @@ class TestUnifiProtectCoordinator:
         """Test sensor cache is cleared after consecutive 404s exceed threshold."""
         cached = {"sensor1": {"id": "sensor1", "state": "CONNECTED"}}
         coordinator.data["sensors"] = cached
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
             side_effect=UniFiNotFoundError("Not Found", 404)
         )
 
@@ -3011,7 +3801,7 @@ class TestUnifiProtectCoordinator:
     ):
         """Test sensor fetch 404 leaves dict empty without error."""
         coordinator.data["sensors"] = {}
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
             side_effect=UniFiNotFoundError("Not Found", 404)
         )
 
@@ -3023,10 +3813,9 @@ class TestUnifiProtectCoordinator:
     ):
         """An empty answer over a collection that is not a dict leaves it empty."""
         coordinator.data["cameras"] = None
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
-            return_value=[]
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
+            return_value=protect_list()
         )
-        require_not_none(coordinator.protect_client).cameras.last_result_complete = True
         await coordinator._fetch_cameras()
         assert coordinator.data["cameras"] == {}
 
@@ -3034,11 +3823,11 @@ class TestUnifiProtectCoordinator:
     @pytest.mark.parametrize(
         ("collection", "client_attr", "client_method", "fetch_method"),
         [
-            ("cameras", "cameras", "get_all", "_fetch_cameras"),
-            ("lights", "lights", "get_all", "_fetch_lights"),
+            ("cameras", "cameras", "get_all_result", "_fetch_cameras"),
+            ("lights", "lights", "get_all_result", "_fetch_lights"),
             ("nvrs", "nvr", "get", "_fetch_nvr"),
-            ("chimes", "chimes", "get_all", "_fetch_chimes"),
-            ("viewers", "viewers", "get_all", "_fetch_viewers"),
+            ("chimes", "chimes", "get_all_result", "_fetch_chimes"),
+            ("viewers", "viewers", "get_all_result", "_fetch_viewers"),
         ],
     )
     async def test_fetch_endpoints_preserve_cache_on_404(
@@ -3079,10 +3868,10 @@ class TestUnifiProtectCoordinator:
         """
         # collection -> (protect_client attribute, its fetch method, coordinator fetch)
         endpoints = {
-            "sensors": ("sensors", "get_all", "_fetch_sensors"),
+            "sensors": ("sensors", "get_all_result", "_fetch_sensors"),
             "nvrs": ("nvr", "get", "_fetch_nvr"),
-            "chimes": ("chimes", "get_all", "_fetch_chimes"),
-            "viewers": ("viewers", "get_all", "_fetch_viewers"),
+            "chimes": ("chimes", "get_all_result", "_fetch_chimes"),
+            "viewers": ("viewers", "get_all_result", "_fetch_viewers"),
         }
         client_attr, client_method, fetch_method = endpoints[collection]
 
@@ -3166,8 +3955,8 @@ class TestUnifiProtectCoordinator:
         """Test camera fetch preserves cache across transient empty polls."""
         cached = {"camera1": {"id": "camera1", "state": "CONNECTED"}}
         coordinator.data["cameras"] = cached
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
-            return_value=[]
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
+            return_value=protect_list()
         )
 
         await coordinator._fetch_cameras()
@@ -3180,8 +3969,8 @@ class TestUnifiProtectCoordinator:
         """Test camera cache is cleared after consecutive empty polls."""
         cached = {"camera1": {"id": "camera1", "state": "CONNECTED"}}
         coordinator.data["cameras"] = cached
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
-            return_value=[]
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
+            return_value=protect_list()
         )
 
         for _ in range(4):
@@ -3196,8 +3985,8 @@ class TestUnifiProtectCoordinator:
         """Test light fetch preserves cached lights across transient empty responses."""
         cached = {"light1": {"id": "light1", "state": "CONNECTED"}}
         coordinator.data["lights"] = cached
-        require_not_none(coordinator.protect_client).lights.get_all = AsyncMock(
-            return_value=[]
+        require_not_none(coordinator.protect_client).lights.get_all_result = AsyncMock(
+            return_value=protect_list()
         )
 
         await coordinator._fetch_lights()
@@ -3227,7 +4016,7 @@ class TestUnifiProtectCoordinator:
         """
         cached = {"camera1": {"id": "camera1", "state": "CONNECTED"}}
         coordinator.data["cameras"] = cached
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
             side_effect=err
         )
 
@@ -3242,7 +4031,7 @@ class TestUnifiProtectCoordinator:
         """A transient light fetch error must not fail the whole Protect poll."""
         cached = {"light1": {"id": "light1", "state": "CONNECTED"}}
         coordinator.data["lights"] = cached
-        require_not_none(coordinator.protect_client).lights.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).lights.get_all_result = AsyncMock(
             side_effect=UniFiResponseError("Response is not JSON", status_code=200)
         )
 
@@ -3263,15 +4052,15 @@ class TestUnifiProtectCoordinator:
         """
         cached = {"camera1": {"id": "camera1", "state": "CONNECTED"}}
         coordinator.data["cameras"] = cached
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
             side_effect=UniFiResponseError("Bad gateway", status_code=502)
         )
         for _ in range(MAX_CONSECUTIVE_EMPTY_FETCHES):
             await coordinator._fetch_cameras()
 
         # First clean poll after the outage genuinely returns no cameras.
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
-            return_value=[]
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
+            return_value=protect_list()
         )
         await coordinator._fetch_cameras()
 
@@ -3288,7 +4077,7 @@ class TestUnifiProtectCoordinator:
         the bounded window prevents.
         """
         coordinator.data["cameras"] = {"camera1": {"id": "camera1"}}
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
             side_effect=UniFiResponseError("Response is not JSON", status_code=200)
         )
 
@@ -3309,19 +4098,19 @@ class TestUnifiProtectCoordinator:
         fail the poll on errors that were never consecutive.
         """
         coordinator.data["cameras"] = {"camera1": {"id": "camera1"}}
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
             side_effect=UniFiResponseError("Blip", status_code=502)
         )
         for _ in range(MAX_CONSECUTIVE_EMPTY_FETCHES):
             await coordinator._fetch_cameras()
 
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
             side_effect=UniFiNotFoundError("No cameras configured", 404)
         )
         await coordinator._fetch_cameras()
 
         # Streak was broken, so this error is the first of a new window.
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
             side_effect=UniFiResponseError("Blip", status_code=502)
         )
         await coordinator._fetch_cameras()
@@ -3332,18 +4121,18 @@ class TestUnifiProtectCoordinator:
     ):
         """See the camera case: a handled 404 resets the light error streak."""
         coordinator.data["lights"] = {"light1": {"id": "light1"}}
-        require_not_none(coordinator.protect_client).lights.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).lights.get_all_result = AsyncMock(
             side_effect=UniFiResponseError("Blip", status_code=502)
         )
         for _ in range(MAX_CONSECUTIVE_EMPTY_FETCHES):
             await coordinator._fetch_lights()
 
-        require_not_none(coordinator.protect_client).lights.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).lights.get_all_result = AsyncMock(
             side_effect=UniFiNotFoundError("No lights configured", 404)
         )
         await coordinator._fetch_lights()
 
-        require_not_none(coordinator.protect_client).lights.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).lights.get_all_result = AsyncMock(
             side_effect=UniFiResponseError("Blip", status_code=502)
         )
         await coordinator._fetch_lights()
@@ -3354,7 +4143,7 @@ class TestUnifiProtectCoordinator:
     ):
         """A recovered poll re-arms the full preservation window."""
         coordinator.data["cameras"] = {"camera1": {"id": "camera1"}}
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
             side_effect=UniFiResponseError("Blip", status_code=502)
         )
         for _ in range(MAX_CONSECUTIVE_EMPTY_FETCHES):
@@ -3362,13 +4151,13 @@ class TestUnifiProtectCoordinator:
 
         camera = MagicMock()
         camera.model_dump = MagicMock(return_value={"id": "camera1", "name": "Cam"})
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
-            return_value=[camera]
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
+            return_value=protect_list([camera])
         )
         await coordinator._fetch_cameras()
 
         # Window is re-armed, so the next error is absorbed rather than raised.
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
             side_effect=UniFiResponseError("Blip", status_code=502)
         )
         await coordinator._fetch_cameras()
@@ -3382,7 +4171,7 @@ class TestUnifiProtectCoordinator:
     ):
         """An expired key must still reach the reauth flow, not be swallowed."""
         collection = "cameras" if method == "_fetch_cameras" else "lights"
-        getattr(coordinator.protect_client, collection).get_all = AsyncMock(
+        getattr(coordinator.protect_client, collection).get_all_result = AsyncMock(
             side_effect=UniFiAuthenticationError("API key expired")
         )
 
@@ -3396,8 +4185,8 @@ class TestUnifiProtectCoordinator:
         """Test stale device cleanup preserves devices during transient empty poll."""
         coordinator.data["sensors"] = {"sensor1": {"id": "sensor1"}}
         _poll_completed(coordinator)
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
-            return_value=[]
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
+            return_value=protect_list()
         )
 
         # 1 transient empty fetch
@@ -3419,8 +4208,8 @@ class TestUnifiProtectCoordinator:
         """Test stale device cleanup removes devices after max empty polls."""
         coordinator.data["sensors"] = {"sensor1": {"id": "sensor1"}}
         _poll_completed(coordinator)
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
-            return_value=[]
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
+            return_value=protect_list()
         )
 
         # 4 consecutive empty polls
@@ -3445,7 +4234,7 @@ class TestUnifiProtectCoordinator:
     ):
         """Test a camera dropped on a ValidationError keeps its cached entry.
 
-        `get_all()` skips an item whose payload will not parse - typically a
+        `get_all_result()` skips an item whose payload will not parse - typically a
         field reshaped by a Protect release - and returns the rest. That short
         list is non-empty, so the bounded empty-response guard never engages
         and the grace window only delays the loss: the skip is deterministic
@@ -3462,12 +4251,9 @@ class TestUnifiProtectCoordinator:
         mock_camera.model_dump = MagicMock(
             return_value={"id": "camera1", "name": "Front"}
         )
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
-            return_value=[mock_camera]
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
+            return_value=protect_list([mock_camera], skipped=1)
         )
-        require_not_none(
-            coordinator.protect_client
-        ).cameras.last_result_complete = False
 
         with patch(
             "custom_components.unifi_insights.coordinators.base.dr.async_get"
@@ -3498,12 +4284,9 @@ class TestUnifiProtectCoordinator:
         mock_camera.model_dump = MagicMock(
             return_value={"id": "camera1", "state": "CONNECTED"}
         )
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
-            return_value=[mock_camera]
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
+            return_value=protect_list([mock_camera], skipped=1)
         )
-        require_not_none(
-            coordinator.protect_client
-        ).cameras.last_result_complete = False
 
         await coordinator._fetch_cameras()
 
@@ -3526,10 +4309,9 @@ class TestUnifiProtectCoordinator:
 
         mock_camera = MagicMock()
         mock_camera.model_dump = MagicMock(return_value={"id": "camera1"})
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
-            return_value=[mock_camera]
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
+            return_value=protect_list([mock_camera])
         )
-        require_not_none(coordinator.protect_client).cameras.last_result_complete = True
 
         await coordinator._fetch_cameras()
 
@@ -3542,19 +4324,16 @@ class TestUnifiProtectCoordinator:
         """Test a schema break that drops every camera does not purge the cache.
 
         A Protect release reshaping a shared field fails validation for all
-        cameras at once, so `get_all()` returns an empty list that looks
+        cameras at once, so `get_all_result()` returns an empty list that looks
         exactly like "no cameras adopted". Left there, the bounded
         empty-response guard clears the collection a few polls later and hands
         every camera to the registry clean-up. An endpoint that reports the
         result incomplete must not advance that counter.
         """
         coordinator.data["cameras"] = {"camera1": {"id": "camera1"}}
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
-            return_value=[]
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
+            return_value=protect_list([], skipped=1)
         )
-        require_not_none(
-            coordinator.protect_client
-        ).cameras.last_result_complete = False
 
         for _ in range(MAX_CONSECUTIVE_EMPTY_FETCHES + 3):
             await coordinator._fetch_cameras()
@@ -3568,7 +4347,7 @@ class TestUnifiProtectCoordinator:
     ):
         """Test a device missing from one poll is not purged from the registry.
 
-        A partial controller response - or an item that `get_all()` skipped on
+        A partial controller response - or an item that `get_all_result()` skipped on
         a ValidationError - drops a still-adopted device out of the collection.
         Acting on that single poll is irreversible: the registry entry, its
         area assignment and every automation keyed on device_id are lost.
@@ -3669,8 +4448,8 @@ class TestUnifiProtectCoordinator:
                 "isPtz": True,
             }
         )
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
-            return_value=[mock_camera]
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
+            return_value=protect_list([mock_camera])
         )
 
         await coordinator._fetch_cameras()
@@ -3722,8 +4501,8 @@ class TestUnifiProtectCoordinator:
                 **payload,
             }
         )
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
-            return_value=[mock_camera]
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
+            return_value=protect_list([mock_camera])
         )
 
         await coordinator._fetch_cameras()
@@ -3748,8 +4527,8 @@ class TestUnifiProtectCoordinator:
                 "feature_flags": {"smartDetectTypes": ["person"]},
             }
         )
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
-            return_value=[mock_camera]
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
+            return_value=protect_list([mock_camera])
         )
 
         await coordinator._fetch_cameras()
@@ -3773,8 +4552,8 @@ class TestUnifiProtectCoordinator:
                 # No featureFlags key
             }
         )
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
-            return_value=[mock_camera]
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
+            return_value=protect_list([mock_camera])
         )
 
         await coordinator._fetch_cameras()
@@ -3875,7 +4654,7 @@ class TestUnifiProtectCoordinator:
         blipped endpoint does not take every Protect entity unavailable; past
         that window the error propagates and the coordinator reports failure.
         """
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
             side_effect=UniFiResponseError("Invalid response", status_code=400)
         )
 
@@ -3895,7 +4674,7 @@ class TestUnifiProtectCoordinator:
         blipped endpoint does not take every Protect entity unavailable; past
         that window the error propagates and the coordinator reports failure.
         """
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
             side_effect=UniFiTimeoutError("Request timed out")
         )
 
@@ -3910,7 +4689,7 @@ class TestUnifiProtectCoordinator:
         self, coordinator: UnifiInsightsProtectCoordinator
     ):
         """Test data fetch with generic error."""
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
             side_effect=Exception("Unknown error")
         )
 
@@ -4080,19 +4859,20 @@ class TestUnifiProtectCoordinator:
                         "start": 1,
                     },
                 )
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
-            return_value=[
-                _create_mock_model(
-                    {
-                        "id": "cam_survives",
-                        "lastMotionStart": 1000,
-                        "lastRingStart": 2000,
-                    }
-                ),
-                _create_mock_model({"id": "cam_pruned"}),
-            ]
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
+            return_value=protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "cam_survives",
+                            "lastMotionStart": 1000,
+                            "lastRingStart": 2000,
+                        }
+                    ),
+                    _create_mock_model({"id": "cam_pruned"}),
+                ]
+            )
         )
-        require_not_none(coordinator.protect_client).cameras.last_result_complete = True
 
         await coordinator._fetch_cameras()
 
@@ -4110,7 +4890,7 @@ class TestUnifiProtectCoordinator:
         protect_client = coordinator.protect_client
         assert protect_client is not None
         get_lights = AsyncMock(side_effect=UniFiConnectionError("Connection failure"))
-        protect_client.lights.get_all = get_lights
+        protect_client.lights.get_all_result = get_lights
         for expected_count in range(1, MAX_CONSECUTIVE_EMPTY_FETCHES + 1):
             await coordinator._fetch_lights()
             assert coordinator._events.families["lights"].fetch_errors == expected_count
@@ -4129,78 +4909,92 @@ class TestUnifiProtectCoordinator:
         """Test Protect collection fetches skip ID-less records."""
         protect_client = coordinator.protect_client
         assert protect_client is not None
-        protect_client.lights.get_all = AsyncMock(
-            return_value=[
-                Light.model_validate(
-                    {"id": "light1", "mac": "00:11:22:33:44:01", "name": "Light 1"}
-                ),
-                Light.model_validate(
-                    {"id": "", "mac": "00:11:22:33:44:02", "name": "NoIDLight"}
-                ),
-            ]
+        protect_client.lights.get_all_result = AsyncMock(
+            return_value=protect_list(
+                [
+                    Light.model_validate(
+                        {"id": "light1", "mac": "00:11:22:33:44:01", "name": "Light 1"}
+                    ),
+                    Light.model_validate(
+                        {"id": "", "mac": "00:11:22:33:44:02", "name": "NoIDLight"}
+                    ),
+                ]
+            )
         )
-        protect_client.lights.last_result_complete = True
         await coordinator._fetch_lights()
         assert list(coordinator.data["lights"].keys()) == ["light1"]
-        protect_client.cameras.get_all = AsyncMock(
-            return_value=[
-                Camera.model_validate(
-                    {"id": "camera1", "mac": "00:11:22:33:44:00", "name": "Camera 1"}
-                ),
-                Camera.model_validate(
-                    {"id": "", "mac": "00:11:22:33:44:01", "name": "NoIDCamera"}
-                ),
-            ]
+        protect_client.cameras.get_all_result = AsyncMock(
+            return_value=protect_list(
+                [
+                    Camera.model_validate(
+                        {
+                            "id": "camera1",
+                            "mac": "00:11:22:33:44:00",
+                            "name": "Camera 1",
+                        }
+                    ),
+                    Camera.model_validate(
+                        {"id": "", "mac": "00:11:22:33:44:01", "name": "NoIDCamera"}
+                    ),
+                ]
+            )
         )
-        protect_client.cameras.last_result_complete = True
         await coordinator._fetch_cameras()
         assert list(coordinator.data["cameras"].keys()) == ["camera1"]
-        protect_client.sensors.get_all = AsyncMock(
-            return_value=[
-                Sensor.model_validate(
-                    {"id": "sensor1", "mac": "00:11:22:33:44:03", "name": "Sensor 1"}
-                ),
-                Sensor.model_validate(
-                    {"id": "", "mac": "00:11:22:33:44:04", "name": "NoIDSensor"}
-                ),
-            ]
+        protect_client.sensors.get_all_result = AsyncMock(
+            return_value=protect_list(
+                [
+                    Sensor.model_validate(
+                        {
+                            "id": "sensor1",
+                            "mac": "00:11:22:33:44:03",
+                            "name": "Sensor 1",
+                        }
+                    ),
+                    Sensor.model_validate(
+                        {"id": "", "mac": "00:11:22:33:44:04", "name": "NoIDSensor"}
+                    ),
+                ]
+            )
         )
         await coordinator._fetch_sensors()
         assert list(coordinator.data["sensors"].keys()) == ["sensor1"]
-        protect_client.chimes.get_all = AsyncMock(
-            return_value=[
-                Chime.model_validate(
-                    {"id": "chime1", "mac": "00:11:22:33:44:05", "name": "Chime 1"}
-                ),
-                Chime.model_validate(
-                    {"id": "", "mac": "00:11:22:33:44:06", "name": "NoIDChime"}
-                ),
-            ]
+        protect_client.chimes.get_all_result = AsyncMock(
+            return_value=protect_list(
+                [
+                    Chime.model_validate(
+                        {"id": "chime1", "mac": "00:11:22:33:44:05", "name": "Chime 1"}
+                    ),
+                    Chime.model_validate(
+                        {"id": "", "mac": "00:11:22:33:44:06", "name": "NoIDChime"}
+                    ),
+                ]
+            )
         )
-        protect_client.chimes.last_result_complete = True
         await coordinator._fetch_chimes()
         assert list(coordinator.data["chimes"].keys()) == ["chime1"]
-        protect_client.viewers.get_all = AsyncMock(
-            return_value=[
-                Viewer.model_validate(
-                    {
-                        "id": "viewer1",
-                        "mac": "00:11:22:33:44:07",
-                        "state": "ONLINE",
-                        "name": "Viewer 1",
-                    }
-                ),
-                Viewer.model_validate(
-                    {
-                        "id": "",
-                        "mac": "00:11:22:33:44:08",
-                        "state": "ONLINE",
-                        "name": "NoIDViewer",
-                    }
-                ),
-            ]
+        protect_client.viewers.get_all_result = AsyncMock(
+            return_value=protect_list(
+                [
+                    Viewer.model_validate(
+                        {
+                            "id": "viewer1",
+                            "mac": "00:11:22:33:44:07",
+                            "state": "ONLINE",
+                            "name": "Viewer 1",
+                        }
+                    ),
+                    Viewer.model_validate(
+                        {
+                            "id": "",
+                            "mac": "00:11:22:33:44:08",
+                            "state": "ONLINE",
+                            "name": "NoIDViewer",
+                        }
+                    ),
+                ]
+            )
         )
-        protect_client.viewers.last_result_complete = True
         await coordinator._fetch_viewers()
         assert list(coordinator.data["viewers"].keys()) == ["viewer1"]
         protect_client.liveviews.get_all = AsyncMock(
@@ -4429,15 +5223,15 @@ class TestProtectCoordinatorEdgeCases:
         protect_client.register_device_update_callback = MagicMock()
         protect_client.register_event_update_callback = MagicMock()
         protect_client.cameras = MagicMock()
-        protect_client.cameras.get_all = AsyncMock(return_value=[])
+        protect_client.cameras.get_all_result = AsyncMock(return_value=protect_list())
         protect_client.lights = MagicMock()
-        protect_client.lights.get_all = AsyncMock(return_value=[])
+        protect_client.lights.get_all_result = AsyncMock(return_value=protect_list())
         protect_client.sensors = MagicMock()
-        protect_client.sensors.get_all = AsyncMock(return_value=[])
+        protect_client.sensors.get_all_result = AsyncMock(return_value=protect_list())
         protect_client.nvr = MagicMock()
         protect_client.nvr.get = AsyncMock(return_value=MagicMock(id="nvr1"))
         protect_client.chimes = MagicMock()
-        protect_client.chimes.get_all = AsyncMock(return_value=[])
+        protect_client.chimes.get_all_result = AsyncMock(return_value=protect_list())
         # Remove viewers attribute
         del protect_client.viewers
         protect_client.liveviews = MagicMock()
@@ -4465,17 +5259,17 @@ class TestProtectCoordinatorEdgeCases:
         protect_client.register_device_update_callback = MagicMock()
         protect_client.register_event_update_callback = MagicMock()
         protect_client.cameras = MagicMock()
-        protect_client.cameras.get_all = AsyncMock(return_value=[])
+        protect_client.cameras.get_all_result = AsyncMock(return_value=protect_list())
         protect_client.lights = MagicMock()
-        protect_client.lights.get_all = AsyncMock(return_value=[])
+        protect_client.lights.get_all_result = AsyncMock(return_value=protect_list())
         protect_client.sensors = MagicMock()
-        protect_client.sensors.get_all = AsyncMock(return_value=[])
+        protect_client.sensors.get_all_result = AsyncMock(return_value=protect_list())
         protect_client.nvr = MagicMock()
         protect_client.nvr.get = AsyncMock(return_value=MagicMock(id="nvr1"))
         protect_client.chimes = MagicMock()
-        protect_client.chimes.get_all = AsyncMock(return_value=[])
+        protect_client.chimes.get_all_result = AsyncMock(return_value=protect_list())
         protect_client.viewers = MagicMock()
-        protect_client.viewers.get_all = AsyncMock(return_value=[])
+        protect_client.viewers.get_all_result = AsyncMock(return_value=protect_list())
         # Remove liveviews attribute
         del protect_client.liveviews
 
@@ -4508,8 +5302,8 @@ class TestProtectCoordinatorEdgeCases:
                 "featureFlags": "not_a_dict",
             }
         )
-        require_not_none(coordinator.protect_client).cameras.get_all = AsyncMock(
-            return_value=[camera_mock]
+        require_not_none(coordinator.protect_client).cameras.get_all_result = AsyncMock(
+            return_value=protect_list([camera_mock])
         )
 
         result = await coordinator._async_update_data()

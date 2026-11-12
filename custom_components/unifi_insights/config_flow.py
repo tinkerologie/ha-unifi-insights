@@ -37,6 +37,7 @@ from unifi_official_api import (
 )
 from unifi_official_api.access import UniFiAccessClient
 from unifi_official_api.carrier_fabric.client import UniFiCarrierFabricClient
+from unifi_official_api.innerspace import UniFiInnerSpaceClient
 from unifi_official_api.network import UniFiNetworkClient
 from unifi_official_api.protect import UniFiProtectClient
 from yarl import URL
@@ -89,9 +90,11 @@ from .probe import (
     ProbeStatus,
     async_probe_access,
     async_probe_carrier_fabric,
+    async_probe_innerspace,
     async_probe_network,
     async_probe_protect,
     async_probe_with_client,
+    is_forbidden,
     is_malformed_response,
     is_transient_error,
 )
@@ -266,9 +269,14 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
         api_key: str,
         *,
         verify_ssl: bool = False,
-        access_token: str | None = None,
+        access_tokens: tuple[str | None, ...] = (),
     ) -> tuple[bool, str | None, dict[str, str]]:
-        """Validate local connection against Network and/or Protect APIs."""
+        """
+        Validate local connection against Network, Protect and InnerSpace APIs.
+
+        ``access_tokens`` lists every Access token the caller holds (typed and
+        stored), so none of them can become the console identity.
+        """
         auth = LocalAuth(api_key=api_key, verify_ssl=verify_ssl)
         console_info: dict[str, str] = {}
 
@@ -315,7 +323,7 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                     # A shared site cannot identify a console. Match setup's
                     # explicit local-endpoint fallback when no MAC is available.
                     host_id = normalize_console_namespace(
-                        host, credentials=(api_key, access_token)
+                        host, credentials=(api_key, *access_tokens)
                     )
                     if host_id:
                         console_info["id"] = host_id
@@ -379,7 +387,33 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
         if protect.status is ProbeStatus.AVAILABLE:
             return True, None, console_info
 
-        return False, self._flow_error_for_probes(network, protect), console_info
+        # 3. Probe InnerSpace API
+        session = async_get_clientsession(self.hass, verify_ssl=verify_ssl)
+        innerspace = await async_probe_with_client(
+            UniFiInnerSpaceClient(
+                auth=auth,
+                base_url=host,
+                connection_type=ConnectionType.LOCAL,
+                timeout=30,
+                session=session,
+            ),
+            async_probe_innerspace,
+        )
+        if innerspace.status is ProbeStatus.AVAILABLE:
+            host_id = normalize_console_namespace(
+                host, credentials=(api_key, *access_tokens)
+            )
+            if host_id:
+                console_info["id"] = host_id
+                console_info["name"] = "UniFi InnerSpace"
+                return True, None, console_info
+            return False, "console_identity_unavailable", {}
+
+        return (
+            False,
+            self._flow_error_for_probes(network, protect, innerspace),
+            console_info,
+        )
 
     @staticmethod
     def _access_token_input(user_input: dict[str, Any]) -> str | None:
@@ -457,14 +491,13 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
         self,
         api_key: str,
         console_id: str,
-    ) -> bool:
+    ) -> str | None:
         """
         Validate remote connectivity for a specific console host ID.
 
-        Returns False when neither application is usable with this key and
-        console. A temporary failure (connection, timeout, 5xx, rate limit)
-        raises UniFiConnectionError so the step reports cannot_connect
-        rather than an invalid console.
+        Return None for a usable console, or the error key for a denied or
+        unusable console. Temporary failures raise UniFiConnectionError so
+        the step reports cannot_connect.
         """
         auth = ApiKeyAuth(api_key=api_key)
 
@@ -478,7 +511,7 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
             async_probe_network,
         )
         if network.status is ProbeStatus.AVAILABLE:
-            return True
+            return None
 
         protect = await async_probe_with_client(
             UniFiProtectClient(
@@ -490,13 +523,42 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
             async_probe_protect,
         )
         if protect.status is ProbeStatus.AVAILABLE:
-            return True
+            return None
 
-        for probe in (network, protect):
+        session = async_get_clientsession(self.hass)
+        innerspace = await async_probe_with_client(
+            UniFiInnerSpaceClient(
+                auth=auth,
+                connection_type=ConnectionType.REMOTE,
+                console_id=console_id,
+                timeout=30,
+                session=session,
+            ),
+            async_probe_innerspace,
+        )
+        if innerspace.status is ProbeStatus.AVAILABLE:
+            return None
+
+        for probe in (network, protect, innerspace):
             if probe.status is ProbeStatus.UNREACHABLE:
                 msg = f"Remote console temporarily unavailable: {probe.error}"
                 raise UniFiConnectionError(msg) from probe.error
-        return False
+        denied_apps = [
+            name
+            for name, result in (
+                ("Network", network),
+                ("Protect", protect),
+                ("InnerSpace", innerspace),
+            )
+            if is_forbidden(result)
+        ]
+        if denied_apps:
+            _LOGGER.debug(
+                "Remote console validation: %s refused the API key with HTTP 403",
+                ", ".join(denied_apps),
+            )
+            return "console_access_denied"
+        return "invalid_console_id"
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -640,6 +702,7 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                     host=user_input[CONF_HOST],
                     api_key=user_input[CONF_API_KEY],
                     verify_ssl=user_input.get(CONF_VERIFY_SSL, False),
+                    access_tokens=(self._access_token_input(user_input),),
                 )
                 if is_valid:
                     access_token = self._access_token_input(user_input)
@@ -750,11 +813,11 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
             console_id = user_input[CONF_CONSOLE_ID]
 
             try:
-                sites_found = await self._async_validate_remote_console(
+                validation_error = await self._async_validate_remote_console(
                     self._remote_api_key,
                     console_id,
                 )
-                if sites_found:
+                if validation_error is None:
                     await self.async_set_unique_id(console_id)
                     self._abort_if_unique_id_configured()
 
@@ -775,7 +838,7 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                         },
                     )
 
-                errors[CONF_CONSOLE_ID] = "invalid_console_id"
+                errors[CONF_CONSOLE_ID] = validation_error
             except AbortFlow:
                 raise
             except UniFiAuthenticationError:
@@ -931,6 +994,7 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                         host=reauth_entry.data.get(CONF_HOST, DEFAULT_API_HOST),
                         api_key=user_input[CONF_API_KEY],
                         verify_ssl=reauth_entry.data.get(CONF_VERIFY_SSL, False),
+                        access_tokens=(reauth_entry.data.get(CONF_ACCESS_TOKEN),),
                     )
                     if is_valid:
                         console_id = normalize_console_namespace(
@@ -973,11 +1037,13 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                             errors["base"] = "invalid_console_id"
                         else:
                             try:
-                                sites_found = await self._async_validate_remote_console(
-                                    api_key,
-                                    console_id,
+                                validation_error = (
+                                    await self._async_validate_remote_console(
+                                        api_key,
+                                        console_id,
+                                    )
                                 )
-                                if sites_found:
+                                if validation_error is None:
                                     return self._async_update_site_entry_and_abort(
                                         reauth_entry,
                                         {
@@ -987,7 +1053,7 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                                         },
                                         console_id,
                                     )
-                                errors["base"] = "invalid_console_id"
+                                errors["base"] = validation_error
                             except UniFiAuthenticationError:
                                 errors["base"] = "invalid_console_id"
 
@@ -1214,7 +1280,10 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                         host=user_input[CONF_HOST],
                         api_key=user_input[CONF_API_KEY],
                         verify_ssl=user_input.get(CONF_VERIFY_SSL, False),
-                        access_token=entry.data.get(CONF_ACCESS_TOKEN),
+                        access_tokens=(
+                            self._access_token_input(user_input),
+                            entry.data.get(CONF_ACCESS_TOKEN),
+                        ),
                     )
                     if is_valid:
                         (
@@ -1252,11 +1321,13 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                             errors[CONF_CONSOLE_ID] = "invalid_console_id"
                         else:
                             try:
-                                sites_found = await self._async_validate_remote_console(
-                                    api_key,
-                                    console_id,
+                                validation_error = (
+                                    await self._async_validate_remote_console(
+                                        api_key,
+                                        console_id,
+                                    )
                                 )
-                                if sites_found:
+                                if validation_error is None:
                                     if (
                                         console_id != entry.data.get(CONF_CONSOLE_ID)
                                         and entry.unique_id
@@ -1279,7 +1350,7 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                                         unique_id=console_id,
                                         reason="reconfigure_successful",
                                     )
-                                errors[CONF_CONSOLE_ID] = "invalid_console_id"
+                                errors[CONF_CONSOLE_ID] = validation_error
                             except UniFiAuthenticationError:
                                 errors[CONF_CONSOLE_ID] = "invalid_console_id"
 

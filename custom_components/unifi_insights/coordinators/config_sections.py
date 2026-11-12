@@ -5,8 +5,14 @@ from __future__ import annotations
 
 import inspect
 import logging
+import math
+import re
+from collections import Counter
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Any, Final
+from http import HTTPStatus
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from unifi_official_api import UniFiAuthenticationError
 from unifi_official_api.network.models import is_predefined_nat_rule
@@ -18,6 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
     from unifi_official_api.network import UniFiNetworkClient
+    from unifi_official_api.network.models.stats import StatsSeries, StatsSeriesBucket
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,18 +36,26 @@ __all__ = [
     "SECTION_OUTCOME_FAILED",
     "SECTION_OUTCOME_OK",
     "SECTION_OUTCOME_UNSUPPORTED",
+    "InternetActivityFetchResult",
+    "aggregate_internet_activity_windows",
+    "aggregate_modern_internet_activity_windows",
+    "async_call_site_report",
     "async_fetch_site_firewall",
+    "async_fetch_site_internet_activity",
+    "async_fetch_site_modern_internet_activity",
     "async_fetch_site_routes",
     "async_fetch_site_rule_section",
     "async_fetch_site_vouchers",
     "async_fetch_site_vpn_clients",
     "async_fetch_site_vpns",
     "async_fetch_site_wifi_and_links",
+    "async_update_site_internet_activity",
     "client_links",
     "enrich_wifi",
     "is_predefined_firewall_rule",
     "is_predefined_nat_rule",
     "map_legacy_site_names",
+    "map_legacy_stats_site_ids",
     "resolve_report_site_name",
     "rule_display_name",
     "verified_legacy_site_name",
@@ -575,6 +590,37 @@ def aggregate_internet_activity_windows(
     return windows
 
 
+# Same rule as unifi-official-api stats.get_recent_series(): the ID goes into
+# the filter grammar, so only these characters are accepted.
+_STATS_SITE_ID_RE = re.compile(r"[0-9A-Za-z-]{1,64}")
+
+
+def _valid_stats_site_id(record: Mapping[str, Any]) -> str | None:
+    """Return a legacy record's validated statistics ``_id``, or None."""
+    raw_id = record.get("_id")
+    if not isinstance(raw_id, str):
+        return None
+    stripped = raw_id.strip()
+    if not _STATS_SITE_ID_RE.fullmatch(stripped):
+        return None
+    return stripped
+
+
+@dataclass(frozen=True, slots=True)
+class InternetActivityFetchResult:
+    """Result of fetching internet activity for a site."""
+
+    data: dict[str, dict[str, int]] | None
+    status: dict[str, Any]
+
+
+class MethodMissing:
+    """Sentinel indicating report method is missing on client."""
+
+
+METHOD_MISSING = MethodMissing()
+
+
 async def async_call_site_report(
     network_client: Any,
     site_name: str,
@@ -582,14 +628,14 @@ async def async_call_site_report(
     *,
     start_ms: int,
     end_ms: int,
-) -> list[Any]:
+) -> Any:
     """Invoke the Network client's legacy site report endpoint for one interval."""
     reports_obj = getattr(network_client, "reports", None)
     target_fn = getattr(reports_obj, "get_site_report", None)
     if not callable(target_fn):
         target_fn = getattr(network_client, "get_site_report", None)
     if not callable(target_fn):
-        return []
+        return METHOD_MISSING
 
     result = target_fn(
         site_name,
@@ -599,67 +645,451 @@ async def async_call_site_report(
     )
     if inspect.isawaitable(result):
         result = await result
-    return list(result) if isinstance(result, (list, tuple)) else []
+    if isinstance(result, (list, tuple)):
+        return list(result)
+    return result
 
 
 async def async_fetch_site_internet_activity(
-    fetch_optional_section: Callable[
-        [str, str, Callable[[], Awaitable[list[Any]]]],
-        Awaitable[list[Any] | None],
-    ],
-    call_site_report: Callable[..., Awaitable[list[Any]]],
+    fetch_optional_section: Callable[..., Awaitable[Any]],
+    call_site_report: Callable[..., Awaitable[Any]],
     site_id: str,
     site_name: str,
     now_ms: int,
-) -> dict[str, dict[str, int]] | None:
+) -> InternetActivityFetchResult:
     """Fetch ``5minutes``, ``hourly``, and ``daily`` site reports and aggregate."""
-    five_min_buckets = await fetch_optional_section(
-        "internet_activity",
-        site_id,
-        partial(
-            call_site_report,
-            site_name,
-            "5minutes",
-            start_ms=now_ms - WINDOW_1H_MS,
-            end_ms=now_ms,
-        ),
+    counts: dict[str, dict[str, int]] = {}
+    raw_buckets: dict[str, list[SiteReportBucket]] = {}
+    intervals: tuple[tuple[str, int], ...] = (
+        ("5minutes", now_ms - WINDOW_1H_MS),
+        ("hourly", now_ms - WINDOW_1W_MS),
+        ("daily", now_ms - WINDOW_1M_MS),
     )
-    if five_min_buckets is None:
-        return None
 
-    hourly_buckets = await fetch_optional_section(
-        "internet_activity",
-        site_id,
-        partial(
-            call_site_report,
-            site_name,
-            "hourly",
-            start_ms=now_ms - WINDOW_1W_MS,
-            end_ms=now_ms,
-        ),
-    )
-    if hourly_buckets is None:
-        return None
+    unsupported_count = 0
+    unrecognised_shape = False
 
-    daily_buckets = await fetch_optional_section(
-        "internet_activity",
-        site_id,
-        partial(
-            call_site_report,
-            site_name,
-            "daily",
-            start_ms=now_ms - WINDOW_1M_MS,
-            end_ms=now_ms,
-        ),
-    )
-    if daily_buckets is None:
-        return None
+    for interval_name, start_ms in intervals:
+        outcomes: dict[tuple[str, str], str] = {}
+        # ``fetch_optional_section`` classifies every failure except a 401,
+        # which it re-raises so the coordinator can trigger reauth.
+        res = await fetch_optional_section(
+            "internet_activity",
+            site_id,
+            partial(
+                call_site_report,
+                site_name,
+                interval_name,
+                start_ms=start_ms,
+                end_ms=now_ms,
+            ),
+            outcomes=outcomes,
+        )
 
-    return aggregate_internet_activity_windows(
-        five_min_buckets,
-        hourly_buckets,
-        daily_buckets,
+        if (
+            outcomes.get(("internet_activity", site_id)) == SECTION_OUTCOME_FAILED
+            or res is None
+        ):
+            counts[interval_name] = {"received": 0, "usable": 0, "skipped": 0}
+            return InternetActivityFetchResult(
+                data=None,
+                status={"source": "legacy", "reason": "failed", "counts": counts},
+            )
+
+        if res is METHOD_MISSING:
+            counts[interval_name] = {"received": 0, "usable": 0, "skipped": 0}
+            return InternetActivityFetchResult(
+                data=None,
+                status={
+                    "source": "legacy",
+                    "reason": "method_missing",
+                    "counts": counts,
+                },
+            )
+
+        if outcomes.get(("internet_activity", site_id)) == SECTION_OUTCOME_UNSUPPORTED:
+            unsupported_count += 1
+            counts[interval_name] = {"received": 0, "usable": 0, "skipped": 0}
+            raw_buckets[interval_name] = []
+            continue
+
+        if not isinstance(res, list):
+            unrecognised_shape = True
+            counts[interval_name] = {"received": 0, "usable": 0, "skipped": 0}
+            raw_buckets[interval_name] = []
+            continue
+
+        valid_items: list[SiteReportBucket] = []
+        skipped = 0
+        for item in res:
+            if isinstance(item, SiteReportBucket):
+                valid_items.append(item)
+            elif isinstance(item, dict):
+                try:
+                    valid_items.append(SiteReportBucket.model_validate(item))
+                except Exception as err:
+                    _LOGGER.debug(
+                        "Skipping invalid site report bucket (%s)",
+                        type(err).__name__,
+                    )
+                    skipped += 1
+            else:
+                skipped += 1
+
+        counts[interval_name] = {
+            "received": len(res),
+            "usable": len(valid_items),
+            "skipped": skipped,
+        }
+        raw_buckets[interval_name] = valid_items
+
+    if unrecognised_shape:
+        return InternetActivityFetchResult(
+            data=None,
+            status={
+                "source": "legacy",
+                "reason": "unrecognised_shape",
+                "counts": counts,
+            },
+        )
+
+    if unsupported_count == len(intervals):
+        return InternetActivityFetchResult(
+            data={},
+            status={"source": "legacy", "reason": "unsupported", "counts": counts},
+        )
+
+    total_received = sum(c["received"] for c in counts.values())
+    if total_received == 0:
+        return InternetActivityFetchResult(
+            data={},
+            status={"source": "legacy", "reason": "empty_response", "counts": counts},
+        )
+
+    windows = aggregate_internet_activity_windows(
+        raw_buckets.get("5minutes", []),
+        raw_buckets.get("hourly", []),
+        raw_buckets.get("daily", []),
         now_ms=now_ms,
+    )
+    if windows:
+        return InternetActivityFetchResult(
+            data=windows,
+            status={"source": "legacy", "reason": "ok", "counts": counts},
+        )
+
+    return InternetActivityFetchResult(
+        data={},
+        status={"source": "legacy", "reason": "no_usable_buckets", "counts": counts},
+    )
+
+
+def map_legacy_stats_site_ids(
+    integration_sites: Mapping[str, Any] | Iterable[Any],
+    legacy_sites: Iterable[Any],
+) -> dict[str, str]:
+    """
+    Map an integration site ID to its classic statistics ``_id``.
+
+    Resolution order, validated against the complete inventories:
+
+    1. A unique legacy record whose ``external_id`` equals the integration ID.
+    2. With no ``external_id`` match, a unique record without an
+       ``external_id`` whose ``name`` equals the integration site's
+       ``internalReference``.
+    3. A single-site fallback, only when the full integration inventory and
+       the full legacy inventory each hold exactly one record and that
+       record's ``external_id`` is absent or equal to the integration ID.
+
+    A conflict, a duplicate target ``_id``, an invalid or missing ``_id``, or
+    more than one site competing for the same record leaves the site
+    unresolved: the caller then skips modern statistics for it.
+    """
+    if not integration_sites or not legacy_sites:
+        return {}
+    if isinstance(integration_sites, Mapping):
+        int_items = list(integration_sites.values())
+    else:
+        int_items = list(integration_sites)
+
+    all_int_sites: dict[str, str | None] = {}
+    for item in int_items:
+        sid = item.get("id") if isinstance(item, Mapping) else getattr(item, "id", None)
+        if isinstance(sid, str) and sid.strip():
+            int_ref = (
+                item.get("internalReference") or item.get("internal_reference")
+                if isinstance(item, Mapping)
+                else getattr(item, "internalReference", None)
+                or getattr(item, "internal_reference", None)
+            )
+            all_int_sites[sid.strip()] = str(int_ref).strip() if int_ref else None
+
+    if not all_int_sites:
+        return {}
+
+    legacy_records = [dict(rec) for rec in legacy_sites if isinstance(rec, Mapping)]
+    if not legacy_records:
+        return {}
+
+    valid_legacy_sites: list[dict[str, Any]] = [
+        rec for rec in legacy_records if _valid_stats_site_id(rec) is not None
+    ]
+    if not valid_legacy_sites:
+        return {}
+
+    # A target ``_id`` shared by two records is ambiguous wherever it is
+    # used, even when only one of those records ends up as a candidate.
+    valid_targets = [
+        target
+        for rec in valid_legacy_sites
+        if (target := _valid_stats_site_id(rec)) is not None
+    ]
+    duplicate_targets = {
+        tid for tid, count in Counter(valid_targets).items() if count > 1
+    }
+
+    candidates: dict[str, str] = {}
+    for sid, int_ref in all_int_sites.items():
+        ext_matches = [rec for rec in legacy_records if rec.get("external_id") == sid]
+        if len(ext_matches) == 1:
+            target = _valid_stats_site_id(ext_matches[0])
+            if target is not None:
+                candidates[sid] = target
+            continue
+        if len(ext_matches) > 1:
+            continue
+        if int_ref:
+            ref_matches = [
+                rec
+                for rec in legacy_records
+                if not rec.get("external_id") and rec.get("name") == int_ref
+            ]
+            if len(ref_matches) == 1:
+                target = _valid_stats_site_id(ref_matches[0])
+                if target is not None:
+                    candidates[sid] = target
+
+    # Fallback only for one integration site and one legacy record, and only
+    # when that record does not name a different integration site.
+    if len(all_int_sites) == 1 and len(legacy_records) == 1:
+        sid = next(iter(all_int_sites))
+        record = legacy_records[0]
+        target = _valid_stats_site_id(record)
+        if target is not None and record.get("external_id") in (None, "", sid):
+            candidates[sid] = target
+
+    target_counts = Counter(candidates.values())
+    return {
+        sid: tid
+        for sid, tid in candidates.items()
+        if target_counts[tid] == 1 and tid not in duplicate_targets
+    }
+
+
+def _sum_modern_window(
+    buckets: Sequence[StatsSeriesBucket],
+    cutoff_ms: int,
+    now_ms: int,
+) -> dict[str, int] | None:
+    """Sum download and upload bytes for modern buckets at or after cutoff_ms."""
+    rx_values: list[float] = []
+    tx_values: list[float] = []
+    for bucket in buckets:
+        if bucket.timestamp < cutoff_ms or bucket.timestamp > now_ms:
+            continue
+        # StatsSeriesBucket already turns missing, bool, non-numeric, negative,
+        # non-finite and oversized byte values into None and keeps a real 0,
+        # so None is the only value to skip here.
+        if bucket.rx_bytes is not None:
+            rx_values.append(bucket.rx_bytes)
+        if bucket.tx_bytes is not None:
+            tx_values.append(bucket.tx_bytes)
+
+    if not rx_values and not tx_values:
+        return None
+
+    window_totals: dict[str, int] = {}
+    if rx_values:
+        window_totals["rx_bytes"] = round(math.fsum(rx_values))
+    if tx_values:
+        window_totals["tx_bytes"] = round(math.fsum(tx_values))
+    return window_totals
+
+
+def aggregate_modern_internet_activity_windows(
+    day_series: Sequence[StatsSeriesBucket],
+    week_series: Sequence[StatsSeriesBucket],
+    month_series: Sequence[StatsSeriesBucket],
+    *,
+    now_ms: int,
+) -> dict[str, dict[str, int]]:
+    """Aggregate modern statistics buckets into 1h, 1d, 1w, and 1m totals."""
+    windows: dict[str, dict[str, int]] = {}
+    for window_key, source_buckets, duration_ms in (
+        ("1h", day_series, WINDOW_1H_MS),
+        ("1d", day_series, WINDOW_1D_MS),
+        ("1w", week_series, WINDOW_1W_MS),
+        ("1m", month_series, WINDOW_1M_MS),
+    ):
+        totals = _sum_modern_window(source_buckets, now_ms - duration_ms, now_ms)
+        if totals is not None:
+            windows[window_key] = totals
+    return windows
+
+
+async def async_fetch_site_modern_internet_activity(
+    fetch_optional_section: Callable[..., Awaitable[Any]],
+    network_client: UniFiNetworkClient,
+    site_id: str,
+    stats_site_id: str,
+    now_ms: int,
+) -> InternetActivityFetchResult:
+    """Fetch DAY, WEEK, and MONTH modern series and aggregate."""
+    counts: dict[str, dict[str, int]] = {}
+    series_by_period: dict[str, list[StatsSeriesBucket]] = {}
+    periods: tuple[Literal["DAY", "WEEK", "MONTH"], ...] = ("DAY", "WEEK", "MONTH")
+
+    unsupported_count = 0
+
+    stats_ep = network_client.stats
+
+    for period in periods:
+        outcomes: dict[tuple[str, str], str] = {}
+        is_403 = False
+
+        async def _call_series(
+            p: Literal["DAY", "WEEK", "MONTH"] = period,
+        ) -> list[StatsSeries]:
+            nonlocal is_403
+            try:
+                return await stats_ep.get_recent_series(
+                    schema="wanBySite",
+                    site_id=stats_site_id,
+                    period=p,
+                    end_ms=now_ms,
+                    values=("rxBytes", "txBytes"),
+                )
+            except UniFiAuthenticationError as err:
+                # Tag a stats-only permission denial at the call boundary:
+                # the shared classifier reports it as unsupported, but the
+                # activity status must say why the section has no data.
+                if getattr(err, "status_code", None) in (
+                    HTTPStatus.FORBIDDEN,
+                    HTTPStatus.FORBIDDEN.value,
+                ):
+                    is_403 = True
+                raise
+
+        # ``fetch_optional_section`` classifies every failure except a 401,
+        # which it re-raises so the coordinator can trigger reauth.
+        res = await fetch_optional_section(
+            "internet_activity",
+            site_id,
+            _call_series,
+            outcomes=outcomes,
+        )
+
+        if is_403:
+            counts[period] = {"received": 0, "usable": 0, "skipped": 0}
+            return InternetActivityFetchResult(
+                data=None,
+                status={
+                    "source": "modern",
+                    "reason": "permission_denied",
+                    "counts": counts,
+                },
+            )
+
+        if (
+            outcomes.get(("internet_activity", site_id)) == SECTION_OUTCOME_FAILED
+            or res is None
+        ):
+            counts[period] = {"received": 0, "usable": 0, "skipped": 0}
+            return InternetActivityFetchResult(
+                data=None,
+                status={"source": "modern", "reason": "failed", "counts": counts},
+            )
+
+        if outcomes.get(("internet_activity", site_id)) == SECTION_OUTCOME_UNSUPPORTED:
+            unsupported_count += 1
+            counts[period] = {"received": 0, "usable": 0, "skipped": 0}
+            series_by_period[period] = []
+            continue
+
+        matching_series = [s for s in res if s.site_id == stats_site_id]
+        if len(matching_series) > 1:
+            counts[period] = {"received": 0, "usable": 0, "skipped": 0}
+            return InternetActivityFetchResult(
+                data=None,
+                status={
+                    "source": "modern",
+                    "reason": "unrecognised_shape",
+                    "counts": counts,
+                },
+            )
+
+        if not matching_series:
+            counts[period] = {"received": 0, "usable": 0, "skipped": 0}
+            series_by_period[period] = []
+            continue
+
+        raw_buckets = matching_series[0].series
+        timestamps = [bucket.timestamp for bucket in raw_buckets]
+        if len(timestamps) != len(set(timestamps)):
+            counts[period] = {
+                "received": len(raw_buckets),
+                "usable": 0,
+                "skipped": len(raw_buckets),
+            }
+            return InternetActivityFetchResult(
+                data=None,
+                status={
+                    "source": "modern",
+                    "reason": "unrecognised_shape",
+                    "counts": counts,
+                },
+            )
+
+        usable = sum(
+            1
+            for bucket in raw_buckets
+            if bucket.rx_bytes is not None or bucket.tx_bytes is not None
+        )
+        counts[period] = {
+            "received": len(raw_buckets),
+            "usable": usable,
+            "skipped": len(raw_buckets) - usable,
+        }
+        series_by_period[period] = list(raw_buckets)
+
+    if unsupported_count == len(periods):
+        return InternetActivityFetchResult(
+            data={},
+            status={"source": "modern", "reason": "unsupported", "counts": counts},
+        )
+
+    total_received = sum(c["received"] for c in counts.values())
+    if total_received == 0:
+        return InternetActivityFetchResult(
+            data={},
+            status={"source": "modern", "reason": "empty_response", "counts": counts},
+        )
+
+    windows = aggregate_modern_internet_activity_windows(
+        series_by_period.get("DAY", []),
+        series_by_period.get("WEEK", []),
+        series_by_period.get("MONTH", []),
+        now_ms=now_ms,
+    )
+    if windows:
+        return InternetActivityFetchResult(
+            data=windows,
+            status={"source": "modern", "reason": "ok", "counts": counts},
+        )
+
+    return InternetActivityFetchResult(
+        data={},
+        status={"source": "modern", "reason": "no_usable_buckets", "counts": counts},
     )
 
 
@@ -681,9 +1111,7 @@ def resolve_report_site_name(
 
 
 async def async_update_site_internet_activity(
-    fetch_site_internet_activity: Callable[
-        ..., Awaitable[dict[str, dict[str, int]] | None]
-    ],
+    fetch_site_internet_activity: Callable[..., Awaitable[InternetActivityFetchResult]],
     *,
     site_id: str,
     site_data: Any,
@@ -692,17 +1120,26 @@ async def async_update_site_internet_activity(
     prior_activity: Any,
     internet_activity_by_site: dict[str, dict[str, dict[str, int]]],
     failed_sections: set[tuple[str, str]],
+    internet_activity_status: dict[str, dict[str, Any]] | None = None,
+    stats_site_id: str | None = None,
+    source: str = "legacy",
 ) -> None:
     """Refresh internet activity for one site and update coordinator state dicts."""
     report_site_name = resolve_report_site_name(site_id, site_data, legacy_name)
-    site_activity = await fetch_site_internet_activity(
+    result = await fetch_site_internet_activity(
         site_id=site_id,
         site_name=report_site_name,
         now_ms=now_ms,
+        stats_site_id=stats_site_id,
+        source=source,
     )
-    if site_activity is None:
+
+    if internet_activity_status is not None:
+        internet_activity_status[site_id] = result.status
+
+    if result.data is None:
         failed_sections.add(("internet_activity", site_id))
         if isinstance(prior_activity, dict) and prior_activity:
             internet_activity_by_site[site_id] = prior_activity
-    elif site_activity:
-        internet_activity_by_site[site_id] = site_activity
+    elif result.data:
+        internet_activity_by_site[site_id] = result.data

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.update_coordinator import UpdateFailed
 from unifi_official_api import (
     UniFiAuthenticationError,
     UniFiConnectionError,
@@ -45,10 +46,12 @@ from .config_sections import (
     WINDOW_1H_MS,
     WINDOW_1M_MS,
     WINDOW_1W_MS,
+    InternetActivityFetchResult,
     aggregate_internet_activity_windows,
     async_call_site_report,
     async_fetch_site_firewall,
     async_fetch_site_internet_activity,
+    async_fetch_site_modern_internet_activity,
     async_fetch_site_routes,
     async_fetch_site_rule_section,
     async_fetch_site_vouchers,
@@ -59,6 +62,7 @@ from .config_sections import (
     client_links,
     enrich_wifi,
     map_legacy_site_names,
+    map_legacy_stats_site_ids,
     rule_display_name,
     verified_legacy_site_name,
     wifi_qr_payload,
@@ -80,6 +84,7 @@ if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import CALLBACK_TYPE, HomeAssistant
     from unifi_official_api.network import UniFiNetworkClient
+    from unifi_official_api.network.models import Site
     from unifi_official_api.network.models.voucher import Voucher
     from unifi_official_api.protect import UniFiProtectClient
 
@@ -101,6 +106,17 @@ RULE_REFRESH_RETRY_DELAY: Final = 15
 # Minimum seconds between two on-demand legacy site lookups, so a classic API
 # that is down is not asked again on every write.
 LEGACY_REMAP_COOLDOWN: Final = 60
+
+# Seconds a detected statistics engine source is trusted before re-probing.
+STATS_SOURCE_TTL: Final = 3600.0
+
+
+def _error_category(err: BaseException) -> str:
+    """Return a bounded, value-free label for a failed optional-section fetch."""
+    status = getattr(err, "status_code", None)
+    if isinstance(status, int) and not isinstance(status, bool):
+        return f"{type(err).__name__}({status})"
+    return type(err).__name__
 
 
 def refreshed_latest_vouchers(
@@ -143,6 +159,7 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
         *,
         network_available: bool = True,
         innerspace_available: bool = False,
+        initial_sites: list[Site] | None = None,
     ) -> None:
         """Initialize the config coordinator."""
         super().__init__(
@@ -154,10 +171,9 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
             update_interval=SCAN_INTERVAL_CONFIG,
         )
         self._network_available = network_available
-        # Set once the sites endpoint has answered. After that, Network is
-        # known to exist and a failure is transient, never a reason to stop
-        # asking.
-        self._network_confirmed = False
+        self._initial_sites = initial_sites
+        self._network_confirmed = initial_sites is not None
+        self._sites_unauthorized_seen = False
         self._innerspace_available = innerspace_available
         self.data: dict[str, Any] = {
             "sites": {},
@@ -178,12 +194,18 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
             "client_links": {},
             "internet_activity": {},
             "internet_activity_unavailable": set(),
+            "internet_activity_status": {},
             "rule_changes": {},
             # Integration site ID -> classic site name, published for every
             # owner that needs it (ADR-010). Last-good on lookup failure.
             "legacy_site_names": {},
             "legacy_mapping_failed": False,
         }
+        self._clock: Callable[[], float] = time.monotonic
+        self._stats_source: str | None = None
+        self._stats_source_expires_at: float = 0.0
+        self._stats_site_ids: dict[str, str] = {}
+        self._internet_activity_no_data_sites: set[str] = set()
         self._rule_audit = RuleAuditTracker()
         self.available_sites: dict[str, str] = {}
         self._warned_no_selected_sites = False
@@ -219,34 +241,6 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
         """Return True if the last refresh fetched WiFi networks for a site."""
         return self._section_available("wifi", site_id)
 
-    def firewall_available(self, site_id: str) -> bool:
-        """Return True if the last refresh fetched firewall rules for a site."""
-        return self._section_available("firewall_rules", site_id)
-
-    def vouchers_available(self, site_id: str) -> bool:
-        """Return True if the last refresh fetched hotspot vouchers for a site."""
-        return self._section_available("vouchers", site_id)
-
-    def port_forwards_available(self, site_id: str) -> bool:
-        """Return True if the last refresh fetched port forwards for a site."""
-        return self._section_available("port_forwards", site_id)
-
-    def traffic_rules_available(self, site_id: str) -> bool:
-        """Return True if the last refresh fetched traffic rules for a site."""
-        return self._section_available("traffic_rules", site_id)
-
-    def nat_rules_available(self, site_id: str) -> bool:
-        """Return True if the last refresh fetched NAT rules for a site."""
-        return self._section_available("nat_rules", site_id)
-
-    def static_routes_available(self, site_id: str) -> bool:
-        """Return True if the last refresh fetched static routes for a site."""
-        return self._section_available("static_routes", site_id)
-
-    def internet_activity_available(self, site_id: str) -> bool:
-        """Return True if the last refresh fetched internet activity for a site."""
-        return self._section_available("internet_activity", site_id)
-
     async def _fetch_optional_section(
         self,
         section: str,
@@ -272,21 +266,29 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
             unsupported: Exception = err
         except Exception as err:
             if not self._is_unsupported_response(err):
-                log = (
-                    _LOGGER.debug
-                    if (section, site_id) in self._failed_sections
-                    else _LOGGER.warning
-                )
-                # A record that failed to parse: the message names its
-                # fields, which the exception's own text leaves out.
-                err_msg: Any = err.message if is_malformed_response(err) else err
-                log(
-                    "Config coordinator: Unable to fetch %s for site %s, keeping "
-                    "the last known data: %s",
-                    section,
-                    site_id,
-                    err_msg,
-                )
+                if section != "internet_activity":
+                    log = (
+                        _LOGGER.debug
+                        if (section, site_id) in self._failed_sections
+                        else _LOGGER.warning
+                    )
+                    # A record that failed to parse: the message names its
+                    # fields, which the exception's own text leaves out.
+                    err_msg: Any = err.message if is_malformed_response(err) else err
+                    log(
+                        "Config coordinator: Unable to fetch %s for site %s, keeping "
+                        "the last known data: %s",
+                        section,
+                        site_id,
+                        err_msg,
+                    )
+                else:
+                    _LOGGER.debug(
+                        "Config coordinator: Unable to fetch %s for site %s (%s)",
+                        section,
+                        site_id,
+                        _error_category(err),
+                    )
                 outcomes[(section, site_id)] = SECTION_OUTCOME_FAILED
                 return None
             unsupported = err
@@ -297,7 +299,11 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
             "Config coordinator: %s not available for site %s: %s",
             section,
             site_id,
-            unsupported,
+            # Statistics denials (a 403 for a View-Only key) carry
+            # transport text; log only the bounded category for them.
+            _error_category(unsupported)
+            if section == "internet_activity"
+            else unsupported,
         )
         outcomes[(section, site_id)] = SECTION_OUTCOME_UNSUPPORTED
         return []
@@ -309,11 +315,58 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
         *,
         start_ms: int,
         end_ms: int,
-    ) -> list[Any]:
+    ) -> Any:
         """Invoke the Network client site report method for one interval."""
         return await async_call_site_report(
             self.network_client, site_name, interval, start_ms=start_ms, end_ms=end_ms
         )
+
+    async def _async_detect_internet_activity_source(
+        self,
+    ) -> tuple[str | None, str | None]:
+        """Detect statistics engine source mode (LEGACY or MODERN)."""
+        now = self._clock()
+        if self._stats_source is not None and now < self._stats_source_expires_at:
+            return self._stats_source, None
+
+        try:
+            source_obj = await self.network_client.stats.get_source()
+            source = source_obj.root
+            self._stats_source = source
+            self._stats_source_expires_at = now + STATS_SOURCE_TTL
+            return source, None
+
+        except UniFiAuthenticationError as err:
+            if getattr(err, "status_code", None) in (
+                HTTPStatus.FORBIDDEN,
+                HTTPStatus.FORBIDDEN.value,
+            ):
+                # A stats-only permission denial is not entry-wide auth
+                # failure: report it for this refresh and retry next poll.
+                return self._stats_source, "permission_denied"
+            # A 401 keeps the coordinator's reauth path: re-raise the
+            # library error so the refresh's auth handler runs.
+            raise
+
+        except Exception as err:
+            if self._is_unsupported_response(err) or getattr(
+                err, "status_code", None
+            ) in (HTTPStatus.NOT_FOUND, HTTPStatus.NOT_FOUND.value):
+                # No statistics engine at all: the console is a legacy one.
+                self._stats_source = "LEGACY"
+                self._stats_source_expires_at = now + STATS_SOURCE_TTL
+                return "LEGACY", None
+            if is_malformed_response(err):
+                # An unknown label or a bad payload is malformed, never LEGACY.
+                return self._stats_source, (
+                    None if self._stats_source is not None else "unrecognised_shape"
+                )
+            # Transient (rate limit, 5xx, timeout, connection): keep the last
+            # known source without renewing its expiry, so the next poll
+            # retries detection.
+            return self._stats_source, (
+                None if self._stats_source is not None else "failed"
+            )
 
     async def _fetch_site_internet_activity(
         self,
@@ -321,8 +374,28 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
         site_id: str,
         site_name: str,
         now_ms: int,
-    ) -> dict[str, dict[str, int]] | None:
-        """Fetch ``5minutes``, ``hourly``, and ``daily`` site reports and aggregate."""
+        stats_site_id: str | None = None,
+        source: str = "legacy",
+    ) -> InternetActivityFetchResult:
+        """Fetch site internet activity according to selected source."""
+        if source == "modern":
+            if not stats_site_id:
+                return InternetActivityFetchResult(
+                    data=None,
+                    status={
+                        "source": "modern",
+                        "reason": "site_not_resolved",
+                        "counts": {},
+                    },
+                )
+            return await async_fetch_site_modern_internet_activity(
+                self._fetch_optional_section,
+                self.network_client,
+                site_id=site_id,
+                stats_site_id=stats_site_id,
+                now_ms=now_ms,
+            )
+
         return await async_fetch_site_internet_activity(
             self._fetch_optional_section,
             self._call_site_report,
@@ -331,41 +404,59 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
             now_ms=now_ms,
         )
 
+    async def _async_fetch_sites(self) -> list[Site]:
+        """List sites while distinguishing a missing app from a failed poll."""
+        if not self._network_available:
+            return []
+
+        if self._initial_sites is not None:
+            # Setup already fetched these sites. Reusing them avoids a second
+            # availability decision between the probe and the first refresh.
+            sites, self._initial_sites = self._initial_sites, None
+            return sites
+
+        other_app_available = (
+            self.protect_client is not None or self._innerspace_available
+        )
+        previous_unauthorized = self._sites_unauthorized_seen
+        self._sites_unauthorized_seen = False
+        try:
+            sites = await self.network_client.sites.get_all()
+        except (UniFiAuthenticationError, UniFiResponseError) as err:
+            if (
+                other_app_available
+                and not self._network_confirmed
+                and (
+                    isinstance(err, (UniFiNotFoundError, UniFiAuthenticationError))
+                    or err.status_code == HTTPStatus.OK
+                )
+            ):
+                self._network_available = False
+                _LOGGER.debug(
+                    "Config coordinator: Unconfirmed Network unavailable: %s", err
+                )
+                return []
+
+            if (
+                other_app_available
+                and isinstance(err, UniFiAuthenticationError)
+                and err.status_code == HTTPStatus.UNAUTHORIZED
+            ):
+                # Both a booting console and a revoked key can return 401.
+                # Only consecutive 401s count as persistent rejection.
+                self._sites_unauthorized_seen = True
+                if not previous_unauthorized:
+                    msg = "Network sites returned HTTP 401. Retrying next poll."
+                    raise UpdateFailed(msg) from err
+            raise
+
+        self._network_confirmed = True
+        return sites
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch configuration data from API."""
         try:
-            sites_models = []
-            if self._network_available:
-                # Only a console whose Network API has never answered is
-                # treated as having no Network application. Once it has, a
-                # rebooting or updating console's HTML page (a 200), 404 or
-                # 401 is a failed refresh, retried on the next poll; turning
-                # Network off then would leave every Network entity
-                # unavailable until the entry is reloaded.
-                other_app_available = not self._network_confirmed and (
-                    self.protect_client is not None or self._innerspace_available
-                )
-                try:
-                    sites_models = await self.network_client.sites.get_all()
-                    self._network_confirmed = True
-                except (UniFiNotFoundError, UniFiAuthenticationError) as err:
-                    if other_app_available:
-                        self._network_available = False
-                        _LOGGER.debug(
-                            "Config coordinator: Network API not available: %s", err
-                        )
-                    else:
-                        raise
-                except UniFiResponseError as err:
-                    if not other_app_available or err.status_code != HTTPStatus.OK:
-                        raise
-                    self._network_available = False
-                    _LOGGER.debug(
-                        "Config coordinator: sites endpoint returned non-JSON "
-                        "(status %s)",
-                        err.status_code,
-                    )
-
+            sites_models = await self._async_fetch_sites()
             site_list = [self._model_to_dict(s) for s in sites_models]
             all_sites: dict[str, dict[str, Any]] = {
                 site["id"]: site for site in site_list if site.get("id")
@@ -379,6 +470,8 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
             sites = self._filter_selected_sites(all_sites)
 
             if not sites:
+                self._internet_activity_no_data_sites.clear()
+                self._stats_site_ids = {}
                 cleared: dict[str, Any] = {
                     **self.data,
                     "sites": sites,
@@ -396,6 +489,7 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
                     "client_links": {},
                     "internet_activity": {},
                     "internet_activity_unavailable": set(),
+                    "internet_activity_status": {},
                     "legacy_site_names": {},
                     "legacy_mapping_failed": False,
                     "last_update": datetime.now(tz=UTC),
@@ -410,13 +504,32 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
             # once, after the last await (see below). The facade passes the
             # published sections on by reference, so a rebuild during this
             # refresh keeps seeing the previous, consistent set.
+            (
+                stats_source,
+                detection_error,
+            ) = await self._async_detect_internet_activity_source()
+
             legacy_site_names: dict[str, str] = {}
+            stats_site_ids: dict[str, str] = {}
             legacy_mapping_failed = False
             try:
                 legacy_sites = await self.network_client.sites.get_legacy_all()
                 legacy_site_names = self._map_legacy_site_names(sites, legacy_sites)
+                stats_site_ids = map_legacy_stats_site_ids(all_sites, legacy_sites)
+                self._stats_site_ids = stats_site_ids
             except Exception as err:
                 legacy_mapping_failed = True
+                # Keep last-good stats IDs only for sites the console still has.
+                self._stats_site_ids = {
+                    site_id: sid
+                    for site_id, sid in self._stats_site_ids.items()
+                    if site_id in all_sites
+                }
+                stats_site_ids = {
+                    site_id: sid
+                    for site_id, sid in self._stats_site_ids.items()
+                    if site_id in sites
+                }
                 _LOGGER.debug(
                     "Config coordinator: Unable to fetch legacy site mapping: %s", err
                 )
@@ -438,6 +551,7 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
             firewall_by_site: dict[str, dict[str, Any]] = {}
             vouchers_by_site: dict[str, tuple[int, dict[str, Any]]] = {}
             internet_activity_by_site: dict[str, dict[str, dict[str, int]]] = {}
+            internet_activity_status: dict[str, dict[str, Any]] = {}
             failed_sections: set[tuple[str, str]] = set()
             section_outcomes: dict[tuple[str, str], str] = {}
             routes_by_site: dict[str, dict[str, Any]] = {}
@@ -466,16 +580,32 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
                     v_seq,
                     await async_fetch_site_vouchers(self, site_id, failed_sections),
                 )
-                await async_update_site_internet_activity(
-                    self._fetch_site_internet_activity,
-                    site_id=site_id,
-                    site_data=sites.get(site_id),
-                    legacy_name=legacy_name,
-                    now_ms=now_ms,
-                    prior_activity=self.data.get("internet_activity", {}).get(site_id),
-                    internet_activity_by_site=internet_activity_by_site,
-                    failed_sections=failed_sections,
-                )
+                if detection_error is not None:
+                    internet_activity_status[site_id] = {
+                        "source": (stats_source.lower() if stats_source else "unknown"),
+                        "reason": detection_error,
+                        "counts": {},
+                    }
+                    failed_sections.add(("internet_activity", site_id))
+                    prior = self.data.get("internet_activity", {}).get(site_id)
+                    if isinstance(prior, dict) and prior:
+                        internet_activity_by_site[site_id] = prior
+                else:
+                    await async_update_site_internet_activity(
+                        self._fetch_site_internet_activity,
+                        site_id=site_id,
+                        site_data=sites.get(site_id),
+                        legacy_name=legacy_name,
+                        now_ms=now_ms,
+                        prior_activity=self.data.get("internet_activity", {}).get(
+                            site_id
+                        ),
+                        internet_activity_by_site=internet_activity_by_site,
+                        failed_sections=failed_sections,
+                        internet_activity_status=internet_activity_status,
+                        stats_site_id=stats_site_ids.get(site_id),
+                        source=stats_source.lower() if stats_source else "legacy",
+                    )
                 routes_by_site[site_id] = await async_fetch_site_routes(
                     self.network_client,
                     self._model_to_dict,
@@ -558,6 +688,7 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
                 "internet_activity_unavailable": {
                     s for sec, s in failed_sections if sec == "internet_activity"
                 },
+                "internet_activity_status": internet_activity_status,
                 "policy_based_routes": routes_by_site,
                 "vpn_clients": vpn_clients_by_site,
                 **rule_sections_by_site,
@@ -566,7 +697,44 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
                 "legacy_site_names": published_legacy_site_names,
                 "legacy_mapping_failed": legacy_mapping_failed,
             }
+            for site_id in sites:
+                status = internet_activity_status.get(site_id, {})
+                reason = status.get("reason")
+                if reason != "ok":
+                    if site_id not in self._internet_activity_no_data_sites:
+                        self._internet_activity_no_data_sites.add(site_id)
+                        _LOGGER.info(
+                            "Config coordinator: Internet activity for site %s "
+                            "reported no data (%s, reason: %s, counts: %s)",
+                            site_id,
+                            status.get("source"),
+                            reason,
+                            status.get("counts"),
+                        )
+                    else:
+                        _LOGGER.debug(
+                            "Config coordinator: Internet activity for site %s "
+                            "still reported no data (%s, reason: %s, counts: %s)",
+                            site_id,
+                            status.get("source"),
+                            reason,
+                            status.get("counts"),
+                        )
+                elif site_id in self._internet_activity_no_data_sites:
+                    self._internet_activity_no_data_sites.discard(site_id)
+                    _LOGGER.info(
+                        "Config coordinator: Internet activity for site %s "
+                        "recovered (%s, counts: %s)",
+                        site_id,
+                        status.get("source"),
+                        status.get("counts"),
+                    )
+            self._internet_activity_no_data_sites &= set(sites)
+
             for section, site_id in self._failed_sections - failed_sections:
+                if section == "internet_activity":
+                    # The no-data tracker above already logged its recovery.
+                    continue
                 _LOGGER.info(
                     "Config coordinator: %s fetch for site %s recovered",
                     section,
@@ -586,6 +754,9 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
             self._handle_timeout_error(err)
         except UniFiResponseError as err:
             self._handle_response_error(err)
+        except UpdateFailed:
+            self._available = False
+            raise
         except Exception as err:
             self._handle_generic_error(err)
 
@@ -1187,19 +1358,3 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
     def get_site_ids(self) -> list[str]:
         """Get all site IDs."""
         return list(self.data.get("sites", {}).keys())
-
-    def get_wifi_networks(self, site_id: str) -> dict[str, Any]:
-        """Get WiFi networks for a site."""
-        return dict(self.data.get("wifi", {}).get(site_id, {}))
-
-    def get_firewall_rules(self, site_id: str) -> dict[str, Any]:
-        """Get firewall rules for a site."""
-        return dict(self.data.get("firewall_rules", {}).get(site_id, {}))
-
-    def get_policy_based_routes(self, site_id: str) -> dict[str, Any]:
-        """Get policy-based routes for a site."""
-        return dict(self.data.get("policy_based_routes", {}).get(site_id, {}))
-
-    def get_vpn_clients(self, site_id: str) -> dict[str, Any]:
-        """Get VPN clients for a site."""
-        return dict(self.data.get("vpn_clients", {}).get(site_id, {}))

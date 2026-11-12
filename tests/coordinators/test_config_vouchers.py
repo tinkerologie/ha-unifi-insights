@@ -31,6 +31,7 @@ from unifi_official_api import (
 )
 from unifi_official_api.network import UniFiNetworkClient
 from unifi_official_api.network.endpoints.vouchers import VouchersEndpoint
+from unifi_official_api.network.models.stats import StatisticsSource
 from unifi_official_api.network.models.voucher import Voucher
 from unifi_official_api.validation import parse_record
 
@@ -51,6 +52,7 @@ from custom_components.unifi_insights.coordinators.facade import (
 from custom_components.unifi_insights.data_transforms import (
     VoucherSettings,
     count_active_vouchers,
+    site_section_available,
 )
 from custom_components.unifi_insights.image import UnifiVoucherQrCodeImage
 from tests.fixtures.assertions import patch_attribute, require_mock, require_not_none
@@ -333,6 +335,8 @@ async def voucher_flow(
     client.sites.get_all = AsyncMock(
         return_value=[_create_mock_model({"id": "site1", "name": "Default"})]
     )
+    client.stats.get_source = AsyncMock(return_value=StatisticsSource("LEGACY"))
+    client.stats.get_recent_series = AsyncMock(return_value=[])
     for endpoint, method in (
         ("sites", "get_legacy_all"),
         ("wifi", "get_all"),
@@ -459,7 +463,7 @@ async def test_numeric_code_does_not_log_credential(
     with caplog.at_level(logging.DEBUG):
         if method == "GET":
             await config.async_refresh_vouchers("site1")
-            assert config.vouchers_available("site1") is False
+            assert ("vouchers", "site1") in config.failed_sections
         else:
             with pytest.raises(HomeAssistantError):
                 await config.async_generate_voucher(
@@ -543,7 +547,7 @@ async def test_partial_overlap_is_incomplete_coordinator(
     assert config.last_update_success is True
     assert config._failed_sections == {("vouchers", "site1")}
     assert config.wifi_available("site1") is True
-    assert config.firewall_available("site1") is True
+    assert ("firewall_rules", "site1") not in config.failed_sections
     _assert_credential_absent(caplog, "1234567890")
 
 
@@ -689,7 +693,7 @@ async def test_stale_targeted_voucher_refresh_is_discarded(
     release_older.set()
     await older_task
     assert list(config.data["vouchers"]["site1"]) == ["newer"]
-    assert config.vouchers_available("site1") is True
+    assert ("vouchers", "site1") not in config.failed_sections
 
 
 async def test_stale_full_poll_keeps_newer_voucher_failure(
@@ -718,11 +722,11 @@ async def test_stale_full_poll_keeps_newer_voucher_failure(
     poll_task = asyncio.create_task(config.async_refresh())
     await poll_started.wait()
     await config.async_refresh_vouchers("site1")
-    assert config.vouchers_available("site1") is False
+    assert ("vouchers", "site1") in config.failed_sections
 
     release_poll.set()
     await poll_task
-    assert config.vouchers_available("site1") is False
+    assert ("vouchers", "site1") in config.failed_sections
     assert config.data["vouchers"]["site1"] == prior
 
 
@@ -815,7 +819,7 @@ class TestConfigCoordinatorVouchers:
         coordinator.network_client.vouchers.get_all_pages = AsyncMock(side_effect=error)
         result = await coordinator._async_update_data()
         assert result["vouchers"]["default"] == {}
-        assert coordinator.vouchers_available("default") is True
+        assert ("vouchers", "default") not in coordinator.failed_sections
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -837,9 +841,9 @@ class TestConfigCoordinatorVouchers:
             return_value=[_create_mock_model({"id": "v1", "code": "1111111111"})]
         )
         await coordinator.async_refresh()
-        assert coordinator.vouchers_available("default") is True
+        assert ("vouchers", "default") not in coordinator.failed_sections
         assert coordinator.wifi_available("default") is True
-        assert coordinator.firewall_available("default") is True
+        assert ("firewall_rules", "default") not in coordinator.failed_sections
         assert "v1" in coordinator.data["vouchers"]["default"]
 
         coordinator.network_client.vouchers.get_all_pages = AsyncMock(side_effect=error)
@@ -847,9 +851,9 @@ class TestConfigCoordinatorVouchers:
 
         assert coordinator.last_update_success is True
         assert "v1" in coordinator.data["vouchers"]["default"]
-        assert coordinator.vouchers_available("default") is False
+        assert ("vouchers", "default") in coordinator.failed_sections
         assert coordinator.wifi_available("default") is True
-        assert coordinator.firewall_available("default") is True
+        assert ("firewall_rules", "default") not in coordinator.failed_sections
 
     @pytest.mark.asyncio
     async def test_vouchers_recover_after_failure(
@@ -860,13 +864,13 @@ class TestConfigCoordinatorVouchers:
             side_effect=UniFiConnectionError("Connection lost")
         )
         await coordinator.async_refresh()
-        assert coordinator.vouchers_available("default") is False
+        assert ("vouchers", "default") in coordinator.failed_sections
 
         coordinator.network_client.vouchers.get_all_pages = AsyncMock(
             return_value=[_create_mock_model({"id": "v1", "code": "1111111111"})]
         )
         await coordinator.async_refresh()
-        assert coordinator.vouchers_available("default") is True
+        assert ("vouchers", "default") not in coordinator.failed_sections
         assert "v1" in coordinator.data["vouchers"]["default"]
 
     @pytest.mark.asyncio
@@ -937,14 +941,14 @@ class TestConfigCoordinatorVouchers:
             side_effect=UniFiConnectionError("Refused")
         )
         await coordinator.async_refresh_vouchers("default")
-        assert coordinator.vouchers_available("default") is False
+        assert ("vouchers", "default") in coordinator.failed_sections
         assert "v-new" in coordinator.data["vouchers"]["default"]
         listener.assert_called_once()
 
         # Target success clears failed section
         coordinator.network_client.vouchers.get_all_pages = AsyncMock(return_value=[])
         await coordinator.async_refresh_vouchers("default")
-        assert coordinator.vouchers_available("default") is True
+        assert ("vouchers", "default") not in coordinator.failed_sections
 
         # Unselected site returns without call
         coordinator.network_client.vouchers.get_all_pages.reset_mock()
@@ -952,14 +956,22 @@ class TestConfigCoordinatorVouchers:
         coordinator.network_client.vouchers.get_all_pages.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_vouchers_available_follows_last_update_success(
-        self, coordinator: UnifiInsightsConfigCoordinator
+    async def test_vouchers_section_follows_the_global_success_gate(
+        self,
+        voucher_flow: tuple[
+            UnifiInsightsConfigCoordinator, UnifiInsightsFacadeCoordinator
+        ],
     ) -> None:
-        """vouchers_available returns False when last_update_success is False."""
-        await coordinator.async_refresh()
-        assert coordinator.vouchers_available("default") is True
-        coordinator.last_update_success = False
-        assert coordinator.vouchers_available("default") is False
+        """A failing entry hides the section even with no failed section pair."""
+        config, facade = voucher_flow
+        await config.async_refresh()
+        assert ("vouchers", "site1") not in config.failed_sections
+        assert site_section_available(facade.data, "site1", "vouchers") is True
+
+        config.last_update_success = False
+        assert config.last_update_success is False
+        config.async_update_listeners()
+        assert site_section_available(facade.data, "site1", "vouchers") is False
 
     @pytest.mark.asyncio
     async def test_vouchers_incomplete_listing_keeps_inventory_and_flags_section(
@@ -970,7 +982,7 @@ class TestConfigCoordinatorVouchers:
             return_value=[_create_mock_model({"id": "v1", "code": "1111111111"})]
         )
         await coordinator.async_refresh()
-        assert coordinator.vouchers_available("default") is True
+        assert ("vouchers", "default") not in coordinator.failed_sections
         assert "v1" in coordinator.data["vouchers"]["default"]
 
         coordinator.network_client.vouchers.get_all_pages = AsyncMock(
@@ -979,7 +991,7 @@ class TestConfigCoordinatorVouchers:
             )
         )
         await coordinator.async_refresh()
-        assert coordinator.vouchers_available("default") is False
+        assert ("vouchers", "default") in coordinator.failed_sections
         assert "v1" in coordinator.data["vouchers"]["default"]
 
     async def test_vouchers_validation_error_does_not_leak_code_in_logs(
@@ -1012,7 +1024,7 @@ class TestConfigCoordinatorVouchers:
         with caplog.at_level("DEBUG"):
             await coordinator.async_refresh()
 
-        assert coordinator.vouchers_available("default") is False
+        assert ("vouchers", "default") in coordinator.failed_sections
         assert synthetic_code not in caplog.text
         assert "Voucher response failed validation (id)" in caplog.text
 

@@ -344,3 +344,46 @@ class TestUnifiInsightsInnerSpaceCoordinator:
         )
         assert coord.available is False
         assert "ap-1" in coord.data["access_points"]
+
+
+@pytest.mark.parametrize(
+    ("method", "endpoint"),
+    [
+        ("get_project", "project"),
+        ("list_floor_plans", "floor_plans"),
+        ("list_access_points", "access_points"),
+        ("list_switches", "switches"),
+        ("list_inventory", "inventory"),
+    ],
+)
+async def test_refresh_failure_evidence_cleared_on_recovery(
+    hass: HomeAssistant,
+    mock_network_client: MagicMock,
+    mock_protect_client: MagicMock,
+    mock_innerspace_client: MagicMock,
+    mock_config_entry: MockConfigEntry,
+    *,
+    method: str,
+    endpoint: str,
+) -> None:
+    """Each request is labelled, preserves base errors and clears on recovery."""
+    coord = UnifiInsightsInnerSpaceCoordinator(
+        hass,
+        mock_network_client,
+        mock_protect_client,
+        mock_innerspace_client,
+        mock_config_entry,
+    )
+    fetch = getattr(mock_innerspace_client, method)
+    fetch.side_effect = UniFiAuthenticationError("private", status_code=403)
+    with pytest.raises(ConfigEntryAuthFailed):
+        await coord._async_update_data()
+    assert coord.refresh_failure == {
+        "endpoint": endpoint,
+        "http_status": 403,
+        "error_type": "UniFiAuthenticationError",
+        "error_category": "forbidden",
+    }
+    fetch.side_effect = None
+    await coord._async_update_data()
+    assert coord.refresh_failure is None

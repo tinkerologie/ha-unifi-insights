@@ -1,16 +1,19 @@
 # Copyright 2026 UniFi Insights contributors
-"""Support for UniFi Protect lights."""
+"""Support for UniFi Network status LEDs and Protect lights."""
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ColorMode,
     LightEntity,
+    LightEntityDescription,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import callback
 
 from .const import (
@@ -28,11 +31,13 @@ from .const import (
 from .data_transforms import (
     MAX_LED_LEVEL,
     MIN_LED_LEVEL,
+    is_legacy_led_device_id,
+    is_network_led_override,
     protect_collection,
     protect_device,
     valid_led_level,
 )
-from .entity import UnifiProtectEntity
+from .entity import UnifiInsightsEntity, UnifiProtectEntity
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -46,25 +51,50 @@ _LOGGER = logging.getLogger(__name__)
 # Lights are action-based, allow parallel execution
 PARALLEL_UPDATES = 1
 
+NETWORK_LED = LightEntityDescription(
+    key="led", translation_key="led", entity_category=EntityCategory.CONFIG
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: UnifiInsightsConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up lights for UniFi Protect integration."""
+    """Set up Network status LEDs and Protect lights."""
     _ = hass
     coordinator: UnifiInsightsFacadeCoordinator = entry.runtime_data.coordinator
 
-    # Skip if Protect API is not available
-    if not coordinator.protect_client:
-        _LOGGER.debug("Skipping light setup - Protect API not available")
-        return
-
     known_light_ids: set[str] = set()
+    known_led_keys: set[tuple[str, str, str]] = set()
 
     @callback
-    def async_discover_lights() -> None:
+    def async_discover_network_leds() -> None:
+        """Discover status LEDs from the current device snapshot."""
+        data: object = coordinator.data
+        devices_by_site = data.get("devices") if isinstance(data, Mapping) else None
+        if not isinstance(devices_by_site, Mapping):
+            return
+        new_entities: list[LightEntity] = []
+        for site_id, devices in devices_by_site.items():
+            if not isinstance(devices, Mapping):
+                continue
+            for device_id, device in devices.items():
+                key = (site_id, device_id, NETWORK_LED.key)
+                if (
+                    key not in known_led_keys
+                    and isinstance(device, dict)
+                    and is_network_led_override(device.get("led_override"))
+                ):
+                    new_entities.append(
+                        UnifiNetworkLedLight(coordinator, site_id, device_id)
+                    )
+                    known_led_keys.add(key)
+        if new_entities:
+            async_add_entities(new_entities)
+
+    @callback
+    def async_discover_protect_lights() -> None:
         """Discover and add new lights."""
         lights = protect_collection(coordinator.data, "lights") or {}
         new_entities: list[LightEntity] = []
@@ -97,8 +127,63 @@ async def async_setup_entry(
             _LOGGER.info("Adding %d UniFi Protect lights", len(new_entities))
             async_add_entities(new_entities)
 
+    @callback
+    def async_discover_lights() -> None:
+        """Discover Network and Protect lights from the same snapshot."""
+        async_discover_network_leds()
+        if coordinator.protect_client:
+            async_discover_protect_lights()
+
     async_discover_lights()
     entry.async_on_unload(coordinator.async_add_listener(async_discover_lights))
+
+
+class UnifiNetworkLedLight(UnifiInsightsEntity, LightEntity):
+    """An on/off control for a Network device's status LED."""
+
+    _attr_color_mode = ColorMode.ONOFF
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsFacadeCoordinator,
+        site_id: str,
+        device_id: str,
+    ) -> None:
+        """Set up an on/off light on the existing Network device."""
+        super().__init__(coordinator, NETWORK_LED, site_id, device_id)
+        self._attr_supported_color_modes = {ColorMode.ONOFF}
+
+    @property
+    def available(self) -> bool:
+        """Return whether the device reports a supported mode and write ID."""
+        record = self.device_data or {}
+        return (
+            super().available
+            and is_network_led_override(record.get("led_override"))
+            and is_legacy_led_device_id(record.get("led_device_id"))
+        )
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the override state, or unknown when the LED follows its site."""
+        mode = (self.device_data or {}).get("led_override")
+        if mode == "on":
+            return True
+        if mode == "off":
+            return False
+        return None
+
+    async def async_turn_on(self, **_kwargs: Any) -> None:
+        """Turn the status LED on."""
+        await self.coordinator.device_coordinator.async_set_led_override(
+            self._site_id, self._device_id, mode="on"
+        )
+
+    async def async_turn_off(self, **_kwargs: Any) -> None:
+        """Turn the status LED off."""
+        await self.coordinator.device_coordinator.async_set_led_override(
+            self._site_id, self._device_id, mode="off"
+        )
 
 
 class UnifiProtectLight(UnifiProtectEntity, LightEntity):

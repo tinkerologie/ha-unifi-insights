@@ -250,6 +250,16 @@ def _is_external_leak_detected(sensor_data: dict[str, Any]) -> bool:
     )
 
 
+def _is_mounted_incorrectly(sensor_data: dict[str, Any]) -> bool | None:
+    """
+    Return whether the sensor is mounted incorrectly.
+
+    Returns None if the value is missing or non-boolean.
+    """
+    val = get_field(sensor_data, "isMountedIncorrectly", "is_mounted_incorrectly")
+    return val if isinstance(val, bool) else None
+
+
 @dataclass(frozen=True, kw_only=True)
 class UnifiInsightsBinarySensorEntityDescription(BinarySensorEntityDescription):
     """Class describing UniFi Insights binary sensor entities."""
@@ -452,6 +462,19 @@ BINARY_SENSOR_TYPES: tuple[UnifiInsightsBinarySensorEntityDescription, ...] = (
         device_type=DEVICE_TYPE_SENSOR,
         entity_type="protect",
         capability_fn=_supports_external_leak,
+    ),
+    # Sensor mounted incorrectly problem detection
+    UnifiInsightsBinarySensorEntityDescription(
+        key="sensor_mounted_incorrectly",
+        translation_key="sensor_mounted_incorrectly",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_is_mounted_incorrectly,
+        device_type=DEVICE_TYPE_SENSOR,
+        entity_type="protect",
+        capability_fn=lambda data: isinstance(
+            get_field(data, "isMountedIncorrectly", "is_mounted_incorrectly"), bool
+        ),
     ),
 )
 
@@ -1003,6 +1026,8 @@ class UnifiInsightsSiteToSiteVpnBinarySensor(UnifiInsightsEntity, BinarySensorEn
     per live VPN keyed by the tunnel's networkconf id. A tunnel that is not in
     the list, or is listed with a status other than CONNECTED, is off.
     """
+
+    _facade_owner = None  # Reads both the Config and Device coordinators.
 
     def __init__(
         self,

@@ -343,6 +343,12 @@
           "off": "mdi:door-closed"
         }
       },
+      "sensor_mounted_incorrectly": {
+        "default": "mdi:alert-circle",
+        "state": {
+          "off": "mdi:check-circle"
+        }
+      },
       "alarm_hub_device_tamper": {
         "default": "mdi:shield-alert",
         "state": {
@@ -404,6 +410,17 @@
       },
       "ptz_patrol_stop": {
         "default": "mdi:stop-circle-outline"
+      },
+      "speaker_stop_siren": {
+        "default": "mdi:bell-off"
+      }
+    },
+    "light": {
+      "led": {
+        "default": "mdi:led-off",
+        "state": {
+          "on": "mdi:led-on"
+        }
       }
     },
     "switch": {

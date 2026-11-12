@@ -3,11 +3,23 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from unifi_official_api.protect import ProtectListResult
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # --- Client doubles ----------------------------------------------------------
+
+
+def protect_list(
+    records: Iterable[Any] = (), *, skipped: int = 0
+) -> ProtectListResult[Any]:
+    """Build a result from a valid list with an optional count of skipped records."""
+    return ProtectListResult(records=tuple(records), skipped=skipped, shape_valid=True)
 
 
 def _create_mock_model(data: dict) -> MagicMock:
@@ -180,47 +192,53 @@ def _create_mock_protect_client() -> MagicMock:
 
     # Cameras namespace
     client.cameras = MagicMock()
-    client.cameras.get_all = AsyncMock(
-        return_value=[
-            _create_mock_model(
-                {
-                    "id": "camera1",
-                    "name": "Front Door",
-                    "state": "CONNECTED",
-                    "type": "UVC-G4-DOORBELL",
-                    "mac": "11:22:33:44:55:66",
-                    "featureFlags": {"smartDetectTypes": ["person", "vehicle"]},
-                }
-            )
-        ]
+    client.cameras.get_all_result = AsyncMock(
+        return_value=protect_list(
+            [
+                _create_mock_model(
+                    {
+                        "id": "camera1",
+                        "name": "Front Door",
+                        "state": "CONNECTED",
+                        "type": "UVC-G4-DOORBELL",
+                        "mac": "11:22:33:44:55:66",
+                        "featureFlags": {"smartDetectTypes": ["person", "vehicle"]},
+                    }
+                )
+            ]
+        )
     )
 
     # Lights namespace
     client.lights = MagicMock()
-    client.lights.get_all = AsyncMock(
-        return_value=[
-            _create_mock_model(
-                {
-                    "id": "light1",
-                    "name": "Garage Light",
-                    "state": "CONNECTED",
-                }
-            )
-        ]
+    client.lights.get_all_result = AsyncMock(
+        return_value=protect_list(
+            [
+                _create_mock_model(
+                    {
+                        "id": "light1",
+                        "name": "Garage Light",
+                        "state": "CONNECTED",
+                    }
+                )
+            ]
+        )
     )
 
     # Sensors namespace
     client.sensors = MagicMock()
-    client.sensors.get_all = AsyncMock(
-        return_value=[
-            _create_mock_model(
-                {
-                    "id": "sensor1",
-                    "name": "Door Sensor",
-                    "state": "CONNECTED",
-                }
-            )
-        ]
+    client.sensors.get_all_result = AsyncMock(
+        return_value=protect_list(
+            [
+                _create_mock_model(
+                    {
+                        "id": "sensor1",
+                        "name": "Door Sensor",
+                        "state": "CONNECTED",
+                    }
+                )
+            ]
+        )
     )
 
     # NVR namespace
@@ -231,30 +249,34 @@ def _create_mock_protect_client() -> MagicMock:
 
     # Chimes namespace
     client.chimes = MagicMock()
-    client.chimes.get_all = AsyncMock(
-        return_value=[
-            _create_mock_model(
-                {
-                    "id": "chime1",
-                    "name": "Door Chime",
-                    "state": "CONNECTED",
-                }
-            )
-        ]
+    client.chimes.get_all_result = AsyncMock(
+        return_value=protect_list(
+            [
+                _create_mock_model(
+                    {
+                        "id": "chime1",
+                        "name": "Door Chime",
+                        "state": "CONNECTED",
+                    }
+                )
+            ]
+        )
     )
 
     # Viewers namespace
     client.viewers = MagicMock()
-    client.viewers.get_all = AsyncMock(
-        return_value=[
-            _create_mock_model(
-                {
-                    "id": "viewer1",
-                    "name": "Viewport",
-                    "state": "CONNECTED",
-                }
-            )
-        ]
+    client.viewers.get_all_result = AsyncMock(
+        return_value=protect_list(
+            [
+                _create_mock_model(
+                    {
+                        "id": "viewer1",
+                        "name": "Viewport",
+                        "state": "CONNECTED",
+                    }
+                )
+            ]
+        )
     )
 
     # Liveviews namespace
@@ -272,11 +294,20 @@ def _create_mock_protect_client() -> MagicMock:
     )
 
     # Protect 7.3.70 security device families
-    for family in ("fobs", "link_stations", "alarm_hubs", "sirens"):
+    for family in ("fobs", "link_stations", "alarm_hubs", "sirens", "speakers"):
         endpoint = MagicMock()
-        endpoint.get_all = AsyncMock(return_value=[])
-        endpoint.last_result_complete = True
+        endpoint.get_all_result = AsyncMock(return_value=protect_list([]))
+        if family == "speakers":
+            endpoint.stop_siren = AsyncMock(return_value=True)
         setattr(client, family, endpoint)
+
+    client.external_arm_profiles = MagicMock()
+    client.external_arm_profiles.get_all_result = AsyncMock(
+        return_value=protect_list([])
+    )
+    client.external_arm_profiles.get_all = AsyncMock(return_value=[])
+    client.external_arm_profiles.arm = AsyncMock()
+    client.external_arm_profiles.disarm = AsyncMock()
     # WebSocket support
     client.get_host_id = AsyncMock(return_value="nvr1")
     client.websocket = MagicMock()
@@ -294,28 +325,24 @@ RULE_SECTION_PARAMS = [
         "port_forwards",
         "port_forwards",
         "list_port_forwards",
-        "port_forwards_available",
         id="port_forward",
     ),
     pytest.param(
         "traffic_rules",
         "traffic_rules",
         "list_traffic_rules",
-        "traffic_rules_available",
         id="traffic_rule",
     ),
     pytest.param(
         "nat_rules",
         "nat_rules",
         "list_nat_rules",
-        "nat_rules_available",
         id="nat_rule",
     ),
     pytest.param(
         "static_routes",
         "static_routes",
         "list_static_routes",
-        "static_routes_available",
         id="static_route",
     ),
 ]

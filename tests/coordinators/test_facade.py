@@ -13,10 +13,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util.read_only_dict import ReadOnlyDict
 from unifi_official_api import UniFiConnectionError
 
+from custom_components.unifi_insights.binary_sensor import (
+    UnifiInsightsSiteToSiteVpnBinarySensor,
+)
 from custom_components.unifi_insights.const import (
     DOMAIN,
 )
@@ -31,6 +35,7 @@ from custom_components.unifi_insights.coordinators.facade import (
     EMPTY_PROTECT,
     SITE_SECTIONS,
     FacadeData,
+    FacadeOwner,
     build_facade_data,
     capture_availability,
 )
@@ -51,13 +56,17 @@ from custom_components.unifi_insights.data_transforms import (
     site_record,
     site_section_available,
 )
+from custom_components.unifi_insights.entity import (
+    UnifiInsightsEntity,
+    UnifiProtectEntity,
+)
 from tests.fixtures.assertions import (
     patch_attribute,
     require_instance,
     require_mock,
     require_not_none,
 )
-from tests.fixtures.command_owners import SITE_ID
+from tests.fixtures.command_owners import DOORBELL_IDS, PDU_ID, SITE_ID
 from tests.fixtures.coordinator_clients import (
     _create_mock_network_client,
     _create_mock_protect_client,
@@ -461,10 +470,10 @@ class TestFacadeNetworkFacts:
         )
 
         assert facade.data[NETWORK_FACTS_KEY] is facts_map
-        assert facade.get_device_facts("site1", "udm") is site.devices["udm"]
+        assert device_facts(facade.data, "site1", "udm") is site.devices["udm"]
         assert facade.get_site_gateway_id("site1") == "udm"
-        assert facade.get_device_facts("site1", "unknown") is None
-        assert facade.get_device_facts("unknown", "udm") is None
+        assert device_facts(facade.data, "site1", "unknown") is None
+        assert device_facts(facade.data, "unknown", "udm") is None
         assert facade.get_site_gateway_id("unknown") is None
         builder.assert_not_called()
 
@@ -475,11 +484,11 @@ class TestFacadeNetworkFacts:
         facade._aggregate_data()
 
         assert facade.data[NETWORK_FACTS_KEY] is None
-        facts = facade.get_device_facts("site1", "dev1")
+        facts = device_facts(facade.data, "site1", "dev1")
         assert facts is not None
         assert facts.mac == "00:11:22:33:44:55"
         assert facade.get_site_gateway_id("site1") is None
-        assert facade.get_device_facts("unknown", "dev1") is None
+        assert device_facts(facade.data, "unknown", "dev1") is None
 
 
 # --- Facade coordinator ------------------------------------------------------
@@ -1085,7 +1094,7 @@ class TestUnifiFacadeCoordinator:
             listener_called = True
 
         facade_coordinator.async_add_listener(listener)
-        facade_coordinator._handle_coordinator_update()
+        facade_coordinator._handle_coordinator_update(FacadeOwner.DEVICE)
 
         assert listener_called
 
@@ -1385,6 +1394,7 @@ def test_build_facade_data_passes_the_owners_sections_through() -> None:
         "sites": {"site1": {"id": "site1"}},
         "latest_vouchers": {"site1": {"id": "v1"}},
         "internet_activity_unavailable": {"site1"},
+        "internet_activity_status": {"site1": {"source": "legacy", "reason": "ok"}},
     }
     facts = {"site1": build_site_network_facts({}, {})}
     device = {
@@ -1407,7 +1417,12 @@ def test_build_facade_data_passes_the_owners_sections_through() -> None:
     )
 
     assert type(snapshot) is ReadOnlyDict
-    for key in ("sites", "latest_vouchers", "internet_activity_unavailable"):
+    for key in (
+        "sites",
+        "latest_vouchers",
+        "internet_activity_unavailable",
+        "internet_activity_status",
+    ):
         assert snapshot[key] is config[key], key
     assert snapshot["devices"] is device["devices"]
     assert snapshot["stats"] is device["stats"]
@@ -1471,22 +1486,22 @@ def test_build_facade_data_selects_the_entry_site_manager_host(
 
 # --- Captured availability (ADR-013) ------------------------------------------
 
-# The config coordinator method that answers each site section live.
-SECTION_METHODS = {
-    "wifi": "wifi_available",
-    "firewall_rules": "firewall_available",
-    "vouchers": "vouchers_available",
-    "port_forwards": "port_forwards_available",
-    "traffic_rules": "traffic_rules_available",
-    "nat_rules": "nat_rules_available",
-    "static_routes": "static_routes_available",
-    "internet_activity": "internet_activity_available",
-}
+# The per-site config sections a snapshot captures for every site.
+EXPECTED_SITE_SECTIONS = (
+    "wifi",
+    "firewall_rules",
+    "vouchers",
+    "port_forwards",
+    "traffic_rules",
+    "nat_rules",
+    "static_routes",
+    "internet_activity",
+)
 
 
-def test_section_methods_cover_every_site_section() -> None:
-    """Every captured site section has a live config coordinator method."""
-    assert set(SECTION_METHODS) == set(SITE_SECTIONS)
+def test_expected_sections_cover_every_site_section() -> None:
+    """The expectation used by the capture tests names every site section."""
+    assert set(EXPECTED_SITE_SECTIONS) == set(SITE_SECTIONS)
 
 
 @pytest.mark.parametrize("config", [True, False])
@@ -1514,21 +1529,25 @@ def test_capture_availability_per_site(*, config: bool) -> None:
             )
 
 
-def _assert_captured_matches_live(facade: UnifiInsightsFacadeCoordinator) -> None:
-    """Assert the snapshot's availability lookups answer what the owners do."""
-    data = facade.data
-    assert owner_available(data, "device") is facade.device_available
-    assert owner_available(data, "config") is facade.config_available
-    assert owner_available(data, "protect") is facade.protect_available
-    assert owner_available(data, "innerspace") is facade.innerspace_available
-    assert owner_available(data, "network") is facade.network_available
-    for site_id in (*data["sites"], "unknown-site"):
-        for section, method in SECTION_METHODS.items():
-            live = getattr(facade.config_coordinator, method)(site_id)
-            assert site_section_available(data, site_id, section) is live, (
-                site_id,
-                section,
-            )
+def _assert_captured_sections(
+    facade: UnifiInsightsFacadeCoordinator,
+    expected: dict[str, bool],
+    *,
+    site_id: str = SITE_ID,
+) -> None:
+    """Assert a site's captured sections; every unlisted section is fetched."""
+    for section in EXPECTED_SITE_SECTIONS:
+        assert site_section_available(facade.data, site_id, section) is expected.get(
+            section, True
+        ), (site_id, section)
+
+
+def _assert_captured_owners(
+    facade: UnifiInsightsFacadeCoordinator, expected: dict[str, bool]
+) -> None:
+    """Assert the captured owner availability; every unlisted owner is up."""
+    for owner in ("device", "config", "protect", "innerspace", "network"):
+        assert owner_available(facade.data, owner) is expected.get(owner, True), owner
 
 
 async def _fail_wifi(owners: SeededOwners) -> None:
@@ -1575,34 +1594,40 @@ async def _refresh_all(owners: SeededOwners) -> None:
 
 
 @pytest.mark.parametrize(
-    ("update", "changed"),
+    ("update", "sections", "owners"),
     [
-        pytest.param(_refresh_all, None, id="refresh_all"),
-        pytest.param(_fail_wifi, ("sites", SITE_ID, "wifi"), id="wifi_failed"),
-        pytest.param(_fail_config, ("config",), id="config_failed"),
-        pytest.param(_fail_vouchers, ("sites", SITE_ID, "vouchers"), id="vouchers"),
-        pytest.param(_recover_vouchers, None, id="vouchers_recovered"),
-        pytest.param(_fail_device, ("device",), id="device_failed"),
-        pytest.param(_fail_protect, ("protect",), id="protect_failed"),
+        pytest.param(_refresh_all, {}, {}, id="refresh_all"),
+        pytest.param(_fail_wifi, {"wifi": False}, {}, id="wifi_failed"),
+        pytest.param(
+            _fail_config,
+            dict.fromkeys(EXPECTED_SITE_SECTIONS, False),
+            {"config": False},
+            id="config_failed",
+        ),
+        pytest.param(_fail_vouchers, {"vouchers": False}, {}, id="vouchers"),
+        pytest.param(_recover_vouchers, {}, {}, id="vouchers_recovered"),
+        pytest.param(_fail_device, {}, {"device": False}, id="device_failed"),
+        pytest.param(_fail_protect, {}, {"protect": False}, id="protect_failed"),
     ],
 )
 async def test_captured_availability_follows_each_owner_update(
     seeded_owners: SeededOwners,
     update: Callable[[SeededOwners], Awaitable[None]],
-    changed: tuple[str, ...] | None,
+    sections: dict[str, bool],
+    owners: dict[str, bool],
 ) -> None:
-    """After each owner update the snapshot carries the live availability."""
+    """After each owner update the snapshot carries the resulting availability."""
     facade = seeded_owners.facade
-    _assert_captured_matches_live(facade)
+    _assert_captured_owners(facade, {})
+    _assert_captured_sections(facade, {})
 
     await update(seeded_owners)
 
-    _assert_captured_matches_live(facade)
-    if changed is not None:
-        value: Any = facade.data["availability"]
-        for key in changed:
-            value = value[key]
-        assert value is False
+    _assert_captured_owners(facade, owners)
+    _assert_captured_sections(facade, sections)
+    if owners.get("config") is False:
+        # The whole-config failure also covers a site the owners never listed.
+        _assert_captured_sections(facade, sections, site_id="unknown-site")
 
 
 async def test_unchanged_availability_is_one_object(
@@ -1634,7 +1659,8 @@ async def test_captured_availability_without_protect_or_innerspace(
         protect_coordinator=None,
     )
     try:
-        _assert_captured_matches_live(facade)
+        _assert_captured_owners(facade, {})
+        _assert_captured_sections(facade, {})
         assert facade.data["availability"]["protect"] is True
         assert facade.data["availability"]["innerspace"] is True
     finally:
@@ -1912,3 +1938,65 @@ def test_with_sections_freezes_the_sections_it_replaces() -> None:
         data["devices"]["site1"]["d1"]["ports"].append(2)
     with pytest.raises(RuntimeError):
         require_instance(data["devices"]["site1"], ReadOnlyDict)["d2"] = {}
+
+
+async def test_owner_notifications_reach_entities_and_preserve_unscoped_listeners(
+    seeded_owners: SeededOwners,
+) -> None:
+    """Notify entity writers from their owners and publish before callbacks run."""
+    owners = seeded_owners
+    facade = owners.facade
+    network = UnifiInsightsEntity(
+        facade, EntityDescription(key="test"), SITE_ID, PDU_ID
+    )
+    protect = UnifiProtectEntity(facade, "camera", DOORBELL_IDS[0])
+    vpn = UnifiInsightsSiteToSiteVpnBinarySensor(
+        facade, SITE_ID, PDU_ID, "tunnel", "Tunnel"
+    )
+    full_update = MagicMock()
+    unsub = facade.async_add_listener(full_update, context="discovery")
+    availability: list[tuple[str, bool]] = []
+
+    with (
+        patch.object(
+            network,
+            "async_write_ha_state",
+            side_effect=lambda: availability.append(("network", network.available)),
+        ) as network_write,
+        patch.object(
+            protect,
+            "async_write_ha_state",
+            side_effect=lambda: availability.append(("protect", protect.available)),
+        ) as protect_write,
+        patch.object(vpn, "async_write_ha_state") as vpn_write,
+    ):
+        await network.async_added_to_hass()
+        await protect.async_added_to_hass()
+        await vpn.async_added_to_hass()
+        owners.protect.async_set_update_error(UpdateFailed("protect down"))
+        owners.protect.async_set_updated_data(owners.protect.data)
+        assert availability == [("protect", False), ("protect", True)]
+        assert network_write.call_count == 0
+        assert vpn_write.call_count == 2
+
+        owners.device.async_set_update_error(UpdateFailed("device down"))
+        owners.device.async_set_updated_data(owners.device.data)
+        assert availability[-2:] == [("network", False), ("network", True)]
+        assert protect_write.call_count == 2
+
+        owners.config.async_set_updated_data(owners.config.data)
+        assert network_write.call_count == protect_write.call_count == 2
+        assert vpn_write.call_count == full_update.call_count == 5
+
+        facade.async_update_listeners()
+        assert network_write.call_count == protect_write.call_count == 3
+        assert vpn_write.call_count == full_update.call_count == 6
+
+        network.hass = facade.hass
+        network.entity_id = "sensor.test_474"
+        await network.async_remove()
+        owners.device.async_set_updated_data(owners.device.data)
+        assert network_write.call_count == 3
+        assert vpn_write.call_count == full_update.call_count == 7
+
+    unsub()

@@ -16,8 +16,6 @@ from homeassistant.components.lovelace.const import LOVELACE_DATA
 from custom_components.unifi_insights import async_setup, frontend
 from custom_components.unifi_insights.frontend import (
     CARD_FILES,
-    CARD_PATH,
-    CARD_URL,
     FRONTEND_PATH,
     FRONTEND_URL_BASE,
     async_register_frontend,
@@ -100,8 +98,9 @@ async def test_updates_resource_when_bundle_changes(
     hass, http, enable_custom_integrations
 ) -> None:
     """Upgrade an existing versioned resource rather than adding a duplicate."""
+    topology_url = f"{FRONTEND_URL_BASE}/{CARD_FILES[0]}"
     resources = FakeResources(
-        [{"id": "topology", "url": f"{CARD_URL}?v=old", "type": "module"}]
+        [{"id": "topology", "url": f"{topology_url}?v=old", "type": "module"}]
     )
     hass.data[LOVELACE_DATA].resources = resources
     with patch.object(frontend, "ResourceStorageCollection", FakeResources):
@@ -109,7 +108,7 @@ async def test_updates_resource_when_bundle_changes(
 
     resources.async_update_item.assert_awaited_once()
     assert resources.async_create_item.await_count == len(CARD_FILES) - 1
-    assert resources.items[0]["url"] != f"{CARD_URL}?v=old"
+    assert resources.items[0]["url"] != f"{topology_url}?v=old"
 
 
 async def test_keeps_current_resource_unchanged(
@@ -200,4 +199,4 @@ def test_manifest_loads_after_web_components() -> None:
 
 def test_bundle_is_shipped() -> None:
     """The Marketplace and HACS install the repository tree, so commit the bundle."""
-    assert CARD_PATH.is_file()
+    assert (FRONTEND_PATH / CARD_FILES[0]).is_file()

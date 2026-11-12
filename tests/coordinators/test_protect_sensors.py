@@ -46,12 +46,14 @@ from custom_components.unifi_insights.coordinators.protect_events import (
 )
 from tests.conftest import set_mock_device_lookup
 from tests.fixtures.assertions import patch_attribute, require_not_none
+from tests.fixtures.coordinator_clients import protect_list
 from tests.fixtures.protect_ws import send_device
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from homeassistant.core import HomeAssistant
+    from unifi_official_api.protect import ProtectListResult
 
 
 def _create_mock_model(data: dict[str, Any]) -> MagicMock:
@@ -91,39 +93,40 @@ def mock_protect_client() -> MagicMock:
     client.base_url = "https://192.168.1.1"
 
     client.cameras = MagicMock()
-    client.cameras.get_all = AsyncMock(
-        return_value=[
-            _create_mock_model(
-                {
-                    "id": "cam1",
-                    "name": "Front Camera",
-                    "state": "CONNECTED",
-                }
-            )
-        ]
+    client.cameras.get_all_result = AsyncMock(
+        return_value=protect_list(
+            [
+                _create_mock_model(
+                    {
+                        "id": "cam1",
+                        "name": "Front Camera",
+                        "state": "CONNECTED",
+                    }
+                )
+            ]
+        )
     )
-    client.cameras.last_result_complete = True
 
     client.lights = MagicMock()
-    client.lights.get_all = AsyncMock(return_value=[])
-    client.lights.last_result_complete = True
+    client.lights.get_all_result = AsyncMock(return_value=protect_list([]))
 
     client.sensors = MagicMock()
-    client.sensors.get_all = AsyncMock(
-        return_value=[
-            _create_mock_model(
-                {
-                    "id": "sensor1",
-                    "name": "Front Door Sensor",
-                    "state": "CONNECTED",
-                    "isOpened": False,
-                    "openStatusChangedAt": 1000,
-                    "batteryLevel": 100,
-                }
-            )
-        ]
+    client.sensors.get_all_result = AsyncMock(
+        return_value=protect_list(
+            [
+                _create_mock_model(
+                    {
+                        "id": "sensor1",
+                        "name": "Front Door Sensor",
+                        "state": "CONNECTED",
+                        "isOpened": False,
+                        "openStatusChangedAt": 1000,
+                        "batteryLevel": 100,
+                    }
+                )
+            ]
+        )
     )
-    client.sensors.last_result_complete = True
 
     client.nvr = MagicMock()
     client.nvr.get = AsyncMock(
@@ -133,16 +136,13 @@ def mock_protect_client() -> MagicMock:
     )
 
     client.chimes = MagicMock()
-    client.chimes.get_all = AsyncMock(return_value=[])
-    client.chimes.last_result_complete = True
+    client.chimes.get_all_result = AsyncMock(return_value=protect_list([]))
 
     client.viewers = MagicMock()
-    client.viewers.get_all = AsyncMock(return_value=[])
-    client.viewers.last_result_complete = True
+    client.viewers.get_all_result = AsyncMock(return_value=protect_list([]))
 
     client.liveviews = MagicMock()
     client.liveviews.get_all = AsyncMock(return_value=[])
-    client.liveviews.last_result_complete = True
 
     client.get_host_id = AsyncMock(return_value="nvr1")
     client.websocket = MagicMock()
@@ -197,23 +197,25 @@ class TestRapidTransitionsPreservation:
 
         rest_gate = asyncio.Event()
 
-        async def delayed_sensors_fetch() -> list[Any]:
+        async def delayed_sensors_fetch() -> ProtectListResult[Any]:
             await rest_gate.wait()
-            return [
-                _create_mock_model(
-                    {
-                        "id": "sensor1",
-                        "name": "Front Door",
-                        "isOpened": False,
-                        "openStatusChangedAt": 1000,
-                    }
-                )
-            ]
+            return protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "sensor1",
+                            "name": "Front Door",
+                            "isOpened": False,
+                            "openStatusChangedAt": 1000,
+                        }
+                    )
+                ]
+            )
 
         patch_attribute(
             monkeypatch,
             require_not_none(coordinator.protect_client).sensors,
-            "get_all",
+            "get_all_result",
             delayed_sensors_fetch,
         )
 
@@ -331,27 +333,29 @@ class TestIndependentSensorRecovery:
         max_concurrent = 0
         fetch_gate = asyncio.Event()
 
-        async def slow_get_all() -> list[Any]:
+        async def slow_get_all() -> ProtectListResult[Any]:
             nonlocal call_count, concurrent, max_concurrent
             call_count += 1
             concurrent += 1
             max_concurrent = max(max_concurrent, concurrent)
             await fetch_gate.wait()
             concurrent -= 1
-            return [
-                _create_mock_model(
-                    {
-                        "id": "sensor1",
-                        "name": "Front Door",
-                        "isOpened": False,
-                    }
-                )
-            ]
+            return protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "sensor1",
+                            "name": "Front Door",
+                            "isOpened": False,
+                        }
+                    )
+                ]
+            )
 
         patch_attribute(
             monkeypatch,
             require_not_none(coordinator.protect_client).sensors,
-            "get_all",
+            "get_all_result",
             slow_get_all,
         )
 
@@ -402,7 +406,7 @@ class TestIndependentSensorRecovery:
         # raises immediately instead of being absorbed (see
         # `test_transient_fetch_errors_preserve_cache`), which keeps this
         # test to a single gated fetch.
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
             side_effect=UniFiConnectionError("Connection lost")
         )
         for _ in range(MAX_CONSECUTIVE_EMPTY_FETCHES):
@@ -410,7 +414,7 @@ class TestIndependentSensorRecovery:
 
         fetch_gate = asyncio.Event()
 
-        async def slow_failing_fetch() -> list[Any]:
+        async def slow_failing_fetch() -> ProtectListResult[Any]:
             await fetch_gate.wait()
             msg = "Connection lost"
             raise UniFiConnectionError(msg)
@@ -418,7 +422,7 @@ class TestIndependentSensorRecovery:
         patch_attribute(
             monkeypatch,
             require_not_none(coordinator.protect_client).sensors,
-            "get_all",
+            "get_all_result",
             slow_failing_fetch,
         )
 
@@ -542,24 +546,26 @@ class TestProtectNewerDoorStates:
         # Slow REST fetch that returns older door closed state
         rest_gate = asyncio.Event()
 
-        async def delayed_sensors_fetch() -> list[Any]:
+        async def delayed_sensors_fetch() -> ProtectListResult[Any]:
             await rest_gate.wait()
-            return [
-                _create_mock_model(
-                    {
-                        "id": "sensor1",
-                        "name": "Front Door",
-                        "isOpened": False,
-                        "openStatusChangedAt": 1000,
-                        "batteryLevel": 90,  # fresh battery info from REST
-                    }
-                )
-            ]
+            return protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "sensor1",
+                            "name": "Front Door",
+                            "isOpened": False,
+                            "openStatusChangedAt": 1000,
+                            "batteryLevel": 90,  # fresh battery info from REST
+                        }
+                    )
+                ]
+            )
 
         patch_attribute(
             monkeypatch,
             require_not_none(coordinator.protect_client).sensors,
-            "get_all",
+            "get_all_result",
             delayed_sensors_fetch,
         )
 
@@ -620,25 +626,27 @@ class TestProtectNewerDoorStates:
 
         rest_gate = asyncio.Event()
 
-        async def delayed_sensors_fetch() -> list[Any]:
+        async def delayed_sensors_fetch() -> ProtectListResult[Any]:
             await rest_gate.wait()
-            return [
-                _create_mock_model(
-                    {
-                        "id": "sensor1",
-                        "name": "Front Door",
-                        "isOpened": False,
-                        # Strictly newer than the cache's 1000 - branches
-                        # 2/3 alone would let this REST response win.
-                        "openStatusChangedAt": 2000,
-                    }
-                )
-            ]
+            return protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "sensor1",
+                            "name": "Front Door",
+                            "isOpened": False,
+                            # Strictly newer than the cache's 1000 - branches
+                            # 2/3 alone would let this REST response win.
+                            "openStatusChangedAt": 2000,
+                        }
+                    )
+                ]
+            )
 
         patch_attribute(
             monkeypatch,
             require_not_none(coordinator.protect_client).sensors,
-            "get_all",
+            "get_all_result",
             delayed_sensors_fetch,
         )
 
@@ -689,17 +697,19 @@ class TestProtectNewerDoorStates:
             }
         }
 
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
-            return_value=[
-                _create_mock_model(
-                    {
-                        "id": "sensor1",
-                        "name": "Front Door Updated Name",
-                        "isOpened": False,
-                        "openStatusChangedAt": 1500,  # older than cached 2000
-                    }
-                )
-            ]
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
+            return_value=protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "sensor1",
+                            "name": "Front Door Updated Name",
+                            "isOpened": False,
+                            "openStatusChangedAt": 1500,  # older than cached 2000
+                        }
+                    )
+                ]
+            )
         )
 
         await coordinator._fetch_sensors()
@@ -730,17 +740,19 @@ class TestProtectNewerDoorStates:
         )
         await asyncio.sleep(0.001)
 
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
-            return_value=[
-                _create_mock_model(
-                    {
-                        "id": "sensor1",
-                        "name": "Front Door",
-                        "isOpened": False,
-                        "openStatusChangedAt": 2000,  # newer than cached 1000
-                    }
-                )
-            ]
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
+            return_value=protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "sensor1",
+                            "name": "Front Door",
+                            "isOpened": False,
+                            "openStatusChangedAt": 2000,  # newer than cached 1000
+                        }
+                    )
+                ]
+            )
         )
 
         await coordinator._fetch_sensors()
@@ -758,7 +770,7 @@ class TestProtectNewerDoorStates:
             "sensor1": {"id": "sensor1", "name": "Front Door", "isOpened": True}
         }
 
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
             side_effect=UniFiConnectionError("Connection lost")
         )
 
@@ -797,7 +809,7 @@ class TestProtectNewerDoorStates:
         where it must reach `config_entry.async_start_reauth` rather than
         vanishing as an unhandled background-task traceback.
         """
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
             side_effect=UniFiAuthenticationError("Invalid credentials")
         )
 
@@ -822,7 +834,7 @@ class TestProtectNewerDoorStates:
         to reauth via `config_entry.async_start_reauth`, not vanish as an
         unhandled background-task traceback (finding 5, WS-reconnect path).
         """
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
             side_effect=UniFiAuthenticationError("Invalid credentials")
         )
 
@@ -859,23 +871,25 @@ class TestGateStampDiscriminatesFrameContent:
 
         rest_gate = asyncio.Event()
 
-        async def delayed_sensors_fetch() -> list[Any]:
+        async def delayed_sensors_fetch() -> ProtectListResult[Any]:
             await rest_gate.wait()
-            return [
-                _create_mock_model(
-                    {
-                        "id": "sensor1",
-                        "name": "Front Door",
-                        "isOpened": True,
-                        "openStatusChangedAt": 2000,  # genuinely newer
-                    }
-                )
-            ]
+            return protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "sensor1",
+                            "name": "Front Door",
+                            "isOpened": True,
+                            "openStatusChangedAt": 2000,  # genuinely newer
+                        }
+                    )
+                ]
+            )
 
         patch_attribute(
             monkeypatch,
             require_not_none(coordinator.protect_client).sensors,
-            "get_all",
+            "get_all_result",
             delayed_sensors_fetch,
         )
 
@@ -933,24 +947,26 @@ class TestGateStampDiscriminatesFrameContent:
 
         rest_gate = asyncio.Event()
 
-        async def delayed_sensors_fetch() -> list[Any]:
+        async def delayed_sensors_fetch() -> ProtectListResult[Any]:
             await rest_gate.wait()
-            return [
-                _create_mock_model(
-                    {
-                        "id": "sensor1",
-                        "name": "Front Door",
-                        "isOpened": True,
-                        "openStatusChangedAt": 5000,  # newer door transition
-                        "isMotionDetected": False,
-                    }
-                )
-            ]
+            return protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "sensor1",
+                            "name": "Front Door",
+                            "isOpened": True,
+                            "openStatusChangedAt": 5000,  # newer door transition
+                            "isMotionDetected": False,
+                        }
+                    )
+                ]
+            )
 
         patch_attribute(
             monkeypatch,
             require_not_none(coordinator.protect_client).sensors,
-            "get_all",
+            "get_all_result",
             delayed_sensors_fetch,
         )
 
@@ -1002,17 +1018,19 @@ class TestDoorStatePreservationIsBounded:
             }
         }
 
-        async def rest_without_timestamp() -> list[Any]:
-            return [
-                _create_mock_model(
-                    {"id": "sensor1", "name": "Front Door", "isOpened": False}
-                )
-            ]
+        async def rest_without_timestamp() -> ProtectListResult[Any]:
+            return protect_list(
+                [
+                    _create_mock_model(
+                        {"id": "sensor1", "name": "Front Door", "isOpened": False}
+                    )
+                ]
+            )
 
         patch_attribute(
             monkeypatch,
             require_not_none(coordinator.protect_client).sensors,
-            "get_all",
+            "get_all_result",
             rest_without_timestamp,
         )
 
@@ -1040,23 +1058,25 @@ class TestDoorStatePreservationIsBounded:
             }
         }
 
-        async def rest_stuck_below_cache() -> list[Any]:
+        async def rest_stuck_below_cache() -> ProtectListResult[Any]:
             # A fresh dict every call, so no call can see another's answer.
-            return [
-                _create_mock_model(
-                    {
-                        "id": "sensor1",
-                        "name": "Front Door",
-                        "isOpened": False,
-                        "openStatusChangedAt": 4000,  # always older than cached
-                    }
-                )
-            ]
+            return protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "sensor1",
+                            "name": "Front Door",
+                            "isOpened": False,
+                            "openStatusChangedAt": 4000,  # always older than cached
+                        }
+                    )
+                ]
+            )
 
         patch_attribute(
             monkeypatch,
             require_not_none(coordinator.protect_client).sensors,
-            "get_all",
+            "get_all_result",
             rest_stuck_below_cache,
         )
 
@@ -1085,22 +1105,24 @@ class TestDoorStatePreservationIsBounded:
         }
 
         # Two preserves (REST always reports an older timestamp).
-        async def rest_always_older() -> list[Any]:
-            return [
-                _create_mock_model(
-                    {
-                        "id": "sensor1",
-                        "name": "Front Door",
-                        "isOpened": False,
-                        "openStatusChangedAt": 500,
-                    }
-                )
-            ]
+        async def rest_always_older() -> ProtectListResult[Any]:
+            return protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "sensor1",
+                            "name": "Front Door",
+                            "isOpened": False,
+                            "openStatusChangedAt": 500,
+                        }
+                    )
+                ]
+            )
 
         patch_attribute(
             monkeypatch,
             require_not_none(coordinator.protect_client).sensors,
-            "get_all",
+            "get_all_result",
             rest_always_older,
         )
         await coordinator._fetch_sensors()
@@ -1109,17 +1131,19 @@ class TestDoorStatePreservationIsBounded:
 
         # REST reports a genuinely newer timestamp: it wins and the
         # bounded-preservation counter resets to zero.
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
-            return_value=[
-                _create_mock_model(
-                    {
-                        "id": "sensor1",
-                        "name": "Front Door",
-                        "isOpened": False,
-                        "openStatusChangedAt": 2000,
-                    }
-                )
-            ]
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
+            return_value=protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "sensor1",
+                            "name": "Front Door",
+                            "isOpened": False,
+                            "openStatusChangedAt": 2000,
+                        }
+                    )
+                ]
+            )
         )
         await coordinator._fetch_sensors()
         assert coordinator.data["sensors"]["sensor1"]["isOpened"] is False
@@ -1154,34 +1178,36 @@ class TestDoorStatePreservationIsBounded:
             }
         }
 
-        async def rest_reports_closed() -> list[Any]:
-            return [
-                _create_mock_model(
-                    {
-                        "id": "sensor1",
-                        "name": "Front Door",
-                        "isOpened": False,
-                        # Deliberately BIGGER than every WS timestamp used
-                        # below, so branches 2/3 (door-timestamp
-                        # comparison) never independently preserve once
-                        # branch 1 (WS-recency) is latched out - this test
-                        # isolates branch 1's latch behaviour specifically.
-                        "openStatusChangedAt": 50_000,
-                    }
-                )
-            ]
+        async def rest_reports_closed() -> ProtectListResult[Any]:
+            return protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "sensor1",
+                            "name": "Front Door",
+                            "isOpened": False,
+                            # Deliberately BIGGER than every WS timestamp used
+                            # below, so branches 2/3 (door-timestamp
+                            # comparison) never independently preserve once
+                            # branch 1 (WS-recency) is latched out - this test
+                            # isolates branch 1's latch behaviour specifically.
+                            "openStatusChangedAt": 50_000,
+                        }
+                    )
+                ]
+            )
 
         async def poll_with_inflight_ws_door_frame(ts: int) -> None:
             rest_gate = asyncio.Event()
 
-            async def delayed() -> list[Any]:
+            async def delayed() -> ProtectListResult[Any]:
                 await rest_gate.wait()
                 return await rest_reports_closed()
 
             patch_attribute(
                 monkeypatch,
                 require_not_none(coordinator.protect_client).sensors,
-                "get_all",
+                "get_all_result",
                 delayed,
             )
             fetch_task = asyncio.create_task(coordinator._fetch_sensors())
@@ -1221,27 +1247,29 @@ class TestDoorStatePreservationIsBounded:
 
         # REST's own report catches up to the (live, WS-written) true
         # state - the latch clears once cached and REST agree.
-        async def rest_reports_open() -> list[Any]:
-            return [
-                _create_mock_model(
-                    {
-                        "id": "sensor1",
-                        "name": "Front Door",
-                        "isOpened": True,
-                        # Bigger than the closed-phase REST timestamp
-                        # (50_000) so branch 2/3 correctly recognizes this
-                        # as a newer REST report rather than mistaking the
-                        # stale-but-numerically-larger closed timestamp
-                        # for "cache is still newer".
-                        "openStatusChangedAt": 99_999,
-                    }
-                )
-            ]
+        async def rest_reports_open() -> ProtectListResult[Any]:
+            return protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "sensor1",
+                            "name": "Front Door",
+                            "isOpened": True,
+                            # Bigger than the closed-phase REST timestamp
+                            # (50_000) so branch 2/3 correctly recognizes this
+                            # as a newer REST report rather than mistaking the
+                            # stale-but-numerically-larger closed timestamp
+                            # for "cache is still newer".
+                            "openStatusChangedAt": 99_999,
+                        }
+                    )
+                ]
+            )
 
         patch_attribute(
             monkeypatch,
             require_not_none(coordinator.protect_client).sensors,
-            "get_all",
+            "get_all_result",
             rest_reports_open,
         )
         await coordinator._fetch_sensors()
@@ -1277,22 +1305,24 @@ class TestDoorStatePreservationIsBounded:
             }
         }
 
-        async def rest_fixed_older() -> list[Any]:
-            return [
-                _create_mock_model(
-                    {
-                        "id": "sensor1",
-                        "name": "Front Door",
-                        "isOpened": False,
-                        "openStatusChangedAt": 500,  # always older than cache
-                    }
-                )
-            ]
+        async def rest_fixed_older() -> ProtectListResult[Any]:
+            return protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "sensor1",
+                            "name": "Front Door",
+                            "isOpened": False,
+                            "openStatusChangedAt": 500,  # always older than cache
+                        }
+                    )
+                ]
+            )
 
         patch_attribute(
             monkeypatch,
             require_not_none(coordinator.protect_client).sensors,
-            "get_all",
+            "get_all_result",
             rest_fixed_older,
         )
 
@@ -1364,17 +1394,19 @@ class TestTimestampNormalization:
             }
         }
 
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
-            return_value=[
-                _create_mock_model(
-                    {
-                        "id": "sensor1",
-                        "name": "Front Door",
-                        "isOpened": False,
-                        "openStatusChangedAt": newer_time_s,  # seconds-epoch
-                    }
-                )
-            ]
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
+            return_value=protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "sensor1",
+                            "name": "Front Door",
+                            "isOpened": False,
+                            "openStatusChangedAt": newer_time_s,  # seconds-epoch
+                        }
+                    )
+                ]
+            )
         )
 
         await coordinator._fetch_sensors()
@@ -1408,17 +1440,19 @@ class TestTimestampNormalization:
             }
         }
 
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
-            return_value=[
-                _create_mock_model(
-                    {
-                        "id": "sensor1",
-                        "name": "Front Door",
-                        "isOpened": False,
-                        "openStatusChangedAt": older_dt,  # datetime, older
-                    }
-                )
-            ]
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
+            return_value=protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "sensor1",
+                            "name": "Front Door",
+                            "isOpened": False,
+                            "openStatusChangedAt": older_dt,  # datetime, older
+                        }
+                    )
+                ]
+            )
         )
 
         await coordinator._fetch_sensors()
@@ -1448,17 +1482,19 @@ class TestTimestampNormalization:
             }
         }
 
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
-            return_value=[
-                _create_mock_model(
-                    {
-                        "id": "sensor1",
-                        "name": "Front Door",
-                        "isOpened": False,
-                        "openStatusChangedAt": older_iso,
-                    }
-                )
-            ]
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
+            return_value=protect_list(
+                [
+                    _create_mock_model(
+                        {
+                            "id": "sensor1",
+                            "name": "Front Door",
+                            "isOpened": False,
+                            "openStatusChangedAt": older_iso,
+                        }
+                    )
+                ]
+            )
         )
 
         await coordinator._fetch_sensors()
@@ -1524,6 +1560,17 @@ class TestSensorModelTimestampCoercion:
         assert sensor.open_status_changed_at is None
         assert sensor.motion_detected_at is None
 
+    def test_mounted_incorrectly_extra_field_preserved(self) -> None:
+        sensor = Sensor.model_validate(
+            {
+                "id": "s1",
+                "mac": "aa:bb",
+                "isMountedIncorrectly": True,
+            }
+        )
+        assert sensor.is_mounted_incorrectly is True
+        assert sensor.model_dump(by_alias=True).get("isMountedIncorrectly") is True
+
 
 class TestBoundedEscalationPropagatesOnMainPoll:
     """Finding 4 (MAJOR): a sustained /sensors outage must fail the poll.
@@ -1539,7 +1586,7 @@ class TestBoundedEscalationPropagatesOnMainPoll:
         self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """After the escalation boundary, `_async_update_data` must raise."""
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
             side_effect=UniFiConnectionError("Connection lost")
         )
 
@@ -1560,7 +1607,7 @@ class TestBoundedEscalationPropagatesOnMainPoll:
         ConfigEntryAuthFailed (triggering reauth), not get relabeled as
         UpdateFailed by `_async_update_data`'s generic exception handler.
         """
-        require_not_none(coordinator.protect_client).sensors.get_all = AsyncMock(
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
             side_effect=UniFiAuthenticationError("Invalid credentials")
         )
 
@@ -1583,19 +1630,21 @@ class TestReconnectStormBounded:
         """The owner loop must stop even if a caller keeps re-marking pending."""
         call_count = 0
 
-        async def instant_get_all() -> list[Any]:
+        async def instant_get_all() -> ProtectListResult[Any]:
             nonlocal call_count
             call_count += 1
             # Re-mark pending on every fetch (but stop after 9, so the
             # unbounded pre-fix loop terminates instead of hanging the test).
             if call_count < 9:
                 coordinator._sensor_refresh_pending = True
-            return [_create_mock_model({"id": "sensor1", "isOpened": False})]
+            return protect_list(
+                [_create_mock_model({"id": "sensor1", "isOpened": False})]
+            )
 
         patch_attribute(
             monkeypatch,
             require_not_none(coordinator.protect_client).sensors,
-            "get_all",
+            "get_all_result",
             instant_get_all,
         )
 
@@ -1616,15 +1665,17 @@ class TestReconnectStormBounded:
         """A flapping devices stream must not trigger unbounded REST calls."""
         call_count = 0
 
-        async def fast_get_all() -> list[Any]:
+        async def fast_get_all() -> ProtectListResult[Any]:
             nonlocal call_count
             call_count += 1
-            return [_create_mock_model({"id": "sensor1", "isOpened": False})]
+            return protect_list(
+                [_create_mock_model({"id": "sensor1", "isOpened": False})]
+            )
 
         patch_attribute(
             monkeypatch,
             require_not_none(coordinator.protect_client).sensors,
-            "get_all",
+            "get_all_result",
             fast_get_all,
         )
         coordinator._sensor_reconnect_debouncer.cooldown = 0.02
@@ -1735,7 +1786,7 @@ class TestRefreshWaiterPaths:
         """
         fetch_gate = asyncio.Event()
 
-        async def slow_auth_failure() -> list[Any]:
+        async def slow_auth_failure() -> ProtectListResult[Any]:
             await fetch_gate.wait()
             msg = "Invalid credentials"
             raise UniFiAuthenticationError(msg)
@@ -1743,7 +1794,7 @@ class TestRefreshWaiterPaths:
         patch_attribute(
             monkeypatch,
             require_not_none(coordinator.protect_client).sensors,
-            "get_all",
+            "get_all_result",
             slow_auth_failure,
         )
 
@@ -1771,14 +1822,14 @@ class TestRefreshWaiterPaths:
         """
         fetch_gate = asyncio.Event()
 
-        async def slow_fetch() -> list[Any]:
+        async def slow_fetch() -> ProtectListResult[Any]:
             await fetch_gate.wait()
-            return []
+            return protect_list([])
 
         patch_attribute(
             monkeypatch,
             require_not_none(coordinator.protect_client).sensors,
-            "get_all",
+            "get_all_result",
             slow_fetch,
         )
 
@@ -1797,3 +1848,30 @@ class TestRefreshWaiterPaths:
             await owner_task
 
         notify_mock.assert_not_called()
+
+
+class TestProtectSensorMountedIncorrectly:
+    """Test Protect 7.4.96 isMountedIncorrectly handling in coordinator."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_sensors_preserves_is_mounted_incorrectly(
+        self, coordinator: UnifiInsightsProtectCoordinator
+    ) -> None:
+        """Protect 7.4.96 isMountedIncorrectly extra field is preserved."""
+        sensor = Sensor.model_validate(
+            {
+                "id": "sensor_mounted",
+                "name": "Orientation Sensor",
+                "mac": "AA:BB:CC:DD:EE:77",
+                "state": "CONNECTED",
+                "isMountedIncorrectly": True,
+            }
+        )
+        require_not_none(coordinator.protect_client).sensors.get_all_result = AsyncMock(
+            return_value=protect_list([sensor])
+        )
+        await coordinator._fetch_sensors()
+        assert (
+            coordinator.data["sensors"]["sensor_mounted"]["isMountedIncorrectly"]
+            is True
+        )

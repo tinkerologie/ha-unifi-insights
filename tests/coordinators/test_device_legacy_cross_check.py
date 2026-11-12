@@ -82,7 +82,7 @@ def _legacy(*extra: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _count(owners: SeededOwners, site_id: str, device_id: str) -> int | None:
     """Return a device's committed absence counter."""
-    return owners.device._site_absence_counts.get(site_id, {}).get(device_id)
+    return owners.device._inventory_state.absence.get(site_id, {}).get(device_id)
 
 
 def _registered(owners: SeededOwners, site_id: str, device_id: str) -> bool:
@@ -114,8 +114,8 @@ async def _seed_switch(owners: SeededOwners) -> None:
     await owners.device.async_refresh()
     await owners.device.async_refresh()
     _register(owners, SITE_ID, SWITCH_ID, SWITCH_MAC)
-    assert owners.device._site_sources[SITE_ID] == "v1"
-    assert SWITCH_ID in owners.device._site_tracked_devices[SITE_ID]
+    assert owners.device._inventory_state.sources[SITE_ID] == "v1"
+    assert SWITCH_ID in owners.device._inventory_state.tracked[SITE_ID]
 
 
 async def test_v1_omits_device_legacy_keeps_it_holds_the_counter(
@@ -133,7 +133,7 @@ async def test_v1_omits_device_legacy_keeps_it_holds_the_counter(
             await owners.device.async_refresh()
             assert owners.device.last_update_success
             assert _count(owners, SITE_ID, SWITCH_ID) is None
-            assert SWITCH_ID in owners.device._site_tracked_devices[SITE_ID]
+            assert SWITCH_ID in owners.device._inventory_state.tracked[SITE_ID]
             assert _registered(owners, SITE_ID, SWITCH_ID)
 
         # Both omit it once: the counter advances.
@@ -145,7 +145,7 @@ async def test_v1_omits_device_legacy_keeps_it_holds_the_counter(
         devices.get_legacy_site_devices.return_value = _legacy(SWITCH_LEGACY)
         await owners.device.async_refresh()
         assert _count(owners, SITE_ID, SWITCH_ID) == 1
-        assert SWITCH_ID in owners.device._site_tracked_devices[SITE_ID]
+        assert SWITCH_ID in owners.device._inventory_state.tracked[SITE_ID]
         assert _registered(owners, SITE_ID, SWITCH_ID)
 
         # Both omit it on the next eligible polls: removed on the Nth.
@@ -157,8 +157,8 @@ async def test_v1_omits_device_legacy_keeps_it_holds_the_counter(
         await owners.device.async_refresh()
         assert not _registered(owners, SITE_ID, SWITCH_ID)
         assert _count(owners, SITE_ID, SWITCH_ID) is None
-        assert SWITCH_ID not in owners.device._site_tracked_devices[SITE_ID]
-        assert SWITCH_MAC not in owners.device._site_aliases[SITE_ID]
+        assert SWITCH_ID not in owners.device._inventory_state.tracked[SITE_ID]
+        assert SWITCH_MAC not in owners.device._inventory_state.aliases[SITE_ID]
     finally:
         await async_shutdown_owners(owners)
 
@@ -208,16 +208,16 @@ async def test_unverified_legacy_list_removes_nothing_and_holds_counters(
         devices.get_legacy_site_devices.return_value = _legacy()
         await owners.device.async_refresh()
         assert _count(owners, SITE_ID, SWITCH_ID) == 1
-        tracked = dict(owners.device._site_tracked_devices[SITE_ID])
+        tracked = dict(owners.device._inventory_state.tracked[SITE_ID])
 
         devices.get_legacy_site_devices.side_effect = side_effect
         devices.get_legacy_site_devices.return_value = return_value
         for _ in range(MAX_CONSECUTIVE_MISSING_POLLS + 1):
             await owners.device.async_refresh()
             assert owners.device.last_update_success
-            assert owners.device._site_sources[SITE_ID] == "v1"
+            assert owners.device._inventory_state.sources[SITE_ID] == "v1"
             assert _count(owners, SITE_ID, SWITCH_ID) == 1
-            assert owners.device._site_tracked_devices[SITE_ID] == tracked
+            assert owners.device._inventory_state.tracked[SITE_ID] == tracked
             assert _registered(owners, SITE_ID, SWITCH_ID)
 
         # Legacy answers again without the switch: counting resumes.
@@ -345,7 +345,7 @@ async def test_multi_site_cross_check_is_per_site(hass: HomeAssistant) -> None:
         await owners.device.async_refresh()
         assert not _registered(owners, SITE_B, SITE_B_SWITCH_ID)
         assert _registered(owners, SITE_ID, SWITCH_ID)
-        assert owners.device._site_absence_counts[SITE_ID] == {}
+        assert owners.device._inventory_state.absence[SITE_ID] == {}
     finally:
         await async_shutdown_owners(owners)
 
@@ -413,7 +413,7 @@ async def test_unverified_legacy_list_tracks_a_new_v1_device(
         )
         await owners.device.async_refresh()
         assert owners.device.last_update_success
-        tracked = owners.device._site_tracked_devices[SITE_ID]
+        tracked = owners.device._inventory_state.tracked[SITE_ID]
         assert new_id in tracked
         assert SWITCH_ID in tracked
         _register(owners, SITE_ID, new_id, new_mac)
@@ -427,5 +427,77 @@ async def test_unverified_legacy_list_tracks_a_new_v1_device(
             await owners.device.async_refresh()
         assert not _registered(owners, SITE_ID, new_id)
         assert not _registered(owners, SITE_ID, SWITCH_ID)
+    finally:
+        await async_shutdown_owners(owners)
+
+
+async def test_partial_site_failure_cannot_commit_a_pending_retirement(
+    hass: HomeAssistant,
+) -> None:
+    """A candidate retirement commits only after every site poll succeeds."""
+    owners = build_seeded_owners(hass)
+    try:
+        devices = owners.network_client.devices
+        v1: dict[str, list[dict[str, Any]] | Exception] = {
+            SITE_ID: _v1(SWITCH_V1),
+            SITE_B: _v1(SITE_B_SWITCH_V1),
+        }
+        legacy: dict[str, list[dict[str, Any]] | Exception] = {
+            "default": _legacy(SWITCH_LEGACY),
+            SITE_B_LEGACY_NAME: _legacy(SITE_B_SWITCH_LEGACY),
+        }
+
+        async def read(
+            responses: dict[str, list[dict[str, Any]] | Exception], site: str
+        ) -> list[dict[str, Any]]:
+            response = responses[site]
+            if isinstance(response, Exception):
+                raise response
+            return copy.deepcopy(response)
+
+        async def read_v1(site: str) -> list[dict[str, Any]]:
+            return await read(v1, site)
+
+        async def read_legacy(site: str) -> list[dict[str, Any]]:
+            return await read(legacy, site)
+
+        devices.get_all.side_effect = read_v1
+        devices.get_legacy_site_devices.side_effect = read_legacy
+        await owners.config.async_refresh()
+        owners.config.get_site_ids = MagicMock(return_value=[SITE_ID, SITE_B])
+        owners.config.data = {
+            **owners.config.data,
+            "legacy_site_names": {SITE_ID: "default", SITE_B: SITE_B_LEGACY_NAME},
+        }
+        await owners.device.async_refresh()
+        _register(owners, SITE_ID, SWITCH_ID, SWITCH_MAC)
+        _register(owners, SITE_B, SITE_B_SWITCH_ID, SITE_B_SWITCH_MAC)
+
+        v1[SITE_ID] = _v1()
+        legacy["default"] = _legacy()
+        for _ in range(MAX_CONSECUTIVE_MISSING_POLLS - 1):
+            await owners.device.async_refresh()
+        assert _count(owners, SITE_ID, SWITCH_ID) == MAX_CONSECUTIVE_MISSING_POLLS - 1
+        before_data = owners.device.data
+        before_inventory = owners.device._inventory_state
+
+        v1[SITE_B] = UniFiResponseError("failed site poll", status_code=500)
+        legacy[SITE_B_LEGACY_NAME] = UniFiResponseError(
+            "failed fallback", status_code=500
+        )
+        await owners.device.async_refresh()
+        assert not owners.device.last_update_success
+        assert owners.device.data is before_data
+        assert owners.device._inventory_state is before_inventory
+        assert _registered(owners, SITE_ID, SWITCH_ID)
+
+        v1[SITE_B] = _v1(SITE_B_SWITCH_V1)
+        legacy[SITE_B_LEGACY_NAME] = _legacy(SITE_B_SWITCH_LEGACY)
+        await owners.device.async_refresh()
+        assert owners.device.last_update_success
+        assert owners.device.data is not before_data
+        assert _count(owners, SITE_ID, SWITCH_ID) is None
+        assert not _registered(owners, SITE_ID, SWITCH_ID)
+        assert _registered(owners, SITE_B, SITE_B_SWITCH_ID)
     finally:
         await async_shutdown_owners(owners)

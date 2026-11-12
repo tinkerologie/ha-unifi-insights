@@ -58,6 +58,7 @@ async def async_setup_entry(
     coordinator = entry.runtime_data.coordinator
     known_wifi_keys: set[tuple[str, str]] = set()
     known_floor_plan_keys: set[str] = set()
+    skipped_floor_plan_keys: set[str] = set()
     known_voucher_keys: set[str] = set()
 
     @callback
@@ -107,6 +108,11 @@ async def async_setup_entry(
                     # get no entity or device; they are picked up by a later
                     # coordinator update once they report an image_url.
                     if not plan_data.get("image_url"):
+                        if plan_id not in skipped_floor_plan_keys:
+                            skipped_floor_plan_keys.add(plan_id)
+                            _LOGGER.debug(
+                                "Skipping InnerSpace floor plan without image_url"
+                            )
                         continue
                     if plan_id in known_floor_plan_keys:
                         continue

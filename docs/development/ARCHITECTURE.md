@@ -1,10 +1,26 @@
 # Architecture overview
 
-This document describes the technical architecture of the UniFi Insights custom integration for Home Assistant.
+This document gives the design of UniFi Insights.
 
-For AI agent instructions, see [`AGENTS.md`](/AGENTS.md). For the decision log, see [`DECISIONS.md`](./DECISIONS.md) and the full records in [`adr/`](./adr/).
+See [AGENTS.md](/AGENTS.md) for agent instructions. See
+[DECISIONS.md](./DECISIONS.md) and [adr/](./adr/) for the decision records.
+See the [glossary](../../GLOSSARY.md) for project terms.
 
-> **Status:** this describes `main` as of 2026-10-21, with the ADR-007 module layout in place (#341). The Protect coordinator is split along ADR-007's `protect_ws.py` / `protect_events.py` seam (#340, [ADR-012](./adr/012-pure-protect-state-reconciler.md)), and the facade publishes a typed, read-only snapshot (#342, [ADR-013](./adr/013-typed-read-only-facade-snapshot.md)).
+> **Status.** This overview describes `main` as of 2026-11-07.
+
+The Device coordinator uses `coordinators/device_inventory.py` to find the
+registry entries to remove. It stores the inventory and publishes the snapshot
+before it removes these entries. See
+[ADR-014](./adr/014-pure-network-inventory-reconciliation.md).
+
+## Facade notifications
+
+The facade publishes a snapshot before it sends notifications. Use
+`FacadeOwner.DEVICE` or `FacadeOwner.PROTECT` as the listener context for
+an entity that reads from that owner. The facade notifies the entity when
+its owner updates. Listeners without a `FacadeOwner` receive all updates.
+Use the default context for discovery and for entities that read from more
+than one owner.
 
 ## Directory structure
 
@@ -52,7 +68,19 @@ docs/development/               # This document, DECISIONS.md and adr/
 
 ### API client
 
-**Library:** [`unifi-official-api`](https://pypi.org/project/unifi-official-api/) from PyPI, pinned in `manifest.json` as `unifi-official-api[talkback]==3.0.0` and imported as `unifi_official_api` (see [ADR-008](./adr/008-depend-on-unifi-official-api-from-pypi.md), which supersedes the vendored copy of [ADR-003](./adr/003-vendor-the-unifi-api-client.md)). API contract fixes go to [tinkerologie/unifi-official-api](https://github.com/tinkerologie/unifi-official-api) first; the integration then raises its pin.
+**Library.** The integration uses
+[`unifi-official-api`](https://pypi.org/project/unifi-official-api/) from PyPI.
+The Python import name is `unifi_official_api`. Keep the same version in
+`manifest.json`, `pyproject.toml`, and `requirements.txt`.
+See [ADR-008](./adr/008-depend-on-unifi-official-api-from-pypi.md).
+
+Fix API contracts in
+[unifi-official-api](https://github.com/tinkerologie/unifi-official-api) first.
+After the API release, update the library version in the integration.
+
+For lenient Protect lists, the Protect coordinator reads the records and the
+completeness flag from one result. An incomplete result keeps the cached
+records that the response does not contain.
 
 The package provides one async client per UniFi application:
 
@@ -66,11 +94,16 @@ The package provides one async client per UniFi application:
 | Mobility client         | `unifi_official_api.mobility`       | Workspaces and mobile routers                                  |
 | Carrier Fabric client   | `unifi_official_api.carrier_fabric` | Organizations, subscribers, fabrics                            |
 
-Every client receives Home Assistant's shared `aiohttp` session through `async_get_clientsession(hass)` (Quality Scale `inject-websession`). Responses are Pydantic models that keep unknown fields (`extra="allow"`), so new API fields never break parsing. Integration code never issues raw HTTP calls.
+Home Assistant supplies the `aiohttp` session with `async_get_clientsession(hass)`
+to meet `inject-websession`. The integration uses the library clients for API
+requests. Pydantic models with `extra="allow"` keep fields that the model
+does not define.
 
 ### Multi-coordinator architecture
 
-Each config entry owns a set of `DataUpdateCoordinator` subclasses, one per data domain, with intervals chosen for that domain's cost and volatility (see [ADR-002](./adr/002-multi-coordinator-architecture-behind-a-facade.md)):
+Each config entry has the coordinators for its applications. The polling
+interval depends on the data. See
+[ADR-002](./adr/002-multi-coordinator-architecture-behind-a-facade.md).
 
 | Coordinator                             | Module                           | Interval         | Scope                                                                                                                           |
 | --------------------------------------- | -------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
@@ -82,57 +115,158 @@ Each config entry owns a set of `DataUpdateCoordinator` subclasses, one per data
 | `UnifiInsightsSiteManagerCoordinator`   | `coordinators/site_manager.py`   | 10 min           | Cloud console and ISP metrics (shared per cloud key)                                                                            |
 | `UnifiInsightsMobilityCoordinator`      | `coordinators/mobility.py`       | 5 min (1 h idle) | Mobility workspaces and routers                                                                                                 |
 | `UnifiInsightsCarrierFabricCoordinator` | `coordinators/carrier_fabric.py` | 5 min            | Carrier Fabric organizations (standalone entry)                                                                                 |
-| `UnifiInsightsFacadeCoordinator`        | `coordinators/facade.py`         | push only        | Unified read view over the coordinators above                                                                                   |
+| `UnifiInsightsFacadeCoordinator`        | `coordinators/facade.py`         | push only        | Read view of Config, Device, Protect, InnerSpace, and Site Manager                                                              |
 
-All coordinators inherit `UnifiInsightsBaseCoordinator` (`coordinators/base.py`) for shared error mapping: authentication failures raise `ConfigEntryAuthFailed` (triggers reauth) and connection or server failures raise `UpdateFailed` (retry next interval). The device, Protect and InnerSpace coordinators detach registry devices the console no longer reports through the base class's `_remove_stale_device`; each keeps its own rule for when a device counts as stale. The device coordinator enforces source-aware eligibility (a site is only eligible for cleanup on consecutive polls from the same API source, preventing v1/legacy flip purges and empty-snapshot drops), a MAC presence guard (an identifier is not stale if its normalized hardware MAC is present on the site), a legacy cross-check on v1 polls (a device v1 omits is not counted while the same poll's legacy device list still has its MAC, and a site with a pending removal is skipped for the poll when that legacy list failed or came back empty; the list is the one the poll already fetched, so the check adds no request and no `await` after the publish), and removes a device on the 3rd consecutive eligible poll in which it is absent (`MAX_CONSECUTIVE_MISSING_POLLS = 3`). Known v1 IDs are reused during legacy fallback to keep device identities stable across endpoint outages. Protect keeps a missing device for 3 polls and removes on the 4th, while InnerSpace removes immediately.
+Config, Device, Protect, and InnerSpace use `UnifiInsightsBaseCoordinator`
+from `coordinators/base.py`. The other coordinators extend
+`DataUpdateCoordinator` directly. An authentication failure can raise
+`ConfigEntryAuthFailed` to start reauthentication. A connection or server
+failure can raise `UpdateFailed` to let Home Assistant retry.
 
-The facade coordinator has no update interval. It subscribes to the specialized coordinators, aggregates their snapshots into one `data` mapping, and fans out a single listener notification. Entities and services read from the facade so they do not need to know which coordinator owns a field.
+Device, Protect, and InnerSpace use `_remove_stale_device` to remove
+registry entries. Each coordinator has its own rule for stale devices.
+For Network devices, consecutive polls must use the same API source.
+An empty result after a nonempty result cannot start a removal.
+The Device coordinator keeps an ID if the site still reports the same MAC.
+When the v1 list omits a device, the legacy list from the same poll must
+also omit its MAC. A failed or empty legacy list cannot confirm removal.
+This check uses the list that the poll already fetched.
 
-The facade's `data` is a `FacadeData` snapshot ([ADR-013](./adr/013-typed-read-only-facade-snapshot.md)): a `TypedDict` with `ReadOnly` keys and `Mapping` sections, so a write into it is a strict-mypy error. The root is a `ReadOnlyDict`, and the pure `build_facade_data` passes each owner's sections through by reference, never copying or writing into them; the InnerSpace view is a memo rebuilt only when the objects it reads change.
+Device removes a device after three consecutive eligible misses
+(`MAX_CONSECUTIVE_MISSING_POLLS = 3`). It keeps known v1 IDs during
+legacy fallback. Protect removes a missing device on the fourth poll.
+InnerSpace removes missing devices on the first poll.
 
-- **Lookups.** Readers go through the pure lookups in `data_transforms.py`, which never raise. `network_device`, `network_device_stats`, `network_client`, `site_record`, `rule_record`, `protect_device` and `latest_voucher` return the published record, or None for a missing or malformed section or record. `protect_collection`, `site_section` and `section_by_site` return None for a missing or malformed section or collection, and otherwise a new dict of the records published as dicts (skipping any other value), so they are never called per entity or per record on every update, nor on the WebSocket gating inputs.
-- **Availability.** Each snapshot captures the owners' availability in `data["availability"]` (device, config, Protect, InnerSpace and Network, and per site each tracked config section). Entities read it with `owner_available(data, owner)` and `site_section_available(data, site_id, section)`, so state and availability come from the same snapshot. The facade's owner-level `*_available` properties remain for the capture, the WebSocket API and diagnostics.
-- **WebSocket gating.** The dashboard streams skip a rebuild when every input section is the same object as last time; the Protect streams compare the identity of the copy-on-write Protect collections.
-- **Tests.** Snapshots are built and frozen with `tests/fixtures/facade_data.py`.
+The facade has no polling interval. It combines Config, Device, Protect,
+InnerSpace, and Site Manager data in one snapshot. Access and Mobility
+entities use their own coordinators. Carrier Fabric has a separate entry.
+
+`FacadeData` is a `TypedDict` with `ReadOnly` keys and `Mapping` sections.
+The root is a `ReadOnlyDict`. `build_facade_data` reuses owner sections by
+reference where possible. The InnerSpace view rebuilds when its inputs
+change. The facade builds the Site Manager section with the selected host ID.
+See [ADR-013](./adr/013-typed-read-only-facade-snapshot.md).
+
+- **Lookups.** The pure lookup functions live in `data_transforms.py`.
+  `network_device`, `network_device_stats`, `network_client`, `site_record`,
+  `rule_record`, `protect_device`, and `latest_voucher` return a record or `None`.
+  `protect_collection`, `site_section`, and `section_by_site` can copy records.
+  Use a record lookup for each entity. The WebSocket inputs use the owner sections.
+- **Availability.** `data["availability"]` stores owner and site-section availability.
+  Entities use `owner_available(data, owner)` and `site_section_available(data, site_id, section)`.
+  The facade uses its `*_available` properties for snapshot creation, WebSocket, and diagnostics.
+- **WebSocket updates.** Dashboard streams compare input objects by identity.
+  Protect streams compare the Protect collections by identity.
+- **Tests.** `tests/fixtures/facade_data.py` builds and freezes test snapshots.
 
 ### Protect state reconciliation
 
-The Protect coordinator has two sources that race each other: the "devices" and "events" WebSocket streams and the 30 s REST poll. `coordinators/protect_events.py` holds every decision about how one of them changes the cache, as one pure function (see [ADR-012](./adr/012-pure-protect-state-reconciler.md)). The one exception is liveviews: they have no frames, latches or eviction to reconcile, so `protect.py` writes each liveview answer itself, copy-on-write.
+The Protect coordinator receives WebSocket frames and polls REST every 30 s.
+`coordinators/protect_events.py` reconciles those inputs with a pure function.
+See [ADR-012](./adr/012-pure-protect-state-reconciler.md).
+`protect.py` stores liveviews directly because they have no events to reconcile.
 
 ```python
 reconcile(state, cache, input, now) -> Step(state, cache, effects)
 ```
 
-- **Inputs.** A `DeviceFrame` or `EventFrame` (parsed by `protect_ws.py`), a `RestBatch` (one REST answer: `Fetched`, `NotFound`, `TransientError` or `NoAnswer`, with the `RequestStamp` taken by `begin_request` before the request's await), `PollStarted` and `PollCompleted` around the main poll, `StreamReconnected`, `SirenStopped` and a command's `CommandOverlay`.
-- **State.** A frozen `ReconcilerState`: the motion, smart-detect and ring latches, per-sensor WebSocket recency and preserve counters, alarm hub tamper records, siren stop guards, the NVR and siren WebSocket generations, and each family's empty-answer, error and missing-poll counts.
-- **Effects.** `PublishUpdate` (`async_set_updated_data` for device frames, `async_update_listeners` otherwise), `RemoveDevice` (registry removal through the base coordinator), `Escalate` (the fetcher re-raises a transient error that outlasted its window) and `Log` (written to the `coordinators.protect` logger).
-- **Copy-on-write.** The cache is never changed in place: a step that changes something returns a new root that shares every untouched collection and record, and a step that changes nothing returns the same object.
-- **Clocks.** The coordinator reads both clocks once per input into an `Instant`: monotonic time for request stamps, WebSocket recency, the tamper race and the siren guard lifetime; wall time for the latch timeout and the siren stop fallback.
+- **Inputs.** `protect_ws.py` parses `DeviceFrame` and `EventFrame`.
+  A `RestBatch` carries `Fetched`, `NotFound`, `TransientError`, or `NoAnswer`.
+  `begin_request` makes the `RequestStamp` before the request waits.
+  Other inputs include `PollStarted`, `PollCompleted`, `StreamReconnected`,
+  `SirenStopped`, and `CommandOverlay`.
+- **State.** The frozen `ReconcilerState` holds event latches and WebSocket timing.
+  It also holds tamper records, siren stop guards, generations, and poll counters.
+- **Effects.** `PublishUpdate` notifies listeners.
+  `RemoveDevice` removes a registry entry.
+  `Escalate` raises an error after the retry window.
+  `Log` records a message. `DispatchDigitalInput` sends a digital input event.
+- **Copy-on-write.** A change creates a new root. It shares unchanged collections
+  and records. If no data changes, the function returns the same object.
+- **Clocks.** The coordinator reads both clocks into an `Instant`.
+  Monotonic time tracks request stamps, recency, and guards.
+  Wall time controls latch timeouts and the siren stop fallback.
 
-The coordinator's `_apply(input)` is the only writer of the state: it commits the new state and cache, then runs the effects in order. The module imports nothing from Home Assistant, the API library or the clock, which an AST test enforces, so `tests/coordinators/test_protect_events.py` drives it table by table.
+The coordinator's `_apply(input)` stores the new state and cache.
+Then it runs the effects in order. The reconciler has no Home Assistant,
+API library, or clock imports. `tests/coordinators/test_protect_events.py`
+tests the decisions.
 
 ### Command path
 
-Every write command belongs to the coordinator that owns the data it changes (see [ADR-010](./adr/010-one-owner-per-write-command.md)). Entities and service actions call that owner directly with a typed call: `coordinator.config_coordinator` (rule toggles, Wi-Fi, guest authorization, voucher generate and delete), `coordinator.device_coordinator` (restart, PoE power cycle, outlets, client commands, Wake-on-LAN) and `coordinator.require_protect_coordinator()` (camera, light, chime, viewer, PTZ, alarm, siren, liveview and talkback commands, which raises the translated `no_protect_coordinator` error without Protect). Access entities call their Access coordinator, and Carrier Fabric actions their Carrier Fabric coordinator. The facade keeps only `async_refresh_or_raise` and holds no domain state: the voucher settings and the latest generated vouchers belong to the config coordinator, which publishes `latest_vouchers` copy-on-write ([ADR-013](./adr/013-typed-read-only-facade-snapshot.md)). There is no string dispatch and no fallback to an API client, and no entity calls a client: the Protect owner also serves the camera snapshot and stream reads.
+The coordinator that owns the data runs its write commands. See
+[ADR-010](./adr/010-one-owner-per-write-command.md).
 
-- **Errors.** Each owner runs the API call through `coordinators/base.py`'s `async_execute_command`, which passes a `HomeAssistantError` through and turns any other failure into a translated error (`command_failed` with the English "Unable to ..." message, `invalid_api_response` for unreadable data, or an optional rejection key such as `restart_rejected` for a falsy result). Access entities pass their coordinator's command through the same executor, so a failure the Access coordinator does not translate itself keeps its "Could not ..." message.
-- **Optimistic state.** After a successful write the owner publishes the written fields as a copy-on-write overlay of its own data (lists included, so every `ringSettings` entry of a chime changes) and notifies listeners. Entities derive their state from that data instead of setting local attributes. There is no rollback and no generation tracking, except that the Device coordinator holds a written outlet field over polls that still report the old value, for up to 60 s (ADR-010, #376).
-- **Reconciliation.** Rule toggles await the config refresh and retry once after 15 s while the family is unavailable; Wi-Fi, outlet and client block writes request a deferred refresh; Protect settings rely on WebSocket frames and the next poll, while chime ringtone, chime pairing and alarm commands request a Protect refresh. A failed refresh after a successful write is logged and never fails the write.
-- **Classic site names.** The config coordinator publishes `legacy_site_names` and owns the only resolver, which never guesses `"default"` and raises `legacy_site_not_found`. The device coordinator reads the published mapping on each poll instead of looking it up.
-- **Translation at the edge.** An entity turns a display name or an observed option into the native ID before it calls the owner (the liveview and ringtone selects raise `liveview_not_found` and `ringtone_not_found`); service actions already pass native IDs.
+- `coordinator.config_coordinator` handles rules, Wi-Fi, guest authorization, and vouchers.
+- `coordinator.device_coordinator` handles restarts, PoE, outlets, Network clients, and Wake-on-LAN.
+- `coordinator.require_protect_coordinator()` gives the owner for Protect commands.
+  Without Protect, it raises `no_protect_coordinator`.
+- Access and Carrier Fabric use their own command owners.
+
+The facade provides `async_refresh_or_raise`. Config owns voucher settings and
+publishes `latest_vouchers`. See [ADR-013](./adr/013-typed-read-only-facade-snapshot.md).
+Entities call their coordinator. The Protect coordinator also handles
+camera snapshot and stream reads.
+
+- **Errors.** `async_execute_command` passes through `HomeAssistantError`.
+  It translates other failures with `command_failed` or a more specific key.
+  Examples include `invalid_api_response` and `restart_rejected`.
+  Access can keep the translated error or its English message.
+- **Optimistic state.** An owner can publish an overlay after a successful write.
+  The fields in this overlay depend on the command. For example, chime
+  ringtone updates change each `ringSettings` entry.
+  Device can keep a new outlet value for up to 60 s while polls return the old value.
+- **Reconciliation.** Rule toggles wait for Config and can retry after 15 s.
+  Wi-Fi, outlet, and client block commands request a deferred refresh.
+  Protect usually waits for a frame or the next poll. Chime ringtone,
+  pairing, and alarm commands request a refresh. A refresh failure after
+  a successful write goes to the log.
+- **Classic site names.** Config publishes `legacy_site_names`.
+  If it cannot resolve a name, it raises `legacy_site_not_found`.
+  Device reads the published mapping. Neither uses `"default"` as a guess.
+- **Native IDs.** Entities convert display values to native IDs before the call.
+  Liveview and ringtone selects can raise `liveview_not_found` or `ringtone_not_found`.
+  Actions already receive native IDs.
 
 ### Network device read model
 
-`data_transforms.py` owns one rule for each network device fact: the online state, the device kind, the site gateway, the ports, the CPU, memory, uptime and uplink metrics, and a client's connection type. The device coordinator builds `SiteNetworkFacts` (one frozen `NetworkDeviceFacts` per device, plus the site's `gateway_id`) once per successful refresh, after the legacy merge, stats reuse and port rates. It publishes them under `network_facts` by replacing the map, never by mutating it. The facts are pruned and cleared with the other site maps, and a failed refresh keeps the last committed facts. The facade passes the map through by reference.
+`data_transforms.py` gives the rules for Network device facts.
+These facts include device kind, online state, gateway, ports, and metrics.
+The Device coordinator builds `SiteNetworkFacts` after it combines the API data.
+The site facts hold one `NetworkDeviceFacts` record per device and a `gateway_id`.
+A failed refresh keeps the previous facts. The facade uses the map by reference.
 
-- **Reading the facts.** `site_network_facts(data, site_id)` and `device_facts(data, site_id, device_id)` return the published objects. They build from the raw `devices` and `stats` only when the key was never published (mock data in tests), and log that at debug level. The facade's `get_device_facts` and `get_site_gateway_id` call the same accessors. Entities read `device_facts` on `UnifiInsightsEntity`. The dashboard builders read the site facts, and WebSocket change detection includes their identity.
-- **Online state.** The rule follows the Network API spec: only `ONLINE` is online. `OFFLINE`, `CONNECTION_INTERRUPTED`, `ISOLATED` and `U5G_INCORRECT_TOPOLOGY` are offline. Every other value is unknown, including `CONNECTED`, `UP`, `DISCONNECTED` and `DOWN`, which are not network device states. Protect `CONNECTED`, tracker `connected` and WAN `connected` keep their own rules.
-- **Service eligibility.** `serviceable` / `device_serviceable()` is separate from strict `online_state` connectivity. Network entities and outlet relay/cycle switches stay available for `ONLINE` and `GETTING_READY` while the snapshot's captured device availability is true. `GETTING_READY` means a managed device is applying configuration; it still counts as unknown on dashboards, and Status/WAN binary sensors stay available with an unknown state rather than triggering false offline automations. `UPDATING`, `ADOPTING`, `PENDING_ADOPTION` and `DELETING` remain unavailable. No last-online memory or timeout is needed: a failed Device poll makes entities unavailable.
-- **Gateway.** The gateway checks (legacy type, v1 type, model prefix or "GATEWAY" in the model, a `gateway` or `router` feature) run before the switching check. A UDM Pro with a null `type` that advertises only `switching` is therefore a gateway even without legacy data. The site gateway is the first gateway in the site's device map order.
-- **Throughput units.** `uplink.txRateBps` and `rxRateBps` (and `tx_rate_bps`/`rx_rate_bps`) are already bits/s. Only the explicit `*_bytes_per_sec` fallbacks are multiplied by 8. Evidence on #337: same-moment samples on a UDM Pro SE and a USW Pro Max 24 read the v1 rates at 8× the legacy uplink bytes/s, a UCG-Fiber sample agreed, and a UDM Pro read 8.00× across seven devices against the legacy `stat/device` `tx_bytes-r`/`rx_bytes-r` that the UniFi UI shows rates from. The facts keep float bits/s, and the performance and internet activity payloads convert them to integers.
-- **Ports need legacy data.** The coordinator fetches only the v1 device overview, whose `interfaces` is a list of names. Port records come from the legacy `/stat/device` merge, so when that fetch fails, port sensors and SFP presence sensors lose their ports together. Each port keeps its raw index for unique IDs (SFP presence IDs use the raw spelling) and a normalized integer index for lookups.
-- **Diagnostics.** Diagnostics drop `network_facts` before redaction, because the section repeats `devices` and `stats` as frozen records that the MAC pass cannot walk.
-- **MAC policies.** `data_transforms.normalize_mac` is the canonical, validating parser and the topology HMAC input. Four identity-specific policies stay separate on purpose, because they feed stored or user-facing identities: `console_identity.normalize_mac`, `UnifiInsightsDeviceCoordinator._normalize_mac`, `innerspace_transforms._normalize_innerspace_mac` and `service_targets._mac_key`.
+- **Access.** `site_network_facts(data, site_id)` and `device_facts(data, site_id, device_id)`
+  return the published records. If no `network_facts` key exists, they can
+  use `devices` and `stats` and write a debug message. Entities and cards
+  use the same facts. WebSocket change detection uses their identity.
+- **Online state.** Only `ONLINE` means online. `OFFLINE`, `CONNECTION_INTERRUPTED`,
+  `ISOLATED`, and `U5G_INCORRECT_TOPOLOGY` mean offline. Other values mean unknown.
+  Protect, device trackers, and WAN sensors use their own rules.
+- **Serviceable Network device.** `serviceable` and `device_serviceable()` are
+  separate from `online_state`. Network entities can remain available in
+  `ONLINE` and `GETTING_READY` when the Device coordinator is available.
+  In `GETTING_READY`, the device applies its configuration. Dashboards and
+  Status or WAN sensors can show unknown. `UPDATING`, `ADOPTING`,
+  `PENDING_ADOPTION`, and `DELETING` make the entities unavailable.
+  A failed Device poll also makes them unavailable.
+- **Gateway.** The gateway check uses type, model, or feature data before the
+  switching check. This can identify a UDM Pro with a null `type`. The
+  first gateway in the site's device map is the site gateway.
+- **Throughput.** `uplink.txRateBps`, `rxRateBps`, `tx_rate_bps`, and
+  `rx_rate_bps` use bits/s. The conversion multiplies only the
+  `*_bytes_per_sec` values by eight. Samples from #337 confirmed this ratio.
+  Device facts keep decimal values. The two dashboard payloads use integers.
+- **Ports.** The v1 `interfaces` list has names. The legacy `/stat/device`
+  response supplies port records. If it fails, both port and SFP sensors
+  lose these records. Ports keep their raw index for IDs and an integer
+  index for lookups.
+- **Diagnostics.** Diagnostics omit `network_facts`. These frozen records
+  repeat `devices` and `stats`, and the MAC redaction cannot read them.
+- **MAC rules.** `data_transforms.normalize_mac` validates MAC addresses for
+  topology. Stored or visible identities use their own rules in
+  `console_identity.normalize_mac`, `UnifiInsightsDeviceCoordinator._normalize_mac`,
+  `innerspace_transforms._normalize_innerspace_mac`, and `service_targets._mac_key`.
 
 ### Runtime data
 
@@ -155,7 +289,9 @@ class UnifiInsightsData:
 UnifiInsightsConfigEntry: TypeAlias = ConfigEntry[UnifiInsightsData]
 ```
 
-Stored in `entry.runtime_data`. Carrier Fabric entries use a separate `CarrierFabricData` dataclass. Component-wide singletons (frontend registration, topology keys) use typed `HassKey` entries; nothing per-entry lives in `hass.data[DOMAIN]`.
+The integration stores per-entry data in `entry.runtime_data`. Carrier Fabric
+uses `CarrierFabricData`. Frontend registration and topology keys use typed
+`HassKey` entries.
 
 ### Entity hierarchy
 
@@ -177,7 +313,14 @@ CoordinatorEntity[UnifiInsightsCarrierFabricCoordinator]
   └── UnifiCarrierFabricEntity → UnifiCarrierFabricSubscriberEntity
 ```
 
-All base classes live in `entity.py`. Platform entities use the MRO `UnifiInsightsEntity, SensorEntity` (custom base first). Same-shape entities share one class driven by its description: `UnifiInsightsNetworkRuleSwitch` serves all seven network rule families (firewall policies, policy-based routes, VPN clients, port forwards, traffic rules, NAT rules, static routes), `UnifiOutletSwitch` the outlet relay and power-cycle switches, and `UnifiProtectSensor` / `UnifiProtectBinarySensor` every Protect device, NVRs and security devices included. Static metadata lives in frozen, keyword-only `EntityDescription` dataclasses. Field access goes through `get_field()` (camelCase and snake_case tolerant) and `first_not_none()` (keeps legitimate `0` and `False`).
+`entity.py` holds the base classes. In the platform class, put the
+integration base first, for example `UnifiInsightsEntity, SensorEntity`.
+`UnifiInsightsNetworkRuleSwitch` covers seven Network rule families.
+`UnifiOutletSwitch` covers outlet relay and power cycle.
+`UnifiProtectSensor` and `UnifiProtectBinarySensor` cover Protect devices.
+Frozen `EntityDescription` dataclasses hold static metadata.
+`get_field()` accepts camelCase and snake_case. `first_not_none()` keeps
+values such as `0` and `False`.
 
 ### Config flow
 
@@ -189,57 +332,92 @@ Three connection modes share one domain (see [ADR-004](./adr/004-stable-console-
 | `remote`         | Site Manager API key + console selection     | Cloud `console_id`                                |
 | `carrier_fabric` | Organization ID + API key                    | `carrier_<org_id>` or `carrier_key_<sha256[:16]>` |
 
-Flows: user setup, reauth, reconfigure, options. There is no network discovery step; `manifest.json` has empty `zeroconf`, `dhcp`, and `ssdp` matchers. `console_identity.py` resolves the identity for both the flow and `async_setup_entry`, so the two can never disagree. `probe.py` classifies which applications the credentials can reach before the entry is created (`test-before-configure`) and again at setup (`test-before-setup`).
+The flow supports setup, reauthentication, reconfiguration, and options.
+`manifest.json` has empty `zeroconf`, `dhcp`, and `ssdp` matchers.
+The flow and `async_setup_entry` use the same identity from
+`console_identity.py`. `probe.py` checks access before it creates the
+entry (`test-before-configure`). It checks again during setup
+(`test-before-setup`).
 
 ### Device model
 
-One device per physical UniFi device, with the console as the parent via `via_device_id`. Network devices are identified by `(DOMAIN, "<site_id>_<device_id>")`, where `device_id` is the v1 ID (reused during legacy fallback) or, when no v1 ID is known, the legacy `_id` or MAC. Protect devices reuse a matching Network device's identifiers or use their own Protect identifiers. Logical sites, WiFi networks, and Mobility workspaces are devices scoped to the owning config entry. Stale devices are removed when they disappear from the coordinator snapshot (`stale-devices`), with Network removing on the 3rd consecutive eligible poll in which a device is absent (adding source-aware eligibility and MAC guard protection) and Protect removing on the 4th, while InnerSpace removes immediately, and `async_remove_config_entry_device` lets users delete what can no longer come back: devices of deselected sites, of sites the console no longer lists after a successful refresh that listed at least one site, and stale WiFi networks, Mobility routers and Carrier Fabric subscribers. Automatic cleanup keeps devices of a site that vanished from the site list, because a partial site list looks the same as a deleted site (#391).
+Each physical device has one registry entry with a console parent
+(`via_device_id`). A Network identifier uses `(DOMAIN, "<site_id>_<device_id>")`.
+`device_id` is the v1 ID when known. Otherwise, it is the legacy `_id`
+or MAC. Protect can reuse identifiers from a matching Network device.
+Sites, Wi-Fi networks, and Mobility workspaces also have registry entries.
+
+The coordinators apply their stale device rules (`stale-devices`).
+Automatic cleanup keeps devices if their entire site disappears from a poll.
+A partial site list can look like a deleted site (#391).
+Users can remove entries for deselected or missing sites with
+`async_remove_config_entry_device` when the site list is reliable.
+They can also remove stale Wi-Fi networks, Mobility routers, and
+Carrier Fabric subscribers.
 
 ### Service actions
 
-`services.py` registers every action in `async_setup` (`action-setup`), so they validate even when no entry is loaded. Target routing lives in `service_targets.py`, a recorded seam ([ADR-009](./adr/009-amend-flat-module-layout.md)): `services.py` keeps the schemas, handlers and registration. Each handler calls one public call-level resolver (`resolve_network_device_call`, `resolve_network_client_call`, `resolve_network_site_call`, `resolve_network_consoles_call`, `resolve_refresh_call`, `resolve_protect_call`, `resolve_protect_console_call`, `resolve_chime_pairing_call`, `resolve_rule_export_call`, `resolve_access_call` or `resolve_carrier_subscriber_call`). The resolver returns a frozen result that holds the owning config entry, the facade to read cached data from (`cache`), the ADR-010 command owner (`device_commands`, `config_commands`, `protect_commands`, `facade_commands`, `export_commands`, `access_commands` or `carrier_commands`) and the native ID and site. The handler then runs that one owner command, the same one the entities use (see [Command path](#command-path)). Routing never picks the first entry: registry targets resolve to their owning entry (`DeviceEntry.config_entry_id`), and Carrier Fabric identifiers are looked up one config entry at a time. User input errors raise `ServiceValidationError`; device or API failures raise `HomeAssistantError`. Both carry `translation_domain=DOMAIN` and a `translation_key` defined under `exceptions` in `strings.json` and `translations/en.json`; an AST guard in `tests/test_translations.py` enforces this for `services.py`, `service_targets.py` and `coordinators/carrier_fabric.py`.
+`services.py` registers actions in `async_setup` (`action-setup`).
+It holds the schemas, handlers, and registration. `service_targets.py`
+resolves the target. See [ADR-009](./adr/009-amend-flat-module-layout.md).
+
+The handler uses one resolver per call. The resolvers are
+`resolve_network_device_call`, `resolve_network_client_call`,
+`resolve_network_site_call`, `resolve_network_consoles_call`,
+`resolve_refresh_call`, `resolve_protect_call`, `resolve_protect_console_call`,
+`resolve_chime_pairing_call`, `resolve_rule_export_call`, `resolve_access_call`,
+and `resolve_carrier_subscriber_call`.
+
+The frozen result holds the config entry, `cache`, the command owner, and
+the native IDs. Owner fields include `device_commands`, `config_commands`,
+`protect_commands`, `facade_commands`, `export_commands`, `access_commands`,
+and `carrier_commands`. The handler runs the same command that an entity uses.
+See [Command path](#command-path).
+
+Registry targets use `DeviceEntry.config_entry_id`. Carrier Fabric searches
+one entry at a time. Invalid inputs raise `ServiceValidationError`.
+Device or API failures raise `HomeAssistantError`. Both use
+`translation_domain=DOMAIN` and a `translation_key` from `exceptions`.
+`tests/test_translations.py` checks the keys in `strings.json` and
+`translations/en.json` for the action handlers and the Carrier Fabric coordinator.
 
 ### Dashboard cards and WebSocket API
 
-Six Lovelace cards are built from `frontend/src/` with Vite into `custom_components/unifi_insights/frontend/` and served by `frontend.py` through `hass.http.async_register_static_paths` with a content-digest query string for cache busting. `websocket_api.py` exposes `unifi_insights/topology/{sources,get,subscribe,node_details}` and `unifi_insights/protect/{sources,get,subscribe}`. Snapshot payloads follow versioned TypedDict contracts, and topology node ids are HMACs of the MAC under a per-entry key so dashboards never leak raw addresses (see [ADR-005](./adr/005-bundled-dashboard-cards-with-versioned-contracts.md)).
+Vite builds six Lovelace cards from `frontend/src/`. The bundles go to
+`custom_components/unifi_insights/frontend/`. `frontend.py` serves them
+through `hass.http.async_register_static_paths`. A content digest in the
+URL identifies the current bundle.
+
+`websocket_api.py` provides `unifi_insights/topology/{sources,get,subscribe,node_details}`
+and `unifi_insights/protect/{sources,get,subscribe}`. Snapshots use versioned
+`TypedDict` contracts. Topology node IDs use an HMAC of the MAC with a
+key for each entry. See [ADR-005](./adr/005-bundled-dashboard-cards-with-versioned-contracts.md).
 
 ### Push channels
 
-- **Protect WebSocket** (`unifi_official_api.protect.websocket`): device and event updates with heartbeat and health checks, falling back to the 30 s poll. `coordinators/protect_ws.py` turns both streams' raw frames into typed `DeviceFrame`, `EventFrame` and `RateLimited` values and tracks each stream's health (`websocket_health` in diagnostics); the Protect coordinator applies them through the reconciler (see [Protect state reconciliation](#protect-state-reconciliation)).
-- **Access webhook** (`access_webhook.py`): signed access-granted and access-denied results delivered through Home Assistant's `webhook` component.
+- **Protect WebSocket.** `coordinators/protect_ws.py` reads the device and
+  event streams. It gives the reconciler `DeviceFrame`, `EventFrame`, and
+  `RateLimited` values. Diagnostics show `websocket_health`. The 30 s poll
+  also updates the data. See [Protect state reconciliation](#protect-state-reconciliation).
+- **Access webhook.** `access_webhook.py` receives signed access results
+  through Home Assistant's `webhook` component.
 
 ### Diagnostics
 
-`diagnostics.py` exports config entry diagnostics through three redaction layers: `TO_REDACT` for secrets, `CLIENT_TO_REDACT` and `WIFI_TO_REDACT` for personal names and SSIDs, and `_anonymize_macs()` for consistent, reversible-only-by-the-author MAC anonymization (see [ADR-006](./adr/006-three-layer-diagnostics-redaction.md)).
+`diagnostics.py` exports config entry diagnostics. `TO_REDACT` identifies
+secrets. `CLIENT_TO_REDACT` and `WIFI_TO_REDACT` identify personal names
+and SSIDs. `_anonymize_macs()` replaces MAC addresses with consistent
+values within each report. See [ADR-006](./adr/006-three-layer-diagnostics-redaction.md).
 
 ## Data flow
 
 ```text
-┌────────────────────────┐
-│  Config entry          │ ← console_identity.py + probe.py decide identity and capabilities
-└───────────┬────────────┘
-            ▼
-┌────────────────────────┐
-│  unifi-official-api    │ ← one client per UniFi application, shared aiohttp session
-└───────────┬────────────┘
-            │
-   ┌────────┼─────────┬──────────┬──────────┬───────────┬──────────┐
-   ▼        ▼         ▼          ▼          ▼           ▼          ▼
-┌──────┐ ┌──────┐ ┌───────┐ ┌───────┐ ┌─────────┐ ┌──────────┐ ┌────────┐
-│Config│ │Device│ │Protect│ │Access │ │InnerSpc │ │SiteMgr   │ │Mobility│
-│5 min │ │30 s  │ │30s+WS │ │30s+WH │ │5 min    │ │10 min    │ │5 min   │
-└──┬───┘ └──┬───┘ └──┬────┘ └──┬────┘ └───┬─────┘ └────┬─────┘ └───┬────┘
-   └────────┴────────┴─────┬───┴──────────┴────────────┴───────────┘
-                           ▼
-              ┌────────────────────────┐
-              │  Facade coordinator    │ ← aggregates snapshots, single listener fan-out
-              └───────────┬────────────┘
-         ┌────────────────┼────────────────────┐
-         ▼                ▼                    ▼
-   ┌───────────┐   ┌──────────────┐   ┌─────────────────────┐
-   │ Entities  │   │ Services     │   │ WebSocket API →     │
-   │ 17 plat.  │   │ services.py  │   │ dashboard cards     │
-   └───────────┘   └──────────────┘   └─────────────────────┘
+Config entry -> console_identity.py and probe.py
+  -> unifi-official-api clients with the shared aiohttp session
+     -> Config, Device, Protect, InnerSpace, Site Manager -> Facade
+        -> Entities, services.py, WebSocket API, dashboard cards
+     -> Access -> Access entities and actions
+     -> Mobility -> Mobility entities
 ```
 
 Carrier Fabric entries run a single `UnifiInsightsCarrierFabricCoordinator` feeding the sensor platform directly.
@@ -250,4 +428,7 @@ See [DECISIONS.md](./DECISIONS.md) for the log and [`adr/`](./adr/) for the full
 
 ## Quality scale
 
-The integration follows the Home Assistant Integration Quality Scale rules through Platinum as mandatory requirements. `custom_components/unifi_insights/quality_scale.yaml` records an evidence-based status for every rule, including the open `todo` items ([#336](https://github.com/tinkerologie/ha-unifi-insights/issues/336)); no tier is claimed in `manifest.json`, which is correct for a custom integration.
+The integration uses the Quality Scale rules through Platinum.
+`custom_components/unifi_insights/quality_scale.yaml` records each rule's
+status and evidence. See [#336](https://github.com/tinkerologie/ha-unifi-insights/issues/336)
+for open items.

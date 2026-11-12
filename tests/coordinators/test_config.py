@@ -35,6 +35,11 @@ from unifi_official_api import (
 )
 from unifi_official_api.exceptions import UniFiResponseError
 from unifi_official_api.network.models import SiteReportBucket
+from unifi_official_api.network.models.stats import (
+    StatisticsSource,
+    StatsSeries,
+    StatsSeriesBucket,
+)
 from unifi_official_api.protect.models import (
     Camera,
     CameraState,
@@ -58,6 +63,8 @@ from custom_components.unifi_insights.coordinators.config import (
     aggregate_internet_activity_windows,
 )
 from custom_components.unifi_insights.coordinators.config_sections import (
+    METHOD_MISSING,
+    InternetActivityFetchResult,
     async_fetch_site_routes,
     async_fetch_site_wifi_and_links,
     async_update_site_internet_activity,
@@ -197,6 +204,32 @@ class TestPublishedLegacyMapping:
 
         assert config.data["legacy_site_names"] == {}
         assert config.data["legacy_mapping_failed"] is False
+
+    async def test_lookup_failure_prunes_stats_ids_of_removed_sites(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A failed lookup keeps last-good stats IDs only for present sites."""
+        config = seeded_owners.config
+        config._stats_site_ids = {SITE_ID: "stats-kept", "gone-site": "stats-gone"}
+        seeded_owners.network_client.sites.get_legacy_all.side_effect = (
+            UniFiConnectionError("down")
+        )
+
+        await config.async_refresh()
+
+        assert config._stats_site_ids == {SITE_ID: "stats-kept"}
+
+    async def test_no_selected_sites_clears_the_stats_ids(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """With no sites left the stored stats IDs are dropped."""
+        config = seeded_owners.config
+        config._stats_site_ids = {SITE_ID: "stats-old"}
+        seeded_owners.network_client.sites.get_all.return_value = []
+
+        await config.async_refresh()
+
+        assert config._stats_site_ids == {}
 
     @pytest.mark.parametrize("lookup_fails", [False, True])
     async def test_site_selection_prunes_the_mapping(
@@ -613,7 +646,7 @@ class TestRuleReconciliation:
         await config.async_set_firewall_rule_enabled(SITE_ID, "rule1", enabled=True)
 
         assert config.last_update_success is True
-        assert not config.firewall_available(SITE_ID)
+        assert ("firewall_rules", SITE_ID) in config.failed_sections
         assert set(config._rule_refresh_retries) == {("firewall_rules", SITE_ID)}
 
     @pytest.mark.parametrize(
@@ -925,17 +958,26 @@ class TestProtectOnlyPollingBehavior:
         assert data["sites"] == {}
         network_client.sites.get_all.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_config_coordinator_marks_network_unavailable_on_non_json(
-        self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            UniFiResponseError(
+                "Non-JSON", status_code=200, response_body="<html></html>"
+            ),
+            UniFiNotFoundError(),
+            UniFiAuthenticationError("Unauthorized", status_code=401),
+        ],
+        ids=["html", "not-found", "unauthorized"],
+    )
+    async def test_unconfirmed_network_can_be_absent(
+        self,
+        hass: HomeAssistant,
+        mock_config_entry: MockConfigEntry,
+        failure: Exception,
     ) -> None:
-        """Test sites.get_all non-JSON error marks network unavailable."""
+        """Continue to support a Protect-only console whose Network API never worked."""
         network_client = _create_site_listing_client()
-        network_client.sites.get_all = AsyncMock(
-            side_effect=UniFiResponseError(
-                "Response is not JSON", status_code=200, response_body="<html></html>"
-            )
-        )
+        network_client.sites.get_all.side_effect = failure
 
         coordinator = UnifiInsightsConfigCoordinator(
             hass=hass,
@@ -947,19 +989,14 @@ class TestProtectOnlyPollingBehavior:
 
         data = await coordinator._async_update_data()
 
-        assert coordinator._network_available is False
+        assert coordinator.network_available is False
         assert data["sites"] == {}
 
     @pytest.mark.asyncio
-    async def test_config_coordinator_keeps_network_after_it_answered(
+    async def test_empty_sites_response_confirms_network(
         self, hass: HomeAssistant, mock_config_entry: MockConfigEntry
     ) -> None:
-        """A console that listed its sites keeps Network through a reboot.
-
-        While it reboots or updates, the console answers the sites endpoint
-        with its web UI's HTML page (a 200). That fails the refresh but must
-        not turn Network off, or no later poll would ask again.
-        """
+        """An empty successful listing prevents a later 404 from disabling Network."""
         network_client = _create_site_listing_client()
         coordinator = UnifiInsightsConfigCoordinator(
             hass=hass,
@@ -969,23 +1006,111 @@ class TestProtectOnlyPollingBehavior:
             network_available=True,
         )
         await coordinator._async_update_data()
-        assert coordinator._network_confirmed is True
-
-        network_client.sites.get_all = AsyncMock(
-            side_effect=UniFiResponseError(
-                "Response is not JSON", status_code=200, response_body="<html></html>"
-            )
-        )
-        with pytest.raises(UpdateFailed):
-            await coordinator._async_update_data()
-        assert coordinator._network_available is True
 
         network_client.sites.get_all = AsyncMock(
             side_effect=UniFiNotFoundError("Not found", status_code=404)
         )
         with pytest.raises(UpdateFailed):
             await coordinator._async_update_data()
-        assert coordinator._network_available is True
+        assert coordinator.network_available is True
+
+    @pytest.mark.parametrize("protect", [True, False], ids=["protect", "innerspace"])
+    @pytest.mark.parametrize("status_code", [200, 404, 401])
+    async def test_network_sites_recover_on_the_next_scheduled_poll(
+        self,
+        hass: HomeAssistant,
+        mock_network_client: MagicMock,
+        mock_config_entry: MockConfigEntry,
+        *,
+        protect: bool,
+        status_code: int,
+    ) -> None:
+        """Retain last-good sites and let the HA timer recover after reboot errors."""
+        coordinator = UnifiInsightsConfigCoordinator(
+            hass=hass,
+            network_client=mock_network_client,
+            protect_client=MagicMock() if protect else None,
+            entry=mock_config_entry,
+            innerspace_available=not protect,
+        )
+        failures = {
+            200: UniFiResponseError(
+                "Non-JSON", status_code=200, response_body="<html></html>"
+            ),
+            404: UniFiNotFoundError(),
+            401: UniFiAuthenticationError("Unauthorized", status_code=401),
+        }
+        sites = mock_network_client.sites.get_all
+        sites.return_value = [{"id": SITE_ID, "name": "Default"}]
+        await coordinator.async_refresh()
+        original = coordinator.data
+        assert SITE_ID in original["sites"]
+        sites.side_effect = [failures[status_code], sites.return_value]
+        calls = sites.await_count
+        initial_time = dt_util.utcnow()
+        remove_listener = coordinator.async_add_listener(MagicMock())
+        try:
+            async_fire_time_changed(hass, initial_time + 2 * SCAN_INTERVAL_CONFIG)
+            await hass.async_block_till_done(wait_background_tasks=True)
+            assert sites.await_count == calls + 1
+            assert isinstance(coordinator.last_exception, UpdateFailed)
+            assert coordinator.last_update_success is False
+            assert not coordinator.available
+            assert coordinator.network_available
+            assert coordinator.data is original
+            assert SITE_ID in coordinator.available_sites
+
+            async_fire_time_changed(hass, initial_time + 4 * SCAN_INTERVAL_CONFIG)
+            await hass.async_block_till_done(wait_background_tasks=True)
+            assert sites.await_count == calls + 2
+            assert coordinator.last_update_success is True
+            assert coordinator.available
+            assert coordinator.network_available
+            assert coordinator.data is not original
+            assert SITE_ID in coordinator.data["sites"]
+        finally:
+            remove_listener()
+            await coordinator.async_shutdown()
+
+    async def test_persistent_sites_401_requests_reauth_after_retry(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A success or non-401 failure breaks the consecutive rejection sequence."""
+        coordinator = seeded_owners.config
+        sites = seeded_owners.network_client.sites.get_all
+        rejected = UniFiAuthenticationError("Unauthorized", status_code=401)
+        sites.side_effect = [
+            rejected,
+            sites.return_value,
+            rejected,
+            UniFiNotFoundError(),
+            rejected,
+            rejected,
+        ]
+
+        with pytest.raises(UpdateFailed) as temporary:
+            await coordinator._async_update_data()
+        assert temporary.value.__cause__ is rejected
+        await coordinator._async_update_data()
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+        with pytest.raises(UpdateFailed):
+            await coordinator._async_update_data()
+        with pytest.raises(ConfigEntryAuthFailed) as persistent:
+            await coordinator._async_update_data()
+        assert persistent.value.__cause__ is rejected
+
+    async def test_sites_403_does_not_get_the_boot_retry(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Keep the existing handling for a confirmed sites authorization error."""
+        seeded_owners.network_client.sites.get_all.side_effect = (
+            UniFiAuthenticationError("Forbidden", status_code=403)
+        )
+        with pytest.raises(ConfigEntryAuthFailed):
+            await seeded_owners.config._async_update_data()
 
 
 # --- WiFi QR payloads and legacy site names ----------------------------------
@@ -1279,8 +1404,8 @@ class TestUnifiConfigCoordinator:
     ):
         """A failed WiFi/firewall fetch keeps that section's data and flags it."""
         await coordinator.async_refresh()
-        assert coordinator.wifi_available("default") is True
-        assert coordinator.firewall_available("default") is True
+        assert ("wifi", "default") not in coordinator.failed_sections
+        assert ("firewall_rules", "default") not in coordinator.failed_sections
         previous = copy.deepcopy(coordinator.data[section])
         assert previous["default"]
 
@@ -1298,16 +1423,12 @@ class TestUnifiConfigCoordinator:
         # working, but the failed section is not reported as fresh.
         assert coordinator.last_update_success is True
         assert coordinator.data[section] == previous
-        section_flag = {
-            "wifi": coordinator.wifi_available,
-            "firewall_rules": coordinator.firewall_available,
-        }
-        assert section_flag[section]("default") is False
-        assert section_flag[other_section]("default") is True
+        assert (section, "default") in coordinator.failed_sections
+        assert (other_section, "default") not in coordinator.failed_sections
 
         setattr(getattr(coordinator.network_client, namespace), method, working)
         await coordinator.async_refresh()
-        assert section_flag[section]("default") is True
+        assert (section, "default") not in coordinator.failed_sections
 
     @pytest.mark.asyncio
     async def test_optional_section_failure_is_per_site(
@@ -1325,8 +1446,8 @@ class TestUnifiConfigCoordinator:
         coordinator.network_client.wifi.get_all = AsyncMock(side_effect=get_all)
         await coordinator.async_refresh()
 
-        assert coordinator.wifi_available("default") is True
-        assert coordinator.wifi_available("site2") is False
+        assert ("wifi", "default") not in coordinator.failed_sections
+        assert ("wifi", "site2") in coordinator.failed_sections
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("endpoint", ["wifi.get_all", "firewall.list_rules"])
@@ -1377,7 +1498,7 @@ class TestUnifiConfigCoordinator:
         assert wifi["qr_code"].startswith("WIFI:T:WPA;S:MainWiFi;P:")
         assert list(result["vpn_clients"]["default"]) == ["vpn1"]
         assert result["firewall_rules"]["default"] == {}
-        assert coordinator.firewall_available("default") is True
+        assert ("firewall_rules", "default") not in coordinator.failed_sections
 
     @pytest.mark.asyncio
     async def test_async_update_data_drops_sites_that_disappeared(
@@ -1535,7 +1656,7 @@ class TestUnifiConfigCoordinator:
         """Test data fetch with auth error on network-only setup."""
         coordinator.protect_client = None
         coordinator.network_client.sites.get_all = AsyncMock(
-            side_effect=UniFiAuthenticationError("Invalid API key")
+            side_effect=UniFiAuthenticationError("Invalid API key", status_code=401)
         )
 
         with pytest.raises(ConfigEntryAuthFailed):
@@ -1690,66 +1811,6 @@ class TestUnifiConfigCoordinator:
         }
         result = coordinator.get_site_ids()
         assert set(result) == {"default", "site2"}
-
-    def test_get_wifi_networks(self, coordinator: UnifiInsightsConfigCoordinator):
-        """Test getting WiFi networks for a site."""
-        coordinator.data["wifi"] = {
-            "default": {"wifi1": {"id": "wifi1", "name": "MainWiFi"}}
-        }
-        result = coordinator.get_wifi_networks("default")
-        assert "wifi1" in result
-
-    def test_get_wifi_networks_missing_site(
-        self, coordinator: UnifiInsightsConfigCoordinator
-    ):
-        """Test getting WiFi networks for missing site."""
-        result = coordinator.get_wifi_networks("nonexistent")
-        assert result == {}
-
-    def test_get_firewall_rules(self, coordinator: UnifiInsightsConfigCoordinator):
-        """Test getting firewall rules for a site."""
-        coordinator.data["firewall_rules"] = {
-            "default": {"rule1": {"id": "rule1", "name": "Block Instagram"}}
-        }
-        result = coordinator.get_firewall_rules("default")
-        assert "rule1" in result
-
-    def test_get_firewall_rules_missing_site(
-        self, coordinator: UnifiInsightsConfigCoordinator
-    ):
-        """Test getting firewall rules for missing site."""
-        result = coordinator.get_firewall_rules("nonexistent")
-        assert result == {}
-
-    def test_get_policy_based_routes(self, coordinator: UnifiInsightsConfigCoordinator):
-        """Test getting policy-based routes for a site."""
-        coordinator.data["policy_based_routes"] = {
-            "default": {"route1": {"id": "route1", "description": "Route to VPN"}}
-        }
-        result = coordinator.get_policy_based_routes("default")
-        assert "route1" in result
-
-    def test_get_policy_based_routes_missing_site(
-        self, coordinator: UnifiInsightsConfigCoordinator
-    ) -> None:
-        """Test getting policy-based routes for missing site."""
-        result = coordinator.get_policy_based_routes("nonexistent")
-        assert result == {}
-
-    def test_get_vpn_clients(self, coordinator: UnifiInsightsConfigCoordinator) -> None:
-        """Test getting VPN clients for a site."""
-        coordinator.data["vpn_clients"] = {
-            "default": {"client1": {"_id": "client1", "name": "Privado VPN"}}
-        }
-        result = coordinator.get_vpn_clients("default")
-        assert "client1" in result
-
-    def test_get_vpn_clients_missing_site(
-        self, coordinator: UnifiInsightsConfigCoordinator
-    ) -> None:
-        """Test getting VPN clients for missing site."""
-        result = coordinator.get_vpn_clients("nonexistent")
-        assert result == {}
 
     @pytest.mark.asyncio
     async def test_async_update_data_skips_none_site_id(
@@ -2006,7 +2067,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        ("data_key", "endpoint_attr", "list_method"),
         RULE_SECTION_PARAMS,
     )
     async def test_rule_section_fetched_by_internal_reference(
@@ -2015,7 +2076,6 @@ class TestUnifiConfigCoordinator:
         data_key: str,
         endpoint_attr: str,
         list_method: str,
-        avail_method: str,
     ) -> None:
         """Rule sections are fetched with internalReference and keyed by id."""
         site1 = _create_mock_model(
@@ -2046,13 +2106,12 @@ class TestUnifiConfigCoordinator:
         assert [c.args[0] for c in mock_fn.await_args_list] == ["default", "branch"]
         assert result[data_key]["default"] == {"rule-1": record1}
         assert result[data_key]["site2"] == {"rule-2": record2}
-        avail_fn = getattr(coordinator, avail_method)
-        assert avail_fn("default") is True
-        assert avail_fn("site2") is True
+        assert (data_key, "default") not in coordinator.failed_sections
+        assert (data_key, "site2") not in coordinator.failed_sections
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        ("data_key", "endpoint_attr", "list_method"),
         RULE_SECTION_PARAMS,
     )
     async def test_rule_section_ignores_fuzzy_legacy_mapping(
@@ -2061,7 +2120,6 @@ class TestUnifiConfigCoordinator:
         data_key: str,
         endpoint_attr: str,
         list_method: str,
-        avail_method: str,
     ) -> None:
         """Rule sections ignore fuzzy legacy mapping from get_legacy_all."""
         site1 = _create_mock_model(
@@ -2085,7 +2143,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        ("data_key", "endpoint_attr", "list_method"),
         RULE_SECTION_PARAMS,
     )
     async def test_rule_section_without_internal_reference_is_empty_and_available(
@@ -2094,7 +2152,6 @@ class TestUnifiConfigCoordinator:
         data_key: str,
         endpoint_attr: str,
         list_method: str,
-        avail_method: str,
     ) -> None:
         """Without internalReference, fetch is skipped and data is empty."""
         endpoint = getattr(coordinator.network_client, endpoint_attr)
@@ -2104,13 +2161,12 @@ class TestUnifiConfigCoordinator:
         mock_fn.assert_not_awaited()
         assert result[data_key]["default"] == {}
         assert result[data_key]["site2"] == {}
-        avail_fn = getattr(coordinator, avail_method)
-        assert avail_fn("default") is True
-        assert avail_fn("site2") is True
+        assert (data_key, "default") not in coordinator.failed_sections
+        assert (data_key, "site2") not in coordinator.failed_sections
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        ("data_key", "endpoint_attr", "list_method"),
         RULE_SECTION_PARAMS,
     )
     @pytest.mark.parametrize(
@@ -2129,7 +2185,6 @@ class TestUnifiConfigCoordinator:
         data_key: str,
         endpoint_attr: str,
         list_method: str,
-        avail_method: str,
         *,
         error: Exception,
     ) -> None:
@@ -2143,12 +2198,11 @@ class TestUnifiConfigCoordinator:
 
         result = await coordinator._async_update_data()
         assert result[data_key]["default"] == {}
-        avail_fn = getattr(coordinator, avail_method)
-        assert avail_fn("default") is True
+        assert (data_key, "default") not in coordinator.failed_sections
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        ("data_key", "endpoint_attr", "list_method"),
         RULE_SECTION_PARAMS,
     )
     async def test_rule_section_transient_failure_keeps_previous_data(
@@ -2157,7 +2211,6 @@ class TestUnifiConfigCoordinator:
         data_key: str,
         endpoint_attr: str,
         list_method: str,
-        avail_method: str,
     ) -> None:
         """Transient failure preserves data and toggles available until recovery."""
         site = _create_mock_model(
@@ -2172,8 +2225,7 @@ class TestUnifiConfigCoordinator:
 
         res1 = await coordinator._async_update_data()
         assert res1[data_key]["default"] == {"r1": rec}
-        avail_fn = getattr(coordinator, avail_method)
-        assert avail_fn("default") is True
+        assert (data_key, "default") not in coordinator.failed_sections
 
         setattr(
             endpoint,
@@ -2182,18 +2234,18 @@ class TestUnifiConfigCoordinator:
         )
         res2 = await coordinator._async_update_data()
         assert res2[data_key]["default"] == {"r1": rec}
-        assert avail_fn("default") is False
+        assert (data_key, "default") in coordinator.failed_sections
 
         setattr(
             endpoint, list_method, AsyncMock(return_value=[_create_mock_model(rec)])
         )
         res3 = await coordinator._async_update_data()
         assert res3[data_key]["default"] == {"r1": rec}
-        assert avail_fn("default") is True
+        assert (data_key, "default") not in coordinator.failed_sections
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        ("data_key", "endpoint_attr", "list_method"),
         RULE_SECTION_PARAMS,
     )
     async def test_rule_section_failure_is_per_site(
@@ -2202,7 +2254,6 @@ class TestUnifiConfigCoordinator:
         data_key: str,
         endpoint_attr: str,
         list_method: str,
-        avail_method: str,
     ) -> None:
         """Failure on site A does not affect availability on site B."""
         site_a = _create_mock_model(
@@ -2227,14 +2278,13 @@ class TestUnifiConfigCoordinator:
         setattr(endpoint, list_method, AsyncMock(side_effect=_side_effect))
 
         result = await coordinator._async_update_data()
-        avail_fn = getattr(coordinator, avail_method)
-        assert avail_fn("site_a") is False
-        assert avail_fn("site_b") is True
+        assert (data_key, "site_a") in coordinator.failed_sections
+        assert (data_key, "site_b") not in coordinator.failed_sections
         assert result[data_key]["site_b"] == {"rb": rec_b}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        ("data_key", "endpoint_attr", "list_method"),
         RULE_SECTION_PARAMS,
     )
     async def test_rule_section_401_triggers_reauth(
@@ -2243,7 +2293,6 @@ class TestUnifiConfigCoordinator:
         data_key: str,
         endpoint_attr: str,
         list_method: str,
-        avail_method: str,
     ) -> None:
         """401 error during rule fetch triggers reauthentication."""
         site = _create_mock_model(
@@ -2264,7 +2313,7 @@ class TestUnifiConfigCoordinator:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("data_key", "endpoint_attr", "list_method", "avail_method"),
+        ("data_key", "endpoint_attr", "list_method"),
         RULE_SECTION_PARAMS,
     )
     async def test_rule_sections_pruned_with_sites(
@@ -2273,7 +2322,6 @@ class TestUnifiConfigCoordinator:
         data_key: str,
         endpoint_attr: str,
         list_method: str,
-        avail_method: str,
     ) -> None:
         """Removed sites are pruned from rule sections, leaving empty dict."""
         site1 = _create_mock_model(
@@ -2344,6 +2392,7 @@ class TestUnifiConfigCoordinator:
         mock_network_client: MagicMock,
         mock_protect_client: MagicMock,
         mock_config_entry: MockConfigEntry,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Test rolling window aggregation, hourly reuse, and transient recovery."""
         now_ms = 1_800_000_000_000
@@ -2418,9 +2467,9 @@ class TestUnifiConfigCoordinator:
         )
         await coord._async_update_data()
         assert coord.data["internet_activity"] == {}
-        assert coord.internet_activity_available("site1") is True
+        assert ("internet_activity", "site1") not in coord.failed_sections
         assert coord.wifi_available("site1") is True
-        assert coord.firewall_available("site1") is True
+        assert ("firewall_rules", "site1") not in coord.failed_sections
 
         # 2. Successful fetch populates windows
         async def _report_ok(
@@ -2434,22 +2483,21 @@ class TestUnifiConfigCoordinator:
             "rx_bytes": 4096,
             "tx_bytes": 2048,
         }
-        assert coord.internet_activity_available("site1") is True
+        assert ("internet_activity", "site1") not in coord.failed_sections
 
         # 3. Transient failure retains prior data and marks section unavailable
         mock_network_client.reports.get_site_report = AsyncMock(
             side_effect=UniFiTimeoutError("Timeout")
         )
         await coord._async_update_data()
-        coord.last_update_success = True
-        assert coord.internet_activity_available("site1") is False
+        assert ("internet_activity", "site1") in coord.failed_sections
         assert "site1" in coord.data["internet_activity_unavailable"]
         assert coord.data["internet_activity"]["site1"]["1h"] == {
             "rx_bytes": 4096,
             "tx_bytes": 2048,
         }
         assert coord.wifi_available("site1") is True
-        assert coord.firewall_available("site1") is True
+        assert ("firewall_rules", "site1") not in coord.failed_sections
 
         # 4. Later success replaces data and clears the unavailable marker
         async def _report_recovered(
@@ -2460,8 +2508,18 @@ class TestUnifiConfigCoordinator:
         mock_network_client.reports.get_site_report = AsyncMock(
             side_effect=_report_recovered
         )
-        await coord._async_update_data()
-        assert coord.internet_activity_available("site1") is True
+        caplog.clear()
+        with caplog.at_level(logging.INFO):
+            await coord._async_update_data()
+        # One INFO recovery line for internet activity, not two.
+        recovered = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.INFO and "recovered" in r.getMessage()
+        ]
+        assert len(recovered) == 1
+        assert "Internet activity" in recovered[0].getMessage()
+        assert ("internet_activity", "site1") not in coord.failed_sections
         assert "site1" not in coord.data["internet_activity_unavailable"]
         assert coord.data["internet_activity"]["site1"]["1h"] == {
             "rx_bytes": 8192,
@@ -2497,7 +2555,7 @@ class TestUnifiConfigCoordinator:
         mock_network_client.get_site_report = None
         assert (
             await coord._call_site_report("default", "hourly", start_ms=1, end_ms=2)
-            == []
+            is METHOD_MISSING
         )
 
         # Hourly / daily transient failures and HTTP 200 HTML unsupported
@@ -2514,12 +2572,10 @@ class TestUnifiConfigCoordinator:
         mock_network_client.reports.get_site_report = AsyncMock(
             side_effect=_fail_hourly
         )
-        assert (
-            await coord._fetch_site_internet_activity(
-                site_id="site1", site_name="default", now_ms=now_ms
-            )
-            is None
+        res_hourly = await coord._fetch_site_internet_activity(
+            site_id="site1", site_name="default", now_ms=now_ms
         )
+        assert res_hourly.data is None
 
         async def _fail_daily(
             site_name: str, interval: str, *, start_ms: int, end_ms: int
@@ -2530,12 +2586,10 @@ class TestUnifiConfigCoordinator:
             return []
 
         mock_network_client.reports.get_site_report = AsyncMock(side_effect=_fail_daily)
-        assert (
-            await coord._fetch_site_internet_activity(
-                site_id="site1", site_name="default", now_ms=now_ms
-            )
-            is None
+        res_daily = await coord._fetch_site_internet_activity(
+            site_id="site1", site_name="default", now_ms=now_ms
         )
+        assert res_daily.data is None
 
         mock_network_client.reports.get_site_report = AsyncMock(
             side_effect=UniFiResponseError(
@@ -2618,7 +2672,12 @@ class TestUnifiConfigCoordinator:
         failed_set: set[tuple[str, str]] = set()
         activity_map: dict[str, dict[str, dict[str, int]]] = {}
         await async_update_site_internet_activity(
-            AsyncMock(return_value=None),
+            AsyncMock(
+                return_value=InternetActivityFetchResult(
+                    data=None,
+                    status={"source": "legacy", "reason": "failed", "counts": {}},
+                )
+            ),
             site_id="site1",
             site_data={},
             legacy_name="default",
@@ -2686,3 +2745,456 @@ class TestCopyOnWritePublish:
         assert config.data is not root_before
         assert root_before["vouchers"] is vouchers_before
         assert config.data["vouchers"] is not vouchers_before
+
+    async def test_detect_internet_activity_source_caching_and_expiry(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Internet activity source detection caches for 3600s
+        and respects clock expiry."""
+        config = seeded_owners.config
+        client = seeded_owners.network_client
+        client.stats.get_source = AsyncMock(return_value=StatisticsSource("MODERN"))
+
+        current_time = 1000.0
+        config._clock = lambda: current_time
+        config._stats_source = None
+        config._stats_source_expires_at = 0.0
+
+        # Initial detection
+        source, err = await config._async_detect_internet_activity_source()
+        assert source == "MODERN"
+        assert err is None
+        assert client.stats.get_source.await_count == 1
+
+        # Second call within 3600s does not re-invoke client
+        current_time = 2000.0
+        (
+            source_cached,
+            err_cached,
+        ) = await config._async_detect_internet_activity_source()
+        assert source_cached == "MODERN"
+        assert err_cached is None
+        assert client.stats.get_source.await_count == 1
+
+        # Advancement past 3600s causes re-detection
+        current_time = 4601.0
+        client.stats.get_source.return_value = StatisticsSource("LEGACY")
+        (
+            source_expired,
+            err_expired,
+        ) = await config._async_detect_internet_activity_source()
+        assert source_expired == "LEGACY"
+        assert err_expired is None
+        assert client.stats.get_source.await_count == 2
+
+    async def test_detect_internet_activity_source_error_handling(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Internet activity source handles 401, 403,
+        unsupported, malformed and transient responses."""
+
+        config = seeded_owners.config
+        client = seeded_owners.network_client
+
+        current_time = 1000.0
+        config._clock = lambda: current_time
+        config._stats_source = None
+        config._stats_source_expires_at = 0.0
+
+        # 404 / unsupported falls back to legacy
+        client.stats.get_source = AsyncMock(
+            side_effect=UniFiResponseError("Not Found", status_code=404)
+        )
+        source, err = await config._async_detect_internet_activity_source()
+        assert source == "LEGACY"
+        assert err is None
+
+        # A 401 re-raises the library error for the refresh's reauth path
+        client.stats.get_source = AsyncMock(
+            side_effect=UniFiAuthenticationError("Unauthorized", status_code=401)
+        )
+        config._stats_source = None
+        config._stats_source_expires_at = 0.0
+        with pytest.raises(UniFiAuthenticationError):
+            await config._async_detect_internet_activity_source()
+
+        # 403 / permission_denied is not reauth, and retries next poll
+        auth_403 = UniFiAuthenticationError("Forbidden", status_code=403)
+        client.stats.get_source = AsyncMock(side_effect=auth_403)
+        config._stats_source = None
+        config._stats_source_expires_at = 0.0
+        source_403, err_403 = await config._async_detect_internet_activity_source()
+        assert source_403 is None
+        assert err_403 == "permission_denied"
+        assert config._stats_source_expires_at == 0.0
+
+        # Malformed response keeps last known source without renewing expiry
+        config._stats_source = "MODERN"
+        config._stats_source_expires_at = 7000.0
+        current_time = 7500.0
+        client.stats.get_source = AsyncMock(
+            side_effect=UniFiResponseError(
+                "Malformed", status_code=200, response_body=None
+            )
+        )
+        (
+            source_malformed,
+            _err_malformed,
+        ) = await config._async_detect_internet_activity_source()
+        assert source_malformed == "MODERN"
+        assert config._stats_source_expires_at == 7000.0
+
+        # A transient failure keeps the last known source, expiry unchanged
+        client.stats.get_source = AsyncMock(side_effect=UniFiTimeoutError("Timeout"))
+        (
+            source_transient,
+            err_transient,
+        ) = await config._async_detect_internet_activity_source()
+        assert source_transient == "MODERN"
+        assert err_transient is None
+        assert config._stats_source_expires_at == 7000.0
+
+    @pytest.mark.parametrize(
+        "cause",
+        [
+            UniFiTimeoutError("Timeout"),
+            UniFiRateLimitError("Slow down", status_code=429),
+            UniFiResponseError("Server error", status_code=500),
+        ],
+    )
+    async def test_detect_internet_activity_source_first_probe_transient(
+        self,
+        seeded_owners: SeededOwners,
+        cause: Exception,
+    ) -> None:
+        """A first-probe transient failure reports ``failed``, not a bad shape."""
+        config = seeded_owners.config
+        seeded_owners.network_client.stats.get_source = AsyncMock(side_effect=cause)
+        config._stats_source = None
+        config._stats_source_expires_at = 0.0
+
+        source, err = await config._async_detect_internet_activity_source()
+        assert source is None
+        assert err == "failed"
+        assert config._stats_source_expires_at == 0.0
+
+    async def test_detect_internet_activity_source_first_probe_malformed(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A malformed first probe is an unrecognised shape, never LEGACY."""
+        config = seeded_owners.config
+        seeded_owners.network_client.stats.get_source = AsyncMock(
+            side_effect=UniFiResponseError(
+                "Malformed", status_code=200, response_body=None
+            )
+        )
+        config._stats_source = None
+        config._stats_source_expires_at = 0.0
+
+        source, err = await config._async_detect_internet_activity_source()
+        assert source is None
+        assert err == "unrecognised_shape"
+
+    async def test_refresh_internet_activity_transition_logging_and_pruning(
+        self, seeded_owners: SeededOwners, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Transition logging emits INFO on enter/recover
+        and DEBUG on repeat, pruning removed sites."""
+        config = seeded_owners.config
+        client = seeded_owners.network_client
+        client.stats.get_source = AsyncMock(return_value=StatisticsSource("LEGACY"))
+
+        # Empty response -> transition into no-data (INFO)
+        mock_report = AsyncMock(return_value=[])
+        client.reports = MagicMock()
+        client.reports.get_site_report = mock_report
+
+        config._internet_activity_no_data_sites.clear()
+
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG):
+            await config.async_refresh()
+            assert any(
+                record.levelno == logging.INFO and "reported no data" in record.message
+                for record in caplog.records
+            )
+
+            # Repeat poll with same no-data -> DEBUG, not repeated INFO
+            caplog.clear()
+            await config.async_refresh()
+            assert any(
+                record.levelno == logging.DEBUG
+                and "still reported no data" in record.message
+                for record in caplog.records
+            )
+            assert not any(
+                record.levelno == logging.INFO and "reported no data" in record.message
+                for record in caplog.records
+            )
+
+        # Removed site is pruned from tracker
+        config._internet_activity_no_data_sites.add("stale_site")
+        await config.async_refresh()
+        assert "stale_site" not in config._internet_activity_no_data_sites
+
+    async def test_refresh_publishes_internet_activity_status(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """Root data publishes internet_activity_status dictionary."""
+        config = seeded_owners.config
+        await config.async_refresh()
+        assert "internet_activity_status" in config.data
+        assert isinstance(config.data["internet_activity_status"], dict)
+
+    async def test_modern_refresh_uses_three_period_series(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A modern console publishes DAY/WEEK/MONTH series with one shared end."""
+        owners = seeded_owners
+        config = owners.config
+        client = owners.network_client
+        site_id = "site_modern"
+        stats_site_id = "00000000-0000-4000-8000-0000000000a1"
+        client.sites.get_all.return_value = [
+            {"id": site_id, "name": "Default", "internalReference": "default"}
+        ]
+        client.sites.get_legacy_all.return_value = [
+            {"_id": stats_site_id, "external_id": site_id, "name": "default"}
+        ]
+        client.stats.get_source = AsyncMock(return_value=StatisticsSource("MODERN"))
+        config._stats_source = None
+        config._stats_source_expires_at = 0.0
+
+        async def _series(
+            *,
+            schema: str,
+            site_id: str,
+            period: str,
+            end_ms: int,
+            values: Any,
+        ) -> list[Any]:
+            assert schema == "wanBySite"
+            assert site_id == stats_site_id
+            assert values == ("rxBytes", "txBytes")
+            offsets = {
+                "DAY": 600_000,
+                "WEEK": 2 * WINDOW_1D_MS,
+                "MONTH": 10 * WINDOW_1D_MS,
+            }
+            totals = {
+                "DAY": (1000.0, 2000.0),
+                "WEEK": (3000.0, 4000.0),
+                "MONTH": (5000.0, 6000.0),
+            }
+            rx, tx = totals[period]
+            return [
+                StatsSeries(
+                    siteId=stats_site_id,
+                    series=[
+                        StatsSeriesBucket(
+                            timestamp=end_ms - offsets[period],
+                            duration=300000,
+                            rxBytes=rx,
+                            txBytes=tx,
+                        )
+                    ],
+                )
+            ]
+
+        client.stats.get_recent_series = AsyncMock(side_effect=_series)
+        client.reports.get_site_report.reset_mock()
+
+        await config.async_refresh()
+
+        assert config.last_update_success
+        status = config.data["internet_activity_status"][site_id]
+        assert status["source"] == "modern"
+        assert status["reason"] == "ok"
+        assert set(status["counts"]) == {"DAY", "WEEK", "MONTH"}
+        assert config.data["internet_activity"][site_id] == {
+            "1h": {"rx_bytes": 1000, "tx_bytes": 2000},
+            "1d": {"rx_bytes": 1000, "tx_bytes": 2000},
+            "1w": {"rx_bytes": 3000, "tx_bytes": 4000},
+            "1m": {"rx_bytes": 5000, "tx_bytes": 6000},
+        }
+        calls = client.stats.get_recent_series.await_args_list
+        assert [call.kwargs["period"] for call in calls] == ["DAY", "WEEK", "MONTH"]
+        assert len({call.kwargs["end_ms"] for call in calls}) == 1
+        client.reports.get_site_report.assert_not_awaited()
+        assert owners.facade.data["internet_activity"][site_id]["1h"] == {
+            "rx_bytes": 1000,
+            "tx_bytes": 2000,
+        }
+
+    async def test_modern_refresh_without_resolved_stats_id(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """An unresolved stats identity makes no series call and says so."""
+        owners = seeded_owners
+        config = owners.config
+        client = owners.network_client
+        site_id = "site_unresolved"
+        client.sites.get_all.return_value = [
+            {"id": site_id, "name": "Default", "internalReference": "default"}
+        ]
+        # The single legacy record names another integration site, so the
+        # single-site fallback must not resolve it.
+        client.sites.get_legacy_all.return_value = [
+            {"_id": "stats-other", "external_id": "another_site"}
+        ]
+        client.stats.get_source = AsyncMock(return_value=StatisticsSource("MODERN"))
+        config._stats_source = None
+        config._stats_source_expires_at = 0.0
+
+        await config.async_refresh()
+
+        assert config.data["internet_activity_status"][site_id] == {
+            "source": "modern",
+            "reason": "site_not_resolved",
+            "counts": {},
+        }
+        client.stats.get_recent_series.assert_not_awaited()
+        assert site_id in config.data["internet_activity_unavailable"]
+
+    async def test_detection_permission_denied_keeps_prior_totals(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A stats 403 reports permission_denied, keeps prior totals, no reauth."""
+        owners = seeded_owners
+        config = owners.config
+        client = owners.network_client
+        site_id = "site_modern"
+        stats_site_id = "00000000-0000-4000-8000-0000000000a1"
+        client.sites.get_all.return_value = [
+            {"id": site_id, "name": "Default", "internalReference": "default"}
+        ]
+        client.sites.get_legacy_all.return_value = [
+            {"_id": stats_site_id, "external_id": site_id, "name": "default"}
+        ]
+        client.stats.get_source = AsyncMock(return_value=StatisticsSource("MODERN"))
+        config._stats_source = None
+        config._stats_source_expires_at = 0.0
+        now_ms = int(dt_util.utcnow().timestamp() * 1000)
+        bucket = StatsSeriesBucket(
+            timestamp=now_ms - 1000,
+            duration=300000,
+            rxBytes=10.0,
+            txBytes=20.0,
+        )
+
+        async def _series(**kwargs: Any) -> list[Any]:
+            return [StatsSeries(siteId=stats_site_id, series=[bucket])]
+
+        client.stats.get_recent_series = AsyncMock(side_effect=_series)
+        await config.async_refresh()
+        published = config.data["internet_activity"][site_id]
+        assert published
+
+        # Expire the cached source and deny statistics access.
+        config._stats_source_expires_at = 0.0
+        client.stats.get_source = AsyncMock(
+            side_effect=UniFiAuthenticationError("Forbidden", status_code=403)
+        )
+        client.stats.get_recent_series.reset_mock()
+
+        await config.async_refresh()
+
+        assert config.last_update_success
+        assert config.data["internet_activity_status"][site_id] == {
+            "source": "modern",
+            "reason": "permission_denied",
+            "counts": {},
+        }
+        assert config.data["internet_activity"][site_id] == published
+        client.stats.get_recent_series.assert_not_awaited()
+
+    async def test_detection_permission_denied_without_prior_source(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A first-probe 403 reports source unknown, never modern."""
+        config = seeded_owners.config
+        site_id = SITE_ID
+        seeded_owners.network_client.stats.get_source = AsyncMock(
+            side_effect=UniFiAuthenticationError("Forbidden", status_code=403)
+        )
+        config._stats_source = None
+        config._stats_source_expires_at = 0.0
+
+        await config.async_refresh()
+
+        assert config.last_update_success
+        assert config.data["internet_activity_status"][site_id] == {
+            "source": "unknown",
+            "reason": "permission_denied",
+            "counts": {},
+        }
+
+    async def test_stats_401_triggers_reauth_not_update_failed(
+        self, seeded_owners: SeededOwners
+    ) -> None:
+        """A 401 from source detection reaches the coordinator's reauth path."""
+        config = seeded_owners.config
+        seeded_owners.network_client.stats.get_source = AsyncMock(
+            side_effect=UniFiAuthenticationError("Unauthorized", status_code=401)
+        )
+        config._stats_source = None
+        config._stats_source_expires_at = 0.0
+
+        await config.async_refresh()
+
+        # ConfigEntryAuthFailed is what asks Home Assistant for reauth;
+        # UpdateFailed would only retry the poll.
+        assert isinstance(config.last_exception, ConfigEntryAuthFailed)
+        assert not isinstance(config.last_exception, UpdateFailed)
+        assert config.last_update_success is False
+
+        # The raw refresh entry point raises it for the config-entry flow.
+        with pytest.raises(ConfigEntryAuthFailed):
+            await config._async_update_data()
+
+    async def test_optional_section_failure_log_hides_error_text(
+        self, seeded_owners: SeededOwners, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A failed optional fetch logs a bounded category, not the error text."""
+        config = seeded_owners.config
+        sentinel = "sentinel-connection-secret"
+
+        async def _fail() -> list[Any]:
+            raise UniFiConnectionError(sentinel)
+
+        with caplog.at_level(logging.DEBUG):
+            result = await config._fetch_optional_section(
+                "internet_activity", "site1", _fail
+            )
+
+        assert result is None
+        assert sentinel not in caplog.text
+        assert "UniFiConnectionError" in caplog.text
+
+        async def _fail_with_status() -> list[Any]:
+            raise UniFiResponseError(sentinel, status_code=500, response_body=sentinel)
+
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG):
+            result = await config._fetch_optional_section(
+                "internet_activity", "site1", _fail_with_status
+            )
+
+        assert result is None
+        assert sentinel not in caplog.text
+        assert "UniFiResponseError(500)" in caplog.text
+
+        async def _deny() -> list[Any]:
+            # A View-Only key: the statistics endpoint answers 403, which the
+            # optional-section classifier treats as unsupported.
+            raise UniFiAuthenticationError(sentinel, status_code=403)
+
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG):
+            result = await config._fetch_optional_section(
+                "internet_activity", "site1", _deny
+            )
+
+        assert result == []
+        assert sentinel not in caplog.text
+        assert "UniFiAuthenticationError(403)" in caplog.text

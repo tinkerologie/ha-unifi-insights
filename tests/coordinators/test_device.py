@@ -28,6 +28,8 @@ from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api import (
+    ApiKeyAuth,
+    ConnectionType,
     UniFiAuthenticationError,
     UniFiConnectionError,
     UniFiNotFoundError,
@@ -36,8 +38,13 @@ from unifi_official_api import (
     UniFiTimeoutError,
     UniFiValidationError,
 )
+from unifi_official_api.network import UniFiNetworkClient
 from unifi_official_api.network.endpoints.devices import DevicesEndpoint
-from unifi_official_api.network.models import LegacyPortMetrics, PortBytesMetrics
+from unifi_official_api.network.models import (
+    Device,
+    LegacyPortMetrics,
+    PortBytesMetrics,
+)
 
 from custom_components.unifi_insights.const import (
     DOMAIN,
@@ -55,9 +62,11 @@ from custom_components.unifi_insights.coordinators.device import (
     MAX_STATS_REUSE_POLLS,
     OUTLET_WRITE_GUARD_SECONDS,
     OutletPayloadProvenance,
+    PendingLedWrite,
     PendingOutletWrite,
     UnifiInsightsDeviceCoordinator,
     _build_outlet_overrides,
+    _hold_led_writes,
     _is_table_outlet,
     evaluate_outlet_payload_provenance,
     get_device_port,
@@ -67,10 +76,14 @@ from custom_components.unifi_insights.coordinators.device import (
     reconcile_pending_outlet_writes,
     require_power_cyclable_port,
 )
+from custom_components.unifi_insights.coordinators.device_inventory import (
+    NetworkInventoryState,
+)
 from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
     SiteNetworkFacts,
     build_site_network_facts,
+    device_facts,
 )
 from custom_components.unifi_insights.entity import is_device_online
 from tests.conftest import (
@@ -79,7 +92,6 @@ from tests.conftest import (
 )
 from tests.fixtures.assertions import (
     patch_attribute,
-    require_instance,
     require_mock,
     require_not_none,
 )
@@ -94,6 +106,7 @@ from tests.fixtures.coordinator_clients import (
     _create_mock_network_client,
     _create_mock_protect_client,
 )
+from tests.fixtures.http_fakes import FakeQueuedSession
 from tests.fixtures.library_responses import (
     SAMPLE_PDU_DEVICE,
     SAMPLE_PDU_LEGACY_DEVICE,
@@ -3174,40 +3187,37 @@ class TestUnifiDeviceCoordinator:
         """Data for a site no longer listed is dropped, and its devices go stale."""
         for key in ("devices", "stats", "clients"):
             coordinator.data[key]["gone"] = {"dev-gone": {"id": "dev-gone"}}
-        coordinator._site_sources = {"gone": "v1"}
-        coordinator._site_tracked_devices = {"gone": {"dev-gone": "aa:bb:cc:dd:ee:ff"}}
+        coordinator._inventory_state = NetworkInventoryState(
+            sources={"gone": "v1"},
+            tracked={"gone": {"dev-gone": "aa:bb:cc:dd:ee:ff"}},
+        )
 
-        with patch.object(coordinator, "_cleanup_stale_devices") as cleanup:
-            await coordinator._async_update_data()
+        await coordinator._async_update_data()
 
         for key in ("devices", "stats", "clients"):
             assert "gone" not in coordinator.data[key]
             assert "default" in coordinator.data[key]
-        cleanup.assert_called_once()
+        assert "gone" not in coordinator._inventory_state.sources
 
     @pytest.mark.asyncio
     async def test_async_update_data_no_sites_clears_data_keeps_registry(
         self, coordinator: UnifiInsightsDeviceCoordinator
     ):
-        """An empty site list clears stale data but never purges registry devices."""
+        """An empty site list clears published data and retains inventory evidence."""
         for key in ("devices", "stats", "clients"):
             coordinator.data[key]["default"] = {"device1": {"id": "device1"}}
-        coordinator._site_sources = {"default": "v1"}
-        coordinator._site_tracked_devices = {
-            "default": {"device1": "aa:bb:cc:dd:ee:01"}
-        }
+        before = NetworkInventoryState(
+            sources={"default": "v1"},
+            tracked={"default": {"device1": "aa:bb:cc:dd:ee:01"}},
+        )
+        coordinator._inventory_state = before
         coordinator.config_coordinator.data["sites"] = {}
 
-        with patch.object(coordinator, "_cleanup_stale_devices") as cleanup:
-            await coordinator._async_update_data()
+        await coordinator._async_update_data()
 
         for key in ("devices", "stats", "clients"):
             assert coordinator.data[key] == {}
-        # An empty list is also what a transient API failure looks like.
-        cleanup.assert_not_called()
-        assert coordinator._site_tracked_devices == {
-            "default": {"device1": "aa:bb:cc:dd:ee:01"}
-        }
+        assert coordinator._inventory_state is before
 
     @pytest.mark.asyncio
     async def test_process_device_stats_error(
@@ -3721,394 +3731,6 @@ class TestUnifiDeviceCoordinator:
         result = coordinator.get_device("default", "nonexistent")
         assert result is None
 
-    def test_get_device_stats_existing(
-        self, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """Test getting existing device stats."""
-        coordinator.data["stats"] = {"default": {"device1": {"cpu": 15.2, "mem": 42.8}}}
-        result = coordinator.get_device_stats("default", "device1")
-        assert result == {"cpu": 15.2, "mem": 42.8}
-
-    def test_get_device_stats_missing(
-        self, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """Test getting missing device stats."""
-        result = coordinator.get_device_stats("default", "nonexistent")
-        assert result is None
-
-    def test_get_clients(self, coordinator: UnifiInsightsDeviceCoordinator):
-        """Test getting clients for a site."""
-        coordinator.data["clients"] = {
-            "default": {"client1": {"id": "client1", "name": "iPhone"}}
-        }
-        result = coordinator.get_clients("default")
-        assert "client1" in result
-
-    def test_get_clients_missing_site(
-        self, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """Test getting clients for missing site."""
-        result = coordinator.get_clients("nonexistent")
-        assert result == {}
-
-    @pytest.mark.asyncio
-    async def test_cleanup_stale_devices(
-        self, hass: HomeAssistant, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """A genuinely removed device is removed only after N consecutive polls."""
-        dev_reg = dr.async_get(hass)
-        require_instance(coordinator.config_entry, MockConfigEntry).add_to_hass(hass)
-        entry_id = coordinator.config_entry.entry_id
-        id1 = (DOMAIN, "default_device1")
-        id2 = (DOMAIN, "default_device2")
-        dev1 = dev_reg.async_get_or_create(
-            config_entry_id=entry_id,
-            identifiers={id1},
-            connections={(CONNECTION_NETWORK_MAC, "aa:bb:cc:dd:ee:01")},
-        )
-        dev2 = dev_reg.async_get_or_create(
-            config_entry_id=entry_id,
-            identifiers={id2},
-            connections={(CONNECTION_NETWORK_MAC, "aa:bb:cc:dd:ee:02")},
-        )
-        assert entry_id in device_config_entry_ids(dev1)
-        assert entry_id in device_config_entry_ids(dev2)
-
-        coordinator._site_sources = {"default": "v1"}
-        coordinator._site_tracked_devices = {
-            "default": {
-                "device1": "aa:bb:cc:dd:ee:01",
-                "device2": "aa:bb:cc:dd:ee:02",
-            }
-        }
-        coordinator._site_aliases = {
-            "default": {
-                "aa:bb:cc:dd:ee:01": "device1",
-                "aa:bb:cc:dd:ee:02": "device2",
-            }
-        }
-        coordinator.data["devices"] = {
-            "default": {"device1": {"id": "device1", "mac": "aa:bb:cc:dd:ee:01"}}
-        }
-        site_sources = {"default": "v1"}
-        current_macs = {"default": {"device1": "aa:bb:cc:dd:ee:01"}}
-
-        # Polls 1 and 2: device2 is absent but threshold (3) is not yet reached
-        coordinator._cleanup_stale_devices(site_sources, current_macs)
-        assert get_device_by_identifier(dev_reg, id2, entry_id) is not None
-        assert coordinator._site_absence_counts.get("default", {}).get("device2") == 1
-
-        coordinator._cleanup_stale_devices(site_sources, current_macs)
-        assert get_device_by_identifier(dev_reg, id2, entry_id) is not None
-        assert coordinator._site_absence_counts.get("default", {}).get("device2") == 2
-
-        # Poll 3: absence threshold reached; device2 is removed and its alias pruned
-        coordinator._cleanup_stale_devices(site_sources, current_macs)
-        reg_dev2 = get_device_by_identifier(dev_reg, id2, entry_id)
-        assert reg_dev2 is None or entry_id not in device_config_entry_ids(reg_dev2)
-        assert "device2" not in coordinator._site_tracked_devices.get("default", {})
-        assert (
-            coordinator._site_absence_counts.get("default", {}).get("device2") is None
-        )
-        assert "aa:bb:cc:dd:ee:02" not in coordinator._site_aliases.get("default", {})
-        # device1 is retained
-        reg_dev1 = get_device_by_identifier(dev_reg, id1, entry_id)
-        assert reg_dev1 is not None
-        assert entry_id in device_config_entry_ids(reg_dev1)
-        assert (
-            coordinator._site_aliases.get("default", {}).get("aa:bb:cc:dd:ee:01")
-            == "device1"
-        )
-
-    @pytest.mark.asyncio
-    async def test_cleanup_stale_devices_prunes_disappeared_site_state(
-        self, coordinator: UnifiInsightsDeviceCoordinator
-    ) -> None:
-        """Drop a disappeared site's state while continuing active-site tracking."""
-        coordinator._site_sources = {"default": "v1", "gone": "legacy"}
-        coordinator._site_aliases = {
-            "default": {
-                "aa:bb:cc:dd:ee:01": "device1",
-                "aa:bb:cc:dd:ee:02": "device2",
-            },
-            "gone": {"aa:bb:cc:dd:ee:99": "gone-device"},
-        }
-        coordinator._site_tracked_devices = {
-            "default": {
-                "device1": "aa:bb:cc:dd:ee:01",
-                "device2": "aa:bb:cc:dd:ee:02",
-            },
-            "gone": {"gone-device": "aa:bb:cc:dd:ee:99"},
-        }
-        coordinator._site_absence_counts = {
-            "default": {"device1": 1, "device2": 1},
-            "gone": {"gone-device": 2},
-        }
-        coordinator.data["devices"] = {
-            "default": {"device1": {"id": "device1", "mac": "aa:bb:cc:dd:ee:01"}}
-        }
-
-        coordinator._cleanup_stale_devices(
-            site_sources={"default": "v1"},
-            site_device_macs={"default": {"device1": "aa:bb:cc:dd:ee:01"}},
-        )
-
-        assert coordinator._site_sources == {"default": "v1"}
-        assert coordinator._site_aliases == {
-            "default": {
-                "aa:bb:cc:dd:ee:01": "device1",
-                "aa:bb:cc:dd:ee:02": "device2",
-            }
-        }
-        assert coordinator._site_tracked_devices == {
-            "default": {
-                "device1": "aa:bb:cc:dd:ee:01",
-                "device2": "aa:bb:cc:dd:ee:02",
-            }
-        }
-        assert coordinator._site_absence_counts == {"default": {"device2": 2}}
-
-    @pytest.mark.asyncio
-    async def test_process_site_empty_devices(
-        self, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """Test site processing with empty devices list."""
-        # Return empty list of devices
-        coordinator.network_client.devices.get_all = AsyncMock(return_value=[])
-
-        result = await coordinator._async_update_data()
-
-        # Should handle empty devices gracefully
-        assert result is not None
-        assert coordinator._available is True
-
-    @pytest.mark.asyncio
-    async def test_cleanup_stale_devices_no_registry_match(
-        self, hass: HomeAssistant, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """Cleanup handles missing registry device gracefully after N polls."""
-        coordinator._site_sources = {"default": "v1"}
-        coordinator._site_tracked_devices = {
-            "default": {
-                "device1": "aa:bb:cc:dd:ee:01",
-                "stale_device": "aa:bb:cc:dd:ee:99",
-            }
-        }
-        coordinator.data["devices"] = {
-            "default": {"device1": {"id": "device1", "mac": "aa:bb:cc:dd:ee:01"}}
-        }
-        site_sources = {"default": "v1"}
-        current_macs = {"default": {"device1": "aa:bb:cc:dd:ee:01"}}
-
-        # Run 3 polls to hit the absence threshold
-        for _ in range(3):
-            coordinator._cleanup_stale_devices(site_sources, current_macs)
-
-        assert "stale_device" not in coordinator._site_tracked_devices.get(
-            "default", {}
-        )
-
-    @pytest.mark.asyncio
-    async def test_cleanup_v1_to_legacy_flip_removes_nothing(
-        self, hass: HomeAssistant, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """A flip from v1 to legacy fallback removes no devices
-        even if identifiers differ."""
-        dev_reg = dr.async_get(hass)
-        require_instance(coordinator.config_entry, MockConfigEntry).add_to_hass(hass)
-        entry_id = coordinator.config_entry.entry_id
-        dev_id = (DOMAIN, "default_old_dev")
-        dev = dev_reg.async_get_or_create(
-            config_entry_id=entry_id,
-            identifiers={dev_id},
-            connections={(CONNECTION_NETWORK_MAC, "00:11:22:33:44:55")},
-        )
-        assert entry_id in device_config_entry_ids(dev)
-
-        coordinator._site_sources = {"default": "v1"}
-        coordinator._site_tracked_devices = {
-            "default": {"old_dev": "00:11:22:33:44:55"}
-        }
-        coordinator._site_aliases = {"default": {"00:11:22:33:44:55": "old_dev"}}
-
-        coordinator.data["devices"] = {
-            "default": {
-                "other_dev": {
-                    "id": "other_dev",
-                    "_id": "legacy_obj_id",
-                    "mac": "aa:bb:cc:dd:ee:01",
-                }
-            }
-        }
-
-        # Alternating sources on each poll past the 3-poll threshold (6 polls)
-        # to prove continuous flips prevent removal indefinitely.
-        for i in range(6):
-            source = "legacy" if i % 2 == 0 else "v1"
-            coordinator._cleanup_stale_devices(
-                site_sources={"default": source},
-                site_device_macs={"default": {"other_dev": "aa:bb:cc:dd:ee:01"}},
-            )
-
-        reg_dev = get_device_by_identifier(dev_reg, dev_id, entry_id)
-        assert reg_dev is not None
-        assert entry_id in device_config_entry_ids(reg_dev)
-        assert "old_dev" in coordinator._site_tracked_devices.get("default", {})
-
-    @pytest.mark.asyncio
-    async def test_cleanup_legacy_to_v1_flip_removes_nothing(
-        self, hass: HomeAssistant, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """A flip from legacy fallback back to v1 removes no devices
-        even if identifiers differ."""
-        dev_reg = dr.async_get(hass)
-        require_instance(coordinator.config_entry, MockConfigEntry).add_to_hass(hass)
-        entry_id = coordinator.config_entry.entry_id
-        dev_id = (DOMAIN, "default_old_dev")
-        dev = dev_reg.async_get_or_create(
-            config_entry_id=entry_id,
-            identifiers={dev_id},
-            connections={(CONNECTION_NETWORK_MAC, "00:11:22:33:44:55")},
-        )
-        assert entry_id in device_config_entry_ids(dev)
-
-        coordinator._site_sources = {"default": "legacy"}
-        coordinator._site_tracked_devices = {
-            "default": {"old_dev": "00:11:22:33:44:55"}
-        }
-
-        coordinator.data["devices"] = {
-            "default": {
-                "other_dev": {
-                    "id": "other_dev",
-                    "mac": "aa:bb:cc:dd:ee:01",
-                }
-            }
-        }
-
-        # Alternating sources on each poll past the 3-poll threshold (6 polls)
-        # to prove continuous flips prevent removal indefinitely.
-        for i in range(6):
-            source = "v1" if i % 2 == 0 else "legacy"
-            coordinator._cleanup_stale_devices(
-                site_sources={"default": source},
-                site_device_macs={"default": {"other_dev": "aa:bb:cc:dd:ee:01"}},
-            )
-
-        reg_dev = get_device_by_identifier(dev_reg, dev_id, entry_id)
-        assert reg_dev is not None
-        assert entry_id in device_config_entry_ids(reg_dev)
-        assert "old_dev" in coordinator._site_tracked_devices.get("default", {})
-
-    @pytest.mark.asyncio
-    async def test_cleanup_empty_site_polls_remove_nothing(
-        self, hass: HomeAssistant, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """Empty site response and missing site data remove no devices."""
-        coordinator._site_sources = {"default": "v1"}
-        coordinator._site_tracked_devices = {
-            "default": {
-                "dev1": "aa:bb:cc:dd:ee:01",
-                "dev2": "aa:bb:cc:dd:ee:02",
-            }
-        }
-
-        with patch.object(coordinator, "_remove_stale_device") as mock_remove:
-            # 1. Empty site poll
-            coordinator.data["devices"] = {"default": {}}
-            for _ in range(3):
-                coordinator._cleanup_stale_devices(
-                    site_sources={"default": "v1"},
-                    site_device_macs={"default": {}},
-                )
-
-            mock_remove.assert_not_called()
-            assert "dev1" in coordinator._site_tracked_devices.get("default", {})
-            assert "dev2" in coordinator._site_tracked_devices.get("default", {})
-
-            # 2. Empty devices dictionary (site omitted from data)
-            coordinator.data["devices"] = {}
-            for _ in range(3):
-                coordinator._cleanup_stale_devices(
-                    site_sources={"default": "v1"},
-                    site_device_macs={},
-                )
-
-            mock_remove.assert_not_called()
-            assert "dev1" in coordinator._site_tracked_devices.get("default", {})
-            assert "dev2" in coordinator._site_tracked_devices.get("default", {})
-
-    @pytest.mark.asyncio
-    async def test_cleanup_same_mac_different_id_removes_nothing(
-        self, hass: HomeAssistant, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """A device appearing with a new ID but the same MAC is not removed."""
-        coordinator._site_sources = {"default": "v1"}
-        coordinator._site_tracked_devices = {"default": {"old_id": "aa:bb:cc:dd:ee:01"}}
-
-        coordinator.data["devices"] = {
-            "default": {
-                "new_id": {
-                    "id": "new_id",
-                    "mac": "aa:bb:cc:dd:ee:01",
-                }
-            }
-        }
-
-        with patch.object(coordinator, "_remove_stale_device") as mock_remove:
-            for _ in range(3):
-                coordinator._cleanup_stale_devices(
-                    site_sources={"default": "v1"},
-                    site_device_macs={"default": {"new_id": "aa:bb:cc:dd:ee:01"}},
-                )
-
-            mock_remove.assert_not_called()
-            assert "new_id" in coordinator._site_tracked_devices.get("default", {})
-
-    @pytest.mark.asyncio
-    async def test_cleanup_device_reappears_resets_absence_count(
-        self, hass: HomeAssistant, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """A missing device that reappears before threshold resets absence count."""
-        coordinator._site_sources = {"default": "v1"}
-        coordinator._site_tracked_devices = {
-            "default": {
-                "dev1": "aa:bb:cc:dd:ee:01",
-                "dev2": "aa:bb:cc:dd:ee:02",
-            }
-        }
-        coordinator.data["devices"] = {
-            "default": {"dev1": {"id": "dev1", "mac": "aa:bb:cc:dd:ee:01"}}
-        }
-        site_sources = {"default": "v1"}
-        poll_macs = {"default": {"dev1": "aa:bb:cc:dd:ee:01"}}
-
-        with patch.object(coordinator, "_remove_stale_device") as mock_remove:
-            # Polls 1 and 2: dev2 is missing
-            coordinator._cleanup_stale_devices(site_sources, poll_macs)
-            assert coordinator._site_absence_counts["default"].get("dev2") == 1
-            coordinator._cleanup_stale_devices(site_sources, poll_macs)
-            assert coordinator._site_absence_counts["default"].get("dev2") == 2
-
-            # Poll 3: dev2 reappears!
-            coordinator.data["devices"] = {
-                "default": {
-                    "dev1": {"id": "dev1", "mac": "aa:bb:cc:dd:ee:01"},
-                    "dev2": {"id": "dev2", "mac": "aa:bb:cc:dd:ee:02"},
-                }
-            }
-            coordinator._cleanup_stale_devices(
-                site_sources,
-                {
-                    "default": {
-                        "dev1": "aa:bb:cc:dd:ee:01",
-                        "dev2": "aa:bb:cc:dd:ee:02",
-                    }
-                },
-            )
-            assert coordinator._site_absence_counts["default"].get("dev2") is None
-            mock_remove.assert_not_called()
-
     def test_legacy_device_to_v1_dict_fallback_contract(self) -> None:
         """Test _legacy_device_to_v1_dict contract: maps _id to id,
         sets macAddress, state."""
@@ -4157,9 +3779,9 @@ class TestUnifiDeviceCoordinator:
 
             assert list(owners.device.data["devices"][SITE_ID].keys()) == [PDU_ID]
             assert owners.device.get_device(SITE_ID, PDU_ID) is not None
-            assert owners.device._site_sources[SITE_ID] == "v1"
-            assert owners.device._site_aliases[SITE_ID] == {mac: PDU_ID}
-            assert owners.device._site_absence_counts.get(SITE_ID, {}) == {}
+            assert owners.device._inventory_state.sources[SITE_ID] == "v1"
+            assert owners.device._inventory_state.aliases[SITE_ID] == {mac: PDU_ID}
+            assert owners.device._inventory_state.absence.get(SITE_ID, {}) == {}
 
             # Spy on _remove_stale_device
             with patch.object(
@@ -4176,9 +3798,9 @@ class TestUnifiDeviceCoordinator:
                 ]
                 await owners.device.async_refresh()
 
-                assert owners.device._site_sources[SITE_ID] == "legacy"
-                assert owners.device._site_aliases[SITE_ID] == {mac: PDU_ID}
-                assert owners.device._site_absence_counts.get(SITE_ID, {}) == {}
+                assert owners.device._inventory_state.sources[SITE_ID] == "legacy"
+                assert owners.device._inventory_state.aliases[SITE_ID] == {mac: PDU_ID}
+                assert owners.device._inventory_state.absence.get(SITE_ID, {}) == {}
 
                 # Cache keys stay v1 due to committed alias lookup
                 assert list(owners.device.data["devices"][SITE_ID].keys()) == [PDU_ID]
@@ -4206,9 +3828,9 @@ class TestUnifiDeviceCoordinator:
                 # Poll 2b: second consecutive fallback poll (eligible fallback)
                 await owners.device.async_refresh()
 
-                assert owners.device._site_sources[SITE_ID] == "legacy"
-                assert owners.device._site_aliases[SITE_ID] == {mac: PDU_ID}
-                assert owners.device._site_absence_counts.get(SITE_ID, {}) == {}
+                assert owners.device._inventory_state.sources[SITE_ID] == "legacy"
+                assert owners.device._inventory_state.aliases[SITE_ID] == {mac: PDU_ID}
+                assert owners.device._inventory_state.absence.get(SITE_ID, {}) == {}
                 assert list(owners.device.data["devices"][SITE_ID].keys()) == [PDU_ID]
                 pdu_fallback2 = owners.device.get_device(SITE_ID, PDU_ID)
                 assert pdu_fallback2 is not None
@@ -4223,9 +3845,9 @@ class TestUnifiDeviceCoordinator:
                 ]
                 await owners.device.async_refresh()
 
-                assert owners.device._site_sources[SITE_ID] == "v1"
-                assert owners.device._site_aliases[SITE_ID] == {mac: PDU_ID}
-                assert owners.device._site_absence_counts.get(SITE_ID, {}) == {}
+                assert owners.device._inventory_state.sources[SITE_ID] == "v1"
+                assert owners.device._inventory_state.aliases[SITE_ID] == {mac: PDU_ID}
+                assert owners.device._inventory_state.absence.get(SITE_ID, {}) == {}
                 assert list(owners.device.data["devices"][SITE_ID].keys()) == [PDU_ID]
                 assert owners.device.get_device(SITE_ID, PDU_ID) is not None
                 reg_pdu = get_device_by_identifier(
@@ -4280,8 +3902,11 @@ class TestUnifiDeviceCoordinator:
             await owners.config.async_refresh()
             await owners.device.async_refresh()
 
-            assert owners.device._site_aliases[SITE_ID][pdu_mac] == PDU_ID
-            assert owners.device._site_aliases[SITE_ID][sw_v1["mac"]] == sw_v1["id"]
+            assert owners.device._inventory_state.aliases[SITE_ID][pdu_mac] == PDU_ID
+            assert (
+                owners.device._inventory_state.aliases[SITE_ID][sw_v1["mac"]]
+                == sw_v1["id"]
+            )
 
             # Poll 2: eligible v1 poll omitting PDU (advances PDU absence counter to 1)
             # while the legacy list agrees that the PDU is gone
@@ -4291,16 +3916,16 @@ class TestUnifiDeviceCoordinator:
             ]
             await owners.device.async_refresh()
 
-            assert owners.device._site_absence_counts[SITE_ID][PDU_ID] == 1
-            assert owners.device._site_aliases[SITE_ID][pdu_mac] == PDU_ID
+            assert owners.device._inventory_state.absence[SITE_ID][PDU_ID] == 1
+            assert owners.device._inventory_state.aliases[SITE_ID][pdu_mac] == PDU_ID
 
             # Poll 3: v1 returns empty list [] (ineligible: empty after non-empty)
             owners.network_client.devices.get_all.return_value = []
             await owners.device.async_refresh()
 
             # Aliases must NOT be replaced with empty dict; counters must NOT reset
-            assert owners.device._site_aliases[SITE_ID][pdu_mac] == PDU_ID
-            assert owners.device._site_absence_counts[SITE_ID][PDU_ID] == 1
+            assert owners.device._inventory_state.aliases[SITE_ID][pdu_mac] == PDU_ID
+            assert owners.device._inventory_state.absence[SITE_ID][PDU_ID] == 1
 
             # Poll 4: fallback to legacy /stat/device with both devices
             owners.network_client.devices.get_all.side_effect = UniFiResponseError(
@@ -4351,7 +3976,9 @@ class TestUnifiDeviceCoordinator:
             await owners.config.async_refresh()
             await owners.device.async_refresh()
 
-            assert pdu_mac not in owners.device._site_aliases.get(SITE_ID, {})
+            assert pdu_mac not in owners.device._inventory_state.aliases.get(
+                SITE_ID, {}
+            )
 
             # Poll 2: eligible v1 poll discovers PDU (merges new PDU alias)
             owners.network_client.devices.get_all.return_value = [
@@ -4360,7 +3987,7 @@ class TestUnifiDeviceCoordinator:
             ]
             await owners.device.async_refresh()
 
-            assert owners.device._site_aliases[SITE_ID][pdu_mac] == PDU_ID
+            assert owners.device._inventory_state.aliases[SITE_ID][pdu_mac] == PDU_ID
 
             # Poll 3: eligible v1 poll omits PDU (omitted for one poll), and so
             # does the legacy list
@@ -4371,8 +3998,8 @@ class TestUnifiDeviceCoordinator:
             await owners.device.async_refresh()
 
             # Merging aliases ensures PDU alias is preserved even when omitted
-            assert owners.device._site_aliases[SITE_ID][pdu_mac] == PDU_ID
-            assert owners.device._site_absence_counts[SITE_ID][PDU_ID] == 1
+            assert owners.device._inventory_state.aliases[SITE_ID][pdu_mac] == PDU_ID
+            assert owners.device._inventory_state.absence[SITE_ID][PDU_ID] == 1
 
             # Poll 4: fallback to legacy /stat/device returning PDU
             owners.network_client.devices.get_all.side_effect = UniFiResponseError(
@@ -4465,8 +4092,8 @@ class TestUnifiDeviceCoordinator:
             await owners.device.async_refresh()
 
             assert legacy_id in owners.device.data["devices"][SITE_ID]
-            assert owners.device._site_sources[SITE_ID] == "legacy"
-            assert owners.device._site_aliases.get(SITE_ID) == {}
+            assert owners.device._inventory_state.sources[SITE_ID] == "legacy"
+            assert owners.device._inventory_state.aliases.get(SITE_ID) == {}
 
             # Poll 2: v1 responds (source changed legacy -> v1: ineligible for cleanup,
             # but aliases must be merged on every committed v1 poll).
@@ -4477,8 +4104,11 @@ class TestUnifiDeviceCoordinator:
             await owners.device.async_refresh()
 
             assert v1_id in owners.device.data["devices"][SITE_ID]
-            assert owners.device._site_sources[SITE_ID] == "v1"
-            assert owners.device._site_aliases.get(SITE_ID, {}).get(mac) == v1_id
+            assert owners.device._inventory_state.sources[SITE_ID] == "v1"
+            assert (
+                owners.device._inventory_state.aliases.get(SITE_ID, {}).get(mac)
+                == v1_id
+            )
 
             # Poll 3: v1 drops again to fallback.
             # Because the v1 alias was recorded in poll 2, fallback must reuse
@@ -4490,7 +4120,7 @@ class TestUnifiDeviceCoordinator:
 
             assert v1_id in owners.device.data["devices"][SITE_ID]
             assert legacy_id not in owners.device.data["devices"][SITE_ID]
-            assert owners.device._site_sources[SITE_ID] == "legacy"
+            assert owners.device._inventory_state.sources[SITE_ID] == "legacy"
         finally:
             await async_shutdown_owners(owners)
 
@@ -4515,7 +4145,7 @@ class TestUnifiDeviceCoordinator:
             ]
             await owners.config.async_refresh()
             await owners.device.async_refresh()
-            assert PDU_ID in owners.device._site_tracked_devices[SITE_ID]
+            assert PDU_ID in owners.device._inventory_state.tracked[SITE_ID]
 
             # Polls 2, 3, 4: site returns zero devices
             owners.network_client.devices.get_all.return_value = []
@@ -4528,7 +4158,7 @@ class TestUnifiDeviceCoordinator:
             )
             assert reg_dev is not None
             assert entry_id in device_config_entry_ids(reg_dev)
-            assert PDU_ID in owners.device._site_tracked_devices[SITE_ID]
+            assert PDU_ID in owners.device._inventory_state.tracked[SITE_ID]
         finally:
             await async_shutdown_owners(owners)
 
@@ -4547,10 +4177,10 @@ class TestUnifiDeviceCoordinator:
             await owners.config.async_refresh()
             await owners.device.async_refresh()
 
-            before_aliases = copy.deepcopy(owners.device._site_aliases)
-            before_sources = copy.deepcopy(owners.device._site_sources)
-            before_tracking = copy.deepcopy(owners.device._site_tracked_devices)
-            before_absence = copy.deepcopy(owners.device._site_absence_counts)
+            before_aliases = copy.deepcopy(owners.device._inventory_state.aliases)
+            before_sources = copy.deepcopy(owners.device._inventory_state.sources)
+            before_tracking = copy.deepcopy(owners.device._inventory_state.tracked)
+            before_absence = copy.deepcopy(owners.device._inventory_state.absence)
 
             # Poll 2: multi-site poll where site 1 succeeds with new alias candidate
             # but site 2 fails -> whole refresh fails; no aliases or tracking committed
@@ -4577,10 +4207,10 @@ class TestUnifiDeviceCoordinator:
             await owners.device.async_refresh()
             assert not owners.device.last_update_success
 
-            assert owners.device._site_aliases == before_aliases
-            assert owners.device._site_sources == before_sources
-            assert owners.device._site_tracked_devices == before_tracking
-            assert owners.device._site_absence_counts == before_absence
+            assert owners.device._inventory_state.aliases == before_aliases
+            assert owners.device._inventory_state.sources == before_sources
+            assert owners.device._inventory_state.tracked == before_tracking
+            assert owners.device._inventory_state.absence == before_absence
         finally:
             await async_shutdown_owners(owners)
 
@@ -4689,12 +4319,16 @@ class TestUnifiDeviceCoordinator:
             # Poll 1 & 2: absent, not detached
             await owners.device.async_refresh()
             assert (
-                owners.device._site_absence_counts.get(SITE_ID, {}).get("switch_v1_id")
+                owners.device._inventory_state.absence.get(SITE_ID, {}).get(
+                    "switch_v1_id"
+                )
                 == 1
             )
             await owners.device.async_refresh()
             assert (
-                owners.device._site_absence_counts.get(SITE_ID, {}).get("switch_v1_id")
+                owners.device._inventory_state.absence.get(SITE_ID, {}).get(
+                    "switch_v1_id"
+                )
                 == 2
             )
 
@@ -4710,7 +4344,9 @@ class TestUnifiDeviceCoordinator:
             ]
             await owners.device.async_refresh()
             assert (
-                owners.device._site_absence_counts.get(SITE_ID, {}).get("switch_v1_id")
+                owners.device._inventory_state.absence.get(SITE_ID, {}).get(
+                    "switch_v1_id"
+                )
                 is None
             )
 
@@ -4829,15 +4465,6 @@ class TestUnifiDeviceCoordinator:
         coordinator.data["devices"] = {"default": {"device1": "not_a_dict"}}
 
         result = coordinator.get_device("default", "device1")
-        assert result is None
-
-    def test_get_device_stats_non_dict_value(
-        self, coordinator: UnifiInsightsDeviceCoordinator
-    ):
-        """Test get_device_stats returns None for non-dict values."""
-        coordinator.data["stats"] = {"default": {"device1": "not_a_dict"}}
-
-        result = coordinator.get_device_stats("default", "device1")
         assert result is None
 
     # -------------------------------------------------------------------
@@ -5839,7 +5466,7 @@ async def test_two_outlet_writes_across_getting_ready_refresh(
     await device.async_set_outlet_state(SITE_ID, PDU_ID, 1, state=False)
     await device.async_refresh()
     current = device.data["devices"][SITE_ID][PDU_ID]
-    facts = seeded_owners.facade.get_device_facts(SITE_ID, PDU_ID)
+    facts = device_facts(seeded_owners.facade.data, SITE_ID, PDU_ID)
     assert current["state"] == "GETTING_READY"
     assert facts is not None
     assert facts.serviceable is True
@@ -6164,3 +5791,332 @@ class TestAccessPointRadioDetails:
 
         assert result["radio_details"] == {}
         assert coordinator._radio_details_last_attempt == {}
+
+
+# --- Network device status LEDs (#504) ---------------------------------------
+
+
+@pytest.fixture
+async def led_owners(seeded_owners: SeededOwners) -> SeededOwners:
+    """Seed a classic LED capability on a non-outlet Network device."""
+    endpoint = seeded_owners.network_client.devices
+    endpoint.get_all.return_value = [{**AP_DEVICE, "state": "ONLINE"}]
+    endpoint.get.return_value = {}
+    endpoint.get_legacy_site_devices.return_value = [
+        {"mac": AP_DEVICE["mac"], "_id": "legacy-ap", "led_override": "off"}
+    ]
+    endpoint.set_led_override.return_value = True
+    await seeded_owners.device.async_refresh()
+    return seeded_owners
+
+
+async def test_led_write_publishes_and_waits_for_poll_confirmation(
+    led_owners: SeededOwners,
+) -> None:
+    """Hold the latest mode over stale reads without editing existing snapshots."""
+    owner = led_owners.device
+    endpoint = led_owners.network_client.devices
+    original = owner.data
+    legacy = endpoint.get_legacy_site_devices.return_value[0]
+    assert original["devices"][SITE_ID][AP_ID]["led_device_id"] == "legacy-ap"
+    assert original["devices"][SITE_ID][AP_ID]["led_override"] == "off"
+
+    clock = MagicMock()
+    clock.monotonic.return_value = 100.0
+    with (
+        patch.object(device_coordinator_module, "time", clock),
+        patch.object(owner, "async_request_refresh") as refresh,
+    ):
+        assert await owner.async_set_led_override(SITE_ID, AP_ID, mode="on")
+        endpoint.set_led_override.assert_awaited_once_with("default", "legacy-ap", "on")
+        refresh.assert_awaited_once()
+        assert owner.data["devices"][SITE_ID][AP_ID]["led_override"] == "on"
+        assert original["devices"][SITE_ID][AP_ID]["led_override"] == "off"
+        assert legacy["led_override"] == "off"
+
+        await owner.async_refresh()
+        assert owner.data["devices"][SITE_ID][AP_ID]["led_override"] == "on"
+
+        endpoint.get_legacy_site_devices.return_value = []
+        await owner.async_refresh()
+        assert "led_override" not in owner.data["devices"][SITE_ID][AP_ID]
+        assert (SITE_ID, AP_ID) in owner._pending_led_writes
+
+        endpoint.get_legacy_site_devices.return_value = [legacy]
+        await owner.async_refresh()
+        assert owner.data["devices"][SITE_ID][AP_ID]["led_override"] == "on"
+
+        clock.monotonic.return_value = 150.0
+        await owner.async_set_led_override(SITE_ID, AP_ID, mode="default")
+        clock.monotonic.return_value = 209.0
+        await owner.async_refresh()
+        assert owner.data["devices"][SITE_ID][AP_ID]["led_override"] == "default"
+
+        clock.monotonic.return_value = 210.0
+        await owner.async_refresh()
+        assert owner.data["devices"][SITE_ID][AP_ID]["led_override"] == "off"
+        assert not owner._pending_led_writes
+
+        await owner.async_set_led_override(SITE_ID, AP_ID, mode="on")
+        endpoint.get_legacy_site_devices.return_value = [
+            {**legacy, "led_override": "on"}
+        ]
+        await owner.async_refresh()
+        assert not owner._pending_led_writes
+        assert owner.data["devices"][SITE_ID][AP_ID]["led_override"] == "on"
+
+
+@pytest.mark.parametrize(
+    ("record", "site_id", "translation_key"),
+    [
+        (None, SITE_ID, "command_failed"),
+        ({"led_device_id": "legacy-ap"}, SITE_ID, "command_failed"),
+        (
+            {"led_device_id": "legacy-ap", "led_override": "invalid"},
+            SITE_ID,
+            "command_failed",
+        ),
+        ({"led_override": "off"}, SITE_ID, "command_failed"),
+        ({"led_device_id": " ", "led_override": "off"}, SITE_ID, "command_failed"),
+        (
+            {"led_device_id": "legacy-ap", "led_override": "off"},
+            "missing",
+            "legacy_site_not_found",
+        ),
+    ],
+)
+async def test_led_write_requires_classic_site_and_device(
+    led_owners: SeededOwners,
+    record: dict[str, Any] | None,
+    site_id: str,
+    translation_key: str,
+) -> None:
+    """Fail before I/O, publication or refresh for incomplete target data."""
+    owner = led_owners.device
+    owner.data = {**owner.data, "devices": {SITE_ID: {AP_ID: record} if record else {}}}
+    before = owner.data
+    with (
+        patch.object(owner, "async_request_refresh") as refresh,
+        pytest.raises(HomeAssistantError) as error,
+    ):
+        await owner.async_set_led_override(site_id, AP_ID, mode="on")
+    assert error.value.translation_key == translation_key
+    led_owners.network_client.devices.set_led_override.assert_not_awaited()
+    refresh.assert_not_awaited()
+    assert owner.data is before
+    assert not owner._pending_led_writes
+
+
+@pytest.mark.parametrize("raises", [False, True])
+async def test_led_rejected_write_does_not_publish(
+    led_owners: SeededOwners, *, raises: bool
+) -> None:
+    """Leave state alone when the SDK rejects the command."""
+    owner = led_owners.device
+    endpoint = led_owners.network_client.devices
+    endpoint.set_led_override.return_value = False
+    if raises:
+        endpoint.set_led_override.side_effect = UniFiConnectionError("offline")
+    before = owner.data
+    with (
+        patch.object(owner, "async_request_refresh") as refresh,
+        pytest.raises(HomeAssistantError) as error,
+    ):
+        await owner.async_set_led_override(SITE_ID, AP_ID, mode="on")
+    assert error.value.translation_key == "command_failed"
+    refresh.assert_not_awaited()
+    assert owner.data is before
+    assert not owner._pending_led_writes
+
+
+async def test_led_pending_write_survives_failure_and_drops_when_device_leaves(
+    led_owners: SeededOwners,
+) -> None:
+    """Keep a successful overlay on failed refresh and forget absent devices."""
+    owner = led_owners.device
+    endpoint = led_owners.network_client.devices
+    await owner.async_set_led_override(SITE_ID, AP_ID, mode="on")
+    before = owner.data
+    endpoint.get_all.side_effect = UniFiConnectionError("offline")
+    await owner.async_refresh()
+    assert owner.data is before
+    assert (SITE_ID, AP_ID) in owner._pending_led_writes
+
+    endpoint.get_all.side_effect = None
+    endpoint.get_all.return_value = []
+    endpoint.get_legacy_site_devices.return_value = []
+    await owner.async_refresh()
+    assert not owner._pending_led_writes
+
+
+async def test_led_write_waits_for_inflight_refresh(led_owners: SeededOwners) -> None:
+    """A refresh that already owns the lock completes before the LED command."""
+    owner = led_owners.device
+    endpoint = led_owners.network_client.devices
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    async def read_devices(_site_id: str) -> list[dict[str, Any]]:
+        started.set()
+        await finish.wait()
+        return [{**AP_DEVICE, "state": "ONLINE"}]
+
+    endpoint.get_all.side_effect = read_devices
+    poll = asyncio.create_task(owner.async_refresh())
+    await started.wait()
+    write = asyncio.create_task(owner.async_set_led_override(SITE_ID, AP_ID, mode="on"))
+    try:
+        await asyncio.sleep(0)
+        endpoint.set_led_override.assert_not_awaited()
+    finally:
+        finish.set()
+        await asyncio.gather(poll, write)
+    assert owner.data["devices"][SITE_ID][AP_ID]["led_override"] == "on"
+
+
+@pytest.mark.parametrize(
+    ("connection_type", "url"),
+    [
+        (
+            ConnectionType.LOCAL,
+            "https://192.168.1.1/proxy/network/api/s/default/rest/device/legacy-ap",
+        ),
+        (
+            ConnectionType.REMOTE,
+            "https://api.ui.com/v1/connector/consoles/test-console/network/api/s/default/rest/device/legacy-ap",
+        ),
+    ],
+)
+async def test_led_command_sdk_http_boundary(
+    led_owners: SeededOwners, connection_type: ConnectionType, url: str
+) -> None:
+    """Send exactly one LED field using the SDK's local or connector route."""
+    session = FakeQueuedSession([{"meta": {"rc": "ok"}, "data": []}])
+    local = connection_type is ConnectionType.LOCAL
+    async with UniFiNetworkClient(
+        auth=ApiKeyAuth(api_key="test-key"),
+        base_url="https://192.168.1.1" if local else None,
+        connection_type=connection_type,
+        console_id=None if local else "test-console",
+        session=session,  # type: ignore[arg-type]
+    ) as client:
+        owner = led_owners.device
+        with (
+            patch.object(owner, "network_client", client),
+            patch.object(owner, "async_request_refresh"),
+        ):
+            await owner.async_set_led_override(SITE_ID, AP_ID, mode="on")
+
+    assert len(session.requests) == 1
+    request = session.requests[0]
+    assert (request["method"], request["url"], request["json"]) == (
+        "PUT",
+        url,
+        {"led_override": "on"},
+    )
+
+
+def test_led_holds_only_writes_for_the_current_site() -> None:
+    """Keep multiple writes on their own site, even if another site shares an ID."""
+    devices = {"ap1": {"led_override": "off"}, "ap2": {"led_override": "default"}}
+    own_writes = {
+        ("site-a", "ap1"): PendingLedWrite("on", 100.0),
+        ("site-a", "ap2"): PendingLedWrite("off", 100.0),
+    }
+    pending = {**own_writes, ("site-b", "ap1"): PendingLedWrite("default", 100.0)}
+
+    updated, kept = _hold_led_writes("site-a", devices, pending, 101.0)
+
+    assert updated == {"ap1": {"led_override": "on"}, "ap2": {"led_override": "off"}}
+    assert kept == own_writes
+    assert devices == {
+        "ap1": {"led_override": "off"},
+        "ap2": {"led_override": "default"},
+    }
+
+
+async def test_led_pending_write_clears_when_all_sites_leave(
+    led_owners: SeededOwners,
+) -> None:
+    """Forget pending writes when the selected site list is empty."""
+    owner = led_owners.device
+    await owner.async_set_led_override(SITE_ID, AP_ID, mode="on")
+    assert (SITE_ID, AP_ID) in owner._pending_led_writes
+
+    led_owners.config.data = {**led_owners.config.data, "sites": {}}
+    await owner.async_refresh()
+
+    assert owner.data["devices"] == {}
+    assert not owner._pending_led_writes
+    root = owner.data
+    owner._publish_led_override(SITE_ID, AP_ID, "off")
+    assert owner.data is root
+
+
+@pytest.mark.parametrize("legacy_read_fails", [False, True])
+async def test_led_capability_requires_a_matching_legacy_device(
+    led_owners: SeededOwners, *, legacy_read_fails: bool
+) -> None:
+    """Drop LED data when the legacy record disappears or its read fails."""
+    owner = led_owners.device
+    endpoint = led_owners.network_client.devices
+    endpoint.get_all.return_value = [
+        Device.model_validate({**AP_DEVICE, "state": "ONLINE", "led_override": "off"})
+    ]
+    endpoint.get_legacy_site_devices.return_value = [
+        {"mac": "00:00:00:00:00:03", "_id": "other-ap", "led_override": "on"}
+    ]
+    if legacy_read_fails:
+        endpoint.get_legacy_site_devices.side_effect = UniFiConnectionError("offline")
+
+    await owner.async_refresh()
+
+    assert owner.last_update_success
+    record = owner.data["devices"][SITE_ID][AP_ID]
+    assert "led_override" not in record
+    assert "led_device_id" not in record
+
+
+@pytest.mark.parametrize("classic_id", [None, "../other-ap", "classic-ap"])
+async def test_led_write_identifier_comes_from_the_matching_legacy_record(
+    led_owners: SeededOwners, classic_id: str | None
+) -> None:
+    """Ignore the extra identifier on the v1 SDK model."""
+    owner = led_owners.device
+    endpoint = led_owners.network_client.devices
+    other_mac = "00:00:00:00:00:03"
+    endpoint.get_all.return_value = [
+        Device.model_validate(
+            {
+                **AP_DEVICE,
+                "macAddress": AP_DEVICE["mac"],
+                "mac": other_mac,
+                "state": "ONLINE",
+                "led_override": "on",
+                "led_device_id": "injected",
+                "_id": "v1-extra",
+            }
+        )
+    ]
+    classic = {"mac": AP_DEVICE["mac"], "led_override": "off"}
+    if classic_id is not None:
+        classic["_id"] = classic_id
+    endpoint.get_legacy_site_devices.return_value = [
+        classic,
+        {"mac": other_mac, "_id": "other-ap", "led_override": "on"},
+    ]
+
+    await owner.async_refresh()
+
+    record = owner.data["devices"][SITE_ID][AP_ID]
+    assert record["led_override"] == "off"
+    assert record["_id"] == "v1-extra"
+    if classic_id == "classic-ap":
+        assert record["led_device_id"] == classic_id
+        await owner.async_set_led_override(SITE_ID, AP_ID, mode="on")
+        endpoint.set_led_override.assert_awaited_once_with("default", classic_id, "on")
+    else:
+        assert "led_device_id" not in record
+        with pytest.raises(HomeAssistantError) as error:
+            await owner.async_set_led_override(SITE_ID, AP_ID, mode="on")
+        assert error.value.translation_key == "command_failed"
+        endpoint.set_led_override.assert_not_awaited()

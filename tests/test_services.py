@@ -263,6 +263,15 @@ _HANDLER_CASES: list[tuple[Any, ...]] = [
         {},
     ),
     (
+        "set_video_mode",
+        {"camera_id": "x", "mode": "antiFlicker"},
+        "resolve_protect_call",
+        ("camera",),
+        "async_set_video_mode",
+        ("r1", "antiFlicker"),
+        {},
+    ),
+    (
         "set_mic_volume",
         {"camera_id": "x", "volume": 100},
         "resolve_protect_call",
@@ -1109,6 +1118,7 @@ class TestAsyncUnloadServices:
                 "slowShutter",
                 "lprReflex",
                 "lprNoneReflex",
+                "antiFlicker",
             ],
             {},
         ),
@@ -1149,6 +1159,7 @@ def test_protect_ui_selectors_match_service_schemas(
             "Low light",
             "License plates (reflective)",
             "License plates (non-reflective)",
+            "Anti-flicker",
         ]
     schema = getattr(services, f"{service.upper()}_SCHEMA")
     for value in values:

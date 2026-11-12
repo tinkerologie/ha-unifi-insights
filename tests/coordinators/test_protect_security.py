@@ -19,6 +19,7 @@ from unifi_official_api.protect.models import (
     Fob,
     LinkStation,
     Siren,
+    Speaker,
 )
 
 from custom_components.unifi_insights.const import (
@@ -42,12 +43,14 @@ from tests.fixtures.assertions import (
 from tests.fixtures.coordinator_clients import (
     _create_mock_network_client,
     _create_mock_protect_client,
+    protect_list,
 )
 from tests.fixtures.library_responses import (
     SAMPLE_ALARM_HUB,
     SAMPLE_ALARM_HUB_TAMPER_EVENT,
     SAMPLE_KEYPAD_FOB,
     SAMPLE_SIREN,
+    SAMPLE_SPEAKER,
     SAMPLE_THREAD_LINK_STATION,
 )
 from tests.fixtures.protect_ws import send_device, send_event
@@ -57,6 +60,7 @@ if TYPE_CHECKING:
 
     from homeassistant.core import HomeAssistant
     from pytest_homeassistant.common import MockConfigEntry
+    from unifi_official_api.protect import ProtectListResult
 
 
 # --- Security device families ------------------------------------------------
@@ -66,6 +70,7 @@ _SECURITY_FAMILIES = [
     ("link_stations", "_fetch_link_stations", LinkStation, SAMPLE_THREAD_LINK_STATION),
     ("alarm_hubs", "_fetch_alarm_hubs", LinkStation, SAMPLE_ALARM_HUB),
     ("sirens", "_fetch_sirens", Siren, SAMPLE_SIREN),
+    ("speakers", "_fetch_speakers", Speaker, SAMPLE_SPEAKER),
 ]
 
 
@@ -111,8 +116,8 @@ class TestProtectSecurityDeviceFamilies:
         sample: dict[str, Any],
     ) -> None:
         """A fetch stores the alias-keyed dump of each real model by id."""
-        getattr(coordinator.protect_client, collection).get_all = AsyncMock(
-            return_value=[model.model_validate(sample)]
+        getattr(coordinator.protect_client, collection).get_all_result = AsyncMock(
+            return_value=protect_list([model.model_validate(sample)])
         )
 
         await getattr(coordinator, fetch_method)()
@@ -125,6 +130,9 @@ class TestProtectSecurityDeviceFamilies:
         elif collection == "sirens":
             assert stored["sirenStatus"]["isActive"] is False
             assert stored["volume"] == 50
+        elif collection == "speakers":
+            assert stored["volume"] == 80
+            assert stored["isMicEnabled"] is True
         else:
             assert "threadState" in stored
 
@@ -134,17 +142,22 @@ class TestProtectSecurityDeviceFamilies:
     ) -> None:
         """The 30s poll includes the three new families."""
         client = coordinator.protect_client
-        require_not_none(client).fobs.get_all = AsyncMock(
-            return_value=[Fob.model_validate(SAMPLE_KEYPAD_FOB)]
+        require_not_none(client).fobs.get_all_result = AsyncMock(
+            return_value=protect_list([Fob.model_validate(SAMPLE_KEYPAD_FOB)])
         )
-        require_not_none(client).link_stations.get_all = AsyncMock(
-            return_value=[LinkStation.model_validate(SAMPLE_THREAD_LINK_STATION)]
+        require_not_none(client).link_stations.get_all_result = AsyncMock(
+            return_value=protect_list(
+                [LinkStation.model_validate(SAMPLE_THREAD_LINK_STATION)]
+            )
         )
-        require_not_none(client).alarm_hubs.get_all = AsyncMock(
-            return_value=[LinkStation.model_validate(SAMPLE_ALARM_HUB)]
+        require_not_none(client).alarm_hubs.get_all_result = AsyncMock(
+            return_value=protect_list([LinkStation.model_validate(SAMPLE_ALARM_HUB)])
         )
-        require_not_none(client).sirens.get_all = AsyncMock(
-            return_value=[Siren.model_validate(SAMPLE_SIREN)]
+        require_not_none(client).sirens.get_all_result = AsyncMock(
+            return_value=protect_list([Siren.model_validate(SAMPLE_SIREN)])
+        )
+        require_not_none(client).speakers.get_all_result = AsyncMock(
+            return_value=protect_list([Speaker.model_validate(SAMPLE_SPEAKER)])
         )
 
         data = await coordinator._async_update_data()
@@ -153,6 +166,7 @@ class TestProtectSecurityDeviceFamilies:
         assert set(data["link_stations"]) == {"link_station_thread"}
         assert set(data["alarm_hubs"]) == {"alarm_hub_1"}
         assert set(data["sirens"]) == {"siren_1"}
+        assert set(data["speakers"]) == {"speaker_1"}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -184,7 +198,7 @@ class TestProtectSecurityDeviceFamilies:
         console does not have.
         """
         get_all = AsyncMock(side_effect=error)
-        getattr(coordinator.protect_client, collection).get_all = get_all
+        getattr(coordinator.protect_client, collection).get_all_result = get_all
         clock = 1000.0
 
         with patch(
@@ -221,13 +235,15 @@ class TestProtectSecurityDeviceFamilies:
         answered, so the call opts out and the error warns like any other.
         """
         endpoint = require_not_none(coordinator.protect_client).link_stations
-        endpoint.get_all = AsyncMock(
-            return_value=[LinkStation.model_validate(SAMPLE_THREAD_LINK_STATION)]
+        endpoint.get_all_result = AsyncMock(
+            return_value=protect_list(
+                [LinkStation.model_validate(SAMPLE_THREAD_LINK_STATION)]
+            )
         )
         await coordinator._fetch_link_stations()
-        endpoint.get_all.assert_awaited_once_with(expected_unsupported=True)
+        endpoint.get_all_result.assert_awaited_once_with(expected_unsupported=True)
 
-        endpoint.get_all = AsyncMock(
+        endpoint.get_all_result = AsyncMock(
             side_effect=UniFiResponseError(
                 "API returned non-JSON response (status 200)", 200
             )
@@ -236,8 +252,8 @@ class TestProtectSecurityDeviceFamilies:
         await coordinator._fetch_link_stations()
 
         assert "link_station_thread" in coordinator.data["link_stations"]
-        assert endpoint.get_all.await_count == 2
-        endpoint.get_all.assert_awaited_with(expected_unsupported=False)
+        assert endpoint.get_all_result.await_count == 2
+        endpoint.get_all_result.assert_awaited_with(expected_unsupported=False)
         assert "Error fetching link_stations" in caplog.text
         assert "does not expose" not in caplog.text
 
@@ -249,14 +265,14 @@ class TestProtectSecurityDeviceFamilies:
     ) -> None:
         """A 400 is a request problem, not a missing endpoint: warn, keep polling."""
         endpoint = require_not_none(coordinator.protect_client).fobs
-        endpoint.get_all = AsyncMock(
+        endpoint.get_all_result = AsyncMock(
             side_effect=UniFiResponseError("API error (status 400)", 400)
         )
 
         await coordinator._fetch_fobs()
         await coordinator._fetch_fobs()
 
-        assert endpoint.get_all.await_count == 2
+        assert endpoint.get_all_result.await_count == 2
         assert "Error fetching fobs" in caplog.text
         assert "does not expose" not in caplog.text
 
@@ -266,10 +282,10 @@ class TestProtectSecurityDeviceFamilies:
     ) -> None:
         """A Protect upgrade is picked up at the next hourly re-probe."""
         endpoint = require_not_none(coordinator.protect_client).fobs
-        endpoint.get_all = AsyncMock(
+        endpoint.get_all_result = AsyncMock(
             side_effect=[
                 UniFiNotFoundError("Not Found", 404),
-                [Fob.model_validate(SAMPLE_KEYPAD_FOB)],
+                protect_list([Fob.model_validate(SAMPLE_KEYPAD_FOB)]),
             ]
         )
         clock = 1000.0
@@ -284,7 +300,7 @@ class TestProtectSecurityDeviceFamilies:
 
         assert "fob_1" in coordinator.data["fobs"]
         # Not skipped after recovering: the third call went to the API.
-        assert endpoint.get_all.await_count == 3
+        assert endpoint.get_all_result.await_count == 3
 
     @pytest.mark.asyncio
     async def test_404_after_success_keeps_cache_and_keeps_polling(
@@ -295,17 +311,19 @@ class TestProtectSecurityDeviceFamilies:
         It goes through the bounded 404 cache path instead, like cameras.
         """
         endpoint = require_not_none(coordinator.protect_client).alarm_hubs
-        endpoint.get_all = AsyncMock(
-            return_value=[LinkStation.model_validate(SAMPLE_ALARM_HUB)]
+        endpoint.get_all_result = AsyncMock(
+            return_value=protect_list([LinkStation.model_validate(SAMPLE_ALARM_HUB)])
         )
         await coordinator._fetch_alarm_hubs()
 
-        endpoint.get_all = AsyncMock(side_effect=UniFiNotFoundError("Not Found", 404))
+        endpoint.get_all_result = AsyncMock(
+            side_effect=UniFiNotFoundError("Not Found", 404)
+        )
         await coordinator._fetch_alarm_hubs()
         await coordinator._fetch_alarm_hubs()
 
         assert "alarm_hub_1" in coordinator.data["alarm_hubs"]
-        assert endpoint.get_all.await_count == 2
+        assert endpoint.get_all_result.await_count == 2
 
     @pytest.mark.asyncio
     async def test_fetch_error_keeps_cached_devices(
@@ -315,7 +333,9 @@ class TestProtectSecurityDeviceFamilies:
     ) -> None:
         """Any other error preserves the cache and is logged."""
         coordinator.data["link_stations"] = {"ls1": {"id": "ls1"}}
-        require_not_none(coordinator.protect_client).link_stations.get_all = AsyncMock(
+        require_not_none(
+            coordinator.protect_client
+        ).link_stations.get_all_result = AsyncMock(
             side_effect=Exception("500 Internal Server Error")
         )
 
@@ -331,10 +351,11 @@ class TestProtectSecurityDeviceFamilies:
         """A device the endpoint dropped on a parse error is not treated as gone."""
         coordinator.data["fobs"] = {"fob_old": {"id": "fob_old"}}
         endpoint = require_not_none(coordinator.protect_client).fobs
-        endpoint.get_all = AsyncMock(
-            return_value=[Fob.model_validate(SAMPLE_KEYPAD_FOB)]
+        endpoint.get_all_result = AsyncMock(
+            return_value=protect_list(
+                [Fob.model_validate(SAMPLE_KEYPAD_FOB)], skipped=1
+            )
         )
-        endpoint.last_result_complete = False
 
         await coordinator._fetch_fobs()
 
@@ -682,8 +703,8 @@ class TestProtectSecurityDeviceFamilies:
         self, coordinator: UnifiInsightsProtectCoordinator, siren: dict[str, Any]
     ) -> dict[str, Any]:
         """Run one siren poll that answers with ``siren`` and return its record."""
-        require_not_none(coordinator.protect_client).sirens.get_all = AsyncMock(
-            return_value=[Siren.model_validate(siren)]
+        require_not_none(coordinator.protect_client).sirens.get_all_result = AsyncMock(
+            return_value=protect_list([Siren.model_validate(siren)])
         )
         await coordinator._fetch_sirens()
         return coordinator.data["sirens"]["siren_1"]["sirenStatus"]
@@ -758,8 +779,8 @@ class TestProtectSecurityDeviceFamilies:
         coordinator.data["sirens"] = {"siren_1": self._siren_with_status()}
         coordinator.mark_siren_stopped("siren_1")
 
-        require_not_none(coordinator.protect_client).sirens.get_all = AsyncMock(
-            return_value=[]
+        require_not_none(coordinator.protect_client).sirens.get_all_result = AsyncMock(
+            return_value=protect_list([])
         )
         coordinator.data["sirens"] = {}
         await coordinator._fetch_sirens()
@@ -901,12 +922,12 @@ class TestProtectSecurityDeviceFamilies:
         started = asyncio.Event()
         release = asyncio.Event()
 
-        async def slow_get_all(*_args: Any, **_kwargs: Any) -> list[Any]:
+        async def slow_get_all(*_args: Any, **_kwargs: Any) -> ProtectListResult[Any]:
             started.set()
             await release.wait()
-            return [older_reading]
+            return protect_list([older_reading])
 
-        getattr(coordinator.protect_client, collection).get_all = slow_get_all
+        getattr(coordinator.protect_client, collection).get_all_result = slow_get_all
         if frame_before_request:
             send_device(coordinator, frame_model_key, copy.deepcopy(frame))
         task = asyncio.create_task(fetch())
@@ -1002,8 +1023,8 @@ class TestProtectSecurityDeviceFamilies:
         listener = MagicMock()
         coordinator.async_add_listener(listener)
         idle = self._siren_with_status(isActive=False)
-        require_not_none(coordinator.protect_client).sirens.get_all = AsyncMock(
-            return_value=[Siren.model_validate(idle)]
+        require_not_none(coordinator.protect_client).sirens.get_all_result = AsyncMock(
+            return_value=protect_list([Siren.model_validate(idle)])
         )
 
         await coordinator._reconcile_sirens()
@@ -1152,8 +1173,10 @@ class TestProtectSecurityDeviceFamilies:
             "alarmHubDeviceTamper",
             copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT),
         )
-        require_not_none(coordinator.protect_client).alarm_hubs.get_all = AsyncMock(
-            return_value=[LinkStation.model_validate(SAMPLE_ALARM_HUB)]
+        require_not_none(
+            coordinator.protect_client
+        ).alarm_hubs.get_all_result = AsyncMock(
+            return_value=protect_list([LinkStation.model_validate(SAMPLE_ALARM_HUB)])
         )
 
         await coordinator._fetch_alarm_hubs()
@@ -1175,8 +1198,10 @@ class TestProtectSecurityDeviceFamilies:
         rest_hub = copy.deepcopy(SAMPLE_ALARM_HUB)
         del rest_hub["alarmHub"]["deviceTamperStatus"]
         coordinator.data["alarm_hubs"] = {"alarm_hub_1": copy.deepcopy(rest_hub)}
-        require_not_none(coordinator.protect_client).alarm_hubs.get_all = AsyncMock(
-            return_value=[LinkStation.model_validate(rest_hub)]
+        require_not_none(
+            coordinator.protect_client
+        ).alarm_hubs.get_all_result = AsyncMock(
+            return_value=protect_list([LinkStation.model_validate(rest_hub)])
         )
 
         send_event(
@@ -1203,24 +1228,26 @@ class TestProtectSecurityDeviceFamilies:
 
         async def get_all_with_tamper_mid_flight(
             *, expected_unsupported: bool
-        ) -> list[LinkStation]:
+        ) -> ProtectListResult[LinkStation]:
             send_event(
                 coordinator,
                 "alarmHubDeviceTamper",
                 copy.deepcopy(SAMPLE_ALARM_HUB_TAMPER_EVENT),
             )
-            return [LinkStation.model_validate(SAMPLE_ALARM_HUB)]  # "restored"
+            return protect_list(
+                [LinkStation.model_validate(SAMPLE_ALARM_HUB)]
+            )  # "restored"
 
         endpoint = require_not_none(coordinator.protect_client).alarm_hubs
         patch_attribute(
-            monkeypatch, endpoint, "get_all", get_all_with_tamper_mid_flight
+            monkeypatch, endpoint, "get_all_result", get_all_with_tamper_mid_flight
         )
         await coordinator._fetch_alarm_hubs()
         hub = coordinator.data["alarm_hubs"]["alarm_hub_1"]
         assert hub["alarmHub"]["deviceTamperStatus"] == "tampered"
 
-        endpoint.get_all = AsyncMock(
-            return_value=[LinkStation.model_validate(SAMPLE_ALARM_HUB)]
+        endpoint.get_all_result = AsyncMock(
+            return_value=protect_list([LinkStation.model_validate(SAMPLE_ALARM_HUB)])
         )
         await coordinator._fetch_alarm_hubs()
         hub = coordinator.data["alarm_hubs"]["alarm_hub_1"]
@@ -1361,8 +1388,10 @@ class TestProtectSecurityDeviceFamilies:
         event["device"] = "gone"
         send_event(coordinator, "alarmHubDeviceTamper", event)
         assert "gone" in coordinator._events.tamper
-        require_not_none(coordinator.protect_client).alarm_hubs.get_all = AsyncMock(
-            return_value=[LinkStation.model_validate(SAMPLE_ALARM_HUB)]
+        require_not_none(
+            coordinator.protect_client
+        ).alarm_hubs.get_all_result = AsyncMock(
+            return_value=protect_list([LinkStation.model_validate(SAMPLE_ALARM_HUB)])
         )
 
         await coordinator._fetch_alarm_hubs()
@@ -1397,8 +1426,10 @@ class TestProtectSecurityDeviceFamilies:
         self, coordinator: UnifiInsightsProtectCoordinator
     ) -> None:
         """An item the API returns without an id can't be keyed, so it's left out."""
-        require_not_none(coordinator.protect_client).fobs.get_all = AsyncMock(
-            return_value=[{"name": "no id"}, Fob.model_validate(SAMPLE_KEYPAD_FOB)]
+        require_not_none(coordinator.protect_client).fobs.get_all_result = AsyncMock(
+            return_value=protect_list(
+                [{"name": "no id"}, Fob.model_validate(SAMPLE_KEYPAD_FOB)]
+            )
         )
 
         await coordinator._fetch_fobs()

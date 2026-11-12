@@ -7,9 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add an on/off light entity for the status LED of UniFi Network devices that report LED control. The light shows an unknown state when the LED follows the site's default setting. [#504](https://github.com/tinkerologie/ha-unifi-insights/issues/504)
+- Add `speaker_stop_siren` button entity for polled UniFi Protect speakers to stop an active siren when running UniFi Protect v7.4.96 or later. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
+- Add `alarm_control_panel` entities for UniFi Protect external arm profiles when an NVR enables the external alarm manager (Protect v7.4.96+), supporting arm away and disarm actions; profile creation, editing, deletion and PIN management remain managed exclusively in UniFi OS. A stale read, read error or partial listing cannot overwrite a newer arm/disarm result, and turning `useExternalAlarmManager` off discards reads still in flight. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
+- Add diagnostic problem binary sensor `sensor_mounted_incorrectly` for Protect UP-Sense sensors to report incorrect mounting orientation when running UniFi Protect v7.4.96 or later. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
+- Support `antiFlicker` video mode option across Protect camera select entities and `unifi_insights.set_video_mode` service action. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
+
+### Changed
+
+- Update `unifi-official-api` to 3.3.0 for the Network status LED command, with support for UniFi Protect 7.4.96 speaker stop-siren and external arm profiles. [#504](https://github.com/tinkerologie/ha-unifi-insights/issues/504) [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
+- Gate local NVR alarm control panel discovery and availability on `featureFlags.useExternalAlarmManager` in UniFi Protect v7.4.96+. When external alarm manager is enabled on an NVR, its local panel is hidden or made unavailable. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
+- Map UniFi Protect HTTP 409 Conflict during camera talkback session startup to a translated error informing the user that a talkback session is already in progress. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
+
 ### Fixed
 
-- Network entities no longer stay unavailable after the console reboots or updates its firmware. While it starts, the console answers the Network API with its web UI's HTML page, and on a console that also runs Protect or InnerSpace that answer turned Network off until the entry was reloaded. Once the sites endpoint has answered, a failed fetch now fails the refresh and is retried on the next poll; a console whose Network API has never answered is still treated as having no Network application. [#505](https://github.com/tinkerologie/ha-unifi-insights/issues/505)
+- Recover Network entities automatically when the Network sites endpoint briefly fails during a reboot or update on a console that also runs Protect or InnerSpace. During normal polling, a temporary 401 from that endpoint gets one retry before Home Assistant asks for new credentials. [#505](https://github.com/tinkerologie/ha-unifi-insights/issues/505)
+- Clear cached external alarm profiles as soon as the NVR disables external management and discard profile reads still in flight. Redact profile creator and updater identifiers in diagnostics. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
+- Match Protect cameras, NVRs, and speakers to their Network devices when the APIs use different MAC address formats. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
+- Allow Local and Remote add, reauth, and reconfigure flows to accept InnerSpace-only consoles by probing InnerSpace when Network and Protect are not available. Local creation requires a safe console identity, reporting `console_identity_unavailable` when an unsafe or credential-equivalent host is supplied. Derived from source review and verified with mocked-client tests. [#500](https://github.com/tinkerologie/ha-unifi-insights/issues/500)
+- Restore the internet activity sensors and card on UniFi Network 11. Network 11 no longer fills the legacy site reports, so the integration reads the Network 11 statistics engine when the console reports it. History may begin at the Network 11 upgrade, and the 30-day window uses 8-hour buckets. Logs and diagnostics now show why internet activity has no data, for example a missing statistics permission. [#503](https://github.com/tinkerologie/ha-unifi-insights/issues/503)
+
+### Removed
+
+- Removed 21 unused `const.py` constants: the two `DEFAULT_TRACK_*_CLIENTS` defaults, the three `ACCESS_MIN_VERSION_*` tuples, `UNIFI_API_HEADERS`, `ATTR_SMART_DETECT_TYPES`, `ATTR_NVR_STATE`, the two PTZ service descriptions, `SERVICE_LIST_VOUCHERS`, the three PTZ service names, four `CAMERA_TYPE_*` values, `PORT_ACTION_POWER_CYCLE`, `CLIENT_ACTION_AUTHORIZE_GUEST` and `CAMERA_STATE_CONNECTED`. Service names, schema values and behaviour do not change. [#496](https://github.com/tinkerologie/ha-unifi-insights/issues/496)
+- Removed three attributes that were written but never read: `_port_label` on the PoE power-cycle button, `_entity_type` on the Protect entity base class and `_input_key` on the camera digital-input event entity. Translation placeholders, unique IDs and constructor arguments are unchanged. [#496](https://github.com/tinkerologie/ha-unifi-insights/issues/496)
+- Removed 18 coordinator accessors that only tests called: the seven config section availability checks and four config getters, the device statistics and client getters, the facade `get_device_facts` and the four Protect cache getters. Entities and service actions read the same owner data and the pure lookups in `data_transforms.py` as before. The tests now assert the owner state (`failed_sections`, `last_update_success`, coordinator data) or the production helpers (`site_section_available`, `device_facts`), so live behaviour stays covered. [#496](https://github.com/tinkerologie/ha-unifi-insights/issues/496)
+- Removed six test-only helpers and constants: `bytes_to_megabits`, `bytes_to_bits` and `_has_storage_info` from `sensor.py`, `_first_site_id` from `__init__.py`, and `CARD_URL` and `CARD_PATH` from `frontend.py`. Storage and rate conversion behaviour stays covered through `normalize_nvr_storage` and the sensor discovery paths. [#496](https://github.com/tinkerologie/ha-unifi-insights/issues/496)
+
+### Documentation
+
+- Add ADR-015 recording the evaluation and deferral of the `/v1/subscribe/updates` unified WebSocket endpoint. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
+- Add the card types, YAML examples and YAML resource instructions for the dashboard cards. Add troubleshooting for cards that do not appear. [#469](https://github.com/tinkerologie/ha-unifi-insights/issues/469)
+
+- Update the README layout, setup steps, blueprint import table, and troubleshooting sections. [#478](https://github.com/tinkerologie/ha-unifi-insights/issues/478)
+
+## [2026.11.1] - 2026-11-10
+
+### Documentation
+
+- Add ASD-STE100 Issue 9 to the contributor guide. Update the glossary and the setup instructions. [#478](https://github.com/tinkerologie/ha-unifi-insights/issues/478)
+
+### Added
+
+- Added a domain glossary, the missing ADR-001 index summary, and contributor links to the glossary and existing architecture decisions so terminology and design history are easier to find. Runtime behavior is unchanged. [#472](https://github.com/tinkerologie/ha-unifi-insights/issues/472)
+
+### Changed
+
+- Complete the ASD-STE100 Issue 9 review of the technical guides and decision summaries. [#478](https://github.com/tinkerologie/ha-unifi-insights/issues/478)
+
+- The Device coordinator finds stale devices before it publishes the snapshot. Then it removes their registry entries. The rules for stale devices stay the same. [#475](https://github.com/tinkerologie/ha-unifi-insights/issues/475)
+- Network and Protect entities receive state updates from the coordinators that supply their data. [#474](https://github.com/tinkerologie/ha-unifi-insights/issues/474)
+
+### Fixed
+
+- The Protect coordinator uses the completeness flag from the same result as the device list. An incomplete list cannot remove a cached device. [#476](https://github.com/tinkerologie/ha-unifi-insights/issues/476)
+- An InnerSpace HTTP 403 no longer reports an API key problem when Network or Protect accepts the same key. Setup logs one INFO line: InnerSpace refused the request, the key is not rejected, and Floorplan is not available on this entry. Setup does not log the "Check your API key permissions" warning for this case. An InnerSpace 401 keeps the warning. When no application accepts the key, setup starts reauthentication as before. This also applies to a console that has only InnerSpace and returns 403. [#470](https://github.com/tinkerologie/ha-unifi-insights/issues/470)
+- Diagnostics now show the InnerSpace probe result, the last InnerSpace refresh failure and whether each floor plan has an image. The data contains only status values, endpoint labels, HTTP status codes, exception class names, true/false flags and counts. It contains no messages, response bodies or URLs. [#470](https://github.com/tinkerologie/ha-unifi-insights/issues/470)
+- Local and Remote entries use different InnerSpace routes. A Local entry uses the console proxy (`/proxy/innerspace/integration/v1/...`). A Remote entry uses the Site Manager cloud connector. The cause of the Local "Headers missing" 403 is not known. A fix must come from `unifi-official-api`. [#470](https://github.com/tinkerologie/ha-unifi-insights/issues/470)
+- A Site Manager API key that can list a console but cannot use it now gets a specific error instead of the general "could not be accessed" error. The error says that UniFi denied the key access to the console's applications (HTTP 403). The flow shows this error only when UniFi returns HTTP 403 for the console's applications. A 401 keeps the general error. It shows the error in console selection, reauthentication and reconfiguration. Personal API keys work only with consoles that the key's account owns. Use a key from the console owner, an organisation API key or a Local connection. [#477](https://github.com/tinkerologie/ha-unifi-insights/issues/477)
+
+### Dependencies
+
+- Update `d3-transition` to 3.0.2 and rebuild the topology card. [#494](https://github.com/tinkerologie/ha-unifi-insights/issues/494)
+- Update `d3-selection` to 3.0.1 and rebuild the topology card. [#494](https://github.com/tinkerologie/ha-unifi-insights/issues/494)
+- Update `d3-zoom` to 3.0.1 and rebuild the topology card. [#494](https://github.com/tinkerologie/ha-unifi-insights/issues/494)
+- Update `d3-hierarchy` to 3.1.3 and rebuild the topology card. [#494](https://github.com/tinkerologie/ha-unifi-insights/issues/494)
+- Update `unifi-official-api` to 3.1.0.
 
 ## [2026.11.0] - 2026-11-05
 

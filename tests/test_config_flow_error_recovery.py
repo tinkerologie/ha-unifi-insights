@@ -23,15 +23,18 @@ from unifi_official_api import (
     UniFiResponseError,
     UniFiTimeoutError,
 )
+from unifi_official_api.innerspace import InnerSpaceProject
 
 from custom_components.unifi_insights.config_flow import UnifiInsightsConfigFlow
 from custom_components.unifi_insights.const import (
+    CONF_ACCESS_TOKEN,
     CONF_CONNECTION_TYPE,
     CONF_CONSOLE_ID,
     CONNECTION_TYPE_LOCAL,
     CONNECTION_TYPE_REMOTE,
     DOMAIN,
 )
+from tests.fixtures.innerspace import build_innerspace_project
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -347,6 +350,16 @@ async def test_select_console_jumps_to_remote_when_state_missing(
     [
         ([], "call", {CONF_CONSOLE_ID: "invalid_console_id"}),
         (
+            UniFiAuthenticationError("denied", status_code=403),
+            "call",
+            {CONF_CONSOLE_ID: "console_access_denied"},
+        ),
+        (
+            UniFiAuthenticationError("unauthorized", status_code=401),
+            "call",
+            {CONF_CONSOLE_ID: "invalid_console_id"},
+        ),
+        (
             UniFiAuthenticationError("auth error"),
             "construct",
             {CONF_CONSOLE_ID: "invalid_console_id"},
@@ -538,30 +551,44 @@ async def test_reauth_remote_discovery_errors_and_recovery(
 
 
 @pytest.mark.parametrize(
-    ("validation_side_effect", "expected_errors"),
+    ("validation_side_effect", "expected_errors", "raise_at"),
     [
-        ([], {"base": "invalid_console_id"}),
         (
-            UniFiAuthenticationError("auth error"),
-            {"base": "invalid_console_id"},
+            UniFiAuthenticationError("denied", status_code=403),
+            {"base": "console_access_denied"},
+            "call",
         ),
-        (UniFiConnectionError("conn error"), {"base": "cannot_connect"}),
-        (UniFiTimeoutError("timeout"), {"base": "cannot_connect"}),
+        (
+            UniFiAuthenticationError("unauthorized", status_code=401),
+            {"base": "invalid_console_id"},
+            "call",
+        ),
+        ([], {"base": "invalid_console_id"}, "call"),
+        (
+            UniFiAuthenticationError("auth error", status_code=401),
+            {"base": "invalid_console_id"},
+            "construct",
+        ),
+        (UniFiConnectionError("conn error"), {"base": "cannot_connect"}, "call"),
+        (UniFiTimeoutError("timeout"), {"base": "cannot_connect"}, "call"),
         (
             UniFiNotFoundError("not found", status_code=404),
             {"base": "invalid_console_id"},
+            "call",
         ),
         (
             _MALFORMED_SITES,
             {"base": "invalid_console_id"},
+            "call",
         ),
-        (RuntimeError("unexpected"), {"base": "invalid_console_id"}),
+        (RuntimeError("unexpected"), {"base": "invalid_console_id"}, "call"),
     ],
 )
 async def test_reauth_remote_validation_errors_and_recovery(
     hass: HomeAssistant,
     validation_side_effect: object,
     expected_errors: dict[str, str],
+    raise_at: str,
 ) -> None:
     """Test validation errors in remote reauth and subsequent recovery."""
     remote_entry = MockConfigEntry(
@@ -575,9 +602,11 @@ async def test_reauth_remote_validation_errors_and_recovery(
         unique_id="old_api_key",
     )
     remote_entry.add_to_hass(hass)
+    original_data = dict(remote_entry.data)
+    original_unique_id = remote_entry.unique_id
 
     discovery_cm_1 = _make_client_context(get_hosts=[_remote_host("console123")])
-    if isinstance(validation_side_effect, UniFiAuthenticationError):
+    if raise_at == "construct":
         failing_validation_cm = validation_side_effect
     elif isinstance(validation_side_effect, Exception):
         failing_validation_cm = _make_client_context(
@@ -615,6 +644,8 @@ async def test_reauth_remote_validation_errors_and_recovery(
         assert result["type"] == FlowResultType.FORM
         assert result["step_id"] == "reauth_confirm"
         assert result["errors"] == expected_errors
+        assert dict(remote_entry.data) == original_data
+        assert remote_entry.unique_id == original_unique_id
 
         # Recovery attempt
         result = await hass.config_entries.flow.async_configure(
@@ -732,6 +763,14 @@ async def test_reconfigure_remote_discovery_errors_and_recovery(
 @pytest.mark.parametrize(
     ("validation_side_effect", "expected_errors"),
     [
+        (
+            UniFiAuthenticationError("denied", status_code=403),
+            {CONF_CONSOLE_ID: "console_access_denied"},
+        ),
+        (
+            UniFiAuthenticationError("unauthorized", status_code=401),
+            {CONF_CONSOLE_ID: "invalid_console_id"},
+        ),
         ([], {CONF_CONSOLE_ID: "invalid_console_id"}),
         (
             UniFiAuthenticationError("auth error"),
@@ -767,6 +806,8 @@ async def test_reconfigure_remote_validation_errors_and_recovery(
         unique_id="old_api_key",
     )
     remote_entry.add_to_hass(hass)
+    original_data = dict(remote_entry.data)
+    original_unique_id = remote_entry.unique_id
 
     discovery_cm_1 = _make_client_context(get_hosts=[_remote_host("console123")])
     if isinstance(validation_side_effect, Exception):
@@ -808,6 +849,8 @@ async def test_reconfigure_remote_validation_errors_and_recovery(
         assert result["type"] == FlowResultType.FORM
         assert result["step_id"] == "reconfigure"
         assert result["errors"] == expected_errors
+        assert dict(remote_entry.data) == original_data
+        assert remote_entry.unique_id == original_unique_id
 
         # Recovery attempt
         result = await hass.config_entries.flow.async_configure(
@@ -821,3 +864,583 @@ async def test_reconfigure_remote_validation_errors_and_recovery(
         assert result["reason"] == "reconfigure_successful"
         assert remote_entry.data[CONF_API_KEY] == "new_valid_key"
         assert remote_entry.data[CONF_CONSOLE_ID] == "console123"
+
+
+@pytest.mark.parametrize(
+    ("network_error", "protect_error", "expected_error", "innerspace_error"),
+    [
+        (
+            UniFiAuthenticationError("denied", status_code=403),
+            UniFiConnectionError("unreachable"),
+            "cannot_connect",
+            None,
+        ),
+        (
+            UniFiAuthenticationError("denied", status_code=403),
+            UniFiNotFoundError("absent", status_code=404),
+            "console_access_denied",
+            None,
+        ),
+        (
+            UniFiAuthenticationError("denied", status_code=403),
+            None,
+            "console_access_denied",
+            None,
+        ),
+        (
+            UniFiAuthenticationError("unauthorized", status_code=401),
+            None,
+            "invalid_console_id",
+            None,
+        ),
+        (
+            None,
+            UniFiAuthenticationError("denied", status_code=403),
+            "console_access_denied",
+            None,
+        ),
+        (
+            UniFiConnectionError("unreachable"),
+            UniFiAuthenticationError("denied", status_code=403),
+            "cannot_connect",
+            None,
+        ),
+        (
+            UniFiAuthenticationError("denied", status_code=403),
+            UniFiAuthenticationError("denied", status_code=403),
+            "console_access_denied",
+            None,
+        ),
+        (
+            UniFiAuthenticationError("unauthorized", status_code=401),
+            None,
+            "console_access_denied",
+            UniFiAuthenticationError("denied", status_code=403),
+        ),
+        (
+            UniFiAuthenticationError("denied", status_code=403),
+            UniFiAuthenticationError("denied", status_code=403),
+            "console_access_denied",
+            UniFiAuthenticationError("denied", status_code=403),
+        ),
+        (
+            UniFiAuthenticationError("denied", status_code=403),
+            None,
+            "cannot_connect",
+            UniFiTimeoutError("InnerSpace timeout"),
+        ),
+    ],
+)
+async def test_remote_validator_permission_precedence(
+    *,
+    hass: HomeAssistant,
+    mock_protect_client_flow: MagicMock,
+    mock_innerspace_client: MagicMock,
+    network_error: Exception | None,
+    protect_error: Exception | None,
+    expected_error: str,
+    innerspace_error: Exception | None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """API outcomes preserve transient-error precedence over confirmed denials."""
+    flow = UnifiInsightsConfigFlow()
+    flow.hass = hass
+    network_cm = _make_client_context(sites_side_effect=network_error)
+    mock_protect_client_flow.cameras.get_all.side_effect = protect_error
+    if innerspace_error is not None:
+        mock_innerspace_client.get_project.side_effect = innerspace_error
+    with patch(
+        "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+        return_value=network_cm,
+    ):
+        if expected_error == "cannot_connect":
+            with pytest.raises(UniFiConnectionError):
+                await flow._async_validate_remote_console("synthetic-key", "console123")
+        else:
+            assert (
+                await flow._async_validate_remote_console("synthetic-key", "console123")
+                == expected_error
+            )
+    denied_logs = [
+        record.message
+        for record in caplog.records
+        if record.name == "custom_components.unifi_insights.config_flow"
+    ]
+    if expected_error == "console_access_denied":
+        applications = ", ".join(
+            name
+            for name, error in (
+                ("Network", network_error),
+                ("Protect", protect_error),
+                ("InnerSpace", innerspace_error),
+            )
+            if isinstance(error, UniFiAuthenticationError) and error.status_code == 403
+        )
+        expected = (
+            f"Remote console validation: {applications} refused the API key "
+            "with HTTP 403"
+        )
+        assert denied_logs == [expected]
+    else:
+        assert denied_logs == []
+
+
+@pytest.mark.parametrize(
+    ("innerspace_side_effect", "expected_errors"),
+    [
+        (UniFiTimeoutError("timeout"), {"base": "cannot_connect"}),
+        (
+            UniFiAuthenticationError("denied", status_code=403),
+            {CONF_CONSOLE_ID: "console_access_denied"},
+        ),
+        (
+            [],  # empty
+            {CONF_CONSOLE_ID: "invalid_console_id"},
+        ),
+    ],
+    ids=["timeout", "403", "empty"],
+)
+async def test_select_console_innerspace_errors_and_recovery(
+    hass: HomeAssistant,
+    mock_innerspace_client: MagicMock,
+    innerspace_side_effect: object,
+    expected_errors: dict[str, str],
+) -> None:
+    """Test console validation errors from InnerSpace and subsequent recovery."""
+    discovery_cm = _make_client_context(
+        get_hosts=[_remote_host(host_id="console123", hostname="Dream Router 7")]
+    )
+    if isinstance(innerspace_side_effect, Exception):
+        mock_innerspace_client.get_project.side_effect = innerspace_side_effect
+    else:
+        mock_innerspace_client.get_project.return_value = InnerSpaceProject()
+
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+            side_effect=[
+                discovery_cm,
+                _make_client_context(sites=[]),
+                _make_client_context(sites=[]),
+            ],
+        ),
+        patch("custom_components.unifi_insights.config_flow.ApiKeyAuth"),
+        patch(
+            "custom_components.unifi_insights.async_setup_entry",
+            return_value=True,
+        ),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_CONNECTION_TYPE: CONNECTION_TYPE_REMOTE},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_API_KEY: "valid_api_key"},
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "select_console"
+
+        # Submit console selection triggering InnerSpace error
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_CONSOLE_ID: "console123"},
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "select_console"
+        assert result["errors"] == expected_errors
+
+        # Recovery attempt: InnerSpace now succeeds
+        mock_innerspace_client.get_project.side_effect = None
+        mock_innerspace_client.get_project.return_value = build_innerspace_project()
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_CONSOLE_ID: "console123"},
+        )
+        assert result["type"] == FlowResultType.CREATE_ENTRY
+        assert result["title"] == "UniFi - Dream Router 7"
+        assert result["data"][CONF_CONSOLE_ID] == "console123"
+
+
+async def test_reauth_local_innerspace_only_success_and_failure(
+    hass: HomeAssistant,
+    mock_innerspace_client: MagicMock,
+) -> None:
+    """Test local reauth preserves safe identity on success.
+
+    Retains data on failure.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="UniFi Insights (Local)",
+        unique_id="https://192.168.1.1",
+        data={
+            CONF_CONNECTION_TYPE: CONNECTION_TYPE_LOCAL,
+            CONF_HOST: "https://192.168.1.1",
+            CONF_API_KEY: "old_key",
+            CONF_VERIFY_SSL: False,
+            CONF_CONSOLE_ID: "https://192.168.1.1",
+        },
+    )
+    entry.add_to_hass(hass)
+    original_data = dict(entry.data)
+    original_unique_id = entry.unique_id
+
+    # 1. Failure attempt: InnerSpace 401
+    mock_innerspace_client.get_project.side_effect = UniFiAuthenticationError(
+        "denied", status_code=401
+    )
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+            return_value=_make_client_context(sites=[]),
+        ),
+        patch("custom_components.unifi_insights.config_flow.LocalAuth"),
+        patch("custom_components.unifi_insights.async_setup_entry", return_value=True),
+    ):
+        result = await entry.start_reauth_flow(hass)
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "reauth_confirm"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_API_KEY: "bad_key"},
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {CONF_API_KEY: "invalid_auth"}
+        assert dict(entry.data) == original_data
+        assert entry.unique_id == original_unique_id
+
+        # 2. Failure attempt: InnerSpace timeout
+        mock_innerspace_client.get_project.side_effect = UniFiTimeoutError("timeout")
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_API_KEY: "timeout_key"},
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {"base": "cannot_connect"}
+        assert dict(entry.data) == original_data
+
+        # 3. Success attempt: InnerSpace available
+        mock_innerspace_client.get_project.side_effect = None
+        mock_innerspace_client.get_project.return_value = build_innerspace_project()
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_API_KEY: "new_good_key"},
+        )
+        assert result["type"] == FlowResultType.ABORT
+        assert result["reason"] == "reauth_successful"
+        assert entry.data[CONF_API_KEY] == "new_good_key"
+        assert entry.data[CONF_CONSOLE_ID] == "https://192.168.1.1"
+        assert entry.unique_id == original_unique_id
+
+
+async def test_reauth_remote_innerspace_only_success_and_failure(
+    hass: HomeAssistant,
+    mock_innerspace_client: MagicMock,
+) -> None:
+    """Test remote reauth with InnerSpace-only console."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="UniFi Insights (Remote)",
+        unique_id="console123",
+        data={
+            CONF_CONNECTION_TYPE: CONNECTION_TYPE_REMOTE,
+            CONF_CONSOLE_ID: "console123",
+            CONF_API_KEY: "old_key",
+        },
+    )
+    entry.add_to_hass(hass)
+    original_data = dict(entry.data)
+
+    def _network_side_effect(*args, **kwargs):
+        client = MagicMock()
+        client.get_hosts = AsyncMock(return_value=[_remote_host("console123")])
+        client.sites = MagicMock()
+        client.sites.get_all = AsyncMock(return_value=[])
+        client.close = AsyncMock()
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=None)
+        return cm
+
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+            side_effect=_network_side_effect,
+        ),
+        patch("custom_components.unifi_insights.config_flow.ApiKeyAuth"),
+        patch("custom_components.unifi_insights.async_setup_entry", return_value=True),
+    ):
+        result = await entry.start_reauth_flow(hass)
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "reauth_confirm"
+
+        # 1. 403 failure
+        mock_innerspace_client.get_project.side_effect = UniFiAuthenticationError(
+            "denied", status_code=403
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_API_KEY: "denied_key"},
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {"base": "console_access_denied"}
+        assert dict(entry.data) == original_data
+
+        # 2. Timeout failure
+        mock_innerspace_client.get_project.side_effect = UniFiTimeoutError("timeout")
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_API_KEY: "timeout_key"},
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {"base": "cannot_connect"}
+        assert dict(entry.data) == original_data
+
+        # 3. Success
+        mock_innerspace_client.get_project.side_effect = None
+        mock_innerspace_client.get_project.return_value = build_innerspace_project()
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_API_KEY: "new_good_key"},
+        )
+        assert result["type"] == FlowResultType.ABORT
+        assert result["reason"] == "reauth_successful"
+        assert entry.data[CONF_API_KEY] == "new_good_key"
+
+
+async def test_reconfigure_local_innerspace_only(
+    hass: HomeAssistant,
+    mock_innerspace_client: MagicMock,
+) -> None:
+    """Test local reconfigure for InnerSpace-only console.
+
+    Covers adoption, collision, unsafe host and failure.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="UniFi Insights (Local)",
+        unique_id="192.168.1.10",
+        data={
+            CONF_CONNECTION_TYPE: CONNECTION_TYPE_LOCAL,
+            CONF_HOST: "192.168.1.10",
+            CONF_API_KEY: "old_key",
+            CONF_VERIFY_SSL: False,
+        },
+    )
+    entry.add_to_hass(hass)
+    original_data = dict(entry.data)
+    original_unique_id = entry.unique_id
+
+    mock_innerspace_client.get_project.return_value = build_innerspace_project()
+
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+            return_value=_make_client_context(sites=[]),
+        ),
+        patch("custom_components.unifi_insights.config_flow.LocalAuth"),
+        patch("custom_components.unifi_insights.async_setup_entry", return_value=True),
+    ):
+        # 1. Unsafe host (host == api_key)
+        result = await entry.start_reconfigure_flow(hass)
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "reconfigure"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_HOST: "new_key",
+                CONF_API_KEY: "new_key",
+                CONF_VERIFY_SSL: False,
+            },
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {"base": "console_identity_unavailable"}
+        assert dict(entry.data) == original_data
+        assert entry.unique_id == original_unique_id
+
+        # 1b. Unsafe host (host == a newly typed Access token)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_HOST: "typed-access-token",
+                CONF_API_KEY: "new_key",
+                CONF_ACCESS_TOKEN: "typed-access-token",
+                CONF_VERIFY_SSL: False,
+            },
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {"base": "console_identity_unavailable"}
+        assert dict(entry.data) == original_data
+        assert entry.unique_id == original_unique_id
+
+        # 2. Failure: timeout
+        mock_innerspace_client.get_project.side_effect = UniFiTimeoutError("timeout")
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_HOST: "192.168.1.20",
+                CONF_API_KEY: "new_key",
+                CONF_VERIFY_SSL: False,
+            },
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {"base": "cannot_connect"}
+        assert dict(entry.data) == original_data
+        assert entry.unique_id == original_unique_id
+
+    # 3. Collision and adoption when entry has no current ID
+    no_id_entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="UniFi Insights (Local)",
+        unique_id="old_credential_key",
+        data={
+            CONF_CONNECTION_TYPE: CONNECTION_TYPE_LOCAL,
+            CONF_HOST: "192.168.1.30",
+            CONF_API_KEY: "old_credential_key",
+            CONF_VERIFY_SSL: False,
+        },
+    )
+    no_id_entry.add_to_hass(hass)
+
+    other_entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="192.168.1.50",
+        data={
+            CONF_CONNECTION_TYPE: CONNECTION_TYPE_LOCAL,
+            CONF_HOST: "192.168.1.50",
+            CONF_API_KEY: "other_key",
+        },
+    )
+    other_entry.add_to_hass(hass)
+
+    mock_innerspace_client.get_project.side_effect = None
+    mock_innerspace_client.get_project.return_value = build_innerspace_project()
+
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+            return_value=_make_client_context(sites=[]),
+        ),
+        patch("custom_components.unifi_insights.config_flow.LocalAuth"),
+        patch("custom_components.unifi_insights.async_setup_entry", return_value=True),
+    ):
+        # Collision with other_entry's unique_id
+        result = await no_id_entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_HOST: "192.168.1.50",
+                CONF_API_KEY: "new_key",
+                CONF_VERIFY_SSL: False,
+            },
+        )
+        assert result["type"] == FlowResultType.ABORT
+        assert result["reason"] == "already_configured"
+
+        # Adoption when no current ID
+        result = await no_id_entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_HOST: "192.168.1.40",
+                CONF_API_KEY: "new_key",
+                CONF_VERIFY_SSL: True,
+            },
+        )
+        assert result["type"] == FlowResultType.ABORT
+        assert result["reason"] == "reconfigure_successful"
+        assert no_id_entry.data[CONF_HOST] == "192.168.1.40"
+        assert no_id_entry.data[CONF_API_KEY] == "new_key"
+        assert no_id_entry.data[CONF_CONSOLE_ID] == "192.168.1.40"
+
+
+async def test_reconfigure_remote_innerspace_only(
+    hass: HomeAssistant,
+    mock_innerspace_client: MagicMock,
+) -> None:
+    """Test remote reconfigure with InnerSpace errors and success."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="UniFi Insights (Remote)",
+        unique_id="console123",
+        data={
+            CONF_CONNECTION_TYPE: CONNECTION_TYPE_REMOTE,
+            CONF_CONSOLE_ID: "console123",
+            CONF_API_KEY: "old_key",
+        },
+    )
+    entry.add_to_hass(hass)
+    original_data = dict(entry.data)
+
+    def _network_side_effect(*args, **kwargs):
+        client = MagicMock()
+        client.get_hosts = AsyncMock(return_value=[_remote_host("console123")])
+        client.sites = MagicMock()
+        client.sites.get_all = AsyncMock(return_value=[])
+        client.close = AsyncMock()
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=client)
+        cm.__aexit__ = AsyncMock(return_value=None)
+        return cm
+
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiNetworkClient",
+            side_effect=_network_side_effect,
+        ),
+        patch("custom_components.unifi_insights.config_flow.ApiKeyAuth"),
+        patch("custom_components.unifi_insights.async_setup_entry", return_value=True),
+    ):
+        result = await entry.start_reconfigure_flow(hass)
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "reconfigure"
+
+        # 1. 403 error placed on CONF_CONSOLE_ID
+        mock_innerspace_client.get_project.side_effect = UniFiAuthenticationError(
+            "denied", status_code=403
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_CONSOLE_ID: "console123",
+                CONF_API_KEY: "key_with_403",
+            },
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {CONF_CONSOLE_ID: "console_access_denied"}
+        assert dict(entry.data) == original_data
+
+        # 2. Timeout error placed on base
+        mock_innerspace_client.get_project.side_effect = UniFiTimeoutError("timeout")
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_CONSOLE_ID: "console123",
+                CONF_API_KEY: "key_with_timeout",
+            },
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["errors"] == {"base": "cannot_connect"}
+        assert dict(entry.data) == original_data
+
+        # 3. Success
+        mock_innerspace_client.get_project.side_effect = None
+        mock_innerspace_client.get_project.return_value = build_innerspace_project()
+        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_CONSOLE_ID: "console123",
+                CONF_API_KEY: "new_good_key",
+            },
+        )
+        assert result["type"] == FlowResultType.ABORT
+        assert result["reason"] == "reconfigure_successful"
+        assert entry.data[CONF_API_KEY] == "new_good_key"

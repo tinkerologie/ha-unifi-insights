@@ -25,6 +25,11 @@ from homeassistant.helpers.entity_registry import (
 )
 from homeassistant.helpers.typing import UNDEFINED
 from pytest_homeassistant.common import MockConfigEntry
+from unifi_official_api.network.models.stats import (
+    StatisticsSource,
+    StatsSeries,
+    StatsSeriesBucket,
+)
 from unifi_official_api.protect.models.sensor import (
     Sensor as ProtectSensorModel,
 )
@@ -34,6 +39,10 @@ from custom_components.unifi_insights.const import (
     CONF_CONSOLE_ID,
     CONNECTION_TYPE_LOCAL,
     DOMAIN,
+)
+from custom_components.unifi_insights.coordinators.config import WINDOW_1D_MS
+from custom_components.unifi_insights.dashboard_snapshots import (
+    build_internet_activity_snapshot,
 )
 from custom_components.unifi_insights.data_transforms import get_site_gateway_id
 from custom_components.unifi_insights.sensor import (
@@ -70,16 +79,14 @@ from custom_components.unifi_insights.sensor import (
     _get_port_label,
     _get_storage_bytes,
     _has_protect_stat,
-    _has_storage_info,
     _migrate_sensor_units,
     _outlet_has_metering,
     async_setup_entry,
-    bytes_to_bits,
-    bytes_to_megabits,
     format_uptime,
     get_network_device_temperature,
 )
 from tests.fixtures.assertions import patch_attribute, require_not_none
+from tests.fixtures.command_owners import async_shutdown_owners, build_seeded_owners
 from tests.fixtures.entities import EntityCollector
 from tests.fixtures.facade_data import (
     facade_data,
@@ -305,50 +312,6 @@ class TestFormatUptime:
     def test_format_uptime_zero(self):
         """Test format_uptime with zero."""
         assert format_uptime(0) == "0m"
-
-
-class TestBytesToMegabits:
-    """Tests for bytes_to_megabits function."""
-
-    def test_bytes_to_megabits_none(self):
-        """Test bytes_to_megabits with None."""
-        assert bytes_to_megabits(None) is None
-
-    def test_bytes_to_megabits_zero(self):
-        """Test bytes_to_megabits with zero."""
-        assert bytes_to_megabits(0) == 0.0
-
-    def test_bytes_to_megabits_calculation(self):
-        """Test bytes_to_megabits calculation."""
-        # 1,000,000 bytes/sec = 8 Mbps
-        assert bytes_to_megabits(1000000) == 8.0
-
-    def test_bytes_to_megabits_rounding(self):
-        """Test bytes_to_megabits rounding."""
-        # 125000 bytes/sec = 1 Mbps
-        assert bytes_to_megabits(125000) == 1.0
-
-
-class TestBytesToBits:
-    """Tests for bytes_to_bits function."""
-
-    def test_bytes_to_bits_none(self):
-        """Test bytes_to_bits with None."""
-        assert bytes_to_bits(None) is None
-
-    def test_bytes_to_bits_zero(self):
-        """Test bytes_to_bits with zero."""
-        assert bytes_to_bits(0) == 0
-
-    def test_bytes_to_bits_calculation(self):
-        """Test bytes_to_bits calculation."""
-        # 1000 bytes/sec = 8000 bits/sec
-        assert bytes_to_bits(1000) == 8000
-
-    def test_bytes_to_bits_large_value(self):
-        """Test bytes_to_bits with large value."""
-        # 1,000,000 bytes/sec = 8,000,000 bits/sec
-        assert bytes_to_bits(1000000) == 8000000
 
 
 class TestGetClientType:
@@ -2079,56 +2042,6 @@ class TestUnifiProtectSensorAttributes:
         assert attrs["battery_low"] is False
 
 
-class TestHasStorageInfo:
-    """Tests for _has_storage_info helper function."""
-
-    def test_has_storage_info_with_direct_camel_case(self):
-        """Test _has_storage_info with direct camelCase fields."""
-        assert _has_storage_info({"storageUsedBytes": 100}) is True
-        assert _has_storage_info({"storageTotalBytes": 100}) is True
-
-    def test_has_storage_info_with_snake_case(self):
-        """Test _has_storage_info with snake_case fields."""
-        assert _has_storage_info({"storage_used_bytes": 100}) is True
-        assert _has_storage_info({"storage_total_bytes": 100}) is True
-
-    def test_has_storage_info_with_nested_used_size(self):
-        """Test _has_storage_info with nested storageInfo.usedSize."""
-        assert _has_storage_info({"storageInfo": {"usedSize": 100}}) is True
-
-    def test_has_storage_info_with_nested_total_size(self):
-        """Test _has_storage_info with nested storageInfo.totalSize."""
-        assert _has_storage_info({"storageInfo": {"totalSize": 100}}) is True
-
-    def test_has_storage_info_with_nested_used_size_snake(self):
-        """Test _has_storage_info with nested storageInfo.used_size."""
-        assert _has_storage_info({"storageInfo": {"used_size": 100}}) is True
-
-    def test_has_storage_info_with_nested_total_size_snake(self):
-        """Test _has_storage_info with nested storageInfo.total_size."""
-        assert _has_storage_info({"storageInfo": {"total_size": 100}}) is True
-
-    def test_has_storage_info_returns_false_for_empty(self):
-        """Test _has_storage_info returns False when no storage info."""
-        assert _has_storage_info({}) is False
-        assert _has_storage_info({"other_field": 123}) is False
-
-    def test_has_storage_info_with_non_dict_storage_info(self):
-        """Test _has_storage_info with non-dict storageInfo."""
-        assert _has_storage_info({"storageInfo": "not a dict"}) is False
-        assert _has_storage_info({"storageInfo": None}) is False
-
-    def test_has_storage_info_with_percentage_only(self):
-        """Test _has_storage_info when the NVR reports only a used percentage."""
-        assert _has_storage_info({"storage": {"used": 42}}) is True
-        assert _calculate_storage_percent({"storage": {"used": 42}}) == 42.0
-
-    def test_has_storage_info_with_available_only(self):
-        """Test _has_storage_info when the NVR reports only available bytes."""
-        assert _has_storage_info({"storageAvailableBytes": 500}) is True
-        assert _has_storage_info({"storageInfo": {"availableSize": 500}}) is True
-
-
 class TestGetStorageBytes:
     """Tests for _get_storage_bytes helper function."""
 
@@ -2219,6 +2132,10 @@ class TestNVRStorageHelpers:
         assert _bytes_to_gb(None) is None
         # Small value
         assert _bytes_to_gb(1000000) == 0.0
+
+    def test_calculate_storage_percent_with_percentage_only(self):
+        """A percentage-only NVR record still yields a used percentage."""
+        assert _calculate_storage_percent({"storage": {"used": 42}}) == 42.0
 
     def test_calculate_storage_percent(self):
         """Test storage percentage calculation."""
@@ -4841,6 +4758,137 @@ class TestUnifiSiteInternetActivitySensor:
         )
         assert sensor.available is expected_available
 
+    async def test_modern_stats_end_to_end_regression(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Real coordinators turn modern series into eight sensors and a snapshot."""
+        owners = build_seeded_owners(hass)
+        try:
+            site_id = "site_modern"
+            stats_site_id = "00000000-0000-4000-8000-0000000000a1"
+            client = owners.network_client
+            client.sites.get_all.return_value = [
+                {"id": site_id, "name": "Default", "internalReference": "default"}
+            ]
+            client.sites.get_legacy_all.return_value = [
+                {"_id": stats_site_id, "external_id": site_id, "name": "default"}
+            ]
+            client.stats.get_source = AsyncMock(return_value=StatisticsSource("MODERN"))
+            client.stats.get_recent_series = AsyncMock(return_value=[])
+            owners.config._stats_source = None
+            owners.config._stats_source_expires_at = 0.0
+
+            # First refresh: a modern console with no history publishes nothing.
+            await owners.config.async_refresh()
+            assert owners.config.data["internet_activity"] == {}
+            known_keys: set[tuple[str, ...]] = set()
+            assert (
+                _discover_site_internet_activity_sensors(
+                    owners.facade,
+                    known_keys,
+                    hass=hass,
+                    entry=owners.entry,
+                    namespace="console",
+                )
+                == []
+            )
+
+            # Second refresh: publish typed modern series at the library boundary.
+            async def _series(
+                *,
+                schema: str,
+                site_id: str,
+                period: str,
+                end_ms: int,
+                values: Any,
+            ) -> list[Any]:
+                assert schema == "wanBySite"
+                assert site_id == stats_site_id
+                assert values == ("rxBytes", "txBytes")
+                offsets = {
+                    "DAY": 600_000,
+                    "WEEK": 2 * WINDOW_1D_MS,
+                    "MONTH": 10 * WINDOW_1D_MS,
+                }
+                totals = {
+                    "DAY": (1500.0, 3000.0),
+                    "WEEK": (2500.0, 3500.0),
+                    "MONTH": (4500.0, 5500.0),
+                }
+                rx, tx = totals[period]
+                return [
+                    StatsSeries(
+                        siteId=stats_site_id,
+                        series=[
+                            StatsSeriesBucket(
+                                timestamp=end_ms - offsets[period],
+                                duration=300000,
+                                rxBytes=rx,
+                                txBytes=tx,
+                            )
+                        ],
+                    )
+                ]
+
+            client.stats.get_recent_series = AsyncMock(side_effect=_series)
+            await owners.config.async_refresh()
+
+            sensors = _discover_site_internet_activity_sensors(
+                owners.facade,
+                known_keys,
+                hass=hass,
+                entry=owners.entry,
+                namespace="console",
+            )
+            assert len(sensors) == 8
+            expected_values = {
+                "internet_download_1h": 1500,
+                "internet_upload_1h": 3000,
+                "internet_download_1d": 1500,
+                "internet_upload_1d": 3000,
+                "internet_download_1w": 2500,
+                "internet_upload_1w": 3500,
+                "internet_download_1m": 4500,
+                "internet_upload_1m": 5500,
+            }
+            for sensor in sensors:
+                key = sensor.entity_description.key
+                assert sensor.unique_id == f"console_{site_id}_{key}"
+                assert sensor.available is True
+                assert sensor.native_value == expected_values[key]
+
+            snapshot = build_internet_activity_snapshot(
+                owners.facade.data,
+                entry_id=owners.entry.entry_id,
+                site_id=site_id,
+                entity_registry=er.async_get(hass),
+            )
+            assert snapshot["status"] == "ok"
+            windows = snapshot["windows"]
+            assert windows["1h"]["download_bytes"] == 1500
+            assert windows["1h"]["upload_bytes"] == 3000
+            assert windows["1d"]["download_bytes"] == 1500
+            assert windows["1d"]["upload_bytes"] == 3000
+            assert windows["1w"]["download_bytes"] == 2500
+            assert windows["1w"]["upload_bytes"] == 3500
+            assert windows["1m"]["download_bytes"] == 4500
+            assert windows["1m"]["upload_bytes"] == 5500
+
+            status = owners.facade.data["internet_activity_status"][site_id]
+            assert status["source"] == "modern"
+            assert status["reason"] == "ok"
+
+            calls = client.stats.get_recent_series.await_args_list
+            assert [call.kwargs["period"] for call in calls] == [
+                "DAY",
+                "WEEK",
+                "MONTH",
+            ]
+            assert len({call.kwargs["end_ms"] for call in calls}) == 1
+            assert all(call.kwargs["site_id"] == stats_site_id for call in calls)
+        finally:
+            await async_shutdown_owners(owners)
+
 
 class TestSensorAdditionalCoverageGaps:
     """Targeted tests for remaining sensor.py coverage gaps."""
@@ -4862,11 +4910,6 @@ class TestSensorAdditionalCoverageGaps:
             )
             is None
         )
-
-    def test_has_storage_info_total_size_fallback(self) -> None:
-        """Test _has_storage_info when only total_size is present."""
-        data = {"storageInfo": {"total_size": 1000}}
-        assert _has_storage_info(data) is True
 
     def test_outlet_has_metering_invalid_caps(self) -> None:
         """Test _outlet_has_metering when outlet_caps cannot be parsed as int."""

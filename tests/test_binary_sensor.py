@@ -2163,6 +2163,140 @@ class TestProtectBinarySensorCapabilityFiltering:
         assert "sensor_door" not in entity_keys
         assert "sensor_motion" not in entity_keys
 
+    def test_sensor_mounted_incorrectly_definition(self) -> None:
+        """Test sensor_mounted_incorrectly binary sensor definition."""
+        desc = next(
+            (s for s in BINARY_SENSOR_TYPES if s.key == "sensor_mounted_incorrectly"),
+            None,
+        )
+        assert desc is not None
+        assert desc.device_class == BinarySensorDeviceClass.PROBLEM
+        assert desc.entity_category == EntityCategory.DIAGNOSTIC
+        assert desc.translation_key == "sensor_mounted_incorrectly"
+        assert desc.device_type == DEVICE_TYPE_SENSOR
+
+    async def test_sensor_mounted_incorrectly_state_values(
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
+        """Test true/false reports on/off, null/non-bool reports None."""
+        desc = next(
+            s for s in BINARY_SENSOR_TYPES if s.key == "sensor_mounted_incorrectly"
+        )
+
+        # True -> on
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "sensors",
+            {"s1": {"id": "s1", "state": "CONNECTED", "isMountedIncorrectly": True}},
+        )
+        sensor = UnifiProtectBinarySensor(mock_coordinator, desc, "s1")
+        assert sensor.is_on is True
+
+        # False -> off
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "sensors",
+            {"s1": {"id": "s1", "state": "CONNECTED", "isMountedIncorrectly": False}},
+        )
+        sensor._update_from_data()
+        assert sensor.is_on is False
+
+        # snake_case alias support
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "sensors",
+            {"s1": {"id": "s1", "state": "CONNECTED", "is_mounted_incorrectly": True}},
+        )
+        sensor._update_from_data()
+        assert sensor.is_on is True
+
+        # value changes back to null -> unknown (is_on is None)
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "sensors",
+            {"s1": {"id": "s1", "state": "CONNECTED", "isMountedIncorrectly": None}},
+        )
+        sensor._update_from_data()
+        assert sensor.is_on is None
+
+        # non-boolean value -> unknown
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "sensors",
+            {
+                "s1": {
+                    "id": "s1",
+                    "state": "CONNECTED",
+                    "isMountedIncorrectly": "invalid",
+                }
+            },
+        )
+        sensor._update_from_data()
+        assert sensor.is_on is None
+
+    async def test_sensor_mounted_incorrectly_discovery_and_late_discovery(
+        self, hass: HomeAssistant, mock_coordinator: MagicMock
+    ) -> None:
+        """Null values skip discovery; later non-null value adds the entity."""
+        config_entry = MagicMock()
+        config_entry.runtime_data = MagicMock()
+        config_entry.runtime_data.mobility_coordinator = None
+        config_entry.runtime_data.coordinator = mock_coordinator
+
+        # 1. Null / missing value: no entity created
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "sensors",
+            {
+                "s_null": {
+                    "id": "s_null",
+                    "name": "Null Sensor",
+                    "state": "CONNECTED",
+                    "isMountedIncorrectly": None,
+                }
+            },
+        )
+        added_entities: list = []
+        add_entities = EntityCollector(added_entities)
+        await async_setup_entry(hass, config_entry, add_entities)
+
+        mounted_entities = [
+            e
+            for e in added_entities
+            if isinstance(e, UnifiProtectBinarySensor)
+            and e.entity_description.key == "sensor_mounted_incorrectly"
+            and e._device_id == "s_null"
+        ]
+        assert len(mounted_entities) == 0
+
+        # 2. Later update provides boolean value: late discovery triggers
+        # and adds entity
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "sensors",
+            {
+                "s_null": {
+                    "id": "s_null",
+                    "name": "Null Sensor",
+                    "state": "CONNECTED",
+                    "isMountedIncorrectly": False,
+                }
+            },
+        )
+        for call in mock_coordinator.async_add_listener.call_args_list:
+            listener = call[0][0]
+            listener()
+
+        mounted_entities = [
+            e
+            for e in added_entities
+            if isinstance(e, UnifiProtectBinarySensor)
+            and e.entity_description.key == "sensor_mounted_incorrectly"
+            and e._device_id == "s_null"
+        ]
+        assert len(mounted_entities) == 1
+        assert mounted_entities[0].is_on is False
+
 
 @pytest.mark.parametrize("description", BINARY_SENSOR_TYPES, ids=lambda desc: desc.key)
 def test_every_binary_sensor_description_preserves_effective_category(
@@ -2187,6 +2321,7 @@ def test_every_binary_sensor_description_preserves_effective_category(
             "device_status",
             "wan_status",
             "camera_microphone",
+            "sensor_mounted_incorrectly",
         }
         else None
     )

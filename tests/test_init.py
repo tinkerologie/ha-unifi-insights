@@ -1,13 +1,14 @@
 # Copyright 2026 UniFi Insights contributors
 """Tests for the UniFi Insights integration initialization."""
 
+import logging
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from homeassistant.components import websocket_api
 from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
-from homeassistant.const import CONF_API_KEY, CONF_HOST, Platform
+from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL, Platform
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -45,6 +46,7 @@ from custom_components.unifi_insights.const import (
     CONF_SITE_IDS,
     CONF_TRACK_SUBSCRIBERS,
     CONNECTION_TYPE_CARRIER_FABRIC,
+    CONNECTION_TYPE_LOCAL,
     DOMAIN,
 )
 from custom_components.unifi_insights.data_transforms import (
@@ -981,7 +983,7 @@ async def test_remove_wifi_device_after_its_site_is_deselected(
     mock_network_client.wifi.get_all.side_effect = lambda site_id: wifi_by_site[site_id]
     await _setup(hass, mock_config_entry)
     coordinator = mock_config_entry.runtime_data.config_coordinator
-    assert "wifi-branch" in coordinator.get_wifi_networks("branch")
+    assert "wifi-branch" in coordinator.data["wifi"]["branch"]
 
     # While the branch site is polled its network is live.
     response = await _remove_device_via_ui(
@@ -1027,7 +1029,7 @@ async def test_remove_wifi_device_refused_while_polled_site_provides_it(
     ]
     await _setup(hass, mock_config_entry)
     coordinator = mock_config_entry.runtime_data.config_coordinator
-    assert "wifi-main" in coordinator.get_wifi_networks("default")
+    assert "wifi-main" in coordinator.data["wifi"]["default"]
 
     response = await _remove_device_via_ui(
         hass, hass_ws_client, mock_config_entry, "wifi_wifi-main"
@@ -1180,6 +1182,50 @@ def _set_protect(client: MagicMock, cameras: object, nvr: object = None) -> None
 
 
 _SITES = [{"id": "default", "name": "Default"}]
+
+
+@pytest.mark.usefixtures(
+    "mock_protect_client", "mock_local_auth", "enable_custom_integrations"
+)
+@pytest.mark.parametrize(
+    "failure",
+    [
+        UniFiResponseError("Non-JSON", status_code=200, response_body="<html></html>"),
+        UniFiNotFoundError(),
+        UniFiAuthenticationError("Unauthorized", status_code=401),
+    ],
+    ids=["html", "not-found", "unauthorized"],
+)
+async def test_setup_uses_probe_sites_and_network_recovers_after_poll_failure(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_network_client: MagicMock,
+    failure: Exception,
+) -> None:
+    """Consume the probe listing once, then recover if the first real poll fails."""
+    sites = mock_network_client.sites.get_all
+    sites.side_effect = [_SITES, failure, _SITES]
+    mock_config_entry.add_to_hass(hass)
+
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert mock_config_entry.state is ConfigEntryState.LOADED
+    sites.assert_awaited_once_with(expected_unsupported=True)
+    coordinator = mock_config_entry.runtime_data.config_coordinator
+    assert coordinator.get_site_ids() == ["default"]
+    original = coordinator.data
+
+    await coordinator.async_refresh()
+    assert not coordinator.last_update_success
+    assert coordinator.network_available
+    assert coordinator.data is original
+
+    await coordinator.async_refresh()
+    assert coordinator.last_update_success
+    assert coordinator.get_site_ids() == ["default"]
+    assert sites.await_args_list == [call(expected_unsupported=True), call(), call()]
+    assert not hass.config_entries.flow.async_progress_by_handler(DOMAIN)
 
 
 @pytest.mark.parametrize(
@@ -1487,6 +1533,58 @@ async def test_setup_entry_innerspace_only_console(
 
     assert await hass.config_entries.async_unload(mock_config_entry.entry_id)
     mock_innerspace_client.close.assert_awaited()
+
+
+async def test_setup_entry_innerspace_only_flow_shaped_entry_backfills_console_id(
+    hass: HomeAssistant,
+    mock_network_client: MagicMock,
+    mock_protect_client: MagicMock,
+    mock_innerspace_client: MagicMock,
+    *,
+    mock_local_auth: MagicMock,
+    enable_custom_integrations,
+) -> None:
+    """An InnerSpace-only flow-created entry backfills safe host as CONF_CONSOLE_ID."""
+    mock_network_client.sites.get_all.return_value = []
+    mock_protect_client.cameras.get_all.return_value = []
+    mock_protect_client.nvr.get.return_value = None
+
+    mock_innerspace_client.get_project.return_value = InnerSpaceProject(
+        project=InnerSpaceProjectIdentity(id="proj-only"),
+    )
+    mock_innerspace_client.list_floor_plans.return_value = [
+        InnerSpaceFloorPlan(id="fp-1", name="Main Floor")
+    ]
+    mock_innerspace_client.list_inventory.return_value = [
+        InnerSpaceInventoryDevice(
+            id="inv-only-1",
+            name="Unplaced AP",
+            model="U6-Pro",
+            mac="AA:BB:CC:00:11:22",
+        )
+    ]
+
+    host = "https://192.168.1.1"
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="UniFi Insights (Local)",
+        unique_id=host,
+        data={
+            CONF_CONNECTION_TYPE: CONNECTION_TYPE_LOCAL,
+            CONF_HOST: host,
+            CONF_API_KEY: "test_key",
+            CONF_VERIFY_SSL: False,
+        },
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.unique_id == host
+    assert entry.data.get(CONF_CONSOLE_ID) == host
+    assert entry.runtime_data.innerspace_coordinator is not None
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 def test_platforms_include_media_player() -> None:
@@ -2220,3 +2318,146 @@ async def test_owner_reload_keeps_mobility_and_leaves_siblings_alone(
     assert owner.runtime_data.mobility_coordinator is not None
     assert sibling.runtime_data is sibling_data
     assert sibling.runtime_data.mobility_coordinator is None
+
+
+@pytest.mark.parametrize("mode", ["local", "remote"])
+@pytest.mark.parametrize(
+    "outcome", ["available", "empty", "unsupported", "403", "401", "error"]
+)
+async def test_innerspace_setup_probe_evidence(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_network_client: MagicMock,
+    mock_protect_client: MagicMock,
+    mock_innerspace_client: MagicMock,
+    *,
+    caplog: pytest.LogCaptureFixture,
+    mode: str,
+    outcome: str,
+    mock_local_auth: MagicMock,
+    enable_custom_integrations: Any,
+) -> None:
+    """Setup retains bounded evidence and applies policy independently of routing."""
+    caplog.set_level(logging.DEBUG)
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        data={
+            **mock_config_entry.data,
+            CONF_CONNECTION_TYPE: mode,
+            CONF_CONSOLE_ID: "synthetic-console",
+        },
+    )
+    if outcome == "available":
+        mock_innerspace_client.get_project.return_value = InnerSpaceProject(
+            project=InnerSpaceProjectIdentity(id="synthetic-project")
+        )
+        mock_innerspace_client.list_floor_plans.return_value = [
+            InnerSpaceFloorPlan(id="synthetic-plan", name="Floor")
+        ]
+    elif outcome == "unsupported":
+        mock_innerspace_client.get_project.side_effect = UniFiResponseError(
+            "private HTML", status_code=200, response_body="<html>private</html>"
+        )
+    elif outcome in ("403", "401"):
+        mock_innerspace_client.get_project.side_effect = UniFiAuthenticationError(
+            "Check your API key permissions", status_code=int(outcome)
+        )
+    elif outcome == "error":
+        mock_innerspace_client.get_project.side_effect = RuntimeError(
+            "synthetic failure"
+        )
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    runtime = mock_config_entry.runtime_data
+    retained = outcome == "available"
+    assert (runtime.innerspace_coordinator is not None) is retained
+    assert (runtime.innerspace_client is mock_innerspace_client) is retained
+    if retained:
+        mock_innerspace_client.close.assert_not_awaited()
+    else:
+        mock_innerspace_client.close.assert_awaited_once()
+    record = runtime.innerspace_probe
+    assert set(record) == {
+        "status",
+        "endpoint",
+        "http_status",
+        "error_type",
+        "error_category",
+        "key_accepted_elsewhere",
+    }
+    assert record["status"] == ("auth_failed" if outcome in ("403", "401") else outcome)
+    assert record["key_accepted_elsewhere"] is (outcome == "403")
+    assert record["http_status"] == (
+        int(outcome)
+        if outcome in ("401", "403")
+        else 200
+        if outcome == "unsupported"
+        else None
+    )
+    warnings = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.WARNING and "InnerSpace" in r.getMessage()
+    ]
+    assert bool(warnings) is (outcome in ("401", "error"))
+    if outcome == "403":
+        messages = [
+            r.getMessage()
+            for r in caplog.records
+            if r.levelno == logging.INFO and "InnerSpace refused" in r.getMessage()
+        ]
+        assert len(messages) == 1
+        for phrase in (
+            "HTTP 403",
+            "same API key",
+            "key is not rejected",
+            "Floorplan is unavailable",
+            "diagnostics",
+        ):
+            assert phrase in messages[0]
+        assert "Check your API key permissions" not in caplog.text
+    assert await hass.config_entries.async_unload(mock_config_entry.entry_id)
+
+
+@pytest.mark.parametrize("status_code", [401, 403])
+@pytest.mark.parametrize("others_auth", [True, False])
+def test_innerspace_no_available_app_preserves_reauth(
+    hass: HomeAssistant, status_code: int, *, others_auth: bool
+) -> None:
+    """An InnerSpace-only denial and all-app denial retain reauthentication."""
+    other = ProbeResult(
+        ProbeStatus.AUTH_FAILED if others_auth else ProbeStatus.UNSUPPORTED,
+        UniFiAuthenticationError("denied", status_code=status_code)
+        if others_auth
+        else None,
+    )
+    innerspace = ProbeResult(
+        ProbeStatus.AUTH_FAILED,
+        UniFiAuthenticationError("denied", status_code=status_code),
+        http_status=status_code,
+    )
+    with pytest.raises(ConfigEntryAuthFailed):
+        _raise_for_setup_probes(hass, "synthetic-entry", other, other, innerspace)
+
+
+def test_innerspace_403_with_protect_only_is_informational(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Protect alone validates the key just as Network does."""
+    caplog.set_level(logging.INFO)
+    _raise_for_setup_probes(
+        hass,
+        "synthetic-entry",
+        ProbeResult(ProbeStatus.UNSUPPORTED),
+        ProbeResult(ProbeStatus.AVAILABLE),
+        ProbeResult(
+            ProbeStatus.AUTH_FAILED,
+            UniFiAuthenticationError("private", status_code=403),
+            http_status=403,
+        ),
+    )
+    assert (
+        len([r for r in caplog.records if "InnerSpace refused" in r.getMessage()]) == 1
+    )
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]

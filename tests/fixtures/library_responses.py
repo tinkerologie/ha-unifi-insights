@@ -5,6 +5,11 @@ import copy
 from typing import Any
 
 from unifi_official_api.network.models.device import Device
+from unifi_official_api.network.models.stats import (
+    StatisticsSource,
+    StatsSeries,
+    StatsSeriesBucket,
+)
 
 # Network API responses
 SAMPLE_SITE = {
@@ -405,6 +410,54 @@ SAMPLE_KEYPAD_FOB = {
 
 # Redacted capture of a live UP-Siren-PoE (Protect 7.3.70). The id, MAC and guid
 # are fakes; every other value is as the console reported it.
+SAMPLE_SPEAKER = {
+    "id": "speaker_1",
+    "modelKey": "speaker",
+    "state": "CONNECTED",
+    "name": "Yard Horn",
+    "type": "UP-Speaker",
+    "mac": "AABBCC000006",
+    "volume": 80,
+    "micVolume": 100,
+    "isMicEnabled": True,
+}
+
+SAMPLE_EXTERNAL_ARM_PROFILE = {
+    "id": "profile_1",
+    "title": "Perimeter",
+    "state": "armed",
+    "state_set_at": "2026-04-10T12:00:00Z",
+    "state_promotion_due_at": "2026-04-10T12:01:00Z",
+    "created_at": "2026-04-01T10:00:00Z",
+    "created_by": "user_1",
+    "updated_at": "2026-04-10T12:00:00Z",
+    "updated_by": "user_1",
+    "activation_delay": 60,
+    "deactivation_delay": 30,
+    "active_breach_id": None,
+    "alarm_ids": ["alarm_1", "alarm_2"],
+    "has_pin": True,
+    "schedule": None,
+}
+
+SAMPLE_EXTERNAL_ARM_PROFILE_2 = {
+    "id": "profile_2",
+    "title": "Interior",
+    "state": "disarmed",
+    "state_set_at": "2026-04-10T12:00:00Z",
+    "state_promotion_due_at": None,
+    "created_at": "2026-04-01T10:00:00Z",
+    "created_by": "user_1",
+    "updated_at": "2026-04-10T12:00:00Z",
+    "updated_by": "user_1",
+    "activation_delay": 0,
+    "deactivation_delay": 0,
+    "active_breach_id": None,
+    "alarm_ids": ["alarm_3"],
+    "has_pin": False,
+    "schedule": None,
+}
+
 SAMPLE_SIREN = {
     "id": "siren_1",
     "modelKey": "siren",
@@ -437,6 +490,15 @@ SAMPLE_ALARM_HUB_TAMPER_EVENT = {
         "deviceName": {"text": "Alarm Hub"},
         "userName": "Installer",
     },
+}
+
+SAMPLE_INNERSPACE_PROJECT = {
+    "project": {
+        "id": "project_1",
+        "name": "Main Floor",
+    },
+    "plans": [],
+    "products": [],
 }
 
 SAMPLE_SITE_REPORT_RESPONSE = {
@@ -481,3 +543,64 @@ class MockUniFiTimeoutError(Exception):
 
 class MockUniFiAPIError(Exception):
     """Mock API error."""
+
+
+# Statistics engine fixtures
+SAMPLE_STATS_SOURCE_MODERN = StatisticsSource("MODERN")
+SAMPLE_STATS_SOURCE_LEGACY = StatisticsSource("LEGACY")
+
+SAMPLE_INTEGRATION_SITE_1 = {
+    "id": "88f7af54-1111-2222-3333-444455556666",
+    "name": "Primary Site",
+    "desc": "Primary Site Desc",
+    "internalReference": "default",
+}
+SAMPLE_LEGACY_SITE_RECORD_1 = {
+    "_id": "ab632056-1111-2222-3333-444455556666",
+    "external_id": "88f7af54-1111-2222-3333-444455556666",
+    "name": "default",
+    "desc": "Primary Site Desc",
+    "legacy_id": "600ee7a7c6aeaa055108e111",
+}
+SAMPLE_STATS_SERIES_SITE_1 = StatsSeries(
+    siteId="ab632056-1111-2222-3333-444455556666",
+    series=[
+        StatsSeriesBucket(
+            timestamp=1790373600000,
+            duration=300000,
+            rxBytes=1000.0,
+            txBytes=2000.0,
+        ),
+        StatsSeriesBucket(
+            timestamp=1790373900000,
+            duration=270216,
+            rxBytes=500.0,
+            txBytes=1000.0,
+        ),
+    ],
+)
+
+SAMPLE_INTEGRATION_SITE_2 = {
+    "id": "99f8ba65-7777-8888-9999-000011112222",
+    "name": "Secondary Site",
+    "desc": "Secondary Site Desc",
+    "internalReference": "site_two",
+}
+SAMPLE_LEGACY_SITE_RECORD_2 = {
+    "_id": "cd743167-7777-8888-9999-000011112222",
+    "external_id": "99f8ba65-7777-8888-9999-000011112222",
+    "name": "site_two",
+    "desc": "Secondary Site Desc",
+    "legacy_id": "600ee7a7c6aeaa055108e222",
+}
+SAMPLE_STATS_SERIES_SITE_2 = StatsSeries(
+    siteId="cd743167-7777-8888-9999-000011112222",
+    series=[
+        StatsSeriesBucket(
+            timestamp=1790373600000,
+            duration=300000,
+            rxBytes=3000.0,
+            txBytes=4000.0,
+        ),
+    ],
+)

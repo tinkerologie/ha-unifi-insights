@@ -7,6 +7,8 @@ import asyncio
 import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from enum import Enum, auto
+from functools import partial
 from typing import TYPE_CHECKING, Any, Final, NotRequired, ReadOnly, TypedDict, cast
 
 if TYPE_CHECKING:
@@ -35,10 +37,8 @@ from custom_components.unifi_insights.client_wake import select_wake_history
 from custom_components.unifi_insights.const import CONF_CONSOLE_ID, DOMAIN
 from custom_components.unifi_insights.data_transforms import (
     NETWORK_FACTS_KEY,
-    NetworkDeviceFacts,
     SiteNetworkFacts,
     build_innerspace_view,
-    device_facts,
     get_site_gateway_id,
     innerspace_correlation_key,
     innerspace_view_inputs,
@@ -111,6 +111,7 @@ class FacadeData(TypedDict):
     client_links: ReadOnly[SiteSection]
     internet_activity: ReadOnly[SiteSection]
     internet_activity_unavailable: ReadOnly[AbstractSet[str]]
+    internet_activity_status: ReadOnly[SiteSection]
     # From the device coordinator
     devices: ReadOnly[SiteSection]
     clients: ReadOnly[SiteSection]
@@ -149,6 +150,7 @@ _CONFIG_SECTIONS: Final = (
     "network_info",
     "client_links",
     "internet_activity",
+    "internet_activity_status",
 )
 # The device coordinator's sections, passed through by reference.
 _DEVICE_SECTIONS: Final = (
@@ -176,6 +178,8 @@ EMPTY_PROTECT: Final[Mapping[str, Mapping[str, Any]]] = ReadOnlyDict(
             "link_stations",
             "alarm_hubs",
             "sirens",
+            "speakers",
+            "external_arm_profiles",
             "doorlocks",
             "viewports",
             "liveviews",
@@ -271,6 +275,16 @@ def build_facade_data(
     return cast("FacadeData", ReadOnlyDict(data))
 
 
+class FacadeOwner(Enum):
+    """Identify the source of a facade update."""
+
+    CONFIG = auto()
+    DEVICE = auto()
+    PROTECT = auto()
+    INNERSPACE = auto()
+    SITE_MANAGER = auto()
+
+
 class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
     """
     Facade coordinator providing unified data view for backward compatibility.
@@ -319,6 +333,7 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
         self._site_manager_coordinator = site_manager_coordinator
         self._site_manager_host_id = entry.data.get(CONF_CONSOLE_ID)
 
+        self._notifying_owner: FacadeOwner | None = None
         # Remove-callbacks returned by async_add_listener() below, released
         # in async_shutdown() so this facade's forwarding listener doesn't
         # outlive it on the sub-coordinators (see _setup_listeners).
@@ -341,36 +356,19 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
 
     def _setup_listeners(self) -> None:
         """Set up listeners to aggregate data when coordinators update."""
-        # async_add_listener() returns a remove-callback; it must be kept
-        # and invoked on shutdown (see async_shutdown) or this facade's
-        # listener registration outlives the facade itself - each
-        # config-entry reload builds a fresh facade + fresh sub-coordinators,
-        # but without releasing this, the outgoing facade stays reachable
-        # (and un-collectable) via the very listener slot it never freed.
-        self._sub_coordinator_unsubs.append(
-            self._device_coordinator.async_add_listener(self._handle_coordinator_update)
-        )
-        self._sub_coordinator_unsubs.append(
-            self._config_coordinator.async_add_listener(self._handle_coordinator_update)
-        )
-        if self._protect_coordinator:
-            self._sub_coordinator_unsubs.append(
-                self._protect_coordinator.async_add_listener(
-                    self._handle_coordinator_update
+        for owner, coordinator in (
+            (FacadeOwner.DEVICE, self._device_coordinator),
+            (FacadeOwner.CONFIG, self._config_coordinator),
+            (FacadeOwner.PROTECT, self._protect_coordinator),
+            (FacadeOwner.INNERSPACE, self._innerspace_coordinator),
+            (FacadeOwner.SITE_MANAGER, self._site_manager_coordinator),
+        ):
+            if coordinator is not None:
+                self._sub_coordinator_unsubs.append(
+                    coordinator.async_add_listener(
+                        partial(self._handle_coordinator_update, owner)
+                    )
                 )
-            )
-        if self._innerspace_coordinator:
-            self._sub_coordinator_unsubs.append(
-                self._innerspace_coordinator.async_add_listener(
-                    self._handle_coordinator_update
-                )
-            )
-        if self._site_manager_coordinator:
-            self._sub_coordinator_unsubs.append(
-                self._site_manager_coordinator.async_add_listener(
-                    self._handle_coordinator_update
-                )
-            )
 
     async def async_shutdown(self) -> None:
         """
@@ -399,10 +397,39 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
         await super().async_shutdown()
 
     @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle update from any coordinator by refreshing aggregated data."""
+    def async_add_listener(
+        self, update_callback: Callable[[], None], context: Any = None
+    ) -> Callable[[], None]:
+        """Limit notifications when a listener declares a single owner."""
+        if not isinstance(context, FacadeOwner):
+            return super().async_add_listener(update_callback, context)
+
+        @callback
+        def notify_owner() -> None:
+            if self._notifying_owner is None or self._notifying_owner is context:
+                update_callback()
+
+        return super().async_add_listener(notify_owner, context)
+
+    @callback
+    def async_update_listeners(self) -> None:
+        """Notify all listeners for a facade update without a single owner."""
+        self._notify_listeners(None)
+
+    @callback
+    def _handle_coordinator_update(self, owner: FacadeOwner) -> None:
+        """Publish the current snapshot before notifying listeners."""
         self._aggregate_data()
-        self.async_update_listeners()
+        self._notify_listeners(owner)
+
+    def _notify_listeners(self, owner: FacadeOwner | None) -> None:
+        """Dispatch through Home Assistant with the current owner scope."""
+        previous_owner = self._notifying_owner
+        self._notifying_owner = owner
+        try:
+            super().async_update_listeners()
+        finally:
+            self._notifying_owner = previous_owner
 
     def _innerspace_view(
         self, devices: Any, protect_data: Mapping[str, Any]
@@ -494,12 +521,6 @@ class UnifiInsightsFacadeCoordinator(DataUpdateCoordinator[FacadeData]):
             site_manager_host_id=self._site_manager_host_id,
             now=datetime.now(tz=UTC),
         )
-
-    def get_device_facts(
-        self, site_id: str, device_id: str
-    ) -> NetworkDeviceFacts | None:
-        """Return the read-model facts of one network device, or None."""
-        return device_facts(self.data, site_id, device_id)
 
     def get_site_gateway_id(self, site_id: str) -> str | None:
         """Return the ID of a site's gateway device, or None."""

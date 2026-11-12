@@ -694,7 +694,6 @@ class UnifiProtectCameraDigitalInputEventEntity(
         """Create the entity for one input of one camera, known or not."""
         super().__init__(coordinator)
         self._camera_id = camera_id
-        self._input_key = input_key
         self._pending_change: Mapping[str, Any] | None = None
         self._added = False
 

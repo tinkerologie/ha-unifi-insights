@@ -12,12 +12,14 @@ from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api.exceptions import UniFiUnsupportedError
 from unifi_official_api.innerspace import InnerSpaceProject
+from unifi_official_api.network.models.stats import StatisticsSource
 
 from custom_components.unifi_insights.const import (
     CONF_CONNECTION_TYPE,
     CONNECTION_TYPE_LOCAL,
     DOMAIN,
 )
+from tests.fixtures.coordinator_clients import protect_list
 
 from .fixtures.command_owners import (
     SeededOwners,
@@ -97,6 +99,11 @@ def _create_mock_network_client() -> MagicMock:
     client.reports.get_site_report = AsyncMock(return_value=[])
     client.get_site_report = AsyncMock(return_value=[])
 
+    # Setup stats namespace
+    client.stats = MagicMock()
+    client.stats.get_source = AsyncMock(return_value=StatisticsSource("LEGACY"))
+    client.stats.get_recent_series = AsyncMock(return_value=[])
+
     # Legacy methods (keeping for backwards compatibility in tests)
     client.restart_device = AsyncMock(return_value=True)
     client.authorize_guest = AsyncMock(return_value=True)
@@ -115,17 +122,22 @@ def _create_mock_protect_client() -> MagicMock:
 
     # Setup cameras namespace
     client.cameras = MagicMock()
+    client.cameras.get_all_result = AsyncMock(
+        return_value=protect_list(
+            [
+                MagicMock(
+                    id="camera1",
+                    name="Front Door",
+                    state="CONNECTED",
+                    type="UVC-G4-DOORBELL",
+                    mac="11:22:33:44:55:66",
+                    featureFlags=MagicMock(smartDetectTypes=["person", "vehicle"]),
+                )
+            ]
+        )
+    )
     client.cameras.get_all = AsyncMock(
-        return_value=[
-            MagicMock(
-                id="camera1",
-                name="Front Door",
-                state="CONNECTED",
-                type="UVC-G4-DOORBELL",
-                mac="11:22:33:44:55:66",
-                featureFlags=MagicMock(smartDetectTypes=["person", "vehicle"]),
-            )
-        ]
+        return_value=list(client.cameras.get_all_result.return_value.records)
     )
     client.cameras.get_snapshot = AsyncMock(return_value=b"fake_image_data")
     client.cameras.create_rtsps_stream = AsyncMock(
@@ -137,17 +149,17 @@ def _create_mock_protect_client() -> MagicMock:
 
     # Setup lights namespace
     client.lights = MagicMock()
-    client.lights.get_all = AsyncMock(return_value=[])
+    client.lights.get_all_result = AsyncMock(return_value=protect_list([]))
     client.lights.set_mode = AsyncMock(return_value=True)
     client.lights.set_brightness = AsyncMock(return_value=True)
 
     # Setup sensors namespace
     client.sensors = MagicMock()
-    client.sensors.get_all = AsyncMock(return_value=[])
+    client.sensors.get_all_result = AsyncMock(return_value=protect_list([]))
 
     # Setup chimes namespace
     client.chimes = MagicMock()
-    client.chimes.get_all = AsyncMock(return_value=[])
+    client.chimes.get_all_result = AsyncMock(return_value=protect_list([]))
     client.chimes.play = AsyncMock(
         side_effect=UniFiUnsupportedError("Synthetic unsupported playback")
     )
@@ -157,7 +169,7 @@ def _create_mock_protect_client() -> MagicMock:
 
     # Setup viewers namespace
     client.viewers = MagicMock()
-    client.viewers.get_all = AsyncMock(return_value=[])
+    client.viewers.get_all_result = AsyncMock(return_value=protect_list([]))
     client.viewers.update = AsyncMock(return_value=True)
 
     # Setup liveviews namespace
@@ -189,10 +201,11 @@ def _create_mock_protect_client() -> MagicMock:
     client.update_viewer = AsyncMock(return_value=True)
 
     # Protect 7.3.70 security device families (empty by default)
-    for family in ("fobs", "link_stations", "alarm_hubs", "sirens"):
+    for family in ("fobs", "link_stations", "alarm_hubs", "sirens", "speakers"):
         endpoint = MagicMock()
-        endpoint.get_all = AsyncMock(return_value=[])
-        endpoint.last_result_complete = True
+        endpoint.get_all_result = AsyncMock(return_value=protect_list([]))
+        if family == "speakers":
+            endpoint.stop_siren = AsyncMock(return_value=True)
         setattr(client, family, endpoint)
 
     # WebSocket support (real-time device updates, additive to polling)
@@ -251,9 +264,26 @@ def mock_innerspace_client() -> Generator[MagicMock]:
     """Return a mocked UniFi InnerSpace client."""
     client = _create_mock_innerspace_client()
 
-    with patch(
-        "custom_components.unifi_insights.UniFiInnerSpaceClient",
-        MagicMock(return_value=client),
+    # Create a mock class that works as both regular init and async context manager
+    mock_class = MagicMock()
+    async_cm = MagicMock()
+    async_cm.__aenter__ = AsyncMock(return_value=client)
+    async_cm.__aexit__ = AsyncMock(return_value=None)
+    mock_class.return_value = async_cm
+
+    for attr in dir(client):
+        if not attr.startswith("_"):
+            setattr(mock_class.return_value, attr, getattr(client, attr))
+
+    with (
+        patch(
+            "custom_components.unifi_insights.config_flow.UniFiInnerSpaceClient",
+            mock_class,
+        ),
+        patch(
+            "custom_components.unifi_insights.UniFiInnerSpaceClient",
+            MagicMock(return_value=client),
+        ),
     ):
         yield client
 

@@ -3,12 +3,18 @@
 
 from __future__ import annotations
 
+import copy
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, call, patch
 
 import pytest
 from homeassistant.components.light import ATTR_BRIGHTNESS, ColorMode
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import EntityCategory
 from homeassistant.exceptions import HomeAssistantError
+from unifi_official_api import UniFiConnectionError, UniFiNotFoundError
+from unifi_official_api.network import UniFiNetworkClient
+from unifi_official_api.protect import UniFiProtectClient
 
 from custom_components.unifi_insights.const import (
     ATTR_LIGHT_DARK,
@@ -19,6 +25,7 @@ from custom_components.unifi_insights.const import (
     ATTR_LIGHT_NAME,
     ATTR_LIGHT_STATE,
     DEVICE_TYPE_LIGHT,
+    DOMAIN,
     LIGHT_MODE_ALWAYS,
     LIGHT_MODE_OFF,
 )
@@ -28,18 +35,29 @@ from custom_components.unifi_insights.light import (
     async_setup_entry,
 )
 from tests.fixtures.assertions import patch_attribute, require_mock, require_not_none
-from tests.fixtures.command_owners import autospec_command_owners, protect_owner
+from tests.fixtures.command_owners import (
+    PDU_ID,
+    SITE_ID,
+    autospec_client,
+    autospec_command_owners,
+    protect_owner,
+    seed_network_client,
+)
 from tests.fixtures.facade_data import (
     with_protect_collection,
     with_protect_device,
     with_protect_fields,
 )
+from tests.fixtures.library_responses import SAMPLE_PDU_LEGACY_DEVICE
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from homeassistant.core import HomeAssistant
+    from homeassistant.helpers import entity_registry as er
+    from pytest_homeassistant.common import MockConfigEntry
 
+    from custom_components.unifi_insights import UnifiInsightsConfigEntry
     from custom_components.unifi_insights.coordinators.facade import FacadeData
 
 
@@ -683,3 +701,101 @@ class TestProtectLightWrites:
         light._update_from_data()
         assert light._attr_brightness == 255
         assert light._attr_extra_state_attributes[ATTR_LIGHT_LEVEL] == 6
+
+
+async def test_network_led_state_and_actions_without_protect(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    entity_registry: er.EntityRegistry,
+    *,
+    enable_custom_integrations: None,
+) -> None:
+    """Register an on/off light and exercise its real Home Assistant actions."""
+    network = autospec_client(UniFiNetworkClient)
+    seed_network_client(network)
+    legacy = copy.deepcopy(SAMPLE_PDU_LEGACY_DEVICE)
+    network.devices.get_legacy_site_devices.return_value = [
+        {**legacy, "led_override": "default"}
+    ]
+    network.devices.set_led_override.return_value = True
+    protect = autospec_client(UniFiProtectClient)
+    protect.nvr.get.side_effect = UniFiNotFoundError("No Protect application")
+    mock_config_entry.add_to_hass(hass)
+
+    with (
+        patch(
+            "custom_components.unifi_insights.UniFiNetworkClient", return_value=network
+        ),
+        patch(
+            "custom_components.unifi_insights.UniFiProtectClient", return_value=protect
+        ),
+    ):
+        assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert mock_config_entry.state is ConfigEntryState.LOADED
+    entry: UnifiInsightsConfigEntry = mock_config_entry
+    facade = entry.runtime_data.coordinator
+    assert facade.protect_client is None
+    owner = facade.device_coordinator
+    entity_id = require_not_none(
+        entity_registry.async_get_entity_id("light", DOMAIN, f"{SITE_ID}_{PDU_ID}_led")
+    )
+    assert (
+        require_not_none(entity_registry.async_get(entity_id)).entity_category
+        is EntityCategory.CONFIG
+    )
+
+    def state() -> str:
+        return require_not_none(hass.states.get(entity_id)).state
+
+    assert state() == "unknown"
+    assert require_not_none(hass.states.get(entity_id)).attributes[
+        "supported_color_modes"
+    ] == [ColorMode.ONOFF]
+
+    for mode in ("on", "off"):
+        await hass.services.async_call(
+            "light", f"turn_{mode}", {"entity_id": entity_id}, blocking=True
+        )
+        assert state() == mode
+        network.devices.set_led_override.assert_awaited_with(
+            "default", legacy["_id"], mode
+        )
+        network.devices.get_legacy_site_devices.return_value = [
+            {**legacy, "led_override": mode}
+        ]
+        await owner.async_refresh()
+        assert state() == mode
+
+    network.devices.set_led_override.side_effect = UniFiConnectionError("offline")
+    with pytest.raises(HomeAssistantError) as error:
+        await hass.services.async_call(
+            "light", "turn_on", {"entity_id": entity_id}, blocking=True
+        )
+    assert error.value.translation_key == "command_failed"
+    assert state() == "off"
+
+    network.devices.get_legacy_site_devices.return_value = [
+        {**legacy, "_id": "  ", "led_override": "off"}
+    ]
+    await owner.async_refresh()
+    assert state() == "unavailable"
+
+    network.devices.get_legacy_site_devices.return_value = [legacy]
+    await owner.async_refresh()
+    assert state() == "unavailable"
+
+    network.devices.get_legacy_site_devices.return_value = [
+        {**legacy, "led_override": "off"}
+    ]
+    await owner.async_refresh()
+    assert state() == "off"
+
+    network.devices.get_all.side_effect = UniFiConnectionError("offline")
+    await owner.async_refresh()
+    assert state() == "unavailable"
+    network.devices.get_all.side_effect = None
+    await owner.async_refresh()
+    assert state() == "off"
+    assert await hass.config_entries.async_unload(mock_config_entry.entry_id)

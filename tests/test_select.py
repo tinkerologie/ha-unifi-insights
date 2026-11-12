@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
+from unifi_official_api.protect.models.camera import Camera
 
 from custom_components.unifi_insights.const import (
     DEVICE_TYPE_CAMERA,
@@ -36,6 +37,7 @@ from custom_components.unifi_insights.select import (
 )
 from tests.fixtures.assertions import patch_attribute, require_mock, require_not_none
 from tests.fixtures.command_owners import autospec_command_owners, protect_owner
+from tests.fixtures.coordinator_clients import protect_list
 from tests.fixtures.entities import EntityCollector
 from tests.fixtures.facade_data import with_protect_collection, with_protect_fields
 
@@ -487,6 +489,7 @@ class TestUnifiProtectVideoModeSelect:
             ("slow_shutter", "slowShutter"),
             ("lpr_reflex", "lprReflex"),
             ("lpr_none_reflex", "lprNoneReflex"),
+            ("anti_flicker", "antiFlicker"),
         ],
     )
     async def test_async_select_option_success(
@@ -597,6 +600,29 @@ class TestUnifiProtectVideoModeSelect:
             require_not_none(entity.extra_state_attributes)["video_mode"] == "default"
         )
 
+    def test_camera_model_anti_flicker(self, mock_coordinator: MagicMock) -> None:
+        """A real Camera model with antiFlicker maps correctly."""
+        camera = Camera.model_validate(
+            {
+                "id": "cam_af",
+                "name": "Anti-flicker Camera",
+                "mac": "AA:BB:CC:DD:EE:02",
+                "state": "CONNECTED",
+                "videoMode": "antiFlicker",
+            }
+        )
+        mock_coordinator.data = with_protect_collection(
+            mock_coordinator.data,
+            "cameras",
+            {"cam_af": camera.model_dump(by_alias=True)},
+        )
+        entity = UnifiProtectVideoModeSelect(mock_coordinator, "cam_af")
+        assert entity.state == "anti_flicker"
+        assert (
+            require_not_none(entity.extra_state_attributes)["video_mode"]
+            == "antiFlicker"
+        )
+
 
 class TestLprVideoModeStates:
     """Exercise camera API responses through the real HA state machine."""
@@ -606,17 +632,19 @@ class TestLprVideoModeStates:
         self, mock_protect_client: MagicMock, mode: str
     ) -> MagicMock:
         """Seed the API boundary before the integration builds its snapshots."""
-        mock_protect_client.cameras.get_all.return_value = [
-            {
-                "id": "lpr_camera",
-                "name": "LPR Camera",
-                "state": "CONNECTED",
-                "model": "UVC-G5-Bullet",
-                "mac": "11:22:33:44:55:66",
-                "videoMode": mode,
-                "featureFlags": {},
-            }
-        ]
+        mock_protect_client.cameras.get_all_result.return_value = protect_list(
+            [
+                {
+                    "id": "lpr_camera",
+                    "name": "LPR Camera",
+                    "state": "CONNECTED",
+                    "model": "UVC-G5-Bullet",
+                    "mac": "11:22:33:44:55:66",
+                    "videoMode": mode,
+                    "featureFlags": {},
+                }
+            ]
+        )
         return mock_protect_client
 
     @pytest.mark.parametrize(
@@ -655,6 +683,7 @@ class TestLprVideoModeStates:
             "slow_shutter",
             "lpr_reflex",
             "lpr_none_reflex",
+            "anti_flicker",
         ]
 
         # Public HA service validation rejects legacy select keys before I/O.
@@ -679,12 +708,16 @@ class TestLprVideoModeStates:
         # A fresh API response must publish the new translated state through HA.
         raw_update = "highFps" if mode == "default" else "default"
         key_update = "high_fps" if mode == "default" else "default"
-        mock_protect_client.cameras.get_all.return_value = [
-            {
-                **mock_protect_client.cameras.get_all.return_value[0],
-                "videoMode": raw_update,
-            }
-        ]
+        mock_protect_client.cameras.get_all_result.return_value = protect_list(
+            [
+                {
+                    **mock_protect_client.cameras.get_all_result.return_value.records[
+                        0
+                    ],
+                    "videoMode": raw_update,
+                }
+            ]
+        )
         owner = init_integration.runtime_data.coordinator.require_protect_coordinator()
         await owner.async_refresh()
         await hass.async_block_till_done()
