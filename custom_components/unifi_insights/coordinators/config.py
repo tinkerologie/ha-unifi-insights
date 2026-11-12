@@ -446,7 +446,7 @@ class UnifiInsightsConfigCoordinator(UnifiInsightsBaseCoordinator):
                 # Only consecutive 401s count as persistent rejection.
                 self._sites_unauthorized_seen = True
                 if not previous_unauthorized:
-                    msg = "Network sites returned HTTP 401. Retrying next poll."
+                    msg = "Retrying Network sites on the next poll after HTTP 401"
                     raise UpdateFailed(msg) from err
             raise
 
