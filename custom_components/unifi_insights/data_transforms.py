@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, TypeGuard, TypeIs
 
 from homeassistant.util import dt as dt_util
 
@@ -1315,6 +1315,19 @@ __all__ = [
 
 MIN_LED_LEVEL = 1
 MAX_LED_LEVEL = 6
+
+
+type NetworkLedOverride = Literal["on", "off", "default"]
+
+
+def is_network_led_override(value: object) -> TypeIs[NetworkLedOverride]:
+    """Return whether a classic device record reports a supported LED mode."""
+    return isinstance(value, str) and value in ("on", "off", "default")
+
+
+def is_legacy_led_device_id(value: object) -> TypeGuard[str]:
+    """Return whether the classic device ID is safe as one LED route segment."""
+    return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]+", value) is not None
 
 
 def valid_led_level(value: Any) -> int | None:

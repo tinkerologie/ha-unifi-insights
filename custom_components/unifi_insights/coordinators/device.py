@@ -49,6 +49,8 @@ from custom_components.unifi_insights.data_transforms import (
     _has_feature,
     build_site_network_facts,
     device_facts,
+    is_legacy_led_device_id,
+    is_network_led_override,
     normalize_legacy_storage,
     normalize_legacy_wans,
 )
@@ -74,7 +76,10 @@ if TYPE_CHECKING:
     from unifi_official_api.network import UniFiNetworkClient
     from unifi_official_api.protect import UniFiProtectClient
 
-    from custom_components.unifi_insights.data_transforms import NetworkPortFacts
+    from custom_components.unifi_insights.data_transforms import (
+        NetworkLedOverride,
+        NetworkPortFacts,
+    )
 
     from .config import UnifiInsightsConfigCoordinator
 
@@ -521,6 +526,40 @@ def reconcile_pending_outlet_writes(
     return result, kept
 
 
+class PendingLedWrite(NamedTuple):
+    """A successful LED write awaiting confirmation from a device poll."""
+
+    mode: NetworkLedOverride
+    written_at: float
+
+
+def _hold_led_writes(
+    site_id: str,
+    devices: dict[str, Any],
+    pending: Mapping[tuple[str, str], PendingLedWrite],
+    now: float,
+) -> tuple[dict[str, Any], dict[tuple[str, str], PendingLedWrite]]:
+    """Hold unconfirmed modes over stale polls without adding missing capability."""
+    result = devices
+    kept: dict[tuple[str, str], PendingLedWrite] = {}
+    for key, write in pending.items():
+        write_site_id, device_id = key
+        if (
+            write_site_id != site_id
+            or now - write.written_at >= OUTLET_WRITE_GUARD_SECONDS
+        ):
+            continue
+        device = devices.get(device_id)
+        if not isinstance(device, dict) or device.get("led_override") == write.mode:
+            continue
+        kept[key] = write
+        if is_network_led_override(device.get("led_override")):
+            if result is devices:
+                result = dict(devices)
+            result[device_id] = {**device, "led_override": write.mode}
+    return result, kept
+
+
 class OutletPayloadProvenance(NamedTuple):
     """
     Whether the latest successful poll gave a complete outlet baseline (#376).
@@ -842,6 +881,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
         # Successful outlet writes the controller has not reported back yet
         # (#376), committed at snapshot publication.
         self._pending_outlet_writes: dict[PendingOutletKey, PendingOutletWrite] = {}
+        self._pending_led_writes: dict[tuple[str, str], PendingLedWrite] = {}
         # Payload integrity of each device's latest raw poll (#376), committed
         # with the pending map. A failed refresh changes neither.
         self._outlet_payload_provenance: dict[
@@ -979,6 +1019,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
         ``device_id_is_mac()`` correctly skips id-addressed endpoints for it.
         """
         mapped: dict[str, Any] = dict(legacy)
+        cls._merge_legacy_led_data(mapped, legacy)
 
         # Ensure macAddress is populated from mac for the merge helpers
         mac = legacy.get("mac")
@@ -1124,6 +1165,20 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
 
         if ports:
             device_dict["ports"] = ports
+
+    @staticmethod
+    def _merge_legacy_led_data(
+        device: dict[str, Any], legacy: dict[str, Any] | None
+    ) -> None:
+        """Publish LED capability and its write identifier from the classic record."""
+        device.pop("led_override", None)
+        device.pop("led_device_id", None)
+        if legacy is not None and is_network_led_override(
+            mode := legacy.get("led_override")
+        ):
+            device["led_override"] = mode
+            if is_legacy_led_device_id(legacy_id := legacy.get("_id")):
+                device["led_device_id"] = legacy_id
 
     @classmethod
     def _merge_legacy_outlet_data(
@@ -1707,8 +1762,11 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 site_id,
             )
         else:
-            # Convert model objects to dictionaries
-            devices = [self._model_to_dict(d) for d in devices_models]
+            # Enrich poll-owned copies, including dictionary-shaped API records.
+            devices = [
+                dict(d) if isinstance(d, dict) else self._model_to_dict(d)
+                for d in devices_models
+            ]
             source = "v1"
             if site_id in self._legacy_fallback_sites:
                 self._legacy_fallback_sites.remove(site_id)
@@ -1747,6 +1805,14 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             raw_device_id = device.get("id")
             if raw_device_id is None:
                 continue
+            if not legacy_as_primary:
+                led_mac = self._normalize_mac(
+                    device.get("macAddress", device.get("mac"))
+                )
+                led_source = (
+                    legacy_devices_by_mac.get(led_mac) if led_mac is not None else None
+                )
+                self._merge_legacy_led_data(device, led_source)
             raw_source = self._legacy_device_for(device, legacy_devices_by_mac)
             raw_outlet_arrays[str(raw_device_id)] = _raw_outlet_arrays(
                 raw_source if raw_source is not None else device
@@ -1904,6 +1970,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 )
                 self._available = True
                 self._pending_outlet_writes = {}
+                self._pending_led_writes = {}
                 self._outlet_payload_provenance = {}
                 self._radio_details_last_attempt = {}
                 self.data = {
@@ -1986,6 +2053,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             # Pending outlet writes of sites and devices no longer polled are
             # dropped here; a failed refresh never gets this far.
             pending_outlet_writes: dict[PendingOutletKey, PendingOutletWrite] = {}
+            pending_led_writes: dict[tuple[str, str], PendingLedWrite] = {}
             # Rebuilt from this poll only, so a device or site that is no
             # longer polled loses its provenance (a reappearing device starts
             # cold). A failed refresh never gets here.
@@ -2022,6 +2090,10 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                     site_id, polled_devices, self._pending_outlet_writes, now
                 )
                 pending_outlet_writes.update(held_writes)
+                devices_dict, held_led_writes = _hold_led_writes(
+                    site_id, devices_dict, self._pending_led_writes, now
+                )
+                pending_led_writes.update(held_led_writes)
                 sections["devices"][site_id] = devices_dict
                 sections["stats"][site_id] = stats_dict
                 sections["clients"][site_id] = clients_dict
@@ -2091,6 +2163,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
 
             self._available = True
             self._pending_outlet_writes = pending_outlet_writes
+            self._pending_led_writes = pending_led_writes
             self._outlet_payload_provenance = outlet_payload_provenance
             # Publish once, after the last await, as a new root: a snapshot
             # taken during the refresh keeps the previous maps unchanged.
@@ -2234,6 +2307,58 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             port_idx,
             "POWER_CYCLE",
         )
+
+    async def async_set_led_override(
+        self, site_id: str, device_id: str, *, mode: NetworkLedOverride
+    ) -> bool:
+        """Set the status LED and hold its new mode until the console confirms it."""
+        site_name = await self.config_coordinator.async_resolve_legacy_site_name(
+            site_id, verified_only=False
+        )
+        async with self._debounced_refresh.async_lock():
+            device = self.get_device(site_id, device_id) or {}
+            legacy_id = device.get("led_device_id")
+            if not is_network_led_override(
+                device.get("led_override")
+            ) or not is_legacy_led_device_id(legacy_id):
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN, translation_key="command_failed"
+                )
+            result = await async_execute_command(
+                CommandFailure(
+                    translation_key="command_failed",
+                    rejected_translation_key="command_failed",
+                ),
+                self.network_client.devices.set_led_override,
+                site_name,
+                legacy_id,
+                mode,
+            )
+            self._pending_led_writes[site_id, device_id] = PendingLedWrite(
+                mode, time.monotonic()
+            )
+            self._publish_led_override(site_id, device_id, mode)
+        await self.async_request_refresh()
+        return result
+
+    def _publish_led_override(
+        self, site_id: str, device_id: str, mode: NetworkLedOverride
+    ) -> None:
+        """Publish a copy of the device path with the new LED mode."""
+        if (device := self.get_device(site_id, device_id)) is None:
+            return
+        devices = self.data["devices"]
+        self.data = {
+            **self.data,
+            "devices": {
+                **devices,
+                site_id: {
+                    **devices[site_id],
+                    device_id: {**device, "led_override": mode},
+                },
+            },
+        }
+        self.async_update_listeners()
 
     async def async_set_outlet_state(
         self,

@@ -415,6 +415,14 @@
         "default": "mdi:bell-off"
       }
     },
+    "light": {
+      "led": {
+        "default": "mdi:led-off",
+        "state": {
+          "on": "mdi:led-on"
+        }
+      }
+    },
     "switch": {
       "client_allow": {
         "default": "mdi:account-lock"

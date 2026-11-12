@@ -1065,6 +1065,11 @@
         "name": "WiFi QR code"
       }
     },
+    "light": {
+      "led": {
+        "name": "LED"
+      }
+    },
     "lock": {
       "access_door_lock": {
         "name": "Lock"

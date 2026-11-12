@@ -1063,3 +1063,39 @@ class TestRadioSensorDiscovery:
             *{description.key for description in RADIO_DETAILS_SENSOR_TYPES},
         }
         assert all("6ghz" in str(entity.unique_id) for entity in late)
+
+
+async def test_network_led_is_discovered_when_capability_appears(
+    hass: Any, mock_coordinator: MagicMock, mock_config_entry: MagicMock
+) -> None:
+    """Discover a newly reported LED once, even on a Network-only console."""
+    mock_coordinator.protect_client = None
+    record = {"id": "ap", "name": "Test AP"}
+    mock_coordinator.data = with_network_device(
+        mock_coordinator.data, "site1", "ap", record
+    )
+    add_entities = MagicMock()
+    await async_setup_light(hass, mock_config_entry, add_entities)
+    discover = mock_coordinator.async_add_listener.call_args.args[0]
+    add_entities.assert_not_called()
+
+    for payload in (
+        None,
+        {"devices": "not a site map"},
+        {"devices": {"site1": "not a device map"}},
+        {"devices": {"site1": {"ap": "not a device record"}}},
+    ):
+        mock_coordinator.data = payload
+        discover()
+    add_entities.assert_not_called()
+
+    mock_coordinator.data = with_network_device(
+        mock_coordinator.data, "site1", "ap", {**record, "led_override": "off"}
+    )
+    discover()
+    discover()
+
+    add_entities.assert_called_once()
+    assert [entity.unique_id for entity in add_entities.call_args.args[0]] == [
+        "site1_ap_led"
+    ]

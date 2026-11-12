@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add an on/off light entity for the status LED of UniFi Network devices that report LED control. The light shows an unknown state when the LED follows the site's default setting. [#504](https://github.com/tinkerologie/ha-unifi-insights/issues/504)
 - Add `speaker_stop_siren` button entity for polled UniFi Protect speakers to stop an active siren when running UniFi Protect v7.4.96 or later. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
 - Add `alarm_control_panel` entities for UniFi Protect external arm profiles when an NVR enables the external alarm manager (Protect v7.4.96+), supporting arm away and disarm actions; profile creation, editing, deletion and PIN management remain managed exclusively in UniFi OS. A stale read, read error or partial listing cannot overwrite a newer arm/disarm result, and turning `useExternalAlarmManager` off discards reads still in flight. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
 - Add diagnostic problem binary sensor `sensor_mounted_incorrectly` for Protect UP-Sense sensors to report incorrect mounting orientation when running UniFi Protect v7.4.96 or later. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
@@ -16,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Raise `unifi-official-api` to 3.2.0, adding support for UniFi Protect 7.4.96 speaker stop-siren and external arm profiles. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
+- Update `unifi-official-api` to 3.3.0 for the Network status LED command, with support for UniFi Protect 7.4.96 speaker stop-siren and external arm profiles. [#504](https://github.com/tinkerologie/ha-unifi-insights/issues/504) [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
 - Gate local NVR alarm control panel discovery and availability on `featureFlags.useExternalAlarmManager` in UniFi Protect v7.4.96+. When external alarm manager is enabled on an NVR, its local panel is hidden or made unavailable. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
 - Map UniFi Protect HTTP 409 Conflict during camera talkback session startup to a translated error informing the user that a talkback session is already in progress. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
 
@@ -24,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Clear cached external alarm profiles as soon as the NVR disables external management and discard profile reads still in flight. Redact profile creator and updater identifiers in diagnostics. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
 - Match Protect cameras, NVRs, and speakers to their Network devices when the APIs use different MAC address formats. [#501](https://github.com/tinkerologie/ha-unifi-insights/issues/501)
+- Allow Local and Remote add, reauth, and reconfigure flows to accept InnerSpace-only consoles by probing InnerSpace when Network and Protect are not available. Local creation requires a safe console identity, reporting `console_identity_unavailable` when an unsafe or credential-equivalent host is supplied. Derived from source review and verified with mocked-client tests. [#500](https://github.com/tinkerologie/ha-unifi-insights/issues/500)
+- Restore the internet activity sensors and card on UniFi Network 11. Network 11 no longer fills the legacy site reports, so the integration reads the Network 11 statistics engine when the console reports it. History may begin at the Network 11 upgrade, and the 30-day window uses 8-hour buckets. Logs and diagnostics now show why internet activity has no data, for example a missing statistics permission. [#503](https://github.com/tinkerologie/ha-unifi-insights/issues/503)
 
 ### Removed
 
@@ -31,11 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed three attributes that were written but never read: `_port_label` on the PoE power-cycle button, `_entity_type` on the Protect entity base class and `_input_key` on the camera digital-input event entity. Translation placeholders, unique IDs and constructor arguments are unchanged. [#496](https://github.com/tinkerologie/ha-unifi-insights/issues/496)
 - Removed 18 coordinator accessors that only tests called: the seven config section availability checks and four config getters, the device statistics and client getters, the facade `get_device_facts` and the four Protect cache getters. Entities and service actions read the same owner data and the pure lookups in `data_transforms.py` as before. The tests now assert the owner state (`failed_sections`, `last_update_success`, coordinator data) or the production helpers (`site_section_available`, `device_facts`), so live behaviour stays covered. [#496](https://github.com/tinkerologie/ha-unifi-insights/issues/496)
 - Removed six test-only helpers and constants: `bytes_to_megabits`, `bytes_to_bits` and `_has_storage_info` from `sensor.py`, `_first_site_id` from `__init__.py`, and `CARD_URL` and `CARD_PATH` from `frontend.py`. Storage and rate conversion behaviour stays covered through `normalize_nvr_storage` and the sensor discovery paths. [#496](https://github.com/tinkerologie/ha-unifi-insights/issues/496)
-
-### Fixed
-
-- Allow Local and Remote add, reauth, and reconfigure flows to accept InnerSpace-only consoles by probing InnerSpace when Network and Protect are not available. Local creation requires a safe console identity, reporting `console_identity_unavailable` when an unsafe or credential-equivalent host is supplied. Derived from source review and verified with mocked-client tests. [#500](https://github.com/tinkerologie/ha-unifi-insights/issues/500)
-- Restore the internet activity sensors and card on UniFi Network 11. Network 11 no longer fills the legacy site reports, so the integration reads the Network 11 statistics engine when the console reports it. History may begin at the Network 11 upgrade, and the 30-day window uses 8-hour buckets. Logs and diagnostics now show why internet activity has no data, for example a missing statistics permission. [#503](https://github.com/tinkerologie/ha-unifi-insights/issues/503)
 
 ### Documentation
 

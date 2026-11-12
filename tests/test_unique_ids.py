@@ -29,6 +29,7 @@ from tests.fixtures.library_responses import (
     SAMPLE_LINK_STATION,
     SAMPLE_NVR_WITH_ARM_MODE,
     SAMPLE_PDU_DEVICE,
+    SAMPLE_PDU_LEGACY_DEVICE,
     SAMPLE_SIREN,
     SAMPLE_THREAD_LINK_STATION,
     SAMPLE_UDM_PRO_OVERVIEW_API,
@@ -95,6 +96,7 @@ EXPECTED_UNIQUE_IDS: list[tuple[str, str]] = [
     ("event", "unifi_insights_camera_doorbell_cam_2_doorbell_event"),
     ("event", "unifi_insights_sensor_test_sensor_usl_event"),
     ("image", "aabbcc0000aa_default_voucher_qr_code"),
+    ("light", "default_pdu_device_1_led"),
     ("light", "unifi_insights_light_light_1"),
     ("number", "aabbcc0000aa_default_voucher_data_limit"),
     ("number", "aabbcc0000aa_default_voucher_download_limit"),
@@ -178,6 +180,9 @@ def _network_client() -> NonCallableMagicMock:
     client.devices.get_all.return_value = [
         copy.deepcopy(SAMPLE_PDU_DEVICE),
         copy.deepcopy(SAMPLE_UDM_PRO_OVERVIEW_API),
+    ]
+    client.devices.get_legacy_site_devices.return_value = [
+        {**copy.deepcopy(SAMPLE_PDU_LEGACY_DEVICE), "led_override": "off"}
     ]
     client.devices.get_statistics.return_value = copy.deepcopy(SAMPLE_UDM_PRO_STATS)
     client.clients.get_all.return_value = [
