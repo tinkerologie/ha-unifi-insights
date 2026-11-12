@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.11.2] - 2026-11-12
+
 ### Added
 
 - Add an on/off light entity for the status LED of UniFi Network devices that report LED control. The light shows an unknown state when the LED follows the site's default setting. [#504](https://github.com/tinkerologie/ha-unifi-insights/issues/504)
