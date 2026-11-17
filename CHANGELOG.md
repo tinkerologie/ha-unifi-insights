@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Pin patched minimatch tooling for frontend checks and enforce aggregate CI validation.
+
 ## [2026.11.2] - 2026-11-12
 
 ### Added
