@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Show read-only Network port inventory on switching nodes in the topology card. The topology snapshot schema is now v3 and uses the updated bundled card. [#498](https://github.com/tinkerologie/ha-unifi-insights/issues/498)
+
+- Add Site Manager WAN diagnostics for Remote entries, with source timestamp expiry and per-site isolation. [#499](https://github.com/tinkerologie/ha-unifi-insights/issues/499)
+
 ### Fixed
 
 - Pin patched minimatch tooling for frontend checks and enforce aggregate CI validation.

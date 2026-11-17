@@ -17,6 +17,9 @@ import {
   type TopologyEdge,
   type TopologyIssue,
   type TopologyNode,
+  type PortEntry,
+  type PortInventory,
+  type PortPoe,
   type TopologyTruncation,
   type TopologyUnresolved,
 } from "../src/contract";
@@ -41,8 +44,34 @@ it("supports additive timeline v2 metadata and older snapshots", () => {
 });
 
 type FieldSpec =
-  | { kind: "string" | "number"; optional?: true }
-  | { kind: "enum"; values: readonly string[]; optional?: true };
+  | { kind: "string" | "number" | "boolean"; optional?: true }
+  | { kind: "enum"; values: readonly string[]; optional?: true }
+  | {
+      kind: "object" | "array";
+      fields: Record<string, FieldSpec>;
+      optional?: true;
+    };
+
+const POE_SPEC = {
+  enabled: { kind: "boolean", optional: true },
+  state: { kind: "string", optional: true },
+  standard: { kind: "string", optional: true },
+  type: { kind: "number", optional: true },
+} satisfies Record<keyof PortPoe, FieldSpec>;
+
+const PORT_SPEC = {
+  idx: { kind: "number" },
+  connector: { kind: "string", optional: true },
+  state: { kind: "string", optional: true },
+  speed_mbps: { kind: "number", optional: true },
+  max_speed_mbps: { kind: "number", optional: true },
+  poe: { kind: "object", fields: POE_SPEC, optional: true },
+} satisfies Record<keyof PortEntry, FieldSpec>;
+
+const PORT_INVENTORY_SPEC = {
+  status: { kind: "enum", values: ["ok", "unknown", "stale", "unavailable"] },
+  ports: { kind: "array", fields: PORT_SPEC, optional: true },
+} satisfies Record<keyof PortInventory, FieldSpec>;
 
 // `satisfies Record<keyof X, FieldSpec>` makes TypeScript reject a spec that
 // misses or invents a field, so these specs cannot drift from contract.ts.
@@ -56,6 +85,11 @@ const NODE_SPEC = {
   connection: { kind: "enum", values: CLIENT_CONNECTIONS, optional: true },
   vlan_id: { kind: "number", optional: true },
   network_name: { kind: "string", optional: true },
+  port_inventory: {
+    kind: "object",
+    fields: PORT_INVENTORY_SPEC,
+    optional: true,
+  },
 } satisfies Record<keyof TopologyNode, FieldSpec>;
 
 const EDGE_SPEC = {
@@ -122,6 +156,13 @@ function checkObject(
       expect(field.optional, `${where}: missing "${key}"`).toBe(true);
     } else if (field.kind === "enum") {
       expect(field.values, `${where}.${key}`).toContain(v);
+    } else if (field.kind === "object") {
+      checkObject(v, field.fields, `${where}.${key}`);
+    } else if (field.kind === "array") {
+      expect(Array.isArray(v), `${where}.${key}`).toBe(true);
+      (v as unknown[]).forEach((item, i) =>
+        checkObject(item, field.fields, `${where}.${key}[${i}]`),
+      );
     } else {
       expect(typeof v, `${where}.${key}`).toBe(field.kind);
     }

@@ -123,7 +123,22 @@ async def test_site_manager_diagnostics_exclude_raw_cloud_snapshot(
         },
         "sites": {},
         "devices": {},
-        "isp_metrics": {},
+        "isp_metrics": {
+            "secret-host": {
+                "private-site": {
+                    "metric_time": "2026-11-17T04:00:00Z",
+                    "wan": {"packetLoss": 0},
+                    "isp": {"name": "private-provider", "asn": "private-asn"},
+                }
+            },
+            "foreign-host": {
+                "foreign-site": {
+                    "metric_time": "2026-11-17T04:00:00Z",
+                    "wan": {"packetLoss": 4},
+                    "isp": {"name": "foreign-provider", "asn": "foreign-asn"},
+                }
+            },
+        },
         "sd_wan_configs": {},
         "collections": {},
         "last_attempt": None,
@@ -141,6 +156,16 @@ async def test_site_manager_diagnostics_exclude_raw_cloud_snapshot(
     assert "site_manager" not in diagnostics["data"]
     assert "secret-host" not in repr(diagnostics)
     assert "private.example.test" not in repr(diagnostics)
+    for private in (
+        "private-site",
+        "private-provider",
+        "private-asn",
+        "foreign-host",
+        "foreign-site",
+        "foreign-provider",
+        "foreign-asn",
+    ):
+        assert private not in repr(diagnostics)
 
 
 async def test_diagnostics_includes_websocket_health(

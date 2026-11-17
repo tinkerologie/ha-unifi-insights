@@ -380,7 +380,13 @@ def _snapshot_inputs(
     runtime = entry.runtime_data
     data = runtime.coordinator.data
     per_site = []
-    for section in ("devices", "clients", "client_links", NETWORK_FACTS_KEY):
+    for section in (
+        "devices",
+        "clients",
+        "client_links",
+        "port_details",
+        NETWORK_FACTS_KEY,
+    ):
         by_site = data.get(section)
         per_site.append(by_site.get(site_id) if isinstance(by_site, dict) else None)
     return (

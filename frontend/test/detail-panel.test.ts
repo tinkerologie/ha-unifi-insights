@@ -39,6 +39,36 @@ it("shows a device with its uplink and an Open device link", async () => {
   expect(location.pathname).toBe("/config/devices/device/reg-core");
 });
 
+it("discloses labelled official ports and resets when selection changes", async () => {
+  const el = await panel("dev:uuid-core");
+  const toggle = () =>
+    el.shadowRoot!.querySelector<HTMLButtonElement>(".port-toggle")!;
+  expect(toggle().getAttribute("aria-expanded")).toBe("false");
+  expect(toggle().textContent).toContain("2 ports, 1 up");
+  toggle().click();
+  await el.updateComplete;
+  expect(toggle().getAttribute("aria-expanded")).toBe("true");
+  expect(
+    [...el.shadowRoot!.querySelectorAll(".port-grid li")].map((item) =>
+      item.getAttribute("aria-label"),
+    ),
+  ).toEqual([
+    "Port 1, RJ45, Down, 0 Mbps, PoE disabled",
+    "Port 12, SFP+, Up, 10 Gbps, Maximum 10 Gbps",
+  ]);
+  el.model = fixtureModel();
+  await el.updateComplete;
+  expect(toggle().getAttribute("aria-expanded")).toBe("true");
+  el.selectedId = "dev:uuid-pdu";
+  await el.updateComplete;
+  expect(el.shadowRoot!.querySelector(".port-section")?.textContent).toContain(
+    "Port inventory is unavailable.",
+  );
+  el.selectedId = "dev:uuid-core";
+  await el.updateComplete;
+  expect(toggle().getAttribute("aria-expanded")).toBe("false");
+});
+
 it("shows PoE draw on a powered link", async () => {
   expect(rows(await panel("dev:uuid-ap"))).toMatchObject({ PoE: "12.3 W" });
 });

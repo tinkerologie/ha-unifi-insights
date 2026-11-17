@@ -8,7 +8,7 @@
  * test/contract.test.ts, so a contract change fails CI on both sides.
  */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** Timeline v2 adds event-local classifications; v1 snapshots omit them. */
 export const TIMELINE_VERSION = 2;
@@ -57,6 +57,27 @@ export const UNRESOLVED_REASONS = [
 ] as const;
 export type UnresolvedReason = (typeof UNRESOLVED_REASONS)[number];
 
+export interface PortPoe {
+  enabled?: boolean;
+  state?: string;
+  standard?: string;
+  type?: number;
+}
+
+export interface PortEntry {
+  idx: number;
+  connector?: string;
+  state?: string;
+  max_speed_mbps?: number;
+  speed_mbps?: number;
+  poe?: PortPoe;
+}
+
+export interface PortInventory {
+  status: "ok" | "unknown" | "stale" | "unavailable";
+  ports?: PortEntry[];
+}
+
 /**
  * A device, client or gateway WAN connection. `id` is opaque: `dev:`/`cli:`
  * plus the v1 UUID, or an HMAC for records keyed only by MAC; a WAN is
@@ -75,6 +96,7 @@ export interface TopologyNode {
   /** Clients on a VLAN-tagged network only. */
   vlan_id?: number;
   network_name?: string;
+  port_inventory?: PortInventory;
 }
 
 /**

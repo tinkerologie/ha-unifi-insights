@@ -37,6 +37,7 @@ from custom_components.unifi_insights.client_wake import (
     history_network_hint,
 )
 from custom_components.unifi_insights.const import (
+    DEVICE_DETAILS_CONCURRENCY,
     DOMAIN,
     SCAN_INTERVAL_DEVICE,
     SCAN_INTERVAL_DEVICE_DETAILS,
@@ -53,6 +54,7 @@ from custom_components.unifi_insights.data_transforms import (
     is_network_led_override,
     normalize_legacy_storage,
     normalize_legacy_wans,
+    normalize_official_ports,
 )
 from custom_components.unifi_insights.topology import (
     first_present,
@@ -79,6 +81,7 @@ if TYPE_CHECKING:
     from custom_components.unifi_insights.data_transforms import (
         NetworkLedOverride,
         NetworkPortFacts,
+        OfficialPortDetails,
     )
 
     from .config import UnifiInsightsConfigCoordinator
@@ -101,6 +104,7 @@ class SiteProcessResult(NamedTuple):
     raw_outlet_arrays: dict[str, dict[str, Any]]
     # Access point radio settings by device ID, as published to the facade.
     radio_details: dict[str, dict[str, Any]]
+    port_details: dict[str, OfficialPortDetails]
     legacy_macs: LegacyMacs = None
 
 
@@ -878,6 +882,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
         # (#454). A failed attempt is recorded too, so retries follow the
         # details interval rather than the faster statistics poll.
         self._radio_details_last_attempt: dict[tuple[str, str], float] = {}
+        self._details_semaphore = asyncio.Semaphore(DEVICE_DETAILS_CONCURRENCY)
         # Successful outlet writes the controller has not reported back yet
         # (#376), committed at snapshot publication.
         self._pending_outlet_writes: dict[PendingOutletKey, PendingOutletWrite] = {}
@@ -895,6 +900,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             # Access point radio settings: site_id -> {device_id: {radios,
             # available}}. Entities read it through data_transforms.
             "radio_details": {},
+            "port_details": {},
             # site_id -> SiteNetworkFacts, rebuilt (never mutated) per refresh
             NETWORK_FACTS_KEY: {},
             "last_update": None,
@@ -1578,6 +1584,10 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             or not _has_feature(device.get("features"), "accessPoint")
         ):
             return False
+        return self._details_due(site_id, device_id)
+
+    def _details_due(self, site_id: str, device_id: str) -> bool:
+        """Use one rate limit per official device details endpoint."""
         last_attempt = self._radio_details_last_attempt.get((site_id, device_id))
         if last_attempt is None:
             return True
@@ -1586,52 +1596,92 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             >= SCAN_INTERVAL_DEVICE_DETAILS.total_seconds()
         )
 
-    async def _fetch_radio_details(
-        self, site_id: str, device: dict[str, Any]
-    ) -> tuple[str, dict[str, Any] | None]:
-        """
-        Return a device's radio settings record, fetching it when due.
+    def _has_official_port_details(
+        self,
+        site_id: str,
+        device: dict[str, Any],
+        device_id: str,
+        source: Literal["v1", "legacy"],
+    ) -> bool:
+        """Require switching capability and an official ID for the current site."""
+        if (
+            not device_id
+            or device_id_is_mac(device)
+            or not _has_feature(device.get("features"), "switching")
+        ):
+            return False
+        if source == "v1":
+            return True
+        mac = self._normalize_mac(device.get("macAddress") or device.get("mac"))
+        return bool(
+            mac and self._inventory_state.aliases.get(site_id, {}).get(mac) == device_id
+        )
 
-        Runs beside the device's statistics call, never inside its error
-        handling: a failed details request must not affect step-1 sensors or
-        fail the refresh. A success publishes only the radios and an
-        ``available`` flag. Any failure (403/404 unsupported responses, 429,
-        timeouts, connection, response and validation errors) keeps the
-        previous radios and marks them unavailable; when there is no previous
-        record, none is published. Either way the attempt is timestamped, so
-        the retry waits the details interval. A non-unsupported authentication
-        error (401) is re-raised so the revoked key starts reauth.
-        """
-        device_id: str = device.get("id", "")
-        if not self._radio_details_due(site_id, device, device_id):
-            return device_id, self._published_radio_details(site_id, device_id)
+    async def _fetch_device_details(
+        self, site_id: str, device: dict[str, Any], source: Literal["v1", "legacy"]
+    ) -> tuple[str, dict[str, Any] | None, OfficialPortDetails | None]:
+        """Poll one official response for both radio settings and port inventory."""
+        device_id: str = device["id"]
+        radio = self._published_radio_details(site_id, device_id)
+        ports: OfficialPortDetails | None = None
+        port_eligible = self._has_official_port_details(
+            site_id, device, device_id, source
+        )
+        if port_eligible:
+            ports = self.data.get("port_details", {}).get(site_id, {}).get(device_id)
+        radio_due = self._radio_details_due(site_id, device, device_id)
+        ports_due = port_eligible and self._details_due(site_id, device_id)
+        if not (radio_due or ports_due):
+            return device_id, radio, ports
 
-        self._radio_details_last_attempt[(site_id, device_id)] = time.monotonic()
         try:
-            model = await self.network_client.devices.get(site_id, device_id)
+            # Bound optional I/O and semaphore wait to one device poll interval.
+            async with (
+                asyncio.timeout(SCAN_INTERVAL_DEVICE.total_seconds()),
+                self._details_semaphore,
+            ):
+                self._radio_details_last_attempt[(site_id, device_id)] = (
+                    time.monotonic()
+                )
+                model = await self.network_client.devices.get(site_id, device_id)
         except Exception as err:
             if isinstance(err, UniFiAuthenticationError) and not (
                 self._is_unsupported_response(err)
             ):
                 raise
-            _LOGGER.debug(
-                "Radio details not available for device %s (%s): %s",
-                device.get("name", device_id),
-                device_id,
-                err,
-            )
-            previous = self._published_radio_details(site_id, device_id)
-            return device_id, (
-                None if previous is None else {**previous, "available": False}
-            )
+            _LOGGER.debug("Network device details unavailable (%s)", type(err).__name__)
+            if radio_due and radio is not None:
+                radio = {**radio, "available": False}
+            if ports_due:
+                ports = self._unavailable_port_details(ports)
+            return device_id, radio, ports
 
-        details = self._model_to_dict(model) if model else {}
-        interfaces = details.get("interfaces")
-        radios = interfaces.get("radios") if isinstance(interfaces, dict) else None
-        return device_id, {
-            "radios": radios if isinstance(radios, list) else [],
-            "available": True,
-        }
+        if radio_due:
+            details = self._model_to_dict(model) if model else {}
+            interfaces = details.get("interfaces")
+            radios = interfaces.get("radios") if isinstance(interfaces, dict) else None
+            radio = {
+                "radios": radios if isinstance(radios, list) else [],
+                "available": True,
+            }
+        if ports_due:
+            try:
+                ports = normalize_official_ports(
+                    model.model_dump(by_alias=True, exclude_unset=True) if model else {}
+                )
+            except Exception as err:
+                _LOGGER.debug("Invalid Network port details (%s)", type(err).__name__)
+                ports = self._unavailable_port_details(ports)
+        return device_id, radio, ports
+
+    @staticmethod
+    def _unavailable_port_details(
+        previous: OfficialPortDetails | None,
+    ) -> OfficialPortDetails:
+        """Mark an optional read failure without discarding known ports."""
+        if previous is None:
+            return {"reported": False, "available": False}
+        return {**previous, "available": False}
 
     def _published_radio_details(
         self, site_id: str, device_id: str
@@ -1883,13 +1933,20 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             )
             for device in devices
         ]
-        # Radio settings are fetched for due access points beside the
-        # statistics, not after them, so a slow details call delays neither the
-        # other devices nor the step-1 sensors.
-        radio_tasks = [self._fetch_radio_details(site_id, device) for device in devices]
-        results, radio_results = await asyncio.gather(
+        # One details request per device serves both optional projections.
+        detail_devices = {
+            device["id"]: device
+            for device in devices
+            if isinstance(device.get("id"), str) and device["id"]
+        }
+        results, detail_results = await asyncio.gather(
             asyncio.gather(*tasks),
-            asyncio.gather(*radio_tasks),
+            asyncio.gather(
+                *(
+                    self._fetch_device_details(site_id, device, source)
+                    for device in detail_devices.values()
+                )
+            ),
         )
 
         # Organize results
@@ -1906,7 +1963,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
 
         radio_details: dict[str, dict[str, Any]] = {
             radio_device_id: radio_record
-            for radio_device_id, radio_record in radio_results
+            for radio_device_id, radio_record, _ in detail_results
             if radio_device_id and isinstance(radio_record, dict)
         }
 
@@ -1918,6 +1975,11 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             device_macs=device_macs,
             raw_outlet_arrays=raw_outlet_arrays,
             radio_details=radio_details,
+            port_details={
+                device_id: ports
+                for device_id, _, ports in detail_results
+                if ports is not None
+            },
             legacy_macs=legacy_macs,
         )
 
@@ -1938,7 +2000,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             sections: dict[str, dict[str, Any]] = {
                 key: {
                     site_id: value
-                    for site_id, value in self.data[key].items()
+                    for site_id, value in self.data.get(key, {}).items()
                     if site_id in site_ids
                 }
                 for key in (
@@ -1947,6 +2009,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                     "clients",
                     "vpn_connections",
                     "radio_details",
+                    "port_details",
                     NETWORK_FACTS_KEY,
                 )
             }
@@ -2071,6 +2134,7 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 dev_macs,
                 raw_outlet_arrays,
                 radio_details,
+                port_details,
                 legacy_macs,
             ), vpn in zip(site_ids, site_results, vpn_results, strict=True):
                 # Judge the raw controller record before the pending overlay
@@ -2098,6 +2162,9 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
                 sections["stats"][site_id] = stats_dict
                 sections["clients"][site_id] = clients_dict
                 sections["radio_details"][site_id] = radio_details
+                previous_ports = sections["port_details"].get(site_id)
+                if previous_ports != port_details:
+                    sections["port_details"][site_id] = port_details
                 inventory_evidence[site_id] = NetworkInventoryEvidence(
                     source=source,
                     published_ids=frozenset(devices_dict),

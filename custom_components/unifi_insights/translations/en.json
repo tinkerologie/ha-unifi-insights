@@ -405,6 +405,33 @@
       }
     },
     "sensor": {
+      "isp_average_latency": {
+        "name": "Average WAN latency"
+      },
+      "isp_maximum_latency": {
+        "name": "Maximum WAN latency"
+      },
+      "isp_packet_loss": {
+        "name": "WAN packet loss"
+      },
+      "isp_download": {
+        "name": "WAN download rate"
+      },
+      "isp_upload": {
+        "name": "WAN upload rate"
+      },
+      "isp_uptime": {
+        "name": "WAN uptime"
+      },
+      "isp_downtime": {
+        "name": "WAN downtime"
+      },
+      "isp_sample_time": {
+        "name": "WAN sample time"
+      },
+      "isp_provider": {
+        "name": "Internet service provider"
+      },
       "cpu_usage": {
         "name": "CPU Usage"
       },

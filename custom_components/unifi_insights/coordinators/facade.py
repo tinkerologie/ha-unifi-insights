@@ -119,6 +119,7 @@ class FacadeData(TypedDict):
     vpn_connections: ReadOnly[Mapping[str, Any]]
     # Access point radio settings: site ID -> device ID -> {radios, available}
     radio_details: ReadOnly[SiteSection]
+    port_details: ReadOnly[SiteSection]
     # None until the device coordinator publishes it; readers then build the
     # facts from the raw devices and stats.
     network_facts: ReadOnly[Mapping[str, SiteNetworkFacts] | None]
@@ -159,6 +160,7 @@ _DEVICE_SECTIONS: Final = (
     "stats",
     "vpn_connections",
     "radio_details",
+    "port_details",
 )
 
 # The Protect data of a console without a Protect coordinator. Built once, so

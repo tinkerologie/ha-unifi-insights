@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Final, Literal, TypeGuard, TypeIs
+from typing import Any, Final, Literal, NotRequired, TypedDict, TypeGuard, TypeIs
 
 from homeassistant.util import dt as dt_util
 
@@ -398,6 +398,89 @@ def _port_facts(port: Mapping[str, Any]) -> NetworkPortFacts:
         record=MappingProxyType(dict(port)),
         is_uplink=get_field(port, "is_uplink", "isUplink") is True,
     )
+
+
+class OfficialPortPoe(TypedDict, total=False):
+    """Official Power over Ethernet fields safe to expose in topology."""
+
+    enabled: bool
+    state: str
+    standard: str
+    type: int
+
+
+class OfficialPort(TypedDict):
+    """Official Network port information in dashboard form."""
+
+    idx: int
+    connector: NotRequired[str]
+    state: NotRequired[str]
+    max_speed_mbps: NotRequired[int]
+    speed_mbps: NotRequired[int]
+    poe: NotRequired[OfficialPortPoe]
+
+
+class OfficialPortDetails(TypedDict):
+    """Collection status and optional last-known port inventory."""
+
+    available: bool
+    reported: bool
+    ports: NotRequired[tuple[OfficialPort, ...]]
+
+
+_PORT_CONNECTORS = frozenset({"RJ45", "SFP", "SFPPLUS", "SFP28", "QSFP28"})
+_PORT_STATES = frozenset({"UP", "DOWN", "UNKNOWN"})
+_PORT_POE_STATES = _PORT_STATES | {"LIMITED"}
+_PORT_POE_STANDARDS = frozenset({"802.3af", "802.3at", "802.3bt"})
+
+
+def _port_label(value: object, allowed: frozenset[str]) -> TypeGuard[str]:
+    """Keep controller labels within the public Network API vocabulary."""
+    return isinstance(value, str) and value in allowed
+
+
+def normalize_official_ports(
+    details: Mapping[str, Any],
+) -> OfficialPortDetails:
+    """Keep only documented port fields and distinguish missing from empty."""
+    interfaces = details.get("interfaces")
+    ports = interfaces.get("ports") if isinstance(interfaces, Mapping) else None
+    if not isinstance(ports, list):
+        return {"available": True, "reported": False}
+    by_index: dict[int, OfficialPort] = {}
+    for row in ports:
+        if not isinstance(row, Mapping):
+            continue
+        idx = row.get("idx")
+        if type(idx) is not int or idx < 1 or idx in by_index:
+            continue
+        port: OfficialPort = {"idx": idx}
+        if _port_label(connector := row.get("connector"), _PORT_CONNECTORS):
+            port["connector"] = connector
+        if _port_label(state := row.get("state"), _PORT_STATES):
+            port["state"] = state
+        if type(max_speed := row.get("maxSpeedMbps")) is int and max_speed >= 0:
+            port["max_speed_mbps"] = max_speed
+        if type(speed := row.get("speedMbps")) is int and speed >= 0:
+            port["speed_mbps"] = speed
+        if isinstance(raw_poe := row.get("poe"), Mapping):
+            poe: OfficialPortPoe = {}
+            if isinstance(enabled := raw_poe.get("enabled"), bool):
+                poe["enabled"] = enabled
+            if _port_label(poe_state := raw_poe.get("state"), _PORT_POE_STATES):
+                poe["state"] = poe_state
+            if _port_label(standard := raw_poe.get("standard"), _PORT_POE_STANDARDS):
+                poe["standard"] = standard
+            if type(poe_type := raw_poe.get("type")) is int:
+                poe["type"] = poe_type
+            if poe:
+                port["poe"] = poe
+        by_index[idx] = port
+    return {
+        "available": True,
+        "reported": True,
+        "ports": tuple(port for _, port in sorted(by_index.items())),
+    }
 
 
 def device_ports(device: Mapping[str, Any]) -> tuple[NetworkPortFacts, ...]:
@@ -1895,7 +1978,7 @@ def fullest_persistent_storage_mount(
 THREAD_DEVICE_TYPES = (DEVICE_TYPE_LINK_STATION, DEVICE_TYPE_ALARM_HUB)
 
 
-def nested_dict(data: dict[str, Any], *keys: str) -> dict[str, Any] | None:
+def nested_dict(data: Mapping[str, Any], *keys: str) -> dict[str, Any] | None:
     """
     Follow ``keys`` through nested dicts, or return None.
 
@@ -1905,7 +1988,7 @@ def nested_dict(data: dict[str, Any], *keys: str) -> dict[str, Any] | None:
     """
     value: Any = data
     for key in keys:
-        value = value.get(key) if isinstance(value, dict) else None
+        value = value.get(key) if isinstance(value, Mapping) else None
     return value if isinstance(value, dict) else None
 
 

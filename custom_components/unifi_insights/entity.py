@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from homeassistant.core import callback
@@ -15,7 +16,9 @@ from homeassistant.helpers.device_registry import (
     DeviceInfo,
 )
 from homeassistant.helpers.entity import EntityDescription
+from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DEVICE_TYPE_ALARM_HUB,
@@ -30,6 +33,7 @@ from .const import (
     MANUFACTURER,
     MOBILITY_DEVICE_PREFIX,
     MOBILITY_WORKSPACE_PREFIX,
+    SITE_MANAGER_ISP_STALE_AFTER,
 )
 from .coordinators import UnifiInsightsFacadeCoordinator
 from .coordinators.access import UnifiInsightsAccessCoordinator
@@ -48,6 +52,7 @@ from .data_transforms import (
     first_not_none,
     get_field,
     get_site_gateway_id,
+    nested_dict,
     network_device,
     network_device_stats,
     normalize_mac,
@@ -580,6 +585,137 @@ class UnifiSiteEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
         self._attr_device_info = DeviceInfo(
             **build_site_device_info(coordinator.data, site_id)  # type: ignore[typeddict-item, unused-ignore]
         )
+
+
+class UnifiSiteManagerIspEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator]):
+    """Base for WAN diagnostics belonging to the entry's cloud site."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: UnifiInsightsFacadeCoordinator,
+        console_id: str,
+        site_id: str,
+        *,
+        description: EntityDescription,
+        unique_id: str,
+        device_id: str,
+    ) -> None:
+        """Attach the entity to its Site Manager service device."""
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._console_id = console_id
+        self._site_id = site_id
+        self._expire_unsub: Callable[[], None] | None = None
+        self._attr_unique_id = unique_id
+        site = (
+            nested_dict(
+                self.coordinator.data.get("site_manager") or {}, "sites", site_id
+            )
+            or {}
+        )
+        name = (nested_dict(site, "meta") or {}).get("name", site.get("name"))
+        if (
+            site.get("hostId") != console_id
+            or not isinstance(name, str)
+            or not name.strip()
+        ):
+            name = site_id
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, device_id)},
+            name=f"UniFi Site Manager ({name})",
+            manufacturer=MANUFACTURER,
+            entry_type=DeviceEntryType.SERVICE,
+        )
+
+    @property
+    def _sample(self) -> dict[str, Any]:
+        """Read only the sample for this entity's console and cloud site."""
+        return (
+            nested_dict(
+                self.coordinator.data.get("site_manager") or {},
+                "isp_metrics",
+                self._console_id,
+                self._site_id,
+            )
+            or {}
+        )
+
+    @property
+    def _sample_time(self) -> datetime | None:
+        """Return the source timestamp only when it includes a timezone."""
+        value = self._sample.get("metric_time")
+        if isinstance(value, str):
+            try:
+                timestamp = datetime.fromisoformat(value)
+            except ValueError:
+                return None
+            if timestamp.tzinfo is not None:
+                return timestamp
+        return None
+
+    @property
+    def _expiry(self) -> datetime | None:
+        """Return the deadline when the collection is healthy."""
+        collection = (
+            nested_dict(
+                self.coordinator.data.get("site_manager") or {},
+                "collections",
+                "isp_metrics",
+            )
+            or {}
+        )
+        if collection.get("available") is True and (stamp := self._sample_time):
+            return stamp + SITE_MANAGER_ISP_STALE_AFTER
+        return None
+
+    @property
+    def available(self) -> bool:
+        """WAN diagnostics depend on the cloud collection and its sample age."""
+        return (expiry := self._expiry) is not None and dt_util.utcnow() < expiry
+
+    def _cancel_expiry(self) -> None:
+        """Cancel the outstanding expiry callback."""
+        if self._expire_unsub is not None:
+            self._expire_unsub()
+            self._expire_unsub = None
+
+    @callback
+    def _expire(self, _now: datetime) -> None:
+        """Publish unavailability at the sample deadline."""
+        self._expire_unsub = None
+        self.async_write_ha_state()
+
+    def _schedule_expiry(self) -> None:
+        """Track the current healthy sample's deadline."""
+        self._cancel_expiry()
+        if (expiry := self._expiry) is not None and expiry > dt_util.utcnow():
+            self._expire_unsub = async_track_point_in_time(
+                self.hass, self._expire, expiry
+            )
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to updates and schedule the initial deadline."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self._cancel_expiry)
+        self._schedule_expiry()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Cancel the callback before removing the entity."""
+        self._cancel_expiry()
+        await super().async_will_remove_from_hass()
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Keep subscriptions when the registry changes the entity ID."""
+        async_delegate_entity_id_changed(super(), old_entity_id)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Reschedule expiry and publish the latest coordinator state."""
+        self._schedule_expiry()
+        super()._handle_coordinator_update()
 
 
 __all__ = [

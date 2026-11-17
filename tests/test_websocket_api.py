@@ -2908,3 +2908,63 @@ async def test_subscriptions_rebuild_when_only_network_facts_change(
         facade.async_update_listeners()
         await _assert_no_event(client, 3)
         assert spy.call_count == 1
+
+
+async def test_topology_subscription_tracks_selected_sites_port_details(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    hass_ws_client,
+) -> None:
+    """Only a changed selected-site port projection produces a new revision."""
+    data = _seed(init_integration)
+    devices = data["devices"]
+    site_devices = devices[SITE]
+    _publish(
+        init_integration,
+        devices={
+            **devices,
+            SITE: {
+                **site_devices,
+                "uuid-gw": {**site_devices["uuid-gw"], "features": ["switching"]},
+            },
+        },
+    )
+    facade = init_integration.runtime_data.coordinator
+    facade.async_update_listeners()
+    await hass.async_block_till_done()
+    client = await hass_ws_client(hass)
+    await client.send_json(
+        {
+            "id": 1,
+            "type": "unifi_insights/topology/subscribe",
+            "entry_id": init_integration.entry_id,
+            "site_id": SITE,
+        }
+    )
+    assert (await client.receive_json())["success"]
+    initial = (await client.receive_json())["event"]
+
+    ports = {
+        "uuid-gw": {
+            "available": True,
+            "reported": True,
+            "ports": ({"idx": 17, "speed_mbps": 0, "poe": {"enabled": False}},),
+        }
+    }
+    _publish(init_integration, port_details={"another-site": ports})
+    facade.async_update_listeners()
+    await _assert_no_event(client, 2)
+
+    _publish(init_integration, port_details={SITE: ports})
+    facade.async_update_listeners()
+    changed = (await client.receive_json())["event"]
+    assert initial["revision"] != changed["revision"]
+    gateway = next(node for node in changed["nodes"] if node["id"] == "dev:uuid-gw")
+    assert gateway["port_inventory"] == {
+        "status": "ok",
+        "ports": [{"idx": 17, "speed_mbps": 0, "poe": {"enabled": False}}],
+    }
+
+    _publish(init_integration, port_details={SITE: dict(ports)})
+    facade.async_update_listeners()
+    await _assert_no_event(client, 3)

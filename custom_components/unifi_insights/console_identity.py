@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from homeassistant.const import CONF_API_KEY
 from homeassistant.helpers import device_registry as dr
@@ -100,6 +101,20 @@ def resolve_console_namespace(entry: ConfigEntry) -> str | None:
     return normalize_console_namespace(
         entry.data.get(CONF_CONSOLE_ID),
         credentials=(entry.data.get(CONF_API_KEY),),
+    )
+
+
+def build_cloud_site_id(
+    entry: ConfigEntry, site_id: str, metric: str | None = None
+) -> str | None:
+    """Build a stable identifier for a Site Manager device or sensor."""
+    host_id = entry.data.get(CONF_CONSOLE_ID)
+    if not isinstance(host_id, str) or resolve_console_namespace(entry) is None:
+        return None
+    # Site Manager lookup and config-entry identity both use exact host IDs.
+    parts = (host_id, site_id) if metric is None else (host_id, site_id, metric)
+    return "unifi_insights_site_manager:" + ":".join(
+        quote(part, safe="") for part in parts
     )
 
 

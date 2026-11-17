@@ -27,7 +27,7 @@ from unittest.mock import MagicMock, NonCallableMagicMock, create_autospec
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
 from pytest_homeassistant.common import MockConfigEntry
 from unifi_official_api.network import UniFiNetworkClient
-from unifi_official_api.network.models.device import LegacyPortMetrics
+from unifi_official_api.network.models.device import Device, LegacyPortMetrics
 from unifi_official_api.network.models.stats import StatisticsSource
 from unifi_official_api.protect import UniFiProtectClient
 
@@ -154,6 +154,7 @@ def seed_network_client(client: NonCallableMagicMock) -> None:
         {"name": "default", "desc": SAMPLE_SITE["desc"]}
     ]
     client.devices.get_all.return_value = [copy.deepcopy(SAMPLE_PDU_DEVICE)]
+    client.devices.get.return_value = Device(id=PDU_ID)
     client.devices.get_legacy_site_devices.return_value = [
         copy.deepcopy(SAMPLE_PDU_LEGACY_DEVICE)
     ]
