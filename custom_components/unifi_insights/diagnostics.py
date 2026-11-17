@@ -924,6 +924,7 @@ async def async_get_config_entry_diagnostics(
     # The read model repeats devices and stats as frozen records, which the
     # MAC pass cannot walk into; the raw sections already carry it all.
     facade_data.pop(NETWORK_FACTS_KEY, None)
+    facade_data.pop("port_details", None)
     raw_status = facade_data.pop("internet_activity_status", None)
     innerspace_snapshot = facade_data.pop("innerspace", None)
     innerspace_coord = getattr(data, "innerspace_coordinator", None)

@@ -7,6 +7,8 @@ import logging
 from collections.abc import Callable, Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
+from datetime import datetime
+from math import isfinite
 from typing import TYPE_CHECKING, Any, Final, Literal, TypeIs, cast
 
 from homeassistant.components.sensor import (
@@ -35,7 +37,11 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import CarrierFabricData
-from .console_identity import async_migrate_site_entity, resolve_console_namespace
+from .console_identity import (
+    async_migrate_site_entity,
+    build_cloud_site_id,
+    resolve_console_namespace,
+)
 from .const import (
     ATTR_ARM_PROFILE_ID,
     ATTR_NIGHT_PROFILE_ID,
@@ -57,7 +63,10 @@ from .const import (
     ATTR_THREAD_EXTENDED_PAN_ID,
     ATTR_THREAD_NETWORK_NAME,
     ATTR_THREAD_PAN_ID,
+    CONF_CONNECTION_TYPE,
+    CONF_CONSOLE_ID,
     CONF_TRACK_SUBSCRIBERS,
+    CONNECTION_TYPE_REMOTE,
     DEFAULT_TRACK_SUBSCRIBERS,
     DEVICE_TYPE_FOB,
     DEVICE_TYPE_NVR,
@@ -67,6 +76,7 @@ from .const import (
     MOBILITY_ROUTER_CONNECTED,
     MOBILITY_ROUTER_STATES,
     MOBILITY_WORKSPACE_PREFIX,
+    SITE_MANAGER_ISP_SAMPLE_PERIOD,
 )
 from .coordinators import UnifiInsightsFacadeCoordinator
 from .coordinators.mobility import UnifiInsightsMobilityCoordinator
@@ -120,6 +130,7 @@ from .entity import (
     UnifiMobilityRouterEntity,
     UnifiProtectEntity,
     UnifiSiteEntity,
+    UnifiSiteManagerIspEntity,
     async_add_mobility_router_entities,
     carrier_organisation_device_fields,
     device_has_feature,
@@ -1346,6 +1357,161 @@ def _is_carrier_fabric_sensor_entry(
     return isinstance(entry.runtime_data, CarrierFabricData)
 
 
+@dataclass(frozen=True, kw_only=True)
+class UnifiSiteManagerIspSensorEntityDescription(SensorEntityDescription):
+    """Metadata and source field for a Site Manager WAN sensor."""
+
+    source: str
+    entity_category: EntityCategory = EntityCategory.DIAGNOSTIC
+    entity_registry_enabled_default: bool = False
+
+
+SITE_MANAGER_ISP_SENSORS = (
+    UnifiSiteManagerIspSensorEntityDescription(
+        key="isp_average_latency",
+        translation_key="isp_average_latency",
+        source="avgLatency",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.MILLISECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=True,
+    ),
+    UnifiSiteManagerIspSensorEntityDescription(
+        key="isp_maximum_latency",
+        translation_key="isp_maximum_latency",
+        source="maxLatency",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.MILLISECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=True,
+    ),
+    UnifiSiteManagerIspSensorEntityDescription(
+        key="isp_download",
+        translation_key="isp_download",
+        source="download_kbps",
+        device_class=SensorDeviceClass.DATA_RATE,
+        native_unit_of_measurement=UnitOfDataRate.KILOBITS_PER_SECOND,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+        entity_registry_enabled_default=True,
+    ),
+    UnifiSiteManagerIspSensorEntityDescription(
+        key="isp_upload",
+        translation_key="isp_upload",
+        source="upload_kbps",
+        device_class=SensorDeviceClass.DATA_RATE,
+        native_unit_of_measurement=UnitOfDataRate.KILOBITS_PER_SECOND,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+        entity_registry_enabled_default=True,
+    ),
+    UnifiSiteManagerIspSensorEntityDescription(
+        key="isp_packet_loss",
+        translation_key="isp_packet_loss",
+        source="packetLoss",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=True,
+    ),
+    UnifiSiteManagerIspSensorEntityDescription(
+        key="isp_uptime",
+        translation_key="isp_uptime",
+        source="uptime",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    UnifiSiteManagerIspSensorEntityDescription(
+        key="isp_downtime",
+        translation_key="isp_downtime",
+        source="downtime",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    UnifiSiteManagerIspSensorEntityDescription(
+        key="isp_sample_time",
+        translation_key="isp_sample_time",
+        source="metric_time",
+        device_class=SensorDeviceClass.TIMESTAMP,
+    ),
+    UnifiSiteManagerIspSensorEntityDescription(
+        key="isp_provider",
+        translation_key="isp_provider",
+        source="isp",
+    ),
+)
+
+
+class UnifiSiteManagerIspSensor(UnifiSiteManagerIspEntity, SensorEntity):
+    """Expose one metric from the entry's latest Site Manager WAN sample."""
+
+    entity_description: UnifiSiteManagerIspSensorEntityDescription
+
+    @property
+    def native_value(self) -> datetime | int | float | str | None:
+        """Return a valid source value, including numeric zero."""
+        source = self.entity_description.source
+        if source == "metric_time":
+            return self._sample_time
+        if source == "isp":
+            name = (nested_dict(self._sample, "isp") or {}).get("name")
+            return name if isinstance(name, str) and name else None
+        value = (nested_dict(self._sample, "wan") or {}).get(source)
+        if type(value) is int or (isinstance(value, float) and isfinite(value)):
+            return value
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str] | None:
+        """Expose sample period or the provider's reported ASN."""
+        source = self.entity_description.source
+        if source == "isp":
+            asn = (nested_dict(self._sample, "isp") or {}).get("asn")
+            return {"isp_asn": asn} if isinstance(asn, str) and asn else None
+        if source != "metric_time":
+            return {"sample_period": SITE_MANAGER_ISP_SAMPLE_PERIOD}
+        return None
+
+
+def _discover_site_manager_isp_sensors(
+    coordinator: UnifiInsightsFacadeCoordinator,
+    entry: UnifiInsightsConfigEntry,
+    known_sensor_keys: set[tuple[Any, ...]],
+    entities: list[SensorEntity],
+) -> None:
+    """Discover reported WAN metrics for the exact Remote entry console."""
+    if entry.data.get(CONF_CONNECTION_TYPE) != CONNECTION_TYPE_REMOTE:
+        return
+    console_id = entry.data.get(CONF_CONSOLE_ID)
+    if not isinstance(console_id, str):
+        return
+    sites = nested_dict(
+        coordinator.data.get("site_manager") or {}, "isp_metrics", console_id
+    )
+    for site_id in sites or {}:
+        if (device_id := build_cloud_site_id(entry, site_id)) is None:
+            continue
+        for description in SITE_MANAGER_ISP_SENSORS:
+            key = ("site_manager_isp", site_id, description.key)
+            if key in known_sensor_keys:
+                continue
+            unique_id = build_cloud_site_id(entry, site_id, description.key)
+            if unique_id is None:
+                continue
+            entity = UnifiSiteManagerIspSensor(
+                coordinator,
+                console_id,
+                site_id,
+                description=description,
+                unique_id=unique_id,
+                device_id=device_id,
+            )
+            if entity._sample_time is not None and entity.native_value is not None:
+                known_sensor_keys.add(key)
+                entities.append(entity)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: UnifiInsightsConfigEntry | CarrierFabricConfigEntry,
@@ -1497,6 +1663,10 @@ async def async_setup_entry(
                             wifi_id=wifi_id,
                         )
                     )
+
+        _discover_site_manager_isp_sensors(
+            coordinator, config_entry, known_sensor_keys, entities
+        )
 
         # Add UniFi Protect sensors
         _discover_protect_sensors(coordinator, known_sensor_keys, entities)

@@ -111,8 +111,53 @@ def test_latest_isp_metrics_ignores_invalid_and_older_periods() -> None:
             "site": {
                 "metric_time": "2026-01-02T03:10:00+00:00",
                 "wan": {"avgLatency": 2},
+                "isp": {"name": "private ISP"},
             }
         }
+    }
+
+
+def test_isp_normalization_validates_period_and_identity() -> None:
+    """Retain only valid five-minute samples and privacy-scoped identity."""
+    now = datetime(2026, 11, 17, 4, tzinfo=UTC)
+
+    def row(host: str, site: str, stamp: datetime, **fields):
+        return {
+            "hostId": host,
+            "siteId": site,
+            "metricType": "5m",
+            "periods": [{"metricTime": stamp.isoformat(), "data": {"wan": fields}}],
+        }
+
+    assert _latest_isp_metrics(
+        [
+            {"hostId": "host", "siteId": "site", "periods": {}},
+            row(" ", "site", now, avgLatency=99),
+            row("host", "", now, avgLatency=99),
+            {**row("host", "site", now, avgLatency=99), "metricType": "1h"},
+            row("host", "site", now + timedelta(minutes=6), avgLatency=99),
+            row(
+                "host",
+                "site",
+                now,
+                avgLatency=0,
+                maxLatency=float("nan"),
+                packetLoss=float("inf"),
+                ispAsn=42,
+                ispName="  Provider  ",
+            ),
+            row("host", "site2", now, ispName="x" * 256, ispAsn=False),
+        ],
+        now,
+    ) == {
+        "host": {
+            "site": {
+                "metric_time": now.isoformat(),
+                "wan": {"avgLatency": 0},
+                "isp": {"name": "Provider", "asn": "42"},
+            },
+            "site2": {"metric_time": now.isoformat(), "wan": {}, "isp": {}},
+        },
     }
 
 
@@ -131,6 +176,7 @@ async def test_partial_failure_keeps_last_good_collection(
     }
     assert first["collections"]["sites"]["available"]
     metric_query = client.get_isp_metrics.call_args.kwargs
+    assert metric_query["metric_type"] == "5m"
     assert metric_query["end_timestamp"] - metric_query["begin_timestamp"] == (
         timedelta(hours=1)
     )
@@ -164,6 +210,38 @@ async def test_partial_failure_keeps_last_good_collection(
     recovered = await coordinator._async_update_data()
     assert recovered["collections"]["sites"]["available"] is True
     assert caplog.messages.count("Site Manager sites available again") == 1
+
+
+async def test_isp_poll_keeps_newest_then_clears_missing_sites(
+    hass: HomeAssistant,
+) -> None:
+    """Stale replies cannot roll back a sample and missing sites are cleared."""
+    client = _client()
+    coordinator = UnifiInsightsSiteManagerCoordinator(hass, client)
+    await coordinator.async_refresh()
+    first = coordinator.data["isp_metrics"]
+    periods = client.get_isp_metrics.return_value[0]["periods"]
+    client.get_isp_metrics.return_value[0]["periods"] = periods[:1]
+    await coordinator.async_refresh()
+    assert coordinator.data["isp_metrics"] == first
+
+    client.get_isp_metrics.side_effect = UniFiResponseError(
+        "private error", status_code=502
+    )
+    updated_at = coordinator.data["collections"]["isp_metrics"]["updated_at"]
+    await coordinator.async_refresh()
+    assert coordinator.data["isp_metrics"] == first
+    assert coordinator.data["collections"]["isp_metrics"] == {
+        "available": False,
+        "updated_at": updated_at,
+        "error": "UniFiResponseError",
+    }
+
+    client.get_isp_metrics.side_effect = None
+    client.get_isp_metrics.return_value = []
+    await coordinator.async_refresh()
+    assert coordinator.data["isp_metrics"] == {}
+    assert coordinator.data["collections"]["isp_metrics"]["available"] is True
 
 
 async def test_malformed_collection_keeps_last_good_data(hass: HomeAssistant) -> None:

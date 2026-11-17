@@ -130,10 +130,16 @@ SCAN_INTERVAL_DEVICE = timedelta(seconds=30)
 # attempt waits the same interval before it retries, so rate limiting or an
 # offline console is not hammered once per statistics poll (#454).
 SCAN_INTERVAL_DEVICE_DETAILS = timedelta(minutes=5)
+DEVICE_DETAILS_CONCURRENCY: Final = 4
 # Config coordinator - slow updates for sites, WiFi config (5 minutes)
 SCAN_INTERVAL_CONFIG = timedelta(minutes=5)
 SCAN_INTERVAL_INNERSPACE = timedelta(minutes=5)
 SCAN_INTERVAL_SITE_MANAGER = timedelta(minutes=10)
+SITE_MANAGER_ISP_DEVICE_PREFIX: Final = "unifi_insights_site_manager:"
+SITE_MANAGER_ISP_SAMPLE_PERIOD: Final = "5m"
+SITE_MANAGER_ISP_LOOKBACK: Final = timedelta(hours=1)
+SITE_MANAGER_ISP_STALE_AFTER: Final = SITE_MANAGER_ISP_LOOKBACK
+SITE_MANAGER_ISP_FUTURE_TOLERANCE: Final = timedelta(minutes=5)
 CARRIER_FABRIC_SCAN_INTERVAL = timedelta(minutes=5)
 CARRIER_FABRIC_REQUEST_TIMEOUT: Final = 30  # seconds
 # Mobility routers report usage and location slowly; keys without Mobility

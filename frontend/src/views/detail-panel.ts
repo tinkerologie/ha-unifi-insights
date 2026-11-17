@@ -8,7 +8,12 @@ import {
 } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import { copyText } from "../clipboard";
-import type { NodeDetails, TopologyNode } from "../contract";
+import type {
+  NodeDetails,
+  PortEntry,
+  PortInventory,
+  TopologyNode,
+} from "../contract";
 import {
   nodeActions,
   type NodeAction,
@@ -31,7 +36,9 @@ import type { UitNodeMenu } from "./node-menu";
 import {
   KIND_KEYS,
   MEDIUM_KEYS,
+  PORT_CONNECTORS,
   STATE_KEYS,
+  describePort,
   formatSpeed,
   stateKey,
   visualTitle,
@@ -62,6 +69,7 @@ export class UitDetailPanel extends LitElement {
     memberQuery: { state: true },
     modal: { state: true },
     copyStatus: { state: true },
+    portsExpanded: { state: true },
   };
 
   declare model?: GraphModel;
@@ -75,6 +83,9 @@ export class UitDetailPanel extends LitElement {
   declare narrow: boolean;
   declare memberQuery: string;
   declare modal: boolean;
+  declare portsExpanded: boolean;
+  private focusPorts = false;
+  private currentPorts?: PortInventory;
   declare copyStatus?: Status | undefined;
 
   /** Whether the current press began on the backdrop rather than inside the dialog. */
@@ -93,6 +104,7 @@ export class UitDetailPanel extends LitElement {
     this.narrow = false;
     this.memberQuery = "";
     this.modal = false;
+    this.portsExpanded = false;
   }
 
   override disconnectedCallback(): void {
@@ -107,7 +119,17 @@ export class UitDetailPanel extends LitElement {
   }
 
   protected override willUpdate(changed: PropertyValues<this>): void {
-    if (changed.has("selectedId")) this.memberQuery = "";
+    if (
+      changed.has("selectedId") ||
+      (changed.has("model") &&
+        (this.model?.snapshot.entry_id !==
+          changed.get("model")?.snapshot.entry_id ||
+          this.model?.snapshot.site_id !==
+            changed.get("model")?.snapshot.site_id))
+    ) {
+      this.memberQuery = "";
+      this.portsExpanded = false;
+    }
     const scope = JSON.stringify([
       this.model?.snapshot.entry_id,
       this.model?.snapshot.site_id,
@@ -134,13 +156,28 @@ export class UitDetailPanel extends LitElement {
 
   protected override updated(changed: PropertyValues<this>): void {
     if (!this.isConnected) return;
+    const inventory =
+      this.selectedId === undefined
+        ? undefined
+        : this.model?.nodes.get(this.selectedId)?.port_inventory;
+    const expandedInventoryChanged =
+      this.portsExpanded && this.currentPorts !== inventory;
+    this.currentPorts = inventory;
     const dialog = this.renderRoot.querySelector("dialog");
     if (dialog) {
       if (!dialog.open) dialog.showModal();
+      if (this.focusPorts) {
+        this.renderRoot
+          .querySelector<HTMLButtonElement>(".port-toggle")
+          ?.focus();
+        this.focusPorts = false;
+      }
     } else if (
       changed.has("selectedId") ||
       changed.has("narrow") ||
-      changed.has("details")
+      changed.has("details") ||
+      changed.has("portsExpanded") ||
+      expandedInventoryChanged
     ) {
       // A card too short for the details (#186) shows them over the
       // dashboard instead. Check when the panel opens, the card crosses
@@ -149,6 +186,9 @@ export class UitDetailPanel extends LitElement {
       const panel = this.renderRoot.querySelector<HTMLElement>(".panel");
       if (panel && panel.scrollHeight > panel.clientHeight + 1) {
         // The dialog render recreates the menu; open it after that.
+        this.focusPorts =
+          this.renderRoot.querySelector(".port-toggle") ===
+          this.shadowRoot?.activeElement;
         this.modal = true;
         return;
       }
@@ -439,6 +479,14 @@ export class UitDetailPanel extends LitElement {
   ): TemplateResult {
     const counts = model.clientCounts.get(node.id);
     const hidden = model.links.get(node.id)?.viaHidden ?? [];
+    const deviceAction = node.ha_device_id
+      ? html`<button
+          class="action"
+          @click=${() => this.openDevice(node.ha_device_id!)}
+        >
+          ${iconTemplate(mdiOpenInNew)}${localize("detail.open_device")}
+        </button>`
+      : nothing;
     return html`${this.menu(node, localize)}${this.rows([
       ["detail.kind", localize(KIND_KEYS[node.kind])],
       ["detail.model", node.model],
@@ -461,14 +509,110 @@ export class UitDetailPanel extends LitElement {
           : undefined,
       ],
     ])}
-    ${node.ha_device_id
-      ? html`<button
-          class="action"
-          @click=${() => this.openDevice(node.ha_device_id!)}
-        >
-          ${iconTemplate(mdiOpenInNew)}${localize("detail.open_device")}
-        </button>`
-      : nothing}`;
+    ${node.port_inventory === undefined
+      ? deviceAction
+      : this.portBody(node.port_inventory, deviceAction, localize)}`;
+  }
+
+  private portBody(
+    inventory: PortInventory,
+    deviceAction: TemplateResult | typeof nothing,
+    localize: LocalizeFunc,
+  ): TemplateResult {
+    const status = inventory?.status;
+    const notice =
+      status === "ok"
+        ? undefined
+        : status === "stale"
+          ? "ports.stale"
+          : status === "unavailable"
+            ? "ports.unavailable"
+            : "ports.unknown";
+    const ports =
+      (status === "ok" || status === "stale") && Array.isArray(inventory.ports)
+        ? inventory.ports.filter(
+            (port) => Number.isInteger(port?.idx) && port.idx > 0,
+          )
+        : [];
+    const summary = localize("ports.summary", {
+      count: ports.length,
+      up: ports.filter((port) => port.state === "UP").length,
+    });
+    return html`<div class="port-section">
+      <div class="port-header">
+        ${deviceAction}
+        ${ports.length
+          ? html`<button
+              class="port-toggle"
+              aria-expanded=${String(this.portsExpanded)}
+              aria-controls="port-list"
+              @click=${() => {
+                this.portsExpanded = !this.portsExpanded;
+              }}
+            >
+              ${localize("ports.title")} · ${summary}
+            </button>`
+          : html`<strong>${localize("ports.title")}</strong>`}
+      </div>
+      ${notice
+        ? html`<p>${localize(notice)}</p>`
+        : ports.length === 0
+          ? html`<p>${localize("ports.empty")}</p>`
+          : nothing}
+      <div id="port-list" ?hidden=${!this.portsExpanded}>
+        ${this.portsExpanded ? this.portGroups(ports, localize) : nothing}
+      </div>
+    </div>`;
+  }
+
+  private portGroups(
+    ports: PortEntry[],
+    localize: LocalizeFunc,
+  ): TemplateResult[] {
+    const groups = new Map<string, PortEntry[]>();
+    for (const port of ports) {
+      const key =
+        typeof port.connector === "string" &&
+        PORT_CONNECTORS.has(port.connector)
+          ? port.connector
+          : "";
+      const existing = groups.get(key);
+      if (existing) existing.push(port);
+      else groups.set(key, [port]);
+    }
+    return [...PORT_CONNECTORS.keys(), ""].flatMap((key) => {
+      const members = groups.get(key);
+      if (!members) return [];
+      const label = PORT_CONNECTORS.get(key) ?? localize("ports.group_other");
+      return [
+        html`<div class="port-group" role="group" aria-label=${label}>
+          <strong>${label}</strong>
+          <ul class="port-grid">
+            ${members
+              .sort((a, b) => a.idx - b.idx)
+              .map((port) => {
+                const index = localize("ports.port", { index: port.idx });
+                const fields = describePort(port, localize);
+                const connector =
+                  typeof port.connector === "string"
+                    ? (PORT_CONNECTORS.get(port.connector) ?? port.connector)
+                    : "";
+                return html`<li
+                  aria-label=${[index, connector, ...fields]
+                    .filter(Boolean)
+                    .join(", ")}
+                >
+                  <strong>${index}</strong>
+                  ${!key && connector
+                    ? html`<span>${connector}</span>`
+                    : nothing}
+                  ${fields.map((field) => html`<span>${field}</span>`)}
+                </li>`;
+              })}
+          </ul>
+        </div>`,
+      ];
+    });
   }
 
   private clientBody(
@@ -617,6 +761,46 @@ export class UitDetailPanel extends LitElement {
       }
       input {
         width: 100%;
+      }
+      .port-header {
+        display: grid;
+        grid-template-columns: max-content minmax(0, 1fr);
+        align-items: center;
+        gap: 8px;
+      }
+      .port-header button.action {
+        margin: 0;
+      }
+      .port-section p {
+        margin: 8px 0;
+        color: var(--secondary-text-color);
+      }
+      .port-toggle {
+        justify-self: start;
+        max-width: 100%;
+        padding-inline: 8px;
+        text-align: start;
+        white-space: normal;
+      }
+      .port-group {
+        margin-block-start: 12px;
+      }
+      .port-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(min(100%, 108px), 1fr));
+        gap: 6px;
+        margin: 6px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+      .port-grid li {
+        display: grid;
+        align-content: start;
+        gap: 3px;
+        padding: 8px;
+        border: 1px solid var(--uit-line);
+        border-radius: var(--ha-card-border-radius, 12px);
+        overflow-wrap: anywhere;
       }
       .members {
         list-style: none;

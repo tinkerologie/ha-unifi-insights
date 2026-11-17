@@ -1,6 +1,33 @@
 {
   "entity": {
     "sensor": {
+      "isp_average_latency": {
+        "default": "mdi:timer-outline"
+      },
+      "isp_maximum_latency": {
+        "default": "mdi:timer-alert-outline"
+      },
+      "isp_packet_loss": {
+        "default": "mdi:chart-line"
+      },
+      "isp_download": {
+        "default": "mdi:download-network"
+      },
+      "isp_upload": {
+        "default": "mdi:upload-network"
+      },
+      "isp_uptime": {
+        "default": "mdi:clock-check-outline"
+      },
+      "isp_downtime": {
+        "default": "mdi:clock-alert-outline"
+      },
+      "isp_sample_time": {
+        "default": "mdi:clock-outline"
+      },
+      "isp_provider": {
+        "default": "mdi:web"
+      },
       "cpu_usage": {
         "default": "mdi:cpu-64-bit"
       },

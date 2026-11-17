@@ -3,6 +3,7 @@ import type {
   LinkMedium,
   NodeKind,
   NodeState,
+  PortEntry,
   TopologyEdge,
   TopologyNode,
 } from "../contract";
@@ -57,6 +58,70 @@ export function formatSpeed(mbps: number): string {
 
 export function formatSpeedLong(mbps: number): string {
   return mbps >= 1000 ? `${trim(mbps / 1000)} gigabit` : `${mbps} megabit`;
+}
+
+export const PORT_CONNECTORS = new Map([
+  ["RJ45", "RJ45"],
+  ["SFP", "SFP"],
+  ["SFPPLUS", "SFP+"],
+  ["SFP28", "SFP28"],
+  ["QSFP28", "QSFP28"],
+]);
+
+function portState(state: string, localize: LocalizeFunc): string {
+  switch (state) {
+    case "UP":
+      return localize("ports.up");
+    case "DOWN":
+      return localize("ports.down");
+    case "LIMITED":
+      return localize("ports.limited");
+    case "UNKNOWN":
+      return localize("state.unknown");
+    default:
+      return state;
+  }
+}
+
+function portSpeed(speed: number, localize: LocalizeFunc): string {
+  return speed >= 1000
+    ? localize("ports.speed_gbps", { speed: trim(speed / 1000) })
+    : localize("ports.speed_mbps", { speed });
+}
+
+/** Describe only reported port values and tolerate older or malformed snapshots. */
+export function describePort(
+  port: PortEntry,
+  localize: LocalizeFunc,
+): string[] {
+  const values: string[] = [];
+  if (typeof port.state === "string")
+    values.push(portState(port.state, localize));
+  if (typeof port.speed_mbps === "number" && Number.isFinite(port.speed_mbps))
+    values.push(portSpeed(port.speed_mbps, localize));
+  if (
+    typeof port.max_speed_mbps === "number" &&
+    Number.isFinite(port.max_speed_mbps)
+  )
+    values.push(
+      localize("ports.max_speed", {
+        speed: portSpeed(port.max_speed_mbps, localize),
+      }),
+    );
+  const poe = port.poe;
+  if (typeof poe?.enabled === "boolean")
+    values.push(
+      localize(poe.enabled ? "ports.poe_enabled" : "ports.poe_disabled"),
+    );
+  if (typeof poe?.state === "string")
+    values.push(
+      localize("ports.poe_state", { state: portState(poe.state, localize) }),
+    );
+  if (typeof poe?.standard === "string")
+    values.push(localize("ports.poe_standard", { standard: poe.standard }));
+  if (Number.isInteger(poe?.type) && typeof poe?.type === "number")
+    values.push(localize("ports.poe_type", { type: poe.type }));
+  return values;
 }
 
 /** Short on-canvas link label, e.g. "p11 · 10G · PoE". */

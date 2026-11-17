@@ -42,7 +42,7 @@ import logging
 import re
 import secrets
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, Literal, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, Final, Literal, NotRequired, TypedDict, cast
 
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
@@ -51,6 +51,7 @@ from homeassistant.util.hass_dict import HassKey
 
 from .const import DOMAIN
 from .data_transforms import (
+    _has_feature,
     client_connection_type,
     device_online_state,
     device_ports,
@@ -68,13 +69,13 @@ if TYPE_CHECKING:
 
     from homeassistant.core import HomeAssistant
 
-    from .data_transforms import SiteNetworkFacts
+    from .data_transforms import OfficialPort, OfficialPortDetails, SiteNetworkFacts
 
 _LOGGER = logging.getLogger(__name__)
 
 # --- Snapshot contract and node normalisers ----------------------------------
 
-# Frontend contract for the network topology snapshot (schema version 2).
+# Frontend contract for the network topology snapshot (schema version 3).
 #
 # The TypedDicts here are the payload the topology WebSocket commands send, and
 # the helpers are the per-field normalisers the graph builder runs every device,
@@ -85,7 +86,7 @@ _LOGGER = logging.getLogger(__name__)
 # adapters over the read-model rules for callers that hold a raw record; the
 # builders read the published facts.
 
-TOPOLOGY_SCHEMA_VERSION: Final = 2
+TOPOLOGY_SCHEMA_VERSION: Final = 3
 # Hard server-side cap on client nodes per site; requests may ask for fewer.
 MAX_CLIENTS_PER_SITE: Final = 500
 
@@ -100,6 +101,13 @@ IssueSeverity = Literal["info", "warning", "error"]
 UnresolvedReason = Literal["parent_not_found", "no_uplink_data"]
 
 
+class TopologyPortInventory(TypedDict):
+    """Read-only official Network port inventory for a switching device."""
+
+    status: Literal["ok", "unknown", "stale", "unavailable"]
+    ports: NotRequired[tuple[OfficialPort, ...]]
+
+
 class TopologyNode(TypedDict):
     """A device or client in the graph."""
 
@@ -112,6 +120,7 @@ class TopologyNode(TypedDict):
     connection: NotRequired[ClientConnection]
     vlan_id: NotRequired[int]
     network_name: NotRequired[str]
+    port_inventory: NotRequired[TopologyPortInventory]
 
 
 class TopologyEdge(TypedDict):
@@ -424,6 +433,15 @@ def _device_node(
     return node
 
 
+def _port_inventory(record: OfficialPortDetails | None) -> TopologyPortInventory:
+    """Classify the availability of the coordinator's allowlisted port projection."""
+    if record is None or (record["available"] and not record["reported"]):
+        return {"status": "unknown"}
+    if ports := record.get("ports"):
+        return {"status": "ok" if record["available"] else "stale", "ports": ports}
+    return {"status": "ok" if record["available"] else "unavailable"}
+
+
 def _wan_links(
     device: Mapping[str, Any],
     device_id: str,
@@ -659,6 +677,7 @@ def build_site_topology(
     site_devices = site_section(data, "devices", site_id)
     devices = site_devices or {}
     site_facts = site_network_facts(data, site_id)
+    ports_by_device = site_section(data, "port_details", site_id) or {}
     clients = site_section(data, "clients", site_id) or {}
     links = site_section(data, "client_links", site_id) or {}
     nodes: list[TopologyNode] = []
@@ -675,9 +694,15 @@ def build_site_topology(
         devices_by_node[node_id] = device
         kind_state = _kind_and_state(site_facts, device_id, device)
         kinds_by_node[node_id] = kind_state[0]
-        nodes.append(
-            _device_node(device, node_id, kind_state, ha_device_ids.get(device_id))
+        node = _device_node(device, node_id, kind_state, ha_device_ids.get(device_id))
+        port_details = cast(
+            "OfficialPortDetails | None", ports_by_device.get(device_id)
         )
+        if port_details is not None or _has_feature(
+            device.get("features"), "switching"
+        ):
+            node["port_inventory"] = _port_inventory(port_details)
+        nodes.append(node)
         mac = normalize_mac(
             first_present(device, "macAddress", "mac")
         ) or normalize_mac(device_id)

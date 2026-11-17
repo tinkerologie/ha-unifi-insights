@@ -402,11 +402,11 @@ INTERNET_ACTIVITY_GOLDEN: dict[str, Any] = {
 }
 
 TOPOLOGY_GOLDEN: dict[str, Any] = {
-    "schema_version": 2,
+    "schema_version": 3,
     "entry_id": "entry1",
     "site_id": "site1",
     "site_name": "Home",
-    "revision": "003f8fb7efe02518",
+    "revision": "a8d5c101195673ca",
     "status": "ok",
     "issues": [],
     "nodes": [

@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Final, TypeAlias, TypeIs
+from urllib.parse import unquote
 
 import homeassistant.helpers.config_validation as cv
 from homeassistant.config_entries import ConfigEntry
@@ -36,6 +37,7 @@ from .access_webhook import (
     async_unload_access_webhook,
 )
 from .console_identity import (
+    build_cloud_site_id,
     is_console_device,
     normalize_console_namespace,
     normalize_mac,
@@ -56,6 +58,7 @@ from .const import (
     DOMAIN,
     MOBILITY_DEVICE_PREFIX,
     MOBILITY_WORKSPACE_PREFIX,
+    SITE_MANAGER_ISP_DEVICE_PREFIX,
 )
 from .const import (
     CONNECTION_TYPE_REMOTE as CONNECTION_TYPE_REMOTE,
@@ -80,6 +83,7 @@ from .coordinators.site_manager import (
     async_acquire_site_manager,
     async_release_site_manager,
 )
+from .data_transforms import nested_dict
 from .data_transforms import normalize_mac as canonical_mac
 from .frontend import async_register_frontend
 from .probe import (
@@ -96,6 +100,8 @@ from .topology import async_load_node_keys, async_remove_node_key
 from .websocket_api import async_register_websocket_commands
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from aiohttp import ClientSession
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.device_registry import DeviceEntry
@@ -988,6 +994,12 @@ async def async_remove_config_entry_device(
                 return sub_id not in coord_subs
         return False
 
+    for domain, identifier in device_entry.identifiers:
+        if domain == DOMAIN and identifier.startswith(SITE_MANAGER_ISP_DEVICE_PREFIX):
+            return _is_stale_cloud_site_identifier(
+                entry, identifier, runtime_data.coordinator.data.get("site_manager")
+            )
+
     config_coordinator = runtime_data.config_coordinator
     polled = config_coordinator.get_site_ids()
     deselected = set(config_coordinator.available_sites) - set(polled)
@@ -1023,6 +1035,7 @@ _NON_SITE_IDENTIFIER_PREFIXES: Final = (
     "innerspace_",
     MOBILITY_DEVICE_PREFIX,
     "carrier_",
+    SITE_MANAGER_ISP_DEVICE_PREFIX,
 )
 
 
@@ -1097,6 +1110,28 @@ def _has_live_protect_counterpart(
         ):
             return True
     return False
+
+
+def _is_stale_cloud_site_identifier(
+    entry: ConfigEntry[Any], identifier: str, data: Mapping[str, Any] | None
+) -> bool:
+    """Allow deletion only after both cloud collections confirm absence."""
+    if data is None:
+        return False
+    _, _, encoded_site_id = identifier.removeprefix(
+        SITE_MANAGER_ISP_DEVICE_PREFIX
+    ).partition(":")
+    site_id = unquote(encoded_site_id)
+    if not site_id or build_cloud_site_id(entry, site_id) != identifier:
+        return False
+    for name in ("sites", "isp_metrics"):
+        if (nested_dict(data, "collections", name) or {}).get("available") is not True:
+            return False
+    return (
+        nested_dict(data, "sites", site_id) is None
+        and nested_dict(data, "isp_metrics", entry.data[CONF_CONSOLE_ID], site_id)
+        is None
+    )
 
 
 def _is_stale_mobility_identifier(

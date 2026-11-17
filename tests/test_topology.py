@@ -342,7 +342,7 @@ def test_live_layout_builds_the_tree() -> None:
     """Every switch/AP hangs off the core; the core hangs off the gateway."""
     snapshot = _build(_live_layout())
 
-    assert snapshot["schema_version"] == 2
+    assert snapshot["schema_version"] == 3
     assert snapshot["status"] == "ok"
     assert snapshot["issues"] == []
     assert snapshot["unresolved"] == []
@@ -791,6 +791,7 @@ def test_allowlist_never_emits_sensitive_values() -> None:
         "connection",
         "vlan_id",
         "network_name",
+        "port_inventory",
     }
     edge_keys = {key for edge in snapshot["edges"] for key in edge}
     assert edge_keys <= {
@@ -1033,6 +1034,24 @@ FRONTEND_FIXTURE = (
 )
 
 
+def test_cached_official_ports_are_shown_without_classic_features() -> None:
+    """Fallback retains the last known ports for a previously seen switch."""
+    data = _live_layout()
+    data["devices"][SITE]["uuid-core"].pop("features")
+    data["port_details"] = {
+        SITE: {
+            "uuid-core": {
+                "available": False,
+                "reported": True,
+                "ports": ({"idx": 7},),
+            }
+        }
+    }
+    snapshot = _build(data)
+    core = next(node for node in snapshot["nodes"] if node["id"] == "dev:uuid-core")
+    assert core["port_inventory"] == {"status": "stale", "ports": ({"idx": 7},)}
+
+
 def test_frontend_contract_fixture_is_current() -> None:
     """
     The card's contract fixture is exactly what the builder emits today.
@@ -1059,7 +1078,44 @@ def test_frontend_contract_fixture_is_current() -> None:
         },
     )
     ha_device_ids = {"uuid-gw": "reg-gw", "uuid-core": "reg-core"}
+    data["port_details"] = {
+        SITE: {
+            "uuid-core": {
+                "available": True,
+                "reported": True,
+                "ports": (
+                    {
+                        "idx": 1,
+                        "connector": "RJ45",
+                        "state": "DOWN",
+                        "speed_mbps": 0,
+                        "poe": {"enabled": False},
+                    },
+                    {
+                        "idx": 12,
+                        "connector": "SFPPLUS",
+                        "state": "UP",
+                        "speed_mbps": 10000,
+                        "max_speed_mbps": 10000,
+                    },
+                ),
+            },
+            "uuid-pdu": {"available": False, "reported": False},
+        },
+        "another-site": {
+            "uuid-core": {
+                "available": True,
+                "reported": True,
+                "ports": ({"idx": 999},),
+            },
+        },
+    }
     snapshot = _build(_with_wans(data), ha_device_ids=ha_device_ids)
+    core = next(node for node in snapshot["nodes"] if node["id"] == "dev:uuid-core")
+    assert (
+        core["port_inventory"]["ports"]
+        == data["port_details"][SITE]["uuid-core"]["ports"]
+    )
     rendered = json.dumps(snapshot, indent=2, sort_keys=True) + chr(10)
     if os.environ.get("UPDATE_TOPOLOGY_FIXTURE"):
         FRONTEND_FIXTURE.parent.mkdir(parents=True, exist_ok=True)
@@ -1096,7 +1152,7 @@ def test_dual_wan_nodes_sit_above_the_gateway() -> None:
     """Each WAN is a node whose edge runs gateway -> WAN; WANs sort first."""
     snapshot = _build(_with_wans(_live_layout()), ha_device_ids={"uuid-gw": "reg-gw"})
 
-    assert snapshot["schema_version"] == 2
+    assert snapshot["schema_version"] == 3
     assert snapshot["status"] == "ok"
     assert snapshot["unresolved"] == []
     wans = [node for node in snapshot["nodes"] if node["kind"] == "wan"]

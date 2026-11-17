@@ -5577,10 +5577,10 @@ class TestAccessPointRadioDetails:
             return_value=[_create_mock_model(device) for device in devices]
         )
 
-    async def test_details_fetched_for_access_points_only(
+    async def test_details_fetched_for_access_points_and_switches(
         self, coordinator: UnifiInsightsDeviceCoordinator
     ) -> None:
-        """A switch never costs a details request; an AP publishes its radios."""
+        """An AP publishes radios and a switch publishes the official port response."""
         switch = {
             "id": "sw1",
             "name": "Switch",
@@ -5589,14 +5589,201 @@ class TestAccessPointRadioDetails:
         }
         coordinator.network_client.devices.get_all = self._serve_only(AP_DEVICE, switch)
         get = require_mock(coordinator.network_client.devices.get)
-        get.return_value = self._detail_model(RADIO_SAMPLE)
+        get.side_effect = [
+            self._detail_model(RADIO_SAMPLE),
+            _create_mock_model(
+                {
+                    "id": "sw1",
+                    "interfaces": {
+                        "ports": [
+                            {
+                                "idx": 8,
+                                "speedMbps": 0,
+                                "maxSpeedMbps": 10000,
+                                "connector": "SFPPLUS",
+                            },
+                            {"idx": 1, "state": "DOWN", "poe": {"enabled": False}},
+                            "invalid",
+                            {"idx": 11, "poe": {"enabled": 1}},
+                            {"idx": 12, "poe": {"type": 3}},
+                            {"idx": True},
+                            {"idx": 8, "state": "UP"},
+                        ]
+                    },
+                }
+            ),
+        ]
 
         result = await coordinator._async_update_data()
 
-        get.assert_awaited_once_with("default", AP_ID)
+        assert get.await_count == 2
+        get.assert_any_await("default", AP_ID)
+        get.assert_any_await("default", "sw1")
+        assert result["port_details"]["default"]["sw1"] == {
+            "reported": True,
+            "available": True,
+            "ports": (
+                {"idx": 1, "state": "DOWN", "poe": {"enabled": False}},
+                {
+                    "idx": 8,
+                    "speed_mbps": 0,
+                    "max_speed_mbps": 10000,
+                    "connector": "SFPPLUS",
+                },
+                {"idx": 11},
+                {"idx": 12, "poe": {"type": 3}},
+            ),
+        }
         assert result["radio_details"]["default"][AP_ID] == {
             "radios": RADIO_SAMPLE,
             "available": True,
+        }
+
+    async def test_dual_feature_details_and_official_presence(
+        self, coordinator: UnifiInsightsDeviceCoordinator, clock: Any
+    ) -> None:
+        """One official response serves both consumers and preserves empty ports."""
+        device = {
+            **AP_DEVICE,
+            "features": ["accessPoint", "switching"],
+            "state": "OFFLINE",
+        }
+        coordinator.network_client.devices.get_all = self._serve_only(device, device)
+        get = require_mock(coordinator.network_client.devices.get)
+        get.return_value = Device.model_validate(
+            {
+                "id": AP_ID,
+                "interfaces": {
+                    "ports": [
+                        {
+                            "idx": 19,
+                            "connector": "private.example.test",
+                            "poe": {
+                                "enabled": False,
+                                "standard": "802.3bt",
+                                "state": "LIMITED",
+                            },
+                        }
+                    ],
+                    "radios": RADIO_SAMPLE,
+                },
+            }
+        )
+        first = await coordinator._async_update_data()
+        get.assert_awaited_once_with("default", AP_ID)
+        port = {
+            "idx": 19,
+            "poe": {"enabled": False, "standard": "802.3bt", "state": "LIMITED"},
+        }
+        assert first["radio_details"]["default"][AP_ID]["radios"] == RADIO_SAMPLE
+        assert first["port_details"]["default"][AP_ID]["ports"] == (port,)
+
+        get.side_effect = TimeoutError
+        clock.advance(301)
+        stale = await coordinator._async_update_data()
+        assert stale["port_details"]["default"][AP_ID] == {
+            "reported": True,
+            "available": False,
+            "ports": (port,),
+        }
+        assert first["port_details"]["default"][AP_ID]["available"] is True
+
+        get.side_effect = None
+        get.return_value = Device.model_validate(
+            {"id": AP_ID, "interfaces": {"ports": []}}
+        )
+        clock.advance(301)
+        recovered = await coordinator._async_update_data()
+        assert recovered["port_details"]["default"][AP_ID] == {
+            "reported": True,
+            "available": True,
+            "ports": (),
+        }
+
+        get.return_value = Device.model_validate({"id": AP_ID, "interfaces": {}})
+        clock.advance(301)
+        missing = await coordinator._async_update_data()
+        assert missing["port_details"]["default"][AP_ID] == {
+            "reported": False,
+            "available": True,
+        }
+
+    async def test_legacy_port_details_require_a_committed_official_alias(
+        self, coordinator: UnifiInsightsDeviceCoordinator, clock: Any
+    ) -> None:
+        """Classic IDs cannot stand in for a previously seen official ID."""
+        site = "default"
+        device = {**AP_DEVICE, "features": ["switching"]}
+        get = require_mock(coordinator.network_client.devices.get)
+        get.return_value = Device.model_validate(
+            {"id": AP_ID, "interfaces": {"ports": [{"idx": 1}]}}
+        )
+        overview = require_mock(coordinator.network_client.devices.get_all)
+        legacy = require_mock(
+            coordinator.network_client.devices.get_legacy_site_devices
+        )
+        overview.return_value = [Device.model_validate(device)]
+        await coordinator._async_update_data()
+        get.assert_awaited_once_with(site, AP_ID)
+
+        overview.side_effect = UniFiResponseError("Unavailable", status_code=500)
+        legacy_record: dict[str, Any] = {
+            "_id": "alias-for-original-mac",
+            "mac": device["mac"],
+        }
+        legacy.return_value = [
+            legacy_record,
+            {
+                "_id": "different-legacy-device",
+                "mac": "aa:bb:cc:00:00:09",
+                "features": ["switching"],
+            },
+        ]
+        get.reset_mock()
+        clock.advance(1)
+        fallback = await coordinator._async_update_data()
+        get.assert_not_awaited()
+        assert fallback["port_details"][site] == {
+            AP_ID: {"available": False, "reported": True, "ports": ({"idx": 1},)}
+        }
+
+        overview.side_effect = None
+        recovered = await coordinator._async_update_data()
+        get.assert_not_awaited()
+        assert recovered["port_details"][site] == fallback["port_details"][site]
+
+        overview.side_effect = UniFiResponseError("Unavailable", status_code=500)
+        legacy_record["features"] = ["switching"]
+        clock.advance(301)
+        result = await coordinator._async_update_data()
+        get.assert_awaited_once_with(site, AP_ID)
+        assert set(result["port_details"][site]) == {AP_ID}
+        assert result["port_details"][site][AP_ID]["available"] is True
+
+    async def test_port_dump_failure_does_not_erase_radio_details(
+        self, coordinator: UnifiInsightsDeviceCoordinator
+    ) -> None:
+        """A malformed optional port payload leaves the shared radio result intact."""
+        device = {**AP_DEVICE, "features": ["accessPoint", "switching"]}
+        coordinator.network_client.devices.get_all = self._serve_only(device)
+        model = self._detail_model(RADIO_SAMPLE)
+
+        def dump_model(**kwargs: Any) -> dict[str, Any]:
+            if kwargs.get("exclude_unset"):
+                msg = "Malformed port data"
+                raise ValueError(msg)
+            return {"id": AP_ID, "interfaces": {"radios": RADIO_SAMPLE}}
+
+        model.model_dump.side_effect = dump_model
+        require_mock(coordinator.network_client.devices.get).return_value = model
+        result = await coordinator._async_update_data()
+        assert result["radio_details"]["default"][AP_ID] == {
+            "radios": RADIO_SAMPLE,
+            "available": True,
+        }
+        assert result["port_details"]["default"][AP_ID] == {
+            "reported": False,
+            "available": False,
         }
 
     async def test_details_skip_mac_addressed_devices(

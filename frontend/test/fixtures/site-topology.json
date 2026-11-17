@@ -102,6 +102,9 @@
       "kind": "gateway",
       "model": "UDM Pro SE",
       "name": "Gateway",
+      "port_inventory": {
+        "status": "unknown"
+      },
       "state": "online"
     },
     {
@@ -110,6 +113,27 @@
       "kind": "switch",
       "model": "USW Pro Max 24",
       "name": "Core 24",
+      "port_inventory": {
+        "ports": [
+          {
+            "connector": "RJ45",
+            "idx": 1,
+            "poe": {
+              "enabled": false
+            },
+            "speed_mbps": 0,
+            "state": "DOWN"
+          },
+          {
+            "connector": "SFPPLUS",
+            "idx": 12,
+            "max_speed_mbps": 10000,
+            "speed_mbps": 10000,
+            "state": "UP"
+          }
+        ],
+        "status": "ok"
+      },
       "state": "online"
     },
     {
@@ -117,6 +141,9 @@
       "kind": "switch",
       "model": "USW",
       "name": "Flex",
+      "port_inventory": {
+        "status": "unknown"
+      },
       "state": "online"
     },
     {
@@ -124,6 +151,9 @@
       "kind": "switch",
       "model": "USW",
       "name": "Lite 8",
+      "port_inventory": {
+        "status": "unknown"
+      },
       "state": "online"
     },
     {
@@ -131,6 +161,9 @@
       "kind": "switch",
       "model": "USW",
       "name": "PDU",
+      "port_inventory": {
+        "status": "unavailable"
+      },
       "state": "online"
     },
     {
@@ -138,6 +171,9 @@
       "kind": "switch",
       "model": "USW",
       "name": "Ultra A",
+      "port_inventory": {
+        "status": "unknown"
+      },
       "state": "online"
     },
     {
@@ -145,6 +181,9 @@
       "kind": "switch",
       "model": "USW",
       "name": "Ultra B",
+      "port_inventory": {
+        "status": "unknown"
+      },
       "state": "online"
     },
     {
@@ -172,8 +211,8 @@
       "vlan_id": 3
     }
   ],
-  "revision": "f1227b1dc7154ee1",
-  "schema_version": 2,
+  "revision": "aa9f5006c4a2dd12",
+  "schema_version": 3,
   "site_id": "site-1",
   "site_name": "Home",
   "status": "ok",

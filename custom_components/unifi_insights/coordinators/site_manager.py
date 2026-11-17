@@ -9,6 +9,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from math import isfinite
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -22,6 +23,9 @@ from custom_components.unifi_insights.const import (
     ISP_WAN_NUMBERS,
     SCAN_INTERVAL_SITE_MANAGER,
     SITE_MANAGER_COLLECTIONS,
+    SITE_MANAGER_ISP_FUTURE_TOLERANCE,
+    SITE_MANAGER_ISP_LOOKBACK,
+    SITE_MANAGER_ISP_SAMPLE_PERIOD,
 )
 
 if TYPE_CHECKING:
@@ -29,6 +33,7 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
+_ISP_IDENTITY_MAX_LENGTH = 255
 _ACCOUNT_REGISTRY: HassKey[dict[str, UnifiInsightsSiteManagerAccount]] = HassKey(
     f"{DOMAIN}_site_manager_accounts"
 )
@@ -60,15 +65,42 @@ def _by_id(rows: list[dict[str, Any]], field_name: str) -> dict[str, dict[str, A
     }
 
 
-def _latest_isp_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _isp_identity(wan: dict[str, Any]) -> dict[str, str]:
+    """Keep bounded identity fields apart from diagnostic measurements."""
+    name = wan.get("ispName")
+    asn = wan.get("ispAsn")
+    if type(asn) is int and abs(asn) < 10**_ISP_IDENTITY_MAX_LENGTH:
+        asn = str(asn)
+    return {
+        key: cleaned
+        for key, value in (("name", name), ("asn", asn))
+        if isinstance(value, str)
+        and 0 < len(cleaned := value.strip()) <= _ISP_IDENTITY_MAX_LENGTH
+    }
+
+
+def _latest_isp_metrics(
+    rows: list[dict[str, Any]], now: datetime | None = None
+) -> dict[str, Any]:
     """Keep only the newest numeric WAN period for each host and site."""
     latest: dict[str, dict[str, dict[str, Any]]] = {}
+    latest_allowed = (now or datetime.now(UTC)) + SITE_MANAGER_ISP_FUTURE_TOLERANCE
     for row in rows:
         host_id = row.get("hostId")
         site_id = row.get("siteId")
-        if not isinstance(host_id, str) or not isinstance(site_id, str):
+        if (
+            not isinstance(host_id, str)
+            or not host_id.strip()
+            or not isinstance(site_id, str)
+            or not site_id.strip()
+            or row.get("metricType", SITE_MANAGER_ISP_SAMPLE_PERIOD)
+            != SITE_MANAGER_ISP_SAMPLE_PERIOD
+        ):
             continue
-        for period in row.get("periods") or []:
+        periods = row.get("periods")
+        if not isinstance(periods, list):
+            continue
+        for period in periods:
             if not isinstance(period, dict):
                 continue
             metric_time = period.get("metricTime")
@@ -80,7 +112,7 @@ def _latest_isp_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 timestamp = datetime.fromisoformat(metric_time)
             except ValueError:
                 continue
-            if timestamp.tzinfo is None:
+            if timestamp.tzinfo is None or timestamp > latest_allowed:
                 continue
             current = latest.setdefault(host_id, {}).get(site_id)
             if current and timestamp <= datetime.fromisoformat(current["metric_time"]):
@@ -90,11 +122,25 @@ def _latest_isp_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 "wan": {
                     key: value
                     for key in ISP_WAN_NUMBERS
-                    if isinstance(value := wan.get(key), (int, float))
-                    and not isinstance(value, bool)
+                    if type(value := wan.get(key)) is int
+                    or (isinstance(value, float) and isfinite(value))
                 },
+                "isp": _isp_identity(wan),
             }
     return latest
+
+
+def _merge_isp_samples(new: dict[str, Any], previous: dict[str, Any]) -> dict[str, Any]:
+    """Retain newer samples for sites that the successful poll still reports."""
+    for host_id, sites in new.items():
+        previous_sites = previous.get(host_id, {})
+        for site_id, sample in sites.items():
+            old_sample = previous_sites.get(site_id)
+            if old_sample and datetime.fromisoformat(
+                old_sample["metric_time"]
+            ) > datetime.fromisoformat(sample["metric_time"]):
+                sites[site_id] = old_sample
+    return new
 
 
 class UnifiInsightsSiteManagerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -136,7 +182,9 @@ class UnifiInsightsSiteManagerCoordinator(DataUpdateCoordinator[dict[str, Any]])
             self.client.list_sites(),
             self.client.list_devices(),
             self.client.get_isp_metrics(
-                begin_timestamp=now - timedelta(hours=1), end_timestamp=now
+                metric_type=SITE_MANAGER_ISP_SAMPLE_PERIOD,
+                begin_timestamp=now - SITE_MANAGER_ISP_LOOKBACK,
+                end_timestamp=now,
             ),
             self.client.list_sd_wan_configs(),
         )
@@ -174,7 +222,9 @@ class UnifiInsightsSiteManagerCoordinator(DataUpdateCoordinator[dict[str, Any]])
                 elif name == "devices":
                     snapshot[name] = _by_id(result, "hostId")
                 elif name == "isp_metrics":
-                    snapshot[name] = _latest_isp_metrics(result)
+                    snapshot[name] = _merge_isp_samples(
+                        _latest_isp_metrics(result, now), self.data[name]
+                    )
                 else:
                     snapshot[name] = _by_id(result, "id")
             except (AttributeError, TypeError, ValueError) as err:

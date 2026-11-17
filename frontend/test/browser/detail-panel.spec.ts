@@ -783,3 +783,29 @@ declare global {
     fixtureUpdate: () => void;
   }
 }
+
+test("opens the switch ports with the keyboard on a narrow card", async ({
+  page,
+}) => {
+  await openFixture(page, { width: 320, height: sectionsHeight(6) });
+  const toggle = page.getByRole("button", { name: "Ports · 2 ports, 1 up" });
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await toggle.focus();
+  await toggle.press("Enter");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(toggle).toBeFocused();
+  const portItems = page.locator(`${panelHost} .port-grid li`);
+  await expect(portItems).toHaveCount(2);
+  await expect(portItems.first()).toContainText("0 Mbps");
+  await expect(portItems.first()).toContainText("PoE disabled");
+  await expect(portItems.last()).toContainText("10 Gbps");
+  await expect
+    .poll(async () => {
+      return portItems
+        .last()
+        .evaluate((item) => item.getBoundingClientRect().right);
+    })
+    .toBeLessThanOrEqual((await geometry(page.locator(panel))).right);
+  await toggle.press("Space");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+});
