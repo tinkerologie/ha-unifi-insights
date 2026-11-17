@@ -603,7 +603,7 @@ class UnifiSiteManagerIspEntity(CoordinatorEntity[UnifiInsightsFacadeCoordinator
         device_id: str,
     ) -> None:
         """Attach the entity to its Site Manager service device."""
-        super().__init__(coordinator)
+        super().__init__(coordinator, context=FacadeOwner.SITE_MANAGER)
         self.entity_description = description
         self._console_id = console_id
         self._site_id = site_id

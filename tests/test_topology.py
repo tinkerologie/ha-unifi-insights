@@ -1034,6 +1034,24 @@ FRONTEND_FIXTURE = (
 )
 
 
+def test_cached_official_ports_are_shown_without_classic_features() -> None:
+    """Fallback retains the last known ports for a previously seen switch."""
+    data = _live_layout()
+    data["devices"][SITE]["uuid-core"].pop("features")
+    data["port_details"] = {
+        SITE: {
+            "uuid-core": {
+                "available": False,
+                "reported": True,
+                "ports": ({"idx": 7},),
+            }
+        }
+    }
+    snapshot = _build(data)
+    core = next(node for node in snapshot["nodes"] if node["id"] == "dev:uuid-core")
+    assert core["port_inventory"] == {"status": "stale", "ports": ({"idx": 7},)}
+
+
 def test_frontend_contract_fixture_is_current() -> None:
     """
     The card's contract fixture is exactly what the builder emits today.

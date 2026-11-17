@@ -131,6 +131,7 @@ def test_isp_normalization_validates_period_and_identity() -> None:
 
     assert _latest_isp_metrics(
         [
+            {"hostId": "host", "siteId": "site", "periods": {}},
             row(" ", "site", now, avgLatency=99),
             row("host", "", now, avgLatency=99),
             {**row("host", "site", now, avgLatency=99), "metricType": "1h"},

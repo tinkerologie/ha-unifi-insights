@@ -17,6 +17,7 @@ from custom_components.unifi_insights.const import (
     CONNECTION_TYPE_REMOTE,
     DOMAIN,
 )
+from custom_components.unifi_insights.coordinators.facade import FacadeOwner
 from custom_components.unifi_insights.sensor import (
     UnifiSiteManagerIspSensor,
     async_setup_entry,
@@ -31,12 +32,18 @@ HOST = "console:account"
 SITE = "cloud:site"
 
 
-def _snapshot(timestamp: str, *, available: bool = True, host: str = HOST):
+def _snapshot(
+    timestamp: str,
+    *,
+    available: bool = True,
+    host: str = HOST,
+    name_host: str = "foreign",
+):
     return facade_data(
         site_manager={
             "collections": {"isp_metrics": {"available": available}},
             "selected_host_id": "foreign",
-            "sites": {SITE: {"hostId": "foreign", "name": "Private site"}},
+            "sites": {SITE: {"hostId": name_host, "meta": {"name": "Reported site"}}},
             "isp_metrics": {
                 host: {
                     SITE: {
@@ -54,7 +61,9 @@ def _snapshot(timestamp: str, *, available: bool = True, host: str = HOST):
     )
 
 
-async def _setup(hass: HomeAssistant, coordinator: MagicMock, host: str, mode: str):
+async def _setup(
+    hass: HomeAssistant, coordinator: MagicMock, host: str | None, mode: str
+):
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -135,6 +144,33 @@ async def test_remote_discovery_is_scoped_and_adds_late_samples(
     local_add.assert_not_called()
 
 
+async def test_cloud_discovery_rejects_missing_identity_and_bad_timestamps(
+    hass: HomeAssistant, mock_coordinator: MagicMock
+) -> None:
+    """Only a valid host and timezone-aware source time may seed an entity."""
+    valid_time = "2026-11-17T04:00:00Z"
+    mock_coordinator.data = _snapshot(valid_time)
+    add, _ = await _setup(hass, mock_coordinator, None, CONNECTION_TYPE_REMOTE)
+    add.assert_not_called()
+
+    mock_coordinator.data = _snapshot(valid_time, host="private-key")
+    add, _ = await _setup(hass, mock_coordinator, "private-key", CONNECTION_TYPE_REMOTE)
+    add.assert_not_called()
+
+    mock_coordinator.data = _snapshot("2026-11-17T04:00:00", name_host=HOST)
+    add, discover = await _setup(hass, mock_coordinator, HOST, CONNECTION_TYPE_REMOTE)
+    add.assert_not_called()
+    mock_coordinator.data = _snapshot("bad timestamp", name_host=HOST)
+    discover()
+    add.assert_not_called()
+    mock_coordinator.data = _snapshot(valid_time, name_host=HOST)
+    discover()
+    sensor = next(
+        e for e in add.call_args.args[0] if e.entity_description.key == "isp_download"
+    )
+    assert sensor.device_info.name == "UniFi Site Manager (Reported site)"
+
+
 async def test_wan_sample_expires_even_after_a_successful_poll(
     hass: HomeAssistant,
     mock_coordinator: MagicMock,
@@ -152,9 +188,16 @@ async def test_wan_sample_expires_even_after_a_successful_poll(
     assert sensor.available
     mock_coordinator.last_update_success = False
     assert sensor.available
+    mock_coordinator.data = _snapshot(now.isoformat(), host="another-console")
+    assert not sensor.available
+    mock_coordinator.data = _snapshot(now.isoformat())
 
     with patch.object(sensor, "async_write_ha_state") as write:
         await sensor.async_added_to_hass()
+        assert (
+            mock_coordinator.async_add_listener.call_args.args[1]
+            is FacadeOwner.SITE_MANAGER
+        )
         mock_coordinator.data = _snapshot(now.isoformat(), available=False)
         sensor._handle_coordinator_update()
         assert not sensor.available

@@ -32,6 +32,7 @@ from .const import (
     CONSOLE_DEVICE_TOKENS,
     DOMAIN,
     SITE_ENTITY_SUFFIXES,
+    SITE_MANAGER_ISP_DEVICE_PREFIX,
 )
 
 if TYPE_CHECKING:
@@ -113,7 +114,7 @@ def build_cloud_site_id(
         return None
     # Site Manager lookup and config-entry identity both use exact host IDs.
     parts = (host_id, site_id) if metric is None else (host_id, site_id, metric)
-    return "unifi_insights_site_manager:" + ":".join(
+    return SITE_MANAGER_ISP_DEVICE_PREFIX + ":".join(
         quote(part, safe="") for part in parts
     )
 

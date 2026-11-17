@@ -39,6 +39,7 @@ from custom_components.unifi_insights import (
     async_remove_config_entry_device,
     async_unload_entry,
 )
+from custom_components.unifi_insights.console_identity import build_cloud_site_id
 from custom_components.unifi_insights.const import (
     CONF_CARRIER_ORG_ID,
     CONF_CONNECTION_TYPE,
@@ -55,6 +56,7 @@ from custom_components.unifi_insights.data_transforms import (
 )
 from custom_components.unifi_insights.probe import ProbeResult, ProbeStatus
 from tests.fixtures.assertions import require_not_none
+from tests.fixtures.facade_data import with_sections
 from tests.fixtures.mobility_responses import (
     OFFICE_ROUTER_ID,
     WORKSPACE_ID,
@@ -146,6 +148,27 @@ async def test_setup_legacy_credential_identity_without_console_mac(
         row.unique_id.startswith(f"{expected_identity}_{site_id}_") for row in rows
     )
     assert all(credential not in row.unique_id for row in rows)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [UniFiConnectionError("Cannot connect"), UniFiTimeoutError("Connection timeout")],
+    ids=["connection", "timeout"],
+)
+async def test_setup_retries_when_the_network_client_cannot_initialize(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    enable_custom_integrations: None,
+    error: UniFiConnectionError | UniFiTimeoutError,
+) -> None:
+    """An SDK startup error leaves Home Assistant able to retry the entry."""
+    mock_config_entry.add_to_hass(hass)
+    with patch(
+        "custom_components.unifi_insights.UniFiNetworkClient", side_effect=error
+    ):
+        assert not await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+    assert mock_config_entry.state is ConfigEntryState.SETUP_RETRY
 
 
 async def test_setup_entry_auth_failed(
@@ -2151,6 +2174,63 @@ async def test_only_one_remote_entry_per_key_polls_mobility(
 def _device(identifier: str) -> Any:
     """Return a device registry entry stand-in with one identifier."""
     return MagicMock(identifiers={(DOMAIN, identifier)})
+
+
+@pytest.mark.usefixtures(
+    "mock_network_client",
+    "mock_protect_client",
+    "enable_custom_integrations",
+    "mock_site_manager_client",
+    "mock_mobility_client",
+)
+async def test_cloud_site_device_removal_requires_healthy_cloud_inventory(
+    hass: HomeAssistant,
+) -> None:
+    """Network sites and failed cloud polls cannot authorize cloud-device removal."""
+    entry = _remote_entry("01REMOTE", "matching:host")
+    await _setup_mobility(hass, entry)
+    coordinator = entry.runtime_data.coordinator
+    site_id = "a:cloud/site"
+    correct_id = require_not_none(build_cloud_site_id(entry, site_id))
+    cloud_device = _device(correct_id)
+
+    def publish(site_data: dict[str, Any] | None) -> None:
+        coordinator.data = with_sections(coordinator.data, site_manager=site_data)
+
+    publish(None)
+    assert not await async_remove_config_entry_device(hass, entry, cloud_device)
+
+    site_data: dict[str, Any] = {
+        "sites": {site_id: {"hostId": entry.data[CONF_CONSOLE_ID]}},
+        "isp_metrics": {},
+        "collections": {
+            "sites": {"available": True},
+            "isp_metrics": {"available": True},
+        },
+    }
+    publish(site_data)
+    assert not await async_remove_config_entry_device(hass, entry, cloud_device)
+    wrong_host = _device(correct_id.replace("matching%3Ahost", "another-host"))
+    assert not await async_remove_config_entry_device(hass, entry, wrong_host)
+
+    site_data = {
+        **site_data,
+        "sites": {},
+        "isp_metrics": {
+            entry.data[CONF_CONSOLE_ID]: {
+                site_id: {"metric_time": "2026-11-17T04:00:00Z"}
+            }
+        },
+    }
+    publish(site_data)
+    assert not await async_remove_config_entry_device(hass, entry, cloud_device)
+
+    failed_collections = {**site_data["collections"], "sites": {"available": False}}
+    publish({**site_data, "isp_metrics": {}, "collections": failed_collections})
+    assert not await async_remove_config_entry_device(hass, entry, cloud_device)
+
+    publish({**site_data, "isp_metrics": {}})
+    assert await async_remove_config_entry_device(hass, entry, cloud_device)
 
 
 @pytest.mark.usefixtures(

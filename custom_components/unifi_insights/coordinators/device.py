@@ -1596,19 +1596,15 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
             >= SCAN_INTERVAL_DEVICE_DETAILS.total_seconds()
         )
 
-    def _has_official_port_details(
+    def _has_official_details_id(
         self,
         site_id: str,
         device: dict[str, Any],
         device_id: str,
         source: Literal["v1", "legacy"],
     ) -> bool:
-        """Require switching capability and an official ID for the current site."""
-        if (
-            not device_id
-            or device_id_is_mac(device)
-            or not _has_feature(device.get("features"), "switching")
-        ):
+        """Verify the ID belongs to the official API for the current site."""
+        if device_id_is_mac(device):
             return False
         if source == "v1":
             return True
@@ -1624,13 +1620,17 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
         device_id: str = device["id"]
         radio = self._published_radio_details(site_id, device_id)
         ports: OfficialPortDetails | None = None
-        port_eligible = self._has_official_port_details(
-            site_id, device, device_id, source
-        )
-        if port_eligible:
-            ports = self.data.get("port_details", {}).get(site_id, {}).get(device_id)
+        official_id = self._has_official_details_id(site_id, device, device_id, source)
+        switching = _has_feature(device.get("features"), "switching")
+        if official_id:
+            previous = self.data.get("port_details", {}).get(site_id, {}).get(device_id)
+            if switching:
+                ports = previous
+            elif source == "legacy" and previous is not None:
+                # Classic inventory can omit the feature list for known switches.
+                ports = self._unavailable_port_details(previous)
         radio_due = self._radio_details_due(site_id, device, device_id)
-        ports_due = port_eligible and self._details_due(site_id, device_id)
+        ports_due = official_id and switching and self._details_due(site_id, device_id)
         if not (radio_due or ports_due):
             return device_id, radio, ports
 

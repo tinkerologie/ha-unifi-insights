@@ -695,10 +695,13 @@ def build_site_topology(
         kind_state = _kind_and_state(site_facts, device_id, device)
         kinds_by_node[node_id] = kind_state[0]
         node = _device_node(device, node_id, kind_state, ha_device_ids.get(device_id))
-        if _has_feature(device.get("features"), "switching"):
-            node["port_inventory"] = _port_inventory(
-                cast("OfficialPortDetails | None", ports_by_device.get(device_id))
-            )
+        port_details = cast(
+            "OfficialPortDetails | None", ports_by_device.get(device_id)
+        )
+        if port_details is not None or _has_feature(
+            device.get("features"), "switching"
+        ):
+            node["port_inventory"] = _port_inventory(port_details)
         nodes.append(node)
         mac = normalize_mac(
             first_present(device, "macAddress", "mac")
