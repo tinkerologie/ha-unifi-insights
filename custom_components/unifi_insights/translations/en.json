@@ -415,16 +415,13 @@
         "name": "WAN packet loss"
       },
       "isp_download": {
-        "name": "WAN download rate"
+        "name": "WAN download capacity"
       },
       "isp_upload": {
-        "name": "WAN upload rate"
+        "name": "WAN upload capacity"
       },
       "isp_uptime": {
         "name": "WAN uptime"
-      },
-      "isp_downtime": {
-        "name": "WAN downtime"
       },
       "isp_sample_time": {
         "name": "WAN sample time"

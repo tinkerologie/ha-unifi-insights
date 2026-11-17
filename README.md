@@ -883,11 +883,18 @@ connection. The diagnostics report shows the collection status.
 
 Each Remote entry adds a Site Manager service device for each cloud site
 with WAN samples for that console. Average and maximum latency (ms), packet
-loss (%), and download and upload rates (kbit/s, displayed in Mbit/s by
-default) are enabled when reported. Uptime and downtime (seconds in the
-sample), sample time and ISP name with ASN are disabled by default. The API
-names the rate fields in kbit/s. The latency, packet loss and duration units
-still need confirmation against a live Site Manager sample.
+loss (%), and download and upload capacity (kbit/s, displayed in Mbit/s by
+default) are enabled when reported. WAN uptime (% of the sample), sample time
+and ISP name with ASN are disabled by default.
+
+The units come from a live capture of six cloud sites over 24 hours and
+7 days. Latency ranged from 0 to 70 ms, and packet loss from 0 to 15%. Uptime
+was always 0 or 100, so it is a percentage. Download and upload capacity did
+not change from sample to sample. It is the speed that the console reports
+for its internet connection, not live traffic. The API also reports a
+downtime value. Its unit is not confirmed, so it is not a sensor and appears
+only in diagnostics. A period from a host without WAN data reports every
+field as zero. The integration ignores such periods.
 
 The timestamp comes from the latest five-minute sample. Sensors become
 unavailable when the metrics collection fails or the source sample reaches

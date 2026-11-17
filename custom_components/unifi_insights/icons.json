@@ -19,9 +19,6 @@
       "isp_uptime": {
         "default": "mdi:clock-check-outline"
       },
-      "isp_downtime": {
-        "default": "mdi:clock-alert-outline"
-      },
       "isp_sample_time": {
         "default": "mdi:clock-outline"
       },
