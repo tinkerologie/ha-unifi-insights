@@ -114,17 +114,22 @@ def _latest_isp_metrics(
                 continue
             if timestamp.tzinfo is None or timestamp > latest_allowed:
                 continue
+            numbers = {
+                key: value
+                for key in ISP_WAN_NUMBERS
+                if type(value := wan.get(key)) is int
+                or (isinstance(value, float) and isfinite(value))
+            }
+            # A host without WAN data reports every field as zero. 0% uptime
+            # with no downtime cannot describe a real WAN, so skip the period.
+            if numbers.get("uptime") == 0 and numbers.get("downtime") == 0:
+                continue
             current = latest.setdefault(host_id, {}).get(site_id)
             if current and timestamp <= datetime.fromisoformat(current["metric_time"]):
                 continue
             latest[host_id][site_id] = {
                 "metric_time": timestamp.isoformat(),
-                "wan": {
-                    key: value
-                    for key in ISP_WAN_NUMBERS
-                    if type(value := wan.get(key)) is int
-                    or (isinstance(value, float) and isfinite(value))
-                },
+                "wan": numbers,
                 "isp": _isp_identity(wan),
             }
     return latest

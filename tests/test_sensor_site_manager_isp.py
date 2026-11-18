@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
-from homeassistant.const import CONF_API_KEY, UnitOfDataRate
+from homeassistant.const import CONF_API_KEY, PERCENTAGE, UnitOfDataRate
 from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.unifi_insights.console_identity import build_cloud_site_id
@@ -19,6 +19,7 @@ from custom_components.unifi_insights.const import (
 )
 from custom_components.unifi_insights.coordinators.facade import FacadeOwner
 from custom_components.unifi_insights.sensor import (
+    SITE_MANAGER_ISP_SENSORS,
     UnifiSiteManagerIspSensor,
     async_setup_entry,
 )
@@ -82,6 +83,16 @@ async def _setup(
     await async_setup_entry(hass, entry, add)
     listener = coordinator.async_add_listener.call_args.args[0]
     return add, listener
+
+
+def test_wan_sensor_units_match_the_live_capture() -> None:
+    """Uptime is a share of the period; downtime has no confirmed unit."""
+    by_key = {d.key: d for d in SITE_MANAGER_ISP_SENSORS}
+    assert "isp_downtime" not in by_key
+    uptime = by_key["isp_uptime"]
+    assert uptime.native_unit_of_measurement == PERCENTAGE
+    assert uptime.device_class is None
+    assert not uptime.entity_registry_enabled_default
 
 
 def test_cloud_device_ids_keep_exact_host_boundaries() -> None:

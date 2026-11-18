@@ -161,6 +161,63 @@ def test_isp_normalization_validates_period_and_identity() -> None:
     }
 
 
+def test_isp_period_without_wan_data_is_not_a_sample() -> None:
+    """A no-data period is skipped, while real outages and zeroes are kept."""
+    # Shape and values of a live no-data period (2026-11-17 capture).
+    no_wan = {
+        "avgLatency": 0,
+        "download_kbps": 0,
+        "downtime": 0,
+        "maxLatency": 0,
+        "packetLoss": 0,
+        "upload_kbps": 0,
+        "uptime": 0,
+        "ispAsn": "64500",
+        "ispName": "Provider",
+    }
+
+    def row(site: str, *periods: tuple[str, dict[str, object]]):
+        return {
+            "hostId": "host",
+            "siteId": site,
+            "metricType": "5m",
+            "periods": [
+                {"metricTime": stamp, "data": {"wan": wan}} for stamp, wan in periods
+            ],
+        }
+
+    assert _latest_isp_metrics(
+        [
+            row(
+                "site",
+                ("2026-01-02T03:05:00Z", {"avgLatency": 9, "uptime": 100}),
+                ("2026-01-02T03:10:00Z", no_wan),
+            ),
+            row("empty", ("2026-01-02T03:10:00Z", no_wan)),
+            row("outage", ("2026-01-02T03:10:00Z", {"uptime": 0, "downtime": 1})),
+            row("healthy", ("2026-01-02T03:10:00Z", {"uptime": 100, "downtime": 0})),
+        ]
+    ) == {
+        "host": {
+            "site": {
+                "metric_time": "2026-01-02T03:05:00+00:00",
+                "wan": {"avgLatency": 9, "uptime": 100},
+                "isp": {},
+            },
+            "outage": {
+                "metric_time": "2026-01-02T03:10:00+00:00",
+                "wan": {"uptime": 0, "downtime": 1},
+                "isp": {},
+            },
+            "healthy": {
+                "metric_time": "2026-01-02T03:10:00+00:00",
+                "wan": {"uptime": 100, "downtime": 0},
+                "isp": {},
+            },
+        },
+    }
+
+
 async def test_partial_failure_keeps_last_good_collection(
     hass: HomeAssistant, caplog: pytest.LogCaptureFixture
 ) -> None:

@@ -1413,20 +1413,13 @@ SITE_MANAGER_ISP_SENSORS = (
         state_class=SensorStateClass.MEASUREMENT,
         entity_registry_enabled_default=True,
     ),
+    # Live samples report uptime as a share of the period (0 or 100), not
+    # seconds. Downtime has no confirmed unit, so it stays diagnostics-only.
     UnifiSiteManagerIspSensorEntityDescription(
         key="isp_uptime",
         translation_key="isp_uptime",
         source="uptime",
-        device_class=SensorDeviceClass.DURATION,
-        native_unit_of_measurement=UnitOfTime.SECONDS,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    UnifiSiteManagerIspSensorEntityDescription(
-        key="isp_downtime",
-        translation_key="isp_downtime",
-        source="downtime",
-        device_class=SensorDeviceClass.DURATION,
-        native_unit_of_measurement=UnitOfTime.SECONDS,
+        native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     UnifiSiteManagerIspSensorEntityDescription(
