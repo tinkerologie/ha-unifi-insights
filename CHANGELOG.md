@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.11.3] - 2026-11-18
+
 ### Added
 
 - Show read-only Network port inventory on switching nodes in the topology card. The topology snapshot schema is now v3 and uses the updated bundled card. [#498](https://github.com/tinkerologie/ha-unifi-insights/issues/498)
