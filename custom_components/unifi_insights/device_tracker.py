@@ -147,22 +147,22 @@ def _client_tracker_entries(
     ]
 
 
-def _mac_has_tracker_row(registry: er.EntityRegistry, mac: str) -> bool:
+def _tracker_row_macs(registry: er.EntityRegistry) -> set[str]:
     """
-    Return True if any client tracker row of this platform is for this MAC.
+    Return the MAC of every client tracker row of this platform, in any entry.
 
-    Called only for a MAC this entry has no row for, so a row found belongs to
+    Checked only for MACs this entry has no row for, so a match belongs to
     another config entry. Unique IDs are not scoped to a config entry: adding
     a tracker for that MAC would move the other entry's row -- with its entity
     ID, name and area -- to this one. Legacy bare-MAC rows keep the API's
-    spelling, so rows are matched by the MAC they identify.
+    spelling, so rows are matched by the MAC they identify. Built once per
+    setup, so the registry is walked once however many MACs are checked.
     """
-    return any(
-        reg_entry.domain == "device_tracker"
-        and reg_entry.platform == DOMAIN
-        and _mac_from_unique_id(reg_entry.unique_id) == mac
+    return {
+        _mac_from_unique_id(reg_entry.unique_id)
         for reg_entry in registry.entities.values()
-    )
+        if reg_entry.domain == "device_tracker" and reg_entry.platform == DOMAIN
+    }
 
 
 def _mac_from_unique_id(unique_id: str) -> str:
@@ -391,10 +391,16 @@ async def async_setup_entry(
     # is left to `async_add_clients`, which applies the type options to it.
     # A MAC whose row belongs to another entry is left alone: that row would
     # otherwise be moved to this entry.
-    for mac in sorted(tracked_clients):
-        if mac in tracked or mac in connected_macs or mac in untracked_macs:
-            continue
-        if _mac_has_tracker_row(registry, mac):
+    offline = [
+        mac
+        for mac in sorted(tracked_clients)
+        if mac not in tracked
+        and mac not in connected_macs
+        and mac not in untracked_macs
+    ]
+    owned_elsewhere = _tracker_row_macs(registry) if offline else set()
+    for mac in offline:
+        if mac in owned_elsewhere:
             _LOGGER.debug(
                 "Not creating an offline tracker for %s: another entry owns it", mac
             )
