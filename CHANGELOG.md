@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Keep a client tracker and its device when the same MAC is eligible on one site and has a disabled connection type on another. [#511](https://github.com/tinkerologie/ha-unifi-insights/issues/511)
+- Keep a client tracker when the same MAC is eligible on one site and has a disabled connection type on another. Before, setup removed the tracker. [#511](https://github.com/tinkerologie/ha-unifi-insights/issues/511)
 
 ## [2026.11.3] - 2026-11-18
 
