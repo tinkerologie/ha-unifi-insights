@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add the **Group devices by network uplink** option for Network and Protect entries, off by default. When it is on, an administrator-only **UniFi devices** sidebar panel lists each device under the switch, access point or gateway it is directly connected to, and links to its device page. Only current, unambiguous links are used; other devices stay at the top level with a reason. Turning the option on or off does not reload the entry or change any device or entity. [#519](https://github.com/tinkerologie/ha-unifi-insights/issues/519)
+
 ## [2026.11.3] - 2026-11-18
 
 ### Added
