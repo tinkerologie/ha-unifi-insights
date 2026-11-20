@@ -177,8 +177,9 @@ async def test_carrier_fabric_aggregate_sensors(
     assert total.native_value == 3
     assert total.entity_description.entity_category is None
     assert total.state_class == SensorStateClass.MEASUREMENT
-    assert total.device_info["identifiers"] == {(DOMAIN, "carrier_org_test123")}
-    assert total.device_info["name"] == "UniFi Carrier Fabric"
+    assert total.device_info is not None
+    assert total.device_info.identifiers == {(DOMAIN, "carrier_org_test123")}
+    assert total.device_info.name == "UniFi Carrier Fabric"
 
     suspended = sensors_by_key["suspended_subscribers"]
     assert suspended.unique_id == "carrier_org_test123_suspended_subscribers"
@@ -297,14 +298,15 @@ async def test_carrier_fabric_subscriber_sensors_opt_in(
 
     # Device info checks
     dev_info1 = s1_state.device_info
-    assert dev_info1["identifiers"] == {(DOMAIN, "carrier_subscriber_sub_1")}
+    assert dev_info1 is not None
+    assert dev_info1.identifiers == {(DOMAIN, "carrier_subscriber_sub_1")}
     org_device = get_device_by_identifier(
         dr.async_get(hass), (DOMAIN, "carrier_org_test123"), carrier_entry.entry_id
     )
     assert org_device is not None
-    assert dev_info1["via_device_id"] == org_device.id
-    assert "via_device" not in dev_info1
-    assert dev_info1["name"] == "Alice Resident"
+    assert dev_info1.via_device_id == org_device.id
+    assert "via_device" not in dev_info1.as_dict()
+    assert dev_info1.name == "Alice Resident"
 
     s1_plan = plans_by_sub["sub_1"]
     assert s1_plan.unique_id == "carrier_subscriber_sub_1_service_plan"
@@ -319,7 +321,8 @@ async def test_carrier_fabric_subscriber_sensors_opt_in(
     s2_state = states_by_sub["sub_2"]
     assert s2_state.native_value == "suspended"
     assert s2_state.extra_state_attributes == {"suspended_at": "2026-02-01T12:00:00Z"}
-    assert s2_state.device_info["name"] == "SUB-002"
+    assert s2_state.device_info is not None
+    assert s2_state.device_info.name == "SUB-002"
 
     s2_plan = plans_by_sub["sub_2"]
     assert s2_plan.native_value is None
@@ -328,7 +331,8 @@ async def test_carrier_fabric_subscriber_sensors_opt_in(
     # Subscriber 3: name falls back to Subscriber <id[:8]>
     # unknown state, unknown plan ID
     s3_state = states_by_sub["sub_3_12345678"]
-    assert s3_state.device_info["name"] == "Subscriber sub_3_12"
+    assert s3_state.device_info is not None
+    assert s3_state.device_info.name == "Subscriber sub_3_12"
     assert s3_state.native_value == "unknown"
 
     # A plan this key cannot see is unknown, not a raw plan UUID
@@ -841,8 +845,9 @@ def _register_devices(hass, entry, entities) -> None:
     """Create or update each entity's device in the entry, like entity setup."""
     dev_reg = dr.async_get(hass)
     for entity in entities:
+        assert entity.device_info is not None
         dev_reg.async_get_or_create(
-            config_entry_id=entry.entry_id, **entity.device_info
+            config_entry_id=entry.entry_id, **entity.device_info.as_dict()
         )
 
 

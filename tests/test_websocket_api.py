@@ -2109,10 +2109,11 @@ async def test_node_details_client_on_standalone_device(
         },
     )
     tracker = _real_tracker(init_integration, LAPTOP_MAC)
-    assert tracker.device_info["identifiers"] == {(DOMAIN, f"client_{LAPTOP_MAC}")}
+    assert tracker.device_info is not None
+    assert tracker.device_info.identifiers == {(DOMAIN, f"client_{LAPTOP_MAC}")}
     device = dr.async_get(hass).async_get_or_create(
         config_entry_id=init_integration.entry_id,
-        identifiers=tracker.device_info["identifiers"],
+        identifiers=tracker.device_info.identifiers,
     )
     registered = _register_tracker(
         hass, init_integration, require_not_none(tracker.unique_id), device_id=device.id
@@ -2140,10 +2141,11 @@ async def test_node_details_grouped_client_tracker_has_no_device(
     """A tracker grouped under its uplink AP never reports the AP as the client."""
     _seed_details(init_integration)
     tracker = _real_tracker(init_integration, PHONE_MAC)
-    assert tracker.device_info["identifiers"] == {(DOMAIN, f"{SITE}_uuid-ap")}
+    assert tracker.device_info is not None
+    assert tracker.device_info.identifiers == {(DOMAIN, f"{SITE}_uuid-ap")}
     ap_device = dr.async_get(hass).async_get_or_create(
         config_entry_id=init_integration.entry_id,
-        identifiers=tracker.device_info["identifiers"],
+        identifiers=tracker.device_info.identifiers,
     )
     registered = _register_tracker(
         hass,

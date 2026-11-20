@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
-from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
+from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.entity import EntityDescription
 
 from custom_components.unifi_insights.const import (
@@ -442,14 +442,16 @@ class TestUnifiInsightsEntity:
             device_id="device1",
         )
 
-        device_info = entity.device_info
-        assert (DOMAIN, "site1_device1") in require_not_none(device_info)["identifiers"]
-        assert "manufacturer" in require_not_none(device_info)
-        assert dict(require_not_none(device_info))["manufacturer"] == MANUFACTURER
-        assert "model" in require_not_none(device_info)
-        assert dict(require_not_none(device_info))["model"] == "USW-24-POE"
-        assert "sw_version" in require_not_none(device_info)
-        assert dict(require_not_none(device_info))["sw_version"] == "6.5.55"
+        device_info = require_instance(entity.device_info, DeviceInfo)
+        assert (DOMAIN, "site1_device1") in device_info.as_dict().get(
+            "identifiers", set()
+        )
+        assert "manufacturer" in device_info.as_dict()
+        assert device_info.manufacturer == MANUFACTURER
+        assert "model" in device_info.as_dict()
+        assert device_info.model == "USW-24-POE"
+        assert "sw_version" in device_info.as_dict()
+        assert device_info.sw_version == "6.5.55"
 
     async def test_entity_available_online(self, hass: HomeAssistant, mock_coordinator):
         """Test entity is available when device is online."""
@@ -610,11 +612,9 @@ class TestUnifiInsightsEntity:
             device_id="device1",
         )
 
-        device_info = entity.device_info
-        assert "connections" in require_not_none(device_info)
-        connections = require_instance(
-            dict(require_not_none(device_info))["connections"], set
-        )
+        device_info = require_instance(entity.device_info, DeviceInfo)
+        assert "connections" in device_info.as_dict()
+        connections = require_instance(device_info.connections, set)
         assert (CONNECTION_NETWORK_MAC, "AA:BB:CC:DD:EE:FF") in connections
 
 
@@ -870,9 +870,9 @@ class TestUnifiProtectEntity:
             device_id="camera1",
         )
 
-        device_info = entity.device_info
-        assert "manufacturer" in require_not_none(device_info)
-        assert dict(require_not_none(device_info))["manufacturer"] == MANUFACTURER
+        device_info = require_instance(entity.device_info, DeviceInfo)
+        assert "manufacturer" in device_info.as_dict()
+        assert device_info.manufacturer == MANUFACTURER
 
     async def test_protect_entity_light_type(
         self, hass: HomeAssistant, mock_coordinator
@@ -912,8 +912,8 @@ class TestUnifiProtectEntity:
         )
 
         # Should use network device identifiers
-        device_info = entity.device_info
-        identifiers = require_not_none(device_info).get("identifiers", set())
+        device_info = require_not_none(entity.device_info)
+        identifiers = device_info.as_dict().get("identifiers", set())
         # Should match network device site1_device1
         assert (DOMAIN, "site1_device1") in identifiers
 
@@ -942,8 +942,8 @@ class TestUnifiProtectEntity:
 
         # Should use network device identifiers - both NVR and network device
         # entities should appear under the same device in HA
-        device_info = entity.device_info
-        identifiers = require_not_none(device_info).get("identifiers", set())
+        device_info = require_not_none(entity.device_info)
+        identifiers = device_info.as_dict().get("identifiers", set())
         # Should match network device site1_device1
         assert (DOMAIN, "site1_device1") in identifiers
 
@@ -970,7 +970,9 @@ class TestUnifiProtectEntity:
             device_id="speaker1",
         )
 
-        identifiers = require_not_none(entity.device_info).get("identifiers", set())
+        identifiers = (
+            require_not_none(entity.device_info).as_dict().get("identifiers", set())
+        )
         assert (DOMAIN, "site1_device1") in identifiers
 
     async def test_protect_entity_no_network_match(
@@ -985,8 +987,8 @@ class TestUnifiProtectEntity:
         )
 
         # Should create its own device entry
-        device_info = entity.device_info
-        identifiers = require_not_none(device_info).get("identifiers", set())
+        device_info = require_not_none(entity.device_info)
+        identifiers = device_info.as_dict().get("identifiers", set())
         assert (DOMAIN, "protect_camera_camera2") in identifiers
 
     async def test_protect_entity_dual_camera_parent(
@@ -1025,8 +1027,8 @@ class TestUnifiProtectEntity:
         )
 
         # Should use parent camera ID in device identifiers
-        device_info = entity.device_info
-        identifiers = require_not_none(device_info).get("identifiers", set())
+        device_info = require_not_none(entity.device_info)
+        identifiers = device_info.as_dict().get("identifiers", set())
         # Uses parent ID for grouping
         assert (DOMAIN, "protect_camera_camera_main") in identifiers
 
@@ -1070,9 +1072,9 @@ class TestUnifiProtectEntity:
 
         # The device name should be stripped of " Package Camera" suffix
         # device_info.name should be "Garage" not "Garage Package Camera"
-        device_info = entity.device_info
+        device_info = require_not_none(entity.device_info)
         assert "Package Camera" not in require_not_none(
-            require_not_none(device_info).get("name", "")
+            device_info.as_dict().get("name", "")
         )
 
     async def test_protect_entity_dual_camera_main_name_stripping(
@@ -1113,11 +1115,11 @@ class TestUnifiProtectEntity:
 
         # The device name should be stripped of " Main Camera" suffix
         # device_info.name should be "Backyard" not "Backyard Main Camera"
-        device_info = entity.device_info
+        device_info = require_not_none(entity.device_info)
         assert "Main Camera" not in require_not_none(
-            require_not_none(device_info).get("name", "")
+            device_info.as_dict().get("name", "")
         )
-        assert require_not_none(device_info).get("name") == "Backyard"
+        assert device_info.name == "Backyard"
 
     async def test_protect_entity_available_non_dict(
         self, hass: HomeAssistant, mock_coordinator: MagicMock
@@ -1192,8 +1194,8 @@ class TestUnifiProtectEntity:
             device_id="camera_new",
         )
 
-        device_info = entity.device_info
-        assert require_not_none(device_info).get("suggested_area") == "Security"
+        device_info = require_not_none(entity.device_info)
+        assert device_info.suggested_area == "Security"
 
     async def test_protect_entity_suggested_area_light(
         self, hass: HomeAssistant, mock_coordinator
@@ -1206,8 +1208,8 @@ class TestUnifiProtectEntity:
             device_id="light1",
         )
 
-        device_info = entity.device_info
-        assert require_not_none(device_info).get("suggested_area") == "Exterior"
+        device_info = require_not_none(entity.device_info)
+        assert device_info.suggested_area == "Exterior"
 
     async def test_protect_entity_suggested_area_sensor(
         self, hass: HomeAssistant, mock_coordinator
@@ -1219,8 +1221,8 @@ class TestUnifiProtectEntity:
             device_id="sensor1",
         )
 
-        device_info = entity.device_info
-        assert require_not_none(device_info).get("suggested_area") == "Security"
+        device_info = require_not_none(entity.device_info)
+        assert device_info.suggested_area == "Security"
 
     async def test_protect_entity_empty_mac_in_lookup(
         self, hass: HomeAssistant, mock_coordinator: MagicMock
@@ -1243,8 +1245,8 @@ class TestUnifiProtectEntity:
             device_id="cam_empty_mac",
         )
 
-        device_info = entity.device_info
-        identifiers = require_not_none(device_info).get("identifiers", set())
+        device_info = require_not_none(entity.device_info)
+        identifiers = device_info.as_dict().get("identifiers", set())
         assert (DOMAIN, "site1_device1") not in identifiers
 
 
@@ -1318,11 +1320,9 @@ class TestUnifiInsightsEntityEdgeCases:
             device_id="switch1",
         )
 
-        device_info = entity.device_info
-        assert "hw_version" in require_not_none(device_info)
-        assert "2 Ports" in require_not_none(
-            require_instance(dict(require_not_none(device_info))["hw_version"], str)
-        )
+        device_info = require_instance(entity.device_info, DeviceInfo)
+        assert "hw_version" in device_info.as_dict()
+        assert "2 Ports" in require_instance(device_info.hw_version, str)
 
     async def test_entity_with_radio_table(
         self, hass: HomeAssistant, mock_coordinator_with_ports
@@ -1337,14 +1337,10 @@ class TestUnifiInsightsEntityEdgeCases:
             device_id="ap1",
         )
 
-        device_info = entity.device_info
-        assert "hw_version" in require_not_none(device_info)
-        assert "ra0 (ng)" in require_not_none(
-            require_instance(dict(require_not_none(device_info))["hw_version"], str)
-        )
-        assert "rai0 (na)" in require_not_none(
-            require_instance(dict(require_not_none(device_info))["hw_version"], str)
-        )
+        device_info = require_instance(entity.device_info, DeviceInfo)
+        assert "hw_version" in device_info.as_dict()
+        assert "ra0 (ng)" in require_instance(device_info.hw_version, str)
+        assert "rai0 (na)" in require_instance(device_info.hw_version, str)
 
     async def test_entity_without_name(
         self, hass: HomeAssistant, mock_coordinator_with_ports
@@ -1359,9 +1355,9 @@ class TestUnifiInsightsEntityEdgeCases:
             device_id="device_minimal",
         )
 
-        device_info = entity.device_info
+        device_info = require_not_none(entity.device_info)
         # Should have a name (either from device or fallback)
-        assert "name" in require_not_none(device_info)
+        assert "name" in device_info.as_dict()
 
     async def test_entity_device_data_missing(
         self, hass: HomeAssistant, mock_coordinator_with_ports: MagicMock
@@ -1486,8 +1482,8 @@ class TestUnifiInsightsEntityEdgeCases:
             device_id="switch1",
         )
 
-        device_info = entity.device_info
-        assert require_not_none(device_info).get("suggested_area") == "Network"
+        device_info = require_not_none(entity.device_info)
+        assert device_info.suggested_area == "Network"
 
     async def test_entity_suggested_area_ap(
         self, hass: HomeAssistant, mock_coordinator_with_ports
@@ -1502,8 +1498,8 @@ class TestUnifiInsightsEntityEdgeCases:
             device_id="ap1",
         )
 
-        device_info = entity.device_info
-        assert require_not_none(device_info).get("suggested_area") == "Network"
+        device_info = require_not_none(entity.device_info)
+        assert device_info.suggested_area == "Network"
 
     async def test_entity_empty_port_table(
         self, hass: HomeAssistant, mock_coordinator_with_ports: MagicMock
@@ -1532,9 +1528,9 @@ class TestUnifiInsightsEntityEdgeCases:
             device_id="switch_empty",
         )
 
-        device_info = entity.device_info
+        device_info = require_not_none(entity.device_info)
         # hw_version should not include ports if empty
-        hw_version = require_not_none(device_info).get("hw_version", "")
+        hw_version = device_info.as_dict().get("hw_version", "")
         assert "Ports" not in require_not_none(hw_version)
 
     async def test_entity_radio_table_non_dict_entry(
@@ -1568,8 +1564,8 @@ class TestUnifiInsightsEntityEdgeCases:
             device_id="ap_mixed",
         )
 
-        device_info = entity.device_info
-        hw_version = require_not_none(device_info).get("hw_version", "")
+        device_info = require_not_none(entity.device_info)
+        hw_version = device_info.as_dict().get("hw_version", "")
         # Should only include valid radio entry
         assert "ra0 (ng)" in require_not_none(hw_version)
 
@@ -1603,8 +1599,8 @@ class TestUnifiInsightsEntityEdgeCases:
             device_id="ap_empty_radio",
         )
 
-        device_info = entity.device_info
-        hw_version = require_not_none(device_info).get("hw_version", "")
+        device_info = require_not_none(entity.device_info)
+        hw_version = device_info.as_dict().get("hw_version", "")
         assert hw_version == "ra1 (na)"
 
 
@@ -1730,11 +1726,11 @@ def test_protect_entity_without_its_record_uses_defaults() -> None:
 
     entity = UnifiProtectEntity(coordinator, DEVICE_TYPE_CAMERA, "cam1")
 
-    assert entity.device_info is not None
-    assert entity.device_info["identifiers"] == {(DOMAIN, "protect_camera_cam1")}
-    assert entity.device_info["name"] == "UniFi Camera cam1"
-    assert "model" in entity.device_info
-    assert entity.device_info["model"] == "UniFi Camera"
+    assert isinstance(entity.device_info, DeviceInfo)
+    assert entity.device_info.identifiers == {(DOMAIN, "protect_camera_cam1")}
+    assert entity.device_info.name == "UniFi Camera cam1"
+    assert "model" in entity.device_info.as_dict()
+    assert entity.device_info.model == "UniFi Camera"
 
 
 @pytest.mark.parametrize(

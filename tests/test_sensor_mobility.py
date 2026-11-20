@@ -402,7 +402,9 @@ async def test_router_links_to_its_workspace(hass: HomeAssistant) -> None:
         coordinator, ROUTER_SENSORS[0], OFFICE_ROUTER_ID, "workspace-device-id"
     )
 
-    device_info: dict[str, Any] = dict(sensor.device_info or {})
+    device_info: dict[str, Any] = (
+        sensor.device_info.as_dict() if sensor.device_info is not None else {}
+    )
     assert device_info["via_device_id"] == "workspace-device-id"
     assert "via_device" not in device_info
 

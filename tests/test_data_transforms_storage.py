@@ -372,7 +372,7 @@ def _assert_entity_snapshot_parity(
         assert entity.unique_id == f"unifi_insights_nvr_nvr1_{key}"
         assert entity.entity_description.device_class == BinarySensorDeviceClass.PROBLEM
         assert entity.entity_description.entity_category == EntityCategory.DIAGNOSTIC
-        assert require_not_none(entity.device_info)["identifiers"] == {
+        assert require_not_none(entity.device_info).identifiers == {
             ("unifi_insights", "protect_nvr_nvr1")
         }
     snapshot = build_protect_snapshot(
