@@ -515,6 +515,38 @@ describe("<unifi-insights-devices-panel>", () => {
     expect(await audit(el)).toEqual([]);
   });
 
+  it("resubscribes when grouping is back on for the same entry after a reconnect", async () => {
+    const fake = fakePanelHass();
+    const { el } = await mountPanel(fake);
+    expect(fake.subs).toHaveLength(1);
+    // The sources reload after the terminal event still lists the entry, because
+    // grouping was switched back on before it ran.
+    fake.setEntries([{ entry_id: "entry-1", title: "Home UDM" }]);
+    fake.push({
+      schema_version: 1,
+      entry_id: "entry-1",
+      status: "grouping_disabled",
+      revision: "",
+      stale: false,
+      sections: [],
+    });
+    await settle(el);
+    expect(el.shadowRoot!.textContent).toContain(
+      "Device grouping is turned off for this integration.",
+    );
+
+    // The next sources refresh (here a reconnect) lists the same entry; the
+    // selection does not change, so only this refresh can restart the stream.
+    fake.emit("ready");
+    await settle(el);
+
+    expect(fake.subs).toHaveLength(2);
+    expect(fake.subs[1]!.message.entry_id).toBe("entry-1");
+    expect(el.shadowRoot!.textContent).not.toContain(
+      "Device grouping is turned off for this integration.",
+    );
+  });
+
   it("handles grouping_disabled error code and switches to another enabled entry if one remains", async () => {
     const fake = fakePanelHass({
       entries: [

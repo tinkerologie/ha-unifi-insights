@@ -237,7 +237,14 @@ export class UnifiInsightsDevicesPanel extends LitElement {
   }
 
   protected override willUpdate(changed: PropertyValues<this>): void {
-    if (changed.has("hass") || changed.has("selectedEntryId")) this.sync();
+    // groupingDisabled clears when the sources list the selected entry again,
+    // which must restart its stream even though the selection did not change.
+    if (
+      changed.has("hass") ||
+      changed.has("selectedEntryId") ||
+      changed.has("groupingDisabled")
+    )
+      this.sync();
   }
 
   private get localize(): LocalizeFunc {

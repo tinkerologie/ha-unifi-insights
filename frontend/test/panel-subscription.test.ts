@@ -205,6 +205,29 @@ describe("DeviceGroupsSubscription", () => {
     expect(fake.connection.subscribeMessage).toHaveBeenCalledTimes(1);
   });
 
+  it("reopens a grouping_disabled stream when pointed at the same entry again", async () => {
+    const fake = fakeConnection();
+    const h = handlers();
+    const sub = new DeviceGroupsSubscription(h);
+    sub.update(fake.connection, "entry-1");
+    await vi.runAllTimersAsync();
+    fake.calls[0]!.callback(
+      makeSnapshot({ status: "grouping_disabled", revision: "" }),
+    );
+    expect(sub.live).toBe(false);
+
+    // The panel re-binds the same entry once sources list it as enabled again.
+    sub.update(fake.connection, "entry-1");
+    await vi.runAllTimersAsync();
+    expect(fake.connection.subscribeMessage).toHaveBeenCalledTimes(2);
+    expect(fake.calls[1]!.message).toMatchObject({ entry_id: "entry-1" });
+
+    // A live stream is still left alone by the same call.
+    sub.update(fake.connection, "entry-1");
+    await vi.runAllTimersAsync();
+    expect(fake.connection.subscribeMessage).toHaveBeenCalledTimes(2);
+  });
+
   it("handles error code grouping_disabled as terminal with no retry", async () => {
     const fake = fakeConnection();
     const h = handlers();

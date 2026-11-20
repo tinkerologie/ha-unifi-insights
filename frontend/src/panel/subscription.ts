@@ -65,12 +65,24 @@ export class DeviceGroupsSubscription {
     return this.isLive;
   }
 
-  /** Point the stream at a connection and entry; a no-op when neither changed. */
+  /**
+   * Point the stream at a connection and entry. A no-op when neither changed,
+   * unless the stream for that entry ended with grouping_disabled.
+   */
   update(
     connection: Connection | undefined,
     entryId: string | undefined,
   ): void {
-    if (connection === this.connection && entryId === this.entryId) return;
+    if (connection === this.connection && entryId === this.entryId) {
+      // A stream ended by grouping_disabled is pointed at the same entry again
+      // only once the sources list it as enabled, so open it again.
+      if (this.terminalDisabled && connection && entryId) {
+        this.terminalDisabled = false;
+        this.attempt = 0;
+        this.open();
+      }
+      return;
+    }
     this.stop();
     this.connection = connection;
     this.entryId = entryId;
