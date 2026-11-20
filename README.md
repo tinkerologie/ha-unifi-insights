@@ -159,12 +159,14 @@ For Carrier Fabric, enter the ISP API key. See
 To change these settings, open **Settings** → **Devices & services** →
 **UniFi Insights** → **Configure**.
 
-| Option                | Default | Description                                                                                                                                                                                             |
-| --------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Track WiFi Clients    | Off     | Creates a device tracker for each wireless client. This can add many entities on busy networks.                                                                                                         |
-| Track Wired Clients   | Off     | Creates a device tracker for each wired client.                                                                                                                                                         |
-| Enable Client Control | On      | Creates client allow/block switches, reconnect buttons and disabled-by-default Wake-on-LAN buttons for wired clients. Turn off for read-only monitoring.                                                |
-| Sites                 | All     | Appears if the console lists sites and either condition applies. It lists more than one site, or the entry has a saved site filter. Select the sites to poll. Leave this field empty to poll all sites. |
+| Option                          | Default | Description                                                                                                                                                                                                                                             |
+| ------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Track WiFi Clients              | Off     | Creates a device tracker for each wireless client. This can add many entities on busy networks.                                                                                                                                                         |
+| Track Wired Clients             | Off     | Creates a device tracker for each wired client.                                                                                                                                                                                                         |
+| Tracked clients                 | All     | Appears when there are clients to pick. Select clients by MAC address to track only those; leave it empty to track every client of the enabled types. Track WiFi Clients and Track Wired Clients still apply. Deselecting a client removes its tracker. |
+| Enable Client Control           | On      | Creates client allow/block switches, reconnect buttons and disabled-by-default Wake-on-LAN buttons for wired clients. Turn off for read-only monitoring.                                                                                                |
+| Sites                           | All     | Appears if the console lists sites and either condition applies. It lists more than one site, or the entry has a saved site filter. Select the sites to poll. Leave this field empty to poll all sites.                                                 |
+| Group devices by network uplink | Off     | Adds a **UniFi devices** sidebar panel for administrators. It lists each device under the switch, access point or gateway it is directly connected to. See [Grouped device panel](#grouped-device-panel). Not available for Carrier Fabric entries.     |
 
 The integration enables new client trackers. This also applies to Home
 Assistant 2026.11 and later, which disable network-scanner trackers by default.
@@ -177,6 +179,43 @@ Home Assistant. If the tracker belongs to an access point or switch device,
 the integration changes only the tracker name.
 
 Carrier Fabric entries have their own options. See [Carrier Fabric setup](#carrier-fabric-setup).
+
+#### Grouped device panel
+
+Home Assistant's own device list for an integration cannot nest one device
+under another by network connection. When **Group devices by network uplink**
+is on, the integration adds its own **UniFi devices** panel to the sidebar
+instead. The panel is for administrators only: other users do not see it, and
+its data commands refuse them.
+
+The panel lists one section for each selected site. Each device appears under
+the device it is directly connected to, with the port number when it is known.
+Select a device to open its Home Assistant device page. Cameras that are not
+also UniFi Network devices appear under the switch or access point that UniFi
+Network reports for them.
+
+The panel only nests a device when the link is current and certain. A device
+stays at the top level of its site, with a short reason, when:
+
+- UniFi reports no uplink for it (**no uplink**).
+- The only link UniFi knows is from before the device went offline
+  (**historical**).
+- The link matches more than one device, or the camera's two link sources
+  disagree (**ambiguous**).
+- The parent is not in the same site (**parent not found**).
+- Two or more devices name each other as their uplink (**cycle**).
+- The latest UniFi Network poll failed (**stale**). The panel then also shows
+  that its data may be out of date.
+
+A camera whose site cannot be found appears under **Unassigned**. Every other
+device of the entry, such as the site device, standalone client devices and
+Access or InnerSpace devices, appears under **Other devices**. No device is
+hidden.
+
+Turning the option on or off does not reload the integration. It does not
+change device or entity IDs, names, areas, labels or automations, and it does
+not change Home Assistant's own device list. The panel stays in the sidebar
+while at least one loaded UniFi Insights entry has the option on.
 
 ## UniFi Network
 

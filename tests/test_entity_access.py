@@ -112,18 +112,17 @@ async def test_identity_helpers_are_namespace_scoped() -> None:
     assert access_unique_id(NAMESPACE, "door-1", "lock") == (
         f"unifi_insights_access_{NAMESPACE}_door-1_lock"
     )
-    assert door_device_info(NAMESPACE, "door-1", "Main")["identifiers"] == {
+    assert door_device_info(NAMESPACE, "door-1", "Main").identifiers == {
         (DOMAIN, f"access_door_{NAMESPACE}_door-1")
     }
-    assert door_device_info(NAMESPACE, "door-1", None)["name"] == "Access door door-1"
-    assert console_device_info(NAMESPACE)["identifiers"] == {
+    assert door_device_info(NAMESPACE, "door-1", None).name == "Access door door-1"
+    assert console_device_info(NAMESPACE).identifiers == {
         (DOMAIN, f"access_console_{NAMESPACE}")
     }
     assert (
-        doorbell_device_info(NAMESPACE, "reader", None)["name"]
-        == "Access device reader"
+        doorbell_device_info(NAMESPACE, "reader", None).name == "Access device reader"
     )
-    assert doorbell_device_info(NAMESPACE, "reader", "Lobby")["name"] == "Lobby"
+    assert doorbell_device_info(NAMESPACE, "reader", "Lobby").name == "Lobby"
 
 
 async def test_discovery_defers_without_namespace(hass: Any) -> None:
@@ -492,7 +491,7 @@ async def test_lock_entity_device_name_comes_from_the_door(hass: Any) -> None:
     lock = lock_platform.UnifiAccessDoorLock(coordinator, "door-plain")
 
     assert lock.device_info is not None
-    assert lock.device_info["name"] == "Lobby door"
+    assert lock.device_info.name == "Lobby door"
 
 
 def test_unique_id_helper_is_pure() -> None:

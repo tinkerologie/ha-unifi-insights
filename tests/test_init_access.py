@@ -487,6 +487,7 @@ async def test_access_resources_follow_the_entry_lifecycle(
             "AccessNotificationSocket.run",
             side_effect=_run_socket,
         ),
+        patch.object(hass.config_entries, "async_schedule_reload") as schedule_reload,
     ):
         if forward_failure:
             with patch.object(
@@ -507,6 +508,11 @@ async def test_access_resources_follow_the_entry_lifecycle(
         else:
             assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
             await hass.async_block_till_done()
+            # The webhook receiver and console identity are written to entry
+            # data during setup; setup must count them as applied rather than
+            # scheduling a follow-up reload (#519 review r2 N1).
+            assert mock_config_entry.data[CONF_ACCESS_WEBHOOK_SECRET]
+            schedule_reload.assert_not_called()
             data = mock_config_entry.runtime_data
             assert data.access_client is client
             assert data.access_coordinator.webhook_active

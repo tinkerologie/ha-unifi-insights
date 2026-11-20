@@ -744,7 +744,7 @@ class TestUnifiClientTracker:
 
         device_info = tracker.device_info
         assert device_info is not None
-        assert device_info.get("manufacturer") == "Ubiquiti Inc."
+        assert device_info.manufacturer == "Ubiquiti Inc."
 
     def test_trackers_are_enabled_by_default(self, mock_coordinator: MagicMock) -> None:
         """Opted-in client trackers stay enabled on Home Assistant 2026.11+."""
@@ -1509,8 +1509,9 @@ class TestRegistryReconciliation:
         # An absent client has no uplink to group under, so it gets a standalone
         # device that represents the client itself. The device carries the name
         # and the entity has none -- see test_offline_tracker_name_is_not_doubled.
-        assert tracker.device_info["name"] == "Kitchen Tablet"
-        assert tracker.device_info["name"] != f"Client {self.OFFLINE_MAC}"
+        assert tracker.device_info is not None
+        assert tracker.device_info.name == "Kitchen Tablet"
+        assert tracker.device_info.name != f"Client {self.OFFLINE_MAC}"
         assert tracker.name is None
 
     @pytest.mark.asyncio
@@ -1572,7 +1573,8 @@ class TestRegistryReconciliation:
 
         tracker = async_add_entities.call_args[0][0][0]
         # Without the device-registry fallback this degrades to "Client <mac>".
-        assert tracker.device_info["name"] == "Kitchen Tablet"
+        assert tracker.device_info is not None
+        assert tracker.device_info.name == "Kitchen Tablet"
 
     @pytest.mark.asyncio
     async def test_tracking_disabled_removes_all_trackers(

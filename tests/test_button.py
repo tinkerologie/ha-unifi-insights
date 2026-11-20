@@ -430,7 +430,7 @@ class TestUnifiProtectChimePlayButton:
         assert button._attr_translation_key == "play"
         assert button.unique_id == "unifi_insights_chime_chime1_play"
         assert button.device_info is not None
-        assert button.device_info["identifiers"] == {(DOMAIN, "protect_chime_chime1")}
+        assert button.device_info.identifiers == {(DOMAIN, "protect_chime_chime1")}
 
     async def test_chime_button_attributes(self, hass: HomeAssistant, mock_coordinator):
         """Test chime button attributes."""
@@ -2028,12 +2028,12 @@ class TestUnifiClientWakeButton:
         assert button.translation_key == "client_wake"
         assert button.has_entity_name is True
         assert button.translation_placeholders == {"client_name": mac}
-        assert button.device_info is not None
-        assert button.device_info["identifiers"] == {(DOMAIN, "site_site1")}
-        assert "manufacturer" in button.device_info
-        assert button.device_info["manufacturer"] == MANUFACTURER
-        assert "model" in button.device_info
-        assert button.device_info["model"] == "UniFi Site"
+        assert isinstance(button.device_info, dr.DeviceInfo)
+        assert button.device_info.identifiers == {(DOMAIN, "site_site1")}
+        assert "manufacturer" in button.device_info.as_dict()
+        assert button.device_info.manufacturer == MANUFACTURER
+        assert "model" in button.device_info.as_dict()
+        assert button.device_info.model == "UniFi Site"
 
     def test_wake_button_without_site_does_not_attach_a_device(
         self, hass: HomeAssistant
@@ -2068,7 +2068,7 @@ class TestUnifiClientWakeButton:
         }
         btn_gw = UnifiClientWakeButton(coordinator, mac, site_id="site1")
         assert btn_gw.device_info is not None
-        assert btn_gw.device_info["identifiers"] == {(DOMAIN, "site1_gw1")}
+        assert btn_gw.device_info.identifiers == {(DOMAIN, "site1_gw1")}
 
         # Site without gateway: falls back to site device
         coordinator.data = {
@@ -2077,13 +2077,13 @@ class TestUnifiClientWakeButton:
             "clients": {"site1": {"c1": {"macAddress": mac, "name": "Gaming PC"}}},
         }
         btn_site = UnifiClientWakeButton(coordinator, mac, site_id="site1")
-        assert btn_site.device_info is not None
-        assert btn_site.device_info["identifiers"] == {(DOMAIN, "site_site1")}
-        assert btn_site.device_info["name"] == "UniFi Site (Home Site)"
-        assert "manufacturer" in btn_site.device_info
-        assert btn_site.device_info["manufacturer"] == MANUFACTURER
-        assert "model" in btn_site.device_info
-        assert btn_site.device_info["model"] == "UniFi Site"
+        assert isinstance(btn_site.device_info, dr.DeviceInfo)
+        assert btn_site.device_info.identifiers == {(DOMAIN, "site_site1")}
+        assert btn_site.device_info.name == "UniFi Site (Home Site)"
+        assert "manufacturer" in btn_site.device_info.as_dict()
+        assert btn_site.device_info.manufacturer == MANUFACTURER
+        assert "model" in btn_site.device_info.as_dict()
+        assert btn_site.device_info.model == "UniFi Site"
 
     def test_wake_button_device_info_never_contains_client_identifier(
         self, hass: HomeAssistant
@@ -2105,13 +2105,18 @@ class TestUnifiClientWakeButton:
             "clients": {"site1": {"c1": {"macAddress": mac, "name": "Workstation"}}},
         }
         btn_gw = UnifiClientWakeButton(coordinator, mac, site_id="site1")
-        for _, identifier in require_not_none(btn_gw.device_info)["identifiers"]:
+        # Indexing, not .get(): a missing key must fail, not loop zero times.
+        identifiers = require_not_none(btn_gw.device_info).as_dict()["identifiers"]
+        assert identifiers
+        for _, identifier in identifiers:
             assert not identifier.startswith("client_")
 
         # Offline unseeded client
         coordinator.data = {"devices": {}, "clients": {}}
         btn_offline = UnifiClientWakeButton(coordinator, mac, site_id="site1")
-        for _, identifier in require_not_none(btn_offline.device_info)["identifiers"]:
+        identifiers = require_not_none(btn_offline.device_info).as_dict()["identifiers"]
+        assert identifiers
+        for _, identifier in identifiers:
             assert not identifier.startswith("client_")
 
     def test_wake_button_translation_placeholders_live_history_and_mac_only(
@@ -2172,7 +2177,7 @@ class TestUnifiClientWakeButton:
             site_id="remote_site",
         )
         assert button.device_info is not None
-        assert button.device_info["identifiers"] == {(DOMAIN, "remote_site_gw_remote")}
+        assert button.device_info.identifiers == {(DOMAIN, "remote_site_gw_remote")}
         assert button.translation_placeholders == {"client_name": "Offline Seeded PC"}
 
     def test_wake_button_name_from_live_name(self, hass: HomeAssistant) -> None:
@@ -2501,7 +2506,7 @@ class TestWakeButtonSetup:
         wakes = [e for e in added if isinstance(e, UnifiClientWakeButton)]
         assert len(wakes) == 1
         button = wakes[0]
-        assert require_not_none(button.device_info)["identifiers"] == (
+        assert require_not_none(button.device_info).identifiers == (
             device.identifiers if existing_device else {(DOMAIN, "site_site1")}
         )
         saved_name = "Registry PC" if registry_name == "Wake Registry PC" else mac
@@ -2753,7 +2758,7 @@ class TestWakeButtonSetup:
         assert wake_buttons[0].unique_id == f"unifi_insights_{mac}_wake"
         assert wake_buttons[0].translation_placeholders == {"client_name": "History PC"}
         assert wake_buttons[0].device_info is not None
-        assert wake_buttons[0].device_info["identifiers"] == {(DOMAIN, "site1_gw1")}
+        assert wake_buttons[0].device_info.identifiers == {(DOMAIN, "site1_gw1")}
 
     async def test_setup_creates_one_button_when_registry_history_and_live_overlap(
         self, hass: HomeAssistant

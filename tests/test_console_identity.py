@@ -1232,6 +1232,7 @@ async def test_async_setup_entry_discovers_console_identity_from_nvr(
             "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
             new_callable=AsyncMock,
         ),
+        patch.object(hass.config_entries, "async_schedule_reload") as schedule_reload,
     ):
         mock_probe_net.return_value = ProbeResult(
             ProbeStatus.AVAILABLE, sites=[MagicMock(id="default")]
@@ -1243,6 +1244,9 @@ async def test_async_setup_entry_discovers_console_identity_from_nvr(
         assert res is True
         assert entry.data.get(CONF_CONSOLE_ID) == "aa:bb:cc:dd:ee:11"
         assert entry.data.get(CONF_CONSOLE_NAME) == "Home UDM"
+        # Setup wrote the console identity itself, so it counts as applied
+        # and must not trigger a follow-up reload (#519 review r2 N1).
+        schedule_reload.assert_not_called()
         assert entry.unique_id == "aa:bb:cc:dd:ee:11"
         assert entry.title == "UniFi - Home UDM"
         await hass.config_entries.async_unload(entry.entry_id)

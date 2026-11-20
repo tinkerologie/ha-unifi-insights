@@ -88,12 +88,24 @@ CONF_TRACK_WIFI_CLIENTS: Final = "track_wifi_clients"
 CONF_TRACK_WIRED_CLIENTS: Final = "track_wired_clients"
 CONF_CLIENT_CONTROL: Final = "client_control"
 CONF_SITE_IDS: Final = "site_ids"  # Empty/absent means every site
+# Client MACs (lowercase) to track; empty/absent tracks every client of the
+# enabled types.
+CONF_TRACKED_CLIENTS: Final = "tracked_clients"
 CONF_TRACK_SUBSCRIBERS: Final = "track_subscribers"
 CONF_CARRIER_ACTIONS: Final = "carrier_actions"
 DEFAULT_TRACK_CLIENTS: Final = False
 DEFAULT_CLIENT_CONTROL: Final = True
 DEFAULT_TRACK_SUBSCRIBERS: Final = False
 DEFAULT_CARRIER_ACTIONS: Final = False
+# Network/Protect entries: list devices grouped by their verified uplink in an
+# admin panel. Presentation only, so toggling it alone never reloads the entry.
+CONF_GROUP_DEVICES_BY_UPLINK: Final = "group_devices_by_uplink"
+DEFAULT_GROUP_DEVICES_BY_UPLINK: Final = False
+
+# Provenance of a device's legacy parent link (``device["topology"]``):
+# ``uplink`` (current) or the ``last_uplink`` overlay (historical).
+UPLINK_SOURCE_CURRENT: Final = "current"
+UPLINK_SOURCE_LAST: Final = "last"
 
 DEFAULT_API_HOST = "https://192.168.10.1"
 

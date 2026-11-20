@@ -39,6 +39,7 @@ Use a new ADR to change an accepted decision. Keep the previous ADR as a record.
 | [013](./adr/013-typed-read-only-facade-snapshot.md)                  | A typed, read-only facade snapshot                            | Accepted              | 2026-10-20 |
 | [014](./adr/014-pure-network-inventory-reconciliation.md)            | Reconcile Network inventory before registry changes           | Accepted              | 2026-11-07 |
 | [015](./adr/015-defer-unified-protect-updates-subscription.md)       | Defer unified Protect updates subscription                    | Accepted              | 2026-11-10 |
+| [016](./adr/016-integration-owned-device-groups-panel.md)            | An integration-owned panel for devices grouped by uplink      | Accepted              | 2026-11-20 |
 
 ### Record architecture decisions
 

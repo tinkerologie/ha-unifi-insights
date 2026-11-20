@@ -27,7 +27,9 @@ from custom_components.unifi_insights.const import (
     CONF_ACCESS_TOKEN,
     CONF_CONNECTION_TYPE,
     CONF_CONSOLE_ID,
+    CONF_GROUP_DEVICES_BY_UPLINK,
     CONF_SITE_IDS,
+    CONNECTION_TYPE_CARRIER_FABRIC,
     CONNECTION_TYPE_LOCAL,
     CONNECTION_TYPE_REMOTE,
     DOMAIN,
@@ -1815,7 +1817,43 @@ async def test_options_flow_submit(
         "track_wifi_clients": True,
         "track_wired_clients": False,
         "client_control": True,
+        "group_devices_by_uplink": False,
     }
+
+
+@pytest.mark.parametrize("stored", [None, False, True])
+async def test_options_flow_offers_grouping_defaulting_to_stored_value(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    *,
+    stored: bool | None,
+) -> None:
+    """The Network/Protect form has the option, off unless saved on."""
+    options = {} if stored is None else {CONF_GROUP_DEVICES_BY_UPLINK: stored}
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(mock_config_entry, options=options)
+
+    result = await hass.config_entries.options.async_init(mock_config_entry.entry_id)
+
+    defaults = require_not_none(result["data_schema"])({})
+    assert defaults[CONF_GROUP_DEVICES_BY_UPLINK] is bool(stored)
+
+
+async def test_carrier_fabric_options_have_no_grouping(hass: HomeAssistant) -> None:
+    """Carrier Fabric has no devices to group, so its form has no option."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_CONNECTION_TYPE: CONNECTION_TYPE_CARRIER_FABRIC},
+        options={},
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    assert (
+        CONF_GROUP_DEVICES_BY_UPLINK
+        not in require_not_none(result["data_schema"]).schema
+    )
 
 
 def _attach_sites(entry: MockConfigEntry, sites: dict[str, str]) -> None:

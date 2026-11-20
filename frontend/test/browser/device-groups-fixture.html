@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Device groups panel browser fixture</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      :root {
+        --primary-background-color: #fafafa;
+        --card-background-color: #ffffff;
+        --primary-color: #03a9f4;
+        --ha-color-text-primary: #212121;
+        --ha-color-text-secondary: #5e5e5e;
+        --ha-color-fill-primary-quiet-resting: #eff9fe;
+        --ha-color-fill-warning-quiet-resting: #fff0e4;
+        --ha-color-fill-danger-quiet-resting: #fff0ef;
+        --primary-text-color: #212121;
+        --secondary-text-color: #5e5e5e;
+        --divider-color: rgba(0, 0, 0, 0.12);
+      }
+      body {
+        margin: 0;
+        background: var(--primary-background-color);
+        color: var(--primary-text-color);
+      }
+      #frame {
+        width: 100%;
+        min-height: 100vh;
+      }
+      :root[data-theme="dark"] {
+        --primary-background-color: #111111;
+        --card-background-color: #1c1c1c;
+        --primary-color: #58c5eb;
+        --ha-color-text-primary: #e1e1e1;
+        --ha-color-text-secondary: #b0b0b0;
+        --ha-color-fill-primary-quiet-resting: #11333e;
+        --ha-color-fill-warning-quiet-resting: #422d13;
+        --ha-color-fill-danger-quiet-resting: #421f24;
+        --primary-text-color: #e1e1e1;
+        --secondary-text-color: #b0b0b0;
+        --divider-color: rgba(255, 255, 255, 0.2);
+      }
+    </style>
+  </head>
+  <body>
+    <main id="frame"></main>
+    <script type="module">
+      const params = new URLSearchParams(location.search);
+      if (params.get("theme") === "dark")
+        document.documentElement.dataset.theme = "dark";
+
+      const multiEntry = params.get("entries") === "2";
+      const entries = multiEntry
+        ? [
+            { entry_id: "entry-1", title: "Home UDM" },
+            { entry_id: "entry-2", title: "Cabin Cloud Key" },
+          ]
+        : [{ entry_id: "entry-1", title: "Home UDM" }];
+
+      const baseSnapshot = {
+        schema_version: 1,
+        entry_id: "entry-1",
+        status: "ok",
+        revision: "3f2a9c01d4e5b6a7",
+        stale: params.get("stale") === "1",
+        sections: [
+          {
+            key: "site:default",
+            kind: "site",
+            title: "Default",
+            rows: [
+              {
+                key: "net:default:gw",
+                name: "UDM Pro",
+                kind: "gateway",
+                ha_device_id: "dev/core 1",
+                parent_key: null,
+                port: null,
+                reason: null,
+              },
+              {
+                key: "net:default:sw",
+                name: "Office switch",
+                kind: "switch",
+                ha_device_id: "sw-1",
+                parent_key: "net:default:gw",
+                port: 5,
+                reason: null,
+              },
+              {
+                key: "cam:c1",
+                name: "Front door",
+                kind: "camera",
+                ha_device_id: "cam-1",
+                parent_key: "net:default:sw",
+                port: 3,
+                reason: null,
+              },
+              {
+                key: "net:default:ap",
+                name: "Garage AP",
+                kind: "access_point",
+                ha_device_id: null,
+                parent_key: null,
+                port: null,
+                reason: "historical",
+              },
+            ],
+          },
+          {
+            key: "unassigned",
+            kind: "unassigned",
+            title: null,
+            rows: [
+              {
+                key: "net:unassigned:1",
+                name: "Workshop Flex",
+                kind: "network_device",
+                ha_device_id: null,
+                parent_key: null,
+                port: null,
+                reason: "no_uplink",
+              },
+            ],
+          },
+          {
+            key: "other",
+            kind: "other",
+            title: null,
+            rows: [],
+          },
+        ],
+      };
+
+      await import("/device-groups-panel.js");
+
+      window.panelFixtureNavigations = [];
+      window.addEventListener("location-changed", () => {
+        window.panelFixtureNavigations.push(location.pathname);
+      });
+
+      const listeners = new Map();
+      let activeCallback;
+      let updateCounter = 0;
+
+      window.panelFixtureUpdate = (overrides = {}) => {
+        if (!activeCallback) throw new Error("No active subscription");
+        updateCounter += 1;
+        const next = structuredClone(baseSnapshot);
+        Object.assign(next, overrides);
+        next.revision = `${baseSnapshot.revision}-${updateCounter}`;
+        activeCallback(next);
+      };
+
+      const connection = {
+        addEventListener(type, listener) {
+          const group = listeners.get(type) ?? new Set();
+          group.add(listener);
+          listeners.set(type, group);
+        },
+        removeEventListener(type, listener) {
+          listeners.get(type)?.delete(listener);
+        },
+        subscribeMessage(callback, message) {
+          activeCallback = callback;
+          const snap = structuredClone(baseSnapshot);
+          snap.entry_id = message.entry_id;
+          queueMicrotask(() => callback(snap));
+          return Promise.resolve(async () => undefined);
+        },
+      };
+
+      const panel = document.createElement("unifi-insights-devices-panel");
+      panel.narrow = params.get("narrow") === "1";
+      panel.route = { prefix: "/unifi-insights-devices", path: "" };
+      panel.panel = { config: {} };
+      panel.hass = {
+        connection,
+        locale: { language: "en" },
+        callWS: async (message) => {
+          if (message.type === "unifi_insights/device_groups/sources") {
+            return { schema_version: 1, entries };
+          }
+          throw new Error(`Unexpected callWS: ${message.type}`);
+        },
+      };
+
+      document.querySelector("#frame").append(panel);
+      while (!panel.shadowRoot?.querySelector('[role="treeitem"]')) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+      await panel.updateComplete;
+      window.panelFixturePanel = panel;
+      window.panelFixtureReady = true;
+    </script>
+  </body>
+</html>

@@ -393,6 +393,14 @@ and `unifi_insights/protect/{sources,get,subscribe}`. Snapshots use versioned
 `TypedDict` contracts. Topology node IDs use an HMAC of the MAC with a
 key for each entry. See [ADR-005](./adr/005-bundled-dashboard-cards-with-versioned-contracts.md).
 
+The admin-only **UniFi devices** panel is not a card. `frontend.py` registers
+it with `panel_custom` while at least one loaded entry has the
+`group_devices_by_uplink` option on, and removes it when none does.
+`device_grouping.py` builds its strict, read-only grouped model, and
+`unifi_insights/device_groups/{sources,subscribe}` serve it. A grouping-only
+option change is applied in place, without a reload. See
+[ADR-016](./adr/016-integration-owned-device-groups-panel.md).
+
 ### Push channels
 
 - **Protect WebSocket.** `coordinators/protect_ws.py` reads the device and

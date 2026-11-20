@@ -7,9 +7,11 @@ Commands are available to any authenticated user (dashboards are used by
 non-admins); privacy comes from the topology builder's field allowlist and
 from scoping every request to one loaded entry and one selected site.
 
-The one exception is ``unifi_insights/topology/node_details``: it returns the
-IP and MAC addresses the snapshot never carries, so it is admin-only, and it
-serves a single node resolved on the server.
+The exceptions are admin-only. ``unifi_insights/topology/node_details``
+returns the IP and MAC addresses the snapshot never carries, and serves a
+single node resolved on the server. The ``unifi_insights/device_groups/*``
+commands feed the admin "UniFi devices" panel, which links to device pages
+only administrators can open.
 """
 
 from __future__ import annotations
@@ -44,6 +46,13 @@ from .dashboard_snapshots import (
     build_unavailable_timeline,
 )
 from .data_transforms import NETWORK_FACTS_KEY, site_section
+from .device_grouping import (
+    STATUS_ENTRY_UNLOADED,
+    STATUS_GROUPING_DISABLED,
+    build_device_groups,
+    build_terminal_device_groups,
+    safe_name,
+)
 from .device_tracker import _client_tracker_entries, _mac_from_unique_id
 from .entity import get_field
 from .topology import (
@@ -70,9 +79,10 @@ else:
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import Event, HomeAssistant
 
     from . import UnifiInsightsConfigEntry
+    from .device_grouping import DeviceGroups, GroupsStatus
     from .topology import NodeKind, SiteTopology
 
 _LOGGER = logging.getLogger(__name__)
@@ -81,6 +91,7 @@ ERR_ENTRY_NOT_FOUND = "entry_not_found"
 ERR_ENTRY_NOT_LOADED = "entry_not_loaded"
 ERR_SITE_NOT_SELECTED = "site_not_selected"
 ERR_NODE_NOT_FOUND = "node_not_found"
+ERR_GROUPING_DISABLED = "grouping_disabled"
 
 _MAX_CLIENTS = vol.All(vol.Coerce(int), vol.Range(min=0, max=MAX_CLIENTS_PER_SITE))
 _SNAPSHOT_SCHEMA: dict[str | vol.Marker, Any] = {
@@ -139,6 +150,8 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_protect_subscribe)
     websocket_api.async_register_command(hass, ws_timeline_get)
     websocket_api.async_register_command(hass, ws_timeline_subscribe)
+    websocket_api.async_register_command(hass, ws_device_groups_sources)
+    websocket_api.async_register_command(hass, ws_device_groups_subscribe)
 
 
 def _resolve_entry(hass: HomeAssistant, entry_id: str) -> UnifiInsightsConfigEntry:
@@ -1190,6 +1203,281 @@ def _subscribe_site_payload(
         )
 
     stop_watching = _async_watch_unload(hass, entry, _async_entry_unloaded)
+    connection.subscriptions[msg_id] = _async_unsubscribe
+    connection.send_result(msg_id)
+    connection.send_message(websocket_api.event_message(msg_id, snapshot))
+
+
+# --- unifi_insights/device_groups/* (admin "UniFi devices" panel) ------------
+
+# hass.data key: entry_id -> end callbacks of that entry's device groups
+# streams, so an in-place option toggle can end them (unload uses the shared
+# _UNLOAD_WATCHERS hook).
+_DEVICE_GROUP_STREAMS: HassKey[dict[str, set[Callable[[GroupsStatus], None]]]] = (
+    HassKey(f"{DOMAIN}_device_group_streams")
+)
+
+
+def _grouping_enabled(entry: UnifiInsightsConfigEntry) -> bool:
+    """Return whether the loaded entry applied the device groups option."""
+    return getattr(entry.runtime_data, "group_devices_by_uplink", False) is True
+
+
+def _owned_camera_entities(
+    hass: HomeAssistant, entry_id: str
+) -> list[er.RegistryEntry]:
+    """Return the entry's camera entity rows (camera identity for the model)."""
+    return [
+        entity
+        for entity in er.async_entries_for_config_entry(er.async_get(hass), entry_id)
+        if entity.domain == "camera"
+    ]
+
+
+def _device_groups_payload(
+    hass: HomeAssistant, entry: UnifiInsightsConfigEntry
+) -> DeviceGroups:
+    """Build one entry's grouped device inventory from entry-scoped rows."""
+    runtime = entry.runtime_data
+    facade = runtime.coordinator
+    return build_device_groups(
+        facade.data,
+        entry_id=entry.entry_id,
+        node_key=async_get_node_key(hass, entry.entry_id),
+        site_ids=runtime.config_coordinator.get_site_ids(),
+        devices_available=facade.device_available,
+        device_rows=dr.async_entries_for_config_entry(
+            dr.async_get(hass), entry.entry_id
+        ),
+        entity_rows=_owned_camera_entities(hass, entry.entry_id),
+    )
+
+
+def _device_groups_inputs(
+    entry: UnifiInsightsConfigEntry,
+) -> tuple[tuple[object, ...], tuple[object, ...]]:
+    """
+    Return (data objects, values) the model reads from coordinator data.
+
+    The data objects are compared by identity (coordinators publish by
+    replacing them, never by mutating them; see _snapshot_inputs) and the
+    values by equality. Registry changes are observed through registry
+    events instead.
+    """
+    runtime = entry.runtime_data
+    data = runtime.coordinator.data
+    return (
+        (
+            *(
+                data.get(section)
+                for section in (
+                    "sites",
+                    "devices",
+                    "clients",
+                    "client_links",
+                    NETWORK_FACTS_KEY,
+                )
+            ),
+            *_protect_collections(data.get("protect"), keys=("cameras",)),
+        ),
+        (
+            runtime.coordinator.device_available,
+            tuple(runtime.config_coordinator.get_site_ids()),
+        ),
+    )
+
+
+@callback
+def async_end_device_group_streams(
+    hass: HomeAssistant,
+    entry_id: str,
+    status: GroupsStatus = STATUS_GROUPING_DISABLED,
+) -> None:
+    """End every device groups stream of an entry with a final ``status`` event."""
+    for end in list(hass.data.get(_DEVICE_GROUP_STREAMS, {}).get(entry_id, ())):
+        end(status)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required("type"): "unifi_insights/device_groups/sources"}
+)
+@callback
+def ws_device_groups_sources(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """List the loaded Network/Protect entries with device grouping on."""
+    entries = [
+        {"entry_id": entry.entry_id, "title": safe_name(entry.title, "UniFi Insights")}
+        for entry in hass.config_entries.async_loaded_entries(DOMAIN)
+        if getattr(
+            getattr(entry, "runtime_data", None), "group_devices_by_uplink", False
+        )
+        is True
+    ]
+    entries.sort(key=lambda item: (item["title"].casefold(), item["entry_id"]))
+    connection.send_result(msg["id"], {"schema_version": 1, "entries": entries})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "unifi_insights/device_groups/subscribe",
+        vol.Required("entry_id"): str,
+    }
+)
+@callback
+def ws_device_groups_subscribe(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """
+    Stream one entry's grouped device inventory as full snapshots.
+
+    A snapshot is rebuilt when the coordinator data it reads changes (the
+    facade listener, gated on identity like the topology stream) and on
+    device or entity registry events for rows this entry owns, so a rename or
+    a device added or removed shows up without a poll. Only a new revision is
+    sent. The stream ends with a final event when the entry unloads
+    (``entry_unloaded``) or the option is turned off in place
+    (``grouping_disabled``); cleanup runs once, as in the topology stream.
+    """
+    msg_id: int = msg["id"]
+    try:
+        entry = _resolve_entry(hass, msg["entry_id"])
+    except _RequestError as err:
+        connection.send_error(msg_id, err.code, str(err))
+        return
+    if not _grouping_enabled(entry):
+        connection.send_error(
+            msg_id,
+            ERR_GROUPING_DISABLED,
+            f"Device grouping is off for UniFi Insights config entry {entry.entry_id}",
+        )
+        return
+
+    entry_id = entry.entry_id
+    snapshot = _device_groups_payload(hass, entry)
+    last_revision = snapshot["revision"]
+    last_inputs = _device_groups_inputs(entry)
+    removed = False
+
+    def _tracked_ids(payload: DeviceGroups) -> set[str]:
+        return {
+            row["ha_device_id"]
+            for section in payload["sections"]
+            for row in section["rows"]
+            if row["ha_device_id"] is not None
+        }
+
+    tracked_devices = _tracked_ids(snapshot)
+    tracked_cameras = {
+        entity.entity_id for entity in _owned_camera_entities(hass, entry_id)
+    }
+
+    @callback
+    def _async_rebuild() -> None:
+        nonlocal last_revision, tracked_devices, tracked_cameras
+        try:
+            update = _device_groups_payload(hass, entry)
+        except Exception:
+            _LOGGER.exception("Failed to rebuild the device groups for %s", entry_id)
+            return
+        tracked_devices = _tracked_ids(update)
+        tracked_cameras = {
+            entity.entity_id for entity in _owned_camera_entities(hass, entry_id)
+        }
+        if update["revision"] == last_revision:
+            return
+        last_revision = update["revision"]
+        connection.send_message(websocket_api.event_message(msg_id, update))
+
+    @callback
+    def _async_forward() -> None:
+        nonlocal last_inputs
+        inputs = _device_groups_inputs(entry)
+        if inputs[1] == last_inputs[1] and all(
+            new is old for new, old in zip(inputs[0], last_inputs[0], strict=True)
+        ):
+            return
+        last_inputs = inputs
+        _async_rebuild()
+
+    @callback
+    def _device_event_relevant(event_data: Mapping[str, Any]) -> bool:
+        device_id = event_data.get("device_id")
+        if device_id in tracked_devices:
+            return True
+        device = dr.async_get(hass).async_get(device_id) if device_id else None
+        return device is not None and device.config_entry_id == entry_id
+
+    @callback
+    def _entity_event_relevant(event_data: Mapping[str, Any]) -> bool:
+        registry = er.async_get(hass)
+        for entity_id in (event_data.get("entity_id"), event_data.get("old_entity_id")):
+            if not isinstance(entity_id, str) or not entity_id.startswith("camera."):
+                continue
+            if entity_id in tracked_cameras:
+                return True
+            entity = registry.async_get(entity_id)
+            if entity is not None and entity.config_entry_id == entry_id:
+                return True
+        return False
+
+    @callback
+    def _async_registry_changed(_event: Event[Any]) -> None:
+        _async_rebuild()
+
+    remove_listeners = (
+        entry.runtime_data.coordinator.async_add_listener(_async_forward),
+        hass.bus.async_listen(
+            dr.EVENT_DEVICE_REGISTRY_UPDATED,
+            _async_registry_changed,
+            event_filter=_device_event_relevant,
+        ),
+        hass.bus.async_listen(
+            er.EVENT_ENTITY_REGISTRY_UPDATED,
+            _async_registry_changed,
+            event_filter=_entity_event_relevant,
+        ),
+    )
+    streams = hass.data.setdefault(_DEVICE_GROUP_STREAMS, {})
+
+    @callback
+    def _async_unsubscribe() -> None:
+        nonlocal removed
+        if removed:
+            return
+        removed = True
+        for remove in remove_listeners:
+            remove()
+        stop_watching()
+        # The set was created before the subscription could be ended, and
+        # only the last stream of the entry removes it.
+        entry_streams = streams[entry_id]
+        entry_streams.discard(_async_end)
+        if not entry_streams:
+            del streams[entry_id]
+
+    @callback
+    def _async_end(status: GroupsStatus) -> None:
+        if removed:
+            return
+        _async_unsubscribe()
+        connection.subscriptions.pop(msg_id, None)
+        connection.send_message(
+            websocket_api.event_message(
+                msg_id, build_terminal_device_groups(entry_id, status)
+            )
+        )
+
+    stop_watching = _async_watch_unload(
+        hass, entry, partial(_async_end, STATUS_ENTRY_UNLOADED)
+    )
+    streams.setdefault(entry_id, set()).add(_async_end)
     connection.subscriptions[msg_id] = _async_unsubscribe
     connection.send_result(msg_id)
     connection.send_message(websocket_api.event_message(msg_id, snapshot))

@@ -762,7 +762,7 @@ async def test_restored_wake_button_follows_its_live_client(
     wake = await _restored_wake_button(hass, data)
 
     assert wake.device_info is not None
-    assert wake.device_info["identifiers"] == {(DOMAIN, f"site_{SITE}")}
+    assert wake.device_info.identifiers == {(DOMAIN, f"site_{SITE}")}
     assert wake.translation_placeholders == {"client_name": "Live PC"}
 
 
@@ -776,7 +776,7 @@ async def test_restored_wake_button_without_a_live_client(
     wake = await _restored_wake_button(hass, data)
 
     assert wake.device_info is not None
-    assert wake.device_info["identifiers"] == {(DOMAIN, "site_home")}
+    assert wake.device_info.identifiers == {(DOMAIN, "site_home")}
     assert wake.translation_placeholders == {"client_name": "Saved PC"}
 
 

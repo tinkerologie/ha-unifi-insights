@@ -1,4 +1,4 @@
-import{B as e,C as t,F as n,G as r,N as i,i as a,l as o,n as s,t as c,u as l,y as u}from"./chunks/register-dashboard-card-FCR1bF7T.js";c({tag:o,editorTag:l,card:class extends s{static editorTag=l;get cardType(){return`custom:${o}`}get sourceCommand(){return`unifi_insights/protect/sources`}get subscribeCommand(){return`unifi_insights/protect/subscribe`}get defaultTitle(){return`Protect Status`}get headerIcon(){return r}get includeSiteInSubscribeMessage(){return!1}getBinding(){let e=this.config.entry_id;if(e)return{entry_id:e,site_id:this.config.site_id??`*`};if(this.sources.length===1)return{entry_id:this.sources[0].entry_id,site_id:this.config.site_id??`*`}}renderHeaderBadge(){if(!this.snapshot)return i;let e=Array.isArray(this.snapshot.devices)?this.snapshot.devices:[];if(this.snapshot.status===`degraded`&&e.length===0)return i;let t=e.filter(e=>e.connected===!1).length,r=e.length-t;return n`
+import{D as e,S as t,g as n,i as r,m as i}from"./chunks/localize-DuXs5QH_.js";import{c as a,l as o,n as s,r as c,t as l,v as u}from"./chunks/register-dashboard-card-DB8D56VC.js";l({tag:a,editorTag:o,card:class extends s{static editorTag=o;get cardType(){return`custom:${a}`}get sourceCommand(){return`unifi_insights/protect/sources`}get subscribeCommand(){return`unifi_insights/protect/subscribe`}get defaultTitle(){return`Protect Status`}get headerIcon(){return e}get includeSiteInSubscribeMessage(){return!1}getBinding(){let e=this.config.entry_id;if(e)return{entry_id:e,site_id:this.config.site_id??`*`};if(this.sources.length===1)return{entry_id:this.sources[0].entry_id,site_id:this.config.site_id??`*`}}renderHeaderBadge(){if(!this.snapshot)return i;let e=Array.isArray(this.snapshot.devices)?this.snapshot.devices:[];if(this.snapshot.status===`degraded`&&e.length===0)return i;let t=e.filter(e=>e.connected===!1).length,r=e.length-t;return n`
       <span
         class="chip ${t>0||this.snapshot.status===`degraded`?`warning`:`ok`}"
       >
@@ -10,7 +10,7 @@ import{B as e,C as t,F as n,G as r,N as i,i as a,l as o,n as s,t as c,u as l,y a
         <div class="kpi-tile">
           <div class="kpi-top">
             <span>Devices</span>
-            ${t(r)}
+            ${r(e)}
           </div>
           <div class="kpi-value">${o.length}</div>
           <div class="kpi-sub">${c} active</div>
@@ -18,7 +18,7 @@ import{B as e,C as t,F as n,G as r,N as i,i as a,l as o,n as s,t as c,u as l,y a
         <div class="kpi-tile">
           <div class="kpi-top">
             <span>Offline</span>
-            ${t(e)}
+            ${r(t)}
           </div>
           <div class="kpi-value">${s}</div>
           <div class="kpi-sub">
@@ -28,17 +28,17 @@ import{B as e,C as t,F as n,G as r,N as i,i as a,l as o,n as s,t as c,u as l,y a
       </div>
 
       <div class="list">
-        ${o.slice(0,6).map(e=>{let r=typeof e.camera_entity_id==`string`?e.camera_entity_id:void 0,a=String(e.name??`Device`),o=String(e.kind??`device`),s=e.connected!==!1,c=s?`online`:`offline`,l=`${a} · ${o}`;return n`
+        ${o.slice(0,6).map(e=>{let t=typeof e.camera_entity_id==`string`?e.camera_entity_id:void 0,a=String(e.name??`Device`),o=String(e.kind??`device`),s=e.connected!==!1,c=s?`online`:`offline`,l=`${a} · ${o}`;return n`
             <div class="item-card">
               <div class="item-icon ${c}">
-                ${t(u(o))}
+                ${r(u(o))}
               </div>
               <div class="item-body">
                 <div class="item-top">
-                  ${r?n`<button
+                  ${t?n`<button
                         type="button"
                         class="link item-name"
-                        @click=${()=>this.openMoreInfo(r)}
+                        @click=${()=>this.openMoreInfo(t)}
                       >
                         ${l}
                       </button>`:n`<span class="item-name"> ${l} </span>`}
@@ -55,4 +55,4 @@ import{B as e,C as t,F as n,G as r,N as i,i as a,l as o,n as s,t as c,u as l,y a
             </div>
           `})}
       </div>
-    `}},editor:class extends a{constructor(){super(o,`unifi_insights/protect/sources`)}},name:`UniFi Protect Status`,description:`Live UniFi Protect camera, doorbell, chime, and NVR status summary.`});
+    `}},editor:class extends c{constructor(){super(a,`unifi_insights/protect/sources`)}},name:`UniFi Protect Status`,description:`Live UniFi Protect camera, doorbell, chime, and NVR status summary.`});
