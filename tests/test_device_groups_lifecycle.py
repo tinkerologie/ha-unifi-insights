@@ -462,8 +462,8 @@ async def test_panel_follows_option_setup_toggle_and_unload(
     mock_config_entry: MockConfigEntry,
     mock_network_client: MagicMock,
     mock_protect_client: MagicMock,
-    mock_local_auth: MagicMock,
     *,
+    mock_local_auth: MagicMock,
     enable_custom_integrations: None,
 ) -> None:
     """Setup with the option on registers it; off and unload remove it."""

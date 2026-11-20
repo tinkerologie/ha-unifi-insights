@@ -460,6 +460,7 @@ class UnifiClientTracker(
         site_id: str | None = None,
         restored_name: str | None = None,
         unique_id: str | None = None,
+        *,
         track_types: tuple[bool, bool] | None = None,
     ) -> None:
         """
