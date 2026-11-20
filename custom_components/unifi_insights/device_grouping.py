@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import re
 from dataclasses import dataclass
@@ -101,9 +102,11 @@ _MAC_RE: Final = re.compile(
     r"|[0-9a-f]{4}(?:\.[0-9a-f]{4}){2}|[0-9a-f]{12})(?![0-9a-f])",
     re.IGNORECASE,
 )
+# IPv6 candidates must stand alone (not inside a word such as "Office::Cam")
+# and must parse as an address (so "10:30:15" is kept); see _strip_ipv6.
 _IPV6_RE: Final = re.compile(
-    r"(?<![0-9a-f:])(?:[0-9a-f]{0,4}:){2,7}"
-    r"(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f]{0,4})(?:%[\w.-]+)?(?![0-9a-f:])",
+    r"(?<![\w:])(?:[0-9a-f]{0,4}:){2,7}"
+    r"(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f]{0,4})(?:%[\w.-]+)?(?![\w:])",
     re.IGNORECASE,
 )
 _IPV4_RE: Final = re.compile(r"(?<!\d)\d{1,3}(?:\.\d{1,3}){3}(?!\d)")
@@ -177,12 +180,21 @@ class _Site:
     rows: dict[str, _Row]
 
 
+def _strip_ipv6(match: re.Match[str]) -> str:
+    """Drop an IPv6-shaped match only when it really is an address."""
+    try:
+        ipaddress.ip_address(match.group(0))
+    except ValueError:
+        return match.group(0)
+    return ""
+
+
 def safe_name(value: Any, fallback: str) -> str:
     """Return ``value`` with address-shaped text removed, or ``fallback``."""
     if not isinstance(value, str):
         return fallback
     text = _MAC_RE.sub("", value)
-    text = _IPV6_RE.sub("", text)
+    text = _IPV6_RE.sub(_strip_ipv6, text)
     text = _IPV4_RE.sub("", text)
     text = _EMPTY_PARENS_RE.sub("", text)
     text = _SPACES_RE.sub(" ", text).strip(" -")

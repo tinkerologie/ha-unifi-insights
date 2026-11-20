@@ -880,4 +880,134 @@ describe("<unifi-insights-devices-panel>", () => {
       "Device grouping is turned off for this integration.",
     );
   });
+
+  it("re-reads sources once more when a refresh is requested while one is in flight", async () => {
+    vi.useFakeTimers();
+    const fake = fakePanelHass();
+    const el = document.createElement(
+      "unifi-insights-devices-panel",
+    ) as UnifiInsightsDevicesPanel;
+    el.hass = fake.hass;
+    document.body.append(el);
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+    fake.push(sampleSnapshot());
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+
+    // Hold the next sources call open after it has read the entry list, so a
+    // second refresh arrives while it is in flight.
+    const original = fake.hass.callWS.bind(fake.hass);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const callWS = vi.fn(async (message: MessageBase) => {
+      const result = await original(message);
+      if (callWS.mock.calls.length === 1) await gate;
+      return result;
+    });
+    fake.hass.callWS = callWS as unknown as typeof fake.hass.callWS;
+
+    const prevVisibility = Object.getOwnPropertyDescriptor(
+      document,
+      "visibilityState",
+    );
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
+    try {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(10);
+      fake.setEntries([
+        { entry_id: "entry-1", title: "Home UDM" },
+        { entry_id: "entry-2", title: "Office Gateway" },
+      ]);
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(10);
+      expect(callWS).toHaveBeenCalledTimes(1);
+
+      release();
+      await vi.advanceTimersByTimeAsync(10);
+      await el.updateComplete;
+    } finally {
+      if (prevVisibility) {
+        Object.defineProperty(document, "visibilityState", prevVisibility);
+      } else {
+        delete (document as unknown as Record<string, unknown>).visibilityState;
+      }
+    }
+
+    // The queued refresh ran after the first call, so the stale list it
+    // returned does not stick.
+    expect(callWS).toHaveBeenCalledTimes(2);
+    const select = el.shadowRoot!.querySelector("select")!;
+    expect([...select.options].map((o) => o.textContent?.trim())).toEqual([
+      "Home UDM",
+      "Office Gateway",
+    ]);
+    expect(el.selectedEntryId).toBe("entry-1");
+  });
+
+  it("keeps the user's entry when a different entry turns grouping off", async () => {
+    vi.useFakeTimers();
+    const fake = fakePanelHass({
+      entries: [
+        { entry_id: "entry-1", title: "Home UDM" },
+        { entry_id: "entry-2", title: "Office Gateway" },
+      ],
+    });
+    const el = document.createElement(
+      "unifi-insights-devices-panel",
+    ) as UnifiInsightsDevicesPanel;
+    el.hass = fake.hass;
+    document.body.append(el);
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+
+    const select = el.shadowRoot!.querySelector("select")!;
+    select.value = "entry-2";
+    select.dispatchEvent(new Event("change"));
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+    expect(fake.subs.at(-1)!.message).toEqual({
+      type: "unifi_insights/device_groups/subscribe",
+      entry_id: "entry-2",
+    });
+
+    // entry-2 turns grouping off; while the entry list is being re-read the
+    // user switches back to entry-1, and a third entry is now listed first.
+    const original = fake.hass.callWS.bind(fake.hass);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    fake.hass.callWS = vi.fn(async (message: MessageBase) => {
+      await gate;
+      return original(message);
+    }) as unknown as typeof fake.hass.callWS;
+    fake.setEntries([
+      { entry_id: "entry-3", title: "Lab Gateway" },
+      { entry_id: "entry-1", title: "Home UDM" },
+    ]);
+    fake.push({
+      schema_version: 1,
+      entry_id: "entry-2",
+      status: "grouping_disabled",
+      revision: "",
+      stale: false,
+      sections: [],
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+    const picker = el.shadowRoot!.querySelector("select")!;
+    picker.value = "entry-1";
+    picker.dispatchEvent(new Event("change"));
+    release();
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+
+    expect(el.selectedEntryId).toBe("entry-1");
+  });
 });

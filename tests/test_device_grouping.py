@@ -321,6 +321,10 @@ async def test_address_shaped_source_ids_and_labels_are_private(rows: Rows) -> N
         (None, "fallback"),
         ("  Plain name  ", "Plain name"),
         ("Rack 2 - 1:1", "Rack 2 - 1:1"),
+        # Colon-separated words and times are not IPv6 addresses.
+        ("Office::Cam", "Office::Cam"),
+        ("Doorbell 10:30:15", "Doorbell 10:30:15"),
+        ("Beef:Cafe:Deck", "Beef:Cafe:Deck"),
     ],
 )
 def test_safe_name(value: Any, expected: str) -> None:
