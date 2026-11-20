@@ -293,6 +293,7 @@ async def async_setup_entry(
     track_wired = entry.options.get(CONF_TRACK_WIRED_CLIENTS, old_track_clients)
 
     tracked_clients = tracked_client_macs(entry.options)
+    track_types = (track_wifi, track_wired) if tracked_clients else None
 
     _LOGGER.debug(
         "Client tracking - WiFi: %s, Wired: %s, selected clients: %d",
@@ -379,7 +380,7 @@ async def async_setup_entry(
                 site_id=connected_macs.get(mac),
                 restored_name=_restored_name(hass, reg_entry, mac),
                 unique_id=reg_entry.unique_id,
-                track_types=(track_wifi, track_wired),
+                track_types=track_types,
             )
         )
         tracked.add(mac)
@@ -402,7 +403,7 @@ async def async_setup_entry(
             UnifiClientTracker(
                 coordinator=coordinator,
                 mac=mac,
-                track_types=(track_wifi, track_wired),
+                track_types=track_types,
             )
         )
         tracked.add(mac)
@@ -420,7 +421,12 @@ async def async_setup_entry(
             tracked_clients=tracked_clients,
         )
         entities = [
-            UnifiClientTracker(coordinator=coordinator, mac=mac, site_id=site_id)
+            UnifiClientTracker(
+                coordinator=coordinator,
+                mac=mac,
+                site_id=site_id,
+                track_types=track_types,
+            )
             for mac, site_id in current.items()
             if mac not in tracked
         ]
@@ -464,8 +470,8 @@ class UnifiClientTracker(
         `restored_name` is the name the registry kept for such a tracker.
         `unique_id` overrides the default DOMAIN_mac id format, used when
         restoring legacy entries that could not be migrated due to collision.
-        `track_types` is the (Wi-Fi, wired) tracking options. They are kept
-        only when the client is absent now, see `_type_excluded`.
+        `track_types` is set for selected clients and applies until the first
+        connected record of an enabled type.
         """
         super().__init__(coordinator)
         self._site_id = site_id
@@ -479,13 +485,11 @@ class UnifiClientTracker(
         # MAC registration `ScannerEntity.add_to_platform_start` performs.
         self._attr_mac_address = self._mac
 
-        # Get initial client data
-        client_data = self._get_client_data() or {}
-
-        # A client present now passed the type options before this tracker was
-        # made. An absent one has an unknown type, so the options are applied
-        # when it turns up; see `_type_excluded`.
-        self._track_types = None if client_data else track_types
+        client_data = self._get_client_data(track_types)
+        self._track_types = track_types if client_data is None else None
+        if client_data is None and track_types is not None:
+            client_data = self._get_client_data()
+        client_data = client_data or {}
 
         # Set unique ID based on MAC address for stability
         self._attr_unique_id = unique_id or f"{DOMAIN}_{self._mac}"
@@ -584,7 +588,9 @@ class UnifiClientTracker(
         """Return device info."""
         return self._device_info
 
-    def _find_in_site(self, clients: Any) -> dict[str, Any] | None:
+    def _find_in_site(
+        self, clients: Any, track_types: tuple[bool, bool] | None
+    ) -> dict[str, Any] | None:
         """Return this MAC's entry within one site's client snapshot."""
         if not isinstance(clients, dict):
             return None
@@ -592,11 +598,20 @@ class UnifiClientTracker(
             if not isinstance(client_data, dict):
                 continue
             mac = get_field(client_data, "macAddress", "mac_address", "mac", default="")
-            if mac and mac.lower() == self._mac:
+            if not mac or mac.lower() != self._mac:
+                continue
+            if track_types is None or (
+                client_is_connected(client_data)
+                and _client_should_be_tracked(
+                    client_data, track_wifi=track_types[0], track_wired=track_types[1]
+                )
+            ):
                 return client_data
         return None
 
-    def _get_client_data(self) -> dict[str, Any] | None:
+    def _get_client_data(
+        self, track_types: tuple[bool, bool] | None = None
+    ) -> dict[str, Any] | None:
         """
         Get connected-client data for this MAC, if currently connected.
 
@@ -604,18 +619,21 @@ class UnifiClientTracker(
         hint: check it first (the common case), then fall back to scanning every
         site so a roamed client -- or one restored from the registry with no hint
         at all -- is still found. Remember where it turned up for next time.
+        With `track_types`, only connected records of an enabled type qualify.
         """
         all_clients = self.coordinator.data.get("clients", {})
         if not isinstance(all_clients, dict):
             return None
         if self._site_id is not None:
-            client_data = self._find_in_site(all_clients.get(self._site_id, {}))
+            client_data = self._find_in_site(
+                all_clients.get(self._site_id, {}), track_types
+            )
             if client_data is not None:
                 return client_data
         for site_id, clients in all_clients.items():
             if site_id == self._site_id:
                 continue
-            client_data = self._find_in_site(clients)
+            client_data = self._find_in_site(clients, track_types)
             if client_data is not None:
                 self._site_id = site_id
                 return client_data
@@ -630,44 +648,15 @@ class UnifiClientTracker(
         connected-clients API lack a connected field and are considered
         connected by presence in the snapshot. An explicit connected=False
         overrides membership and reports disconnected. A missing client
-        record returns False, and so does a tracker set up offline whose
-        client turns up with an untracked type (see `_type_excluded`).
-        """
-        if self._type_excluded():
-            return False
-        return client_is_connected(self._get_client_data())
-
-    def _type_excluded(self) -> bool:
-        """
-        Return True if a tracker set up offline now shows an untracked type.
-
-        Only trackers whose client was absent at setup check this: their type
-        was unknown when they were created. Such a client that turns up with a
-        type the options exclude is not home, and the next setup removes its
-        tracker as it does for any present client of an untracked type. The
-        MAC can be on several sites; a tracked type on any of them counts.
-        With no record at all this also returns True, the same not-home answer
-        `is_connected` gives an absent client anyway.
+        record returns False. A provisional tracker also requires an enabled
+        type on the connected record before it starts tracking presence normally.
         """
         if self._track_types is None:
+            return client_is_connected(self._get_client_data())
+        if self._get_client_data(self._track_types) is None:
             return False
-        track_wifi, track_wired = self._track_types
-        all_clients = self.coordinator.data.get("clients", {})
-        records = (
-            [
-                record
-                for clients in all_clients.values()
-                if (record := self._find_in_site(clients)) is not None
-            ]
-            if isinstance(all_clients, dict)
-            else []
-        )
-        return not any(
-            _client_should_be_tracked(
-                record, track_wifi=track_wifi, track_wired=track_wired
-            )
-            for record in records
-        )
+        self._track_types = None
+        return True
 
     @property
     def source_type(self) -> SourceType:

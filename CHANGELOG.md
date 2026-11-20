@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Add the **Group devices by network uplink** option for Network and Protect entries, off by default. When it is on, an administrator-only **UniFi devices** sidebar panel lists each device under the switch, access point or gateway it is directly connected to, and links to its device page. Only current, unambiguous links are used; other devices stay at the top level with a reason. Turning the option on or off does not reload the entry or change any device or entity. [#519](https://github.com/tinkerologie/ha-unifi-insights/issues/519)
-- Add the optional **Tracked clients** option for Network entries. Select clients by MAC address to track only those; leave it empty to track every client of the enabled types, as before. The Track WiFi Clients and Track Wired Clients options still apply. A selected client that is away keeps its tracker and shows Away, and one selected while offline gets a tracker on the next reload. Deselecting a client removes its tracker. [#511](https://github.com/tinkerologie/ha-unifi-insights/issues/511)
+- Add the optional **Tracked clients** option for Network entries. Select clients by MAC address, or leave the list empty to keep tracking all clients of the enabled types. The Track WiFi Clients and Track Wired Clients options still apply. A selected offline client gets or keeps a tracker on reload. It shows Away until it connects using an enabled connection type. It then tracks presence across Wi-Fi and wired connections until the next reload. Deselecting a client removes its tracker. [#511](https://github.com/tinkerologie/ha-unifi-insights/issues/511)
 
 ### Changed
 
@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A client tracker set up while its client was away no longer shows Home when the client comes back with a type that is not tracked, such as a wired client with only WiFi tracking on. It shows Away, and the next reload removes it. A client seen on two sites keeps its tracker when either site shows a tracked type. [#511](https://github.com/tinkerologie/ha-unifi-insights/issues/511)
+- Keep a client tracker and its device when the same MAC is eligible on one site and has a disabled connection type on another. [#511](https://github.com/tinkerologie/ha-unifi-insights/issues/511)
 
 ## [2026.11.3] - 2026-11-18
 

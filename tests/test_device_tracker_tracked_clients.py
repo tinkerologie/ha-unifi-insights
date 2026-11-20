@@ -625,8 +625,8 @@ async def test_offline_tracker_ignores_rows_that_are_not_client_trackers(
 
 
 @pytest.mark.parametrize(
-    ("client_type", "expected"),
-    [("WIRED", False), ("WIRELESS", True)],
+    "client_type",
+    ["WIRED", "WIRELESS"],
 )
 @pytest.mark.parametrize(
     ("registered", "options"),
@@ -641,7 +641,11 @@ async def test_offline_tracker_ignores_rows_that_are_not_client_trackers(
             {CONF_TRACK_WIFI_CLIENTS: True, CONF_TRACKED_CLIENTS: [PHONE]},
             id="kept_row",
         ),
-        pytest.param(True, {CONF_TRACK_WIFI_CLIENTS: True}, id="kept_row_no_filter"),
+        pytest.param(
+            True,
+            {CONF_TRACK_WIFI_CLIENTS: True, CONF_TRACKED_CLIENTS: []},
+            id="kept_row_no_filter",
+        ),
     ],
 )
 async def test_tracker_created_offline_applies_the_type_rule_when_seen(
@@ -649,10 +653,9 @@ async def test_tracker_created_offline_applies_the_type_rule_when_seen(
     client_type: str,
     options: dict[str, Any],
     *,
-    expected: bool,
     registered: bool,
 ) -> None:
-    """A tracker set up with its client absent is home only for a tracked type."""
+    """An empty filter lets a restored tracker report any connected client."""
     coordinator = _coordinator()
     entry = _entry(hass, coordinator, options)
     if registered:
@@ -664,13 +667,22 @@ async def test_tracker_created_offline_applies_the_type_rule_when_seen(
 
     coordinator.data = _coordinator(_client(PHONE, client_type)).data
 
-    assert tracker.is_connected is expected
+    assert tracker.is_connected is (
+        not options[CONF_TRACKED_CLIENTS] or client_type == "WIRELESS"
+    )
 
 
-async def test_type_rule_counts_every_site_record_of_the_mac(
+@pytest.mark.parametrize(
+    ("wired_connected", "wifi_connected"),
+    [(True, True), (False, True), (True, False)],
+)
+async def test_type_rule_requires_one_connected_eligible_record(
     hass: HomeAssistant,
+    *,
+    wired_connected: bool,
+    wifi_connected: bool,
 ) -> None:
-    """An offline-created tracker is home when any site shows a tracked type."""
+    """Presence uses connectivity and type from the same client record."""
     coordinator = _coordinator()
     entry = _entry(
         hass,
@@ -683,11 +695,11 @@ async def test_type_rule_counts_every_site_record_of_the_mac(
 
     # The wired record is found first: it must not decide alone.
     coordinator.data = _sites_coordinator(
-        ("site_wired", (_client(PHONE, "WIRED"),)),
-        ("site_wifi", (_client(PHONE),)),
+        ("site_wired", (_client(PHONE, "WIRED", connected=wired_connected),)),
+        ("site_wifi", (_client(PHONE, connected=wifi_connected),)),
     ).data
 
-    assert tracker.is_connected is True
+    assert tracker.is_connected is wifi_connected
 
 
 async def test_type_rule_ignores_a_malformed_clients_section(
@@ -706,6 +718,60 @@ async def test_type_rule_ignores_a_malformed_clients_section(
 
     coordinator.data = {"clients": [_client(PHONE)]}
 
+    assert tracker.is_connected is False
+
+
+@pytest.mark.parametrize(
+    ("selected", "registered"),
+    [(False, True), (True, False), (True, True)],
+    ids=["no_filter", "new", "restored"],
+)
+async def test_offline_tracker_stays_home_after_wifi_to_wired_handoff(
+    hass: HomeAssistant, *, selected: bool, registered: bool
+) -> None:
+    """One connected Wi-Fi observation ends any provisional type check."""
+    coordinator = _coordinator()
+    entry = _entry(
+        hass,
+        coordinator,
+        {
+            CONF_TRACK_WIFI_CLIENTS: True,
+            CONF_TRACKED_CLIENTS: [PHONE] if selected else [],
+        },
+    )
+    if registered:
+        _register(hass, entry, PHONE)
+    add_entities = MagicMock()
+    await async_setup_entry(hass, entry, add_entities)
+    [tracker] = _added(add_entities)
+    assert tracker.is_connected is False
+
+    coordinator.data = _coordinator(_client(PHONE)).data
+    assert tracker.is_connected is True
+
+    coordinator.data = _coordinator(_client(PHONE, "WIRED")).data
+    assert tracker.is_connected is True
+
+
+@pytest.mark.parametrize("registered", [False, True], ids=["new", "kept_row"])
+async def test_disconnected_record_at_setup_keeps_tracker_provisional(
+    hass: HomeAssistant, *, registered: bool
+) -> None:
+    """A disconnected Wi-Fi record at setup cannot activate a selected tracker."""
+    coordinator = _coordinator(_client(PHONE, connected=False))
+    entry = _entry(
+        hass,
+        coordinator,
+        {CONF_TRACK_WIFI_CLIENTS: True, CONF_TRACKED_CLIENTS: [PHONE]},
+    )
+    if registered:
+        _register(hass, entry, PHONE)
+    add_entities = MagicMock()
+    await async_setup_entry(hass, entry, add_entities)
+    [tracker] = _added(add_entities)
+    assert tracker.is_connected is False
+
+    coordinator.data = _coordinator(_client(PHONE, "WIRED")).data
     assert tracker.is_connected is False
 
 
