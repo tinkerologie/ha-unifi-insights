@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Add the **Group devices by network uplink** option for Network and Protect entries, off by default. When it is on, an administrator-only **UniFi devices** sidebar panel lists each device under the switch, access point or gateway it is directly connected to, and links to its device page. Only current, unambiguous links are used; other devices stay at the top level with a reason. Turning the option on or off does not reload the entry or change any device or entity. [#519](https://github.com/tinkerologie/ha-unifi-insights/issues/519)
+- Add the optional **Tracked clients** option for Network entries. Select clients by MAC address to track only those; leave it empty to track every client of the enabled types, as before. The Track WiFi Clients and Track Wired Clients options still apply. A selected client that is away keeps its tracker and shows Away, and one selected while offline gets a tracker on the next reload. Deselecting a client removes its tracker. [#511](https://github.com/tinkerologie/ha-unifi-insights/issues/511)
+
+### Changed
+
+- Removing a client tracker now also removes its standalone client device when no other entity, enabled or disabled, uses it. This applies to the Tracked clients filter, to a client type that is no longer tracked, and to turning client tracking off. Devices of switches and access points are never removed this way. [#511](https://github.com/tinkerologie/ha-unifi-insights/issues/511)
 
 ## [2026.11.3] - 2026-11-18
 

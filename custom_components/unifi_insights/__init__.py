@@ -63,6 +63,7 @@ from .const import (
     CONF_TRACK_CLIENTS,
     CONF_TRACK_WIFI_CLIENTS,
     CONF_TRACK_WIRED_CLIENTS,
+    CONF_TRACKED_CLIENTS,
     CONNECTION_TYPE_CARRIER_FABRIC,
     CONNECTION_TYPE_LOCAL,
     DEFAULT_ACCESS_PORT,
@@ -99,7 +100,7 @@ from .coordinators.site_manager import (
     async_acquire_site_manager,
     async_release_site_manager,
 )
-from .data_transforms import nested_dict
+from .data_transforms import nested_dict, tracked_client_macs
 from .data_transforms import normalize_mac as canonical_mac
 from .frontend import async_reconcile_device_groups_panel, async_register_frontend
 from .probe import (
@@ -1276,8 +1277,9 @@ def _applied_options(options: Mapping[str, Any]) -> dict[str, Any]:
     Each option setup reads is resolved to the value setup uses, so a missing
     option and its explicit default compare equal: the two tracking options
     fall back to the legacy ``track_clients`` (itself defaulting to off), an
-    empty or missing site filter means every site. Any other key is kept as
-    stored, so an unknown change still differs.
+    empty or missing site filter means every site, and an empty or missing
+    Tracked clients filter means every client of the enabled types. Any
+    other key is kept as stored, so an unknown change still differs.
     """
     effective = {
         key: value
@@ -1298,6 +1300,7 @@ def _applied_options(options: Mapping[str, Any]) -> dict[str, Any]:
         options.get(CONF_ACCESS_WEBHOOK, DEFAULT_ACCESS_WEBHOOK)
     )
     effective[CONF_SITE_IDS] = list(options.get(CONF_SITE_IDS) or [])
+    effective[CONF_TRACKED_CLIENTS] = sorted(tracked_client_macs(options))
     return effective
 
 

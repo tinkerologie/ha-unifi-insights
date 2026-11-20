@@ -88,6 +88,9 @@ CONF_TRACK_WIFI_CLIENTS: Final = "track_wifi_clients"
 CONF_TRACK_WIRED_CLIENTS: Final = "track_wired_clients"
 CONF_CLIENT_CONTROL: Final = "client_control"
 CONF_SITE_IDS: Final = "site_ids"  # Empty/absent means every site
+# Client MACs (lowercase) to track; empty/absent tracks every client of the
+# enabled types.
+CONF_TRACKED_CLIENTS: Final = "tracked_clients"
 CONF_TRACK_SUBSCRIBERS: Final = "track_subscribers"
 CONF_CARRIER_ACTIONS: Final = "carrier_actions"
 DEFAULT_TRACK_CLIENTS: Final = False
