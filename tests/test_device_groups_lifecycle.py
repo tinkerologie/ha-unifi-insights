@@ -236,6 +236,58 @@ async def test_options_updated_during_setup_are_reconciled(
     assert entry.runtime_data.applied_options == _applied_options(entry.options)
 
 
+async def test_option_changed_and_restored_during_setup_still_reloads(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_network_client: MagicMock,
+    mock_protect_client: MagicMock,
+    *,
+    mock_local_auth: MagicMock,
+    enable_custom_integrations: None,
+) -> None:
+    """A platform may have read the temporary value, so setup reloads anyway."""
+    assert await async_setup_component(hass, DOMAIN, {})
+    entry = mock_config_entry
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry, options={CONF_TRACK_WIFI_CLIENTS: False}
+    )
+
+    calls = 0
+
+    async def forward_with_a_reverted_change(*args: Any) -> None:
+        nonlocal calls
+        calls += 1
+        if calls > 1:  # the reload's own setup
+            await forward(*args)
+            return
+        hass.config_entries.async_update_entry(
+            entry, options={CONF_TRACK_WIFI_CLIENTS: True}
+        )
+        await forward(*args)
+        hass.config_entries.async_update_entry(
+            entry, options={CONF_TRACK_WIFI_CLIENTS: False}
+        )
+
+    forward = hass.config_entries.async_forward_entry_setups
+    with (
+        patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            side_effect=forward_with_a_reverted_change,
+        ),
+        patch.object(
+            hass.config_entries, "async_reload", wraps=hass.config_entries.async_reload
+        ) as reload,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    reload.assert_awaited_once_with(entry.entry_id)
+    assert calls == 2
+    assert entry.state is ConfigEntryState.LOADED
+
+
 async def test_entry_data_updated_during_setup_is_reconciled(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,

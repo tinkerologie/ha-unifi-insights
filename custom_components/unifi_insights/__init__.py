@@ -120,7 +120,7 @@ from .websocket_api import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Coroutine, Mapping
 
     from aiohttp import ClientSession
     from homeassistant.core import HomeAssistant
@@ -464,6 +464,10 @@ async def async_setup_entry(
 
     applied_data = copy.deepcopy(dict(entry.data))
     applied_options = copy.deepcopy(_applied_options(entry.options))
+    # Platforms read the options while they set up, so a non-grouping change
+    # seen during setup needs a reload even if it is reverted before the end.
+    options_watch = _SetupOptionsWatch(applied_options)
+    entry.async_on_unload(entry.add_update_listener(options_watch))
     is_local = connection_type == CONNECTION_TYPE_LOCAL
 
     # Get Home Assistant's aiohttp session for efficient connection pooling
@@ -853,7 +857,7 @@ async def async_setup_entry(
     # Home Assistant queues the reload behind the current setup lock. Grouping
     # was read after the platforms were set up, so a grouping-only change needs
     # no reload: a reload would reconcile rows the toggle must leave alone.
-    if entry.data != applied_data or _applied_options(entry.options) != applied_options:
+    if entry.data != applied_data or options_watch.changed:
         hass.config_entries.async_schedule_reload(entry.entry_id)
     _LOGGER.info("UniFi Insights integration setup completed successfully")
     return True
@@ -1270,6 +1274,29 @@ async def async_remove_entry(
     async_hand_over_mobility(hass, entry)
     if entry.data.get(CONF_ACCESS_TOKEN):
         await async_remove_access_webhook(hass, entry)
+
+
+class _SetupOptionsWatch:
+    """
+    Record whether an options update changed a non-grouping option.
+
+    Registered as an update listener when setup starts, since Home Assistant
+    calls update listeners for every update. Each update is checked when it
+    happens, so a value changed and then restored during setup still counts.
+    """
+
+    def __init__(self, applied_options: dict[str, Any]) -> None:
+        """Watch for options that differ from what setup applied."""
+        self._applied_options = applied_options
+        self.changed = False
+
+    def __call__(
+        self, _hass: HomeAssistant, entry: ConfigEntry
+    ) -> Coroutine[Any, Any, None]:
+        """Check the update now; the returned coroutine has nothing to do."""
+        if _applied_options(entry.options) != self._applied_options:
+            self.changed = True
+        return asyncio.sleep(0)
 
 
 def _grouping_option(options: Mapping[str, Any]) -> bool:
