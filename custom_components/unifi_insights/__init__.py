@@ -463,8 +463,7 @@ async def async_setup_entry(
         return await _async_setup_carrier_fabric_entry(hass, entry)
 
     applied_data = copy.deepcopy(dict(entry.data))
-    setup_options = entry.options
-    applied_options = copy.deepcopy(_applied_options(setup_options))
+    applied_options = copy.deepcopy(_applied_options(entry.options))
     is_local = connection_type == CONNECTION_TYPE_LOCAL
 
     # Get Home Assistant's aiohttp session for efficient connection pooling
@@ -838,13 +837,23 @@ async def async_setup_entry(
             )
         raise
 
-    await async_reconcile_device_groups_panel(
-        hass, entry.entry_id, enabled=entry.runtime_data.group_devices_by_uplink
-    )
+    # No update listener runs before this point, so a grouping toggle saved
+    # while the panel is reconciled is applied here, in place, until the
+    # option stops changing. The listener is added with no await after it.
+    enabled = entry.runtime_data.group_devices_by_uplink
+    while True:
+        await async_reconcile_device_groups_panel(hass, entry.entry_id, enabled=enabled)
+        if (latest := _grouping_option(entry.options)) == enabled:
+            break
+        entry.runtime_data.group_devices_by_uplink = enabled = latest
+        if not enabled:
+            async_end_device_group_streams(hass, entry.entry_id)
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     # Update listeners could not apply changes while platforms were being set up.
-    # Home Assistant queues the reload behind the current setup lock.
-    if entry.data != applied_data or entry.options is not setup_options:
+    # Home Assistant queues the reload behind the current setup lock. Grouping
+    # was read after the platforms were set up, so a grouping-only change needs
+    # no reload: a reload would reconcile rows the toggle must leave alone.
+    if entry.data != applied_data or _applied_options(entry.options) != applied_options:
         hass.config_entries.async_schedule_reload(entry.entry_id)
     _LOGGER.info("UniFi Insights integration setup completed successfully")
     return True

@@ -500,6 +500,101 @@ async def test_panel_follows_option_setup_toggle_and_unload(
         assert frontend.PANEL_URL_PATH not in hass.data[DATA_PANELS]
 
 
+async def test_grouping_saved_during_setup_applies_without_reload(
+    hass: HomeAssistant,
+    web: Path,
+    mock_config_entry: MockConfigEntry,
+    mock_network_client: MagicMock,
+    mock_protect_client: MagicMock,
+    *,
+    mock_local_auth: MagicMock,
+    enable_custom_integrations: None,
+) -> None:
+    """A grouping-only save while platforms set up is applied, not reloaded."""
+    entry = mock_config_entry
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry, options={CONF_TRACK_WIFI_CLIENTS: True}
+    )
+    forward = hass.config_entries.async_forward_entry_setups
+
+    async def forward_and_turn_grouping_on(*args: Any) -> None:
+        await forward(*args)
+        hass.config_entries.async_update_entry(
+            entry, options={CONF_TRACK_WIFI_CLIENTS: True, GROUPING: True}
+        )
+
+    with (
+        patch.object(frontend, "FRONTEND_PATH", web),
+        patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            side_effect=forward_and_turn_grouping_on,
+        ),
+        patch.object(
+            hass.config_entries, "async_reload", wraps=hass.config_entries.async_reload
+        ) as reload,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert frontend.PANEL_URL_PATH in hass.data[DATA_PANELS]
+
+    reload.assert_not_awaited()
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data.group_devices_by_uplink is True
+
+
+@pytest.mark.parametrize(("initial", "saved"), [(False, True), (True, False)])
+async def test_grouping_toggled_while_panel_reconciles_is_applied(
+    hass: HomeAssistant,
+    web: Path,
+    mock_config_entry: MockConfigEntry,
+    mock_network_client: MagicMock,
+    mock_protect_client: MagicMock,
+    *,
+    mock_local_auth: MagicMock,
+    enable_custom_integrations: None,
+    initial: bool,
+    saved: bool,
+) -> None:
+    """A toggle saved before the update listener exists still reaches the panel."""
+    entry = mock_config_entry
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(entry, options={GROUPING: initial})
+    original = frontend.async_reconcile_device_groups_panel
+    calls: list[bool] = []
+
+    async def reconcile_and_toggle(
+        hass: HomeAssistant, entry_id: str, *, enabled: bool
+    ) -> None:
+        calls.append(enabled)
+        if len(calls) == 1:
+            hass.config_entries.async_update_entry(entry, options={GROUPING: saved})
+        await original(hass, entry_id, enabled=enabled)
+
+    with (
+        patch.object(frontend, "FRONTEND_PATH", web),
+        patch(
+            "custom_components.unifi_insights.async_reconcile_device_groups_panel",
+            side_effect=reconcile_and_toggle,
+        ),
+        patch(
+            "custom_components.unifi_insights.async_end_device_group_streams"
+        ) as end_streams,
+        patch.object(
+            hass.config_entries, "async_reload", wraps=hass.config_entries.async_reload
+        ) as reload,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert (frontend.PANEL_URL_PATH in hass.data[DATA_PANELS]) is saved
+
+    assert calls == [initial, saved]
+    assert entry.runtime_data.group_devices_by_uplink is saved
+    assert end_streams.call_count == (0 if saved else 1)
+    reload.assert_not_awaited()
+
+
 async def test_failed_unload_keeps_the_panel(
     hass: HomeAssistant, init_integration: MockConfigEntry
 ) -> None:
