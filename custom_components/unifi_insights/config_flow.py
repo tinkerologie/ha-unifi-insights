@@ -135,6 +135,15 @@ _ACCESS_WEBHOOK_STATE_KEYS = (
 )
 
 
+def _client_label_name(client: Mapping[str, Any]) -> str:
+    """Return a client's name, else its hostname; blank values count as missing."""
+    for key in ("name", "hostname"):
+        value = client.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
 def _host_key(host: object) -> str | None:
     """Return the lower-cased host name of a host or URL, or None when unusable."""
     if not isinstance(host, str) or not host.strip():
@@ -1450,6 +1459,12 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
 class UnifiInsightsOptionsFlow(OptionsFlow):
     """Handle options for UniFi Insights integration."""
 
+    # Whether the form last shown had the Tracked clients selector. The
+    # submitted form is that one, so this -- not the choices at submit time,
+    # which another flow's save can change -- decides what an omitted field
+    # means.
+    _tracked_clients_shown = False
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -1493,11 +1508,6 @@ class UnifiInsightsOptionsFlow(OptionsFlow):
         show_site_picker = bool(available_sites) and (
             len(available_sites) > 1 or bool(current_site_ids)
         )
-        current_tracked_clients = sorted(tracked_client_macs(self.config_entry.options))
-        # Saved MACs are always among the choices, so a saved filter always
-        # shows the picker and can be cleared.
-        tracked_client_choices = self._tracked_client_choices(current_tracked_clients)
-
         if user_input is not None:
             # The form only submits fields available for this entry.
             options = {**self.config_entry.options, **user_input}
@@ -1510,16 +1520,20 @@ class UnifiInsightsOptionsFlow(OptionsFlow):
             elif not user_input.get(CONF_SITE_IDS):
                 # No selection means every site; don't store an empty filter.
                 options.pop(CONF_SITE_IDS, None)
-            selected_clients = user_input.get(CONF_TRACKED_CLIENTS)
-            if not tracked_client_choices or not selected_clients:
-                # Hidden (nothing to offer, so nothing was saved either: a
-                # value from a form shown before is discarded), or shown and
-                # left empty, which means every client of the enabled types.
-                options.pop(CONF_TRACKED_CLIENTS, None)
-            else:
-                # Every choice is keyed by lowercase MAC, and the selector
-                # accepts only its choices, so values are already lowercase.
-                options[CONF_TRACKED_CLIENTS] = list(dict.fromkeys(selected_clients))
+            # A form shown without the selector says nothing about the filter,
+            # so the merge above keeps whatever is saved now -- possibly by
+            # another options flow saved while this form was open.
+            if self._tracked_clients_shown:
+                selected_clients = user_input.get(CONF_TRACKED_CLIENTS)
+                if not selected_clients:
+                    # Shown and left empty: every client of the enabled types.
+                    options.pop(CONF_TRACKED_CLIENTS, None)
+                else:
+                    # Every choice is keyed by lowercase MAC, and the selector
+                    # accepts only its choices, so values are already lowercase.
+                    options[CONF_TRACKED_CLIENTS] = list(
+                        dict.fromkeys(selected_clients)
+                    )
             return self.async_create_entry(title="", data=options)
 
         # Get current values, migrating from old CONF_TRACK_CLIENTS if needed
@@ -1588,6 +1602,11 @@ class UnifiInsightsOptionsFlow(OptionsFlow):
                 )
             )
 
+        current_tracked_clients = sorted(tracked_client_macs(self.config_entry.options))
+        # Saved MACs are always among the choices, so a saved filter always
+        # shows the picker and can be cleared.
+        tracked_client_choices = self._tracked_client_choices(current_tracked_clients)
+        self._tracked_clients_shown = bool(tracked_client_choices)
         if tracked_client_choices:
             schema[vol.Optional(CONF_TRACKED_CLIENTS)] = SelectSelector(
                 SelectSelectorConfig(
@@ -1628,9 +1647,7 @@ class UnifiInsightsOptionsFlow(OptionsFlow):
                 mac = get_field(client, "macAddress", "mac_address", "mac")
                 if not mac or not client_is_connected(client):
                     continue
-                labels.setdefault(
-                    mac.lower(), get_field(client, "name", "hostname", default="")
-                )
+                labels.setdefault(mac.lower(), _client_label_name(client))
         registry = er.async_get(self.hass)
         for reg_entry in _client_tracker_entries(registry, self.config_entry.entry_id):
             mac = _mac_from_unique_id(reg_entry.unique_id)

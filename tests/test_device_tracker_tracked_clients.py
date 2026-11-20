@@ -554,3 +554,270 @@ async def test_selected_offline_client_reports_not_home_on_the_platform(
     assert require_not_none(er.async_get(hass).async_get(entity_id)).device_id == (
         device.id
     )
+
+
+# --- Review round 3 -----------------------------------------------------------
+
+
+def _sites_coordinator(*sites: tuple[str, tuple[dict[str, Any], ...]]) -> MagicMock:
+    """Return a facade coordinator mock with these sites, in this order."""
+    coordinator = MagicMock()
+    coordinator.data = {
+        "clients": {
+            site_id: {client["id"]: client for client in clients}
+            for site_id, clients in sites
+        }
+    }
+    return coordinator
+
+
+@pytest.mark.parametrize(
+    "unique_id",
+    [f"{DOMAIN}_{PHONE}", PHONE.upper()],
+    ids=["canonical_row", "legacy_bare_mac_row"],
+)
+async def test_offline_tracker_skips_a_mac_another_entry_owns(
+    hass: HomeAssistant, unique_id: str
+) -> None:
+    """Another entry's row for a selected MAC is never taken over offline."""
+    other = _entry(hass, _coordinator(), {}, entry_id="other_entry")
+    other_entity_id = _register(hass, other, PHONE, unique_id=unique_id)
+    entry = _entry(
+        hass,
+        _coordinator(),
+        {CONF_TRACK_WIFI_CLIENTS: True, CONF_TRACKED_CLIENTS: [PHONE, LAPTOP]},
+    )
+    add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, add_entities)
+
+    # LAPTOP is nobody's, so it still gets its offline tracker.
+    assert [tracker.mac_address for tracker in _added(add_entities)] == [LAPTOP]
+    reg_entry = require_not_none(er.async_get(hass).async_get(other_entity_id))
+    assert reg_entry.config_entry_id == other.entry_id
+
+
+@pytest.mark.parametrize(
+    ("domain", "platform", "unique_id"),
+    [
+        pytest.param("device_tracker", "nmap_tracker", PHONE, id="other_integration"),
+        pytest.param("button", DOMAIN, f"{DOMAIN}_{PHONE}", id="other_domain"),
+    ],
+)
+async def test_offline_tracker_ignores_rows_that_are_not_client_trackers(
+    hass: HomeAssistant, domain: str, platform: str, unique_id: str
+) -> None:
+    """Only this platform's tracker rows can hold a MAC's offline tracker back."""
+    other = _entry(hass, _coordinator(), {}, entry_id="other_entry")
+    er.async_get(hass).async_get_or_create(
+        domain, platform, unique_id, config_entry=other
+    )
+    entry = _entry(
+        hass,
+        _coordinator(),
+        {CONF_TRACK_WIFI_CLIENTS: True, CONF_TRACKED_CLIENTS: [PHONE]},
+    )
+    add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, add_entities)
+
+    assert [tracker.mac_address for tracker in _added(add_entities)] == [PHONE]
+
+
+@pytest.mark.parametrize(
+    ("client_type", "expected"),
+    [("WIRED", False), ("WIRELESS", True)],
+)
+@pytest.mark.parametrize(
+    ("registered", "options"),
+    [
+        pytest.param(
+            False,
+            {CONF_TRACK_WIFI_CLIENTS: True, CONF_TRACKED_CLIENTS: [PHONE]},
+            id="offline_new",
+        ),
+        pytest.param(
+            True,
+            {CONF_TRACK_WIFI_CLIENTS: True, CONF_TRACKED_CLIENTS: [PHONE]},
+            id="kept_row",
+        ),
+        pytest.param(True, {CONF_TRACK_WIFI_CLIENTS: True}, id="kept_row_no_filter"),
+    ],
+)
+async def test_tracker_created_offline_applies_the_type_rule_when_seen(
+    hass: HomeAssistant,
+    client_type: str,
+    options: dict[str, Any],
+    *,
+    expected: bool,
+    registered: bool,
+) -> None:
+    """A tracker set up with its client absent is home only for a tracked type."""
+    coordinator = _coordinator()
+    entry = _entry(hass, coordinator, options)
+    if registered:
+        _register(hass, entry, PHONE)
+    add_entities = MagicMock()
+    await async_setup_entry(hass, entry, add_entities)
+    [tracker] = _added(add_entities)
+    assert tracker.is_connected is False
+
+    coordinator.data = _coordinator(_client(PHONE, client_type)).data
+
+    assert tracker.is_connected is expected
+
+
+async def test_type_rule_counts_every_site_record_of_the_mac(
+    hass: HomeAssistant,
+) -> None:
+    """An offline-created tracker is home when any site shows a tracked type."""
+    coordinator = _coordinator()
+    entry = _entry(
+        hass,
+        coordinator,
+        {CONF_TRACK_WIFI_CLIENTS: True, CONF_TRACKED_CLIENTS: [PHONE]},
+    )
+    add_entities = MagicMock()
+    await async_setup_entry(hass, entry, add_entities)
+    [tracker] = _added(add_entities)
+
+    # The wired record is found first: it must not decide alone.
+    coordinator.data = _sites_coordinator(
+        ("site_wired", (_client(PHONE, "WIRED"),)),
+        ("site_wifi", (_client(PHONE),)),
+    ).data
+
+    assert tracker.is_connected is True
+
+
+async def test_type_rule_ignores_a_malformed_clients_section(
+    hass: HomeAssistant,
+) -> None:
+    """A clients section that is not a mapping reads as absent, not an error."""
+    coordinator = _coordinator()
+    entry = _entry(
+        hass,
+        coordinator,
+        {CONF_TRACK_WIFI_CLIENTS: True, CONF_TRACKED_CLIENTS: [PHONE]},
+    )
+    add_entities = MagicMock()
+    await async_setup_entry(hass, entry, add_entities)
+    [tracker] = _added(add_entities)
+
+    coordinator.data = {"clients": [_client(PHONE)]}
+
+    assert tracker.is_connected is False
+
+
+@pytest.mark.parametrize("registered", [False, True], ids=["new", "kept_row"])
+async def test_tracker_set_up_from_a_live_record_skips_the_type_rule(
+    hass: HomeAssistant, *, registered: bool
+) -> None:
+    """A tracker whose client was present at setup keeps the existing behaviour."""
+    coordinator = _coordinator(_client(PHONE))
+    entry = _entry(
+        hass,
+        coordinator,
+        {CONF_TRACK_WIFI_CLIENTS: True, CONF_TRACKED_CLIENTS: [PHONE]},
+    )
+    if registered:
+        _register(hass, entry, PHONE)
+    add_entities = MagicMock()
+    await async_setup_entry(hass, entry, add_entities)
+    [tracker] = _added(add_entities)
+
+    coordinator.data = _coordinator(_client(PHONE, "WIRED")).data
+
+    assert tracker.is_connected is True
+
+
+@pytest.mark.parametrize(
+    "site_order",
+    [("site_wifi", "site_wired"), ("site_wired", "site_wifi")],
+    ids=["eligible_first", "excluded_first"],
+)
+@pytest.mark.parametrize(
+    "options",
+    [
+        {CONF_TRACK_WIFI_CLIENTS: True},
+        {CONF_TRACK_WIFI_CLIENTS: True, CONF_TRACKED_CLIENTS: [PHONE]},
+    ],
+    ids=["no_filter", "filter"],
+)
+async def test_mac_eligible_on_one_site_keeps_its_row_and_device(
+    hass: HomeAssistant, site_order: tuple[str, str], options: dict[str, Any]
+) -> None:
+    """A record of a tracked type anywhere outweighs an excluded one elsewhere."""
+    records = {
+        "site_wifi": (_client(PHONE),),
+        "site_wired": (_client(PHONE, "WIRED"),),
+    }
+    coordinator = _sites_coordinator(*((site, records[site]) for site in site_order))
+    entry = _entry(hass, coordinator, options)
+    device = _client_device(hass, entry, PHONE)
+    entity_id = _register(hass, entry, PHONE, device_id=device.id)
+    registry = er.async_get(hass)
+    registry.async_update_entity(entity_id, name="My phone")
+    original = require_not_none(registry.async_get(entity_id))
+    add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, add_entities)
+
+    kept = require_not_none(registry.async_get(entity_id))
+    assert kept.id == original.id
+    assert kept.name == "My phone"
+    assert dr.async_get(hass).async_get(device.id) is not None
+    [tracker] = _added(add_entities)
+    assert tracker.mac_address == PHONE
+    assert tracker.is_connected is True
+
+
+def test_partition_never_marks_an_eligible_mac_untracked() -> None:
+    """A MAC wanted on one site is not also in the untracked set."""
+    wanted, untracked = _partition_connected_clients(
+        _sites_coordinator(
+            ("site_wifi", (_client(PHONE),)),
+            ("site_wired", (_client(PHONE, "WIRED"), _client(LAPTOP, "WIRED"))),
+        ),
+        track_wifi=True,
+        track_wired=False,
+    )
+
+    assert wanted == {PHONE: "site_wifi"}
+    assert untracked == {LAPTOP}
+
+
+async def test_offline_tracker_seen_wired_is_away_then_removed_on_reload(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_network_client: MagicMock,
+    mock_protect_client: MagicMock,
+    *,
+    mock_local_auth: MagicMock,
+    enable_custom_integrations: None,
+) -> None:
+    """Wi-Fi only: a selected MAC that turns up wired is Away, then removed."""
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options={CONF_TRACK_WIFI_CLIENTS: True, CONF_TRACKED_CLIENTS: [PHONE]},
+    )
+    _network_client(mock_network_client)
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    registry = er.async_get(hass)
+    entity_id = require_not_none(
+        registry.async_get_entity_id("device_tracker", DOMAIN, f"{DOMAIN}_{PHONE}")
+    )
+
+    mock_network_client.clients.get_all.return_value = [_client(PHONE, "WIRED")]
+    await mock_config_entry.runtime_data.device_coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert require_not_none(hass.states.get(entity_id)).state == STATE_NOT_HOME
+
+    # The next reconciliation sees a present client of an untracked type.
+    assert await hass.config_entries.async_reload(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert registry.async_get(entity_id) is None
+    assert _get_client_device(hass, mock_config_entry.entry_id, PHONE) is None

@@ -240,10 +240,10 @@ async def test_saved_offline_value_is_kept_when_resubmitted(
     assert result["data"]["client_control"] is False
 
 
-async def test_selector_hidden_at_submit_discards_the_value(
+async def test_selector_shown_then_without_choices_still_saves_the_value(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:
-    """Visibility is recomputed on submit: a hidden selector saves nothing."""
+    """The form as shown decides: a client gone since then is still saved."""
     mock_config_entry.add_to_hass(hass)
     _attach_clients(mock_config_entry, _client(PHONE))
 
@@ -257,7 +257,51 @@ async def test_selector_hidden_at_submit_discards_the_value(
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert CONF_TRACKED_CLIENTS not in result["data"]
+    assert result["data"][CONF_TRACKED_CLIENTS] == [PHONE]
+
+
+async def test_selector_hidden_when_shown_keeps_a_filter_saved_meanwhile(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """A form shown without the selector never clears a filter saved since."""
+    mock_config_entry.add_to_hass(hass)
+
+    stale = await _open(hass, mock_config_entry)
+    assert CONF_TRACKED_CLIENTS not in require_not_none(stale["data_schema"]).schema
+    # A second options flow saves a filter while the first is still open.
+    second = await _open(hass, mock_config_entry, {CONF_TRACKED_CLIENTS: [AWAY]})
+    result = await hass.config_entries.options.async_configure(
+        second["flow_id"], user_input={**BASE_INPUT, CONF_TRACKED_CLIENTS: [AWAY]}
+    )
+    assert result["data"][CONF_TRACKED_CLIENTS] == [AWAY]
+
+    result = await hass.config_entries.options.async_configure(
+        stale["flow_id"], user_input={**BASE_INPUT, "client_control": False}
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"]["client_control"] is False
+    assert result["data"][CONF_TRACKED_CLIENTS] == [AWAY]
+
+
+@pytest.mark.parametrize("name", ["", "   "], ids=["empty", "whitespace"])
+async def test_blank_client_name_falls_back_to_the_hostname(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry, name: str
+) -> None:
+    """A blank controller name is no name: the hostname labels the choice."""
+    mock_config_entry.add_to_hass(hass)
+    _attach_clients(
+        mock_config_entry,
+        _client(PHONE, name=name, hostname="phone-host"),
+        _client(LAPTOP, name=name, hostname=" "),
+    )
+
+    result = await _open(hass, mock_config_entry)
+
+    assert _choices(result) == [
+        (LAPTOP, LAPTOP),
+        (PHONE, f"phone-host ({PHONE})"),
+    ]
 
 
 async def test_other_entrys_trackers_are_not_offered(

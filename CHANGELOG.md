@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Removing a client tracker now also removes its standalone client device when no other entity, enabled or disabled, uses it. This applies to the Tracked clients filter, to a client type that is no longer tracked, and to turning client tracking off. Devices of switches and access points are never removed this way. [#511](https://github.com/tinkerologie/ha-unifi-insights/issues/511)
 
+### Fixed
+
+- A client tracker set up while its client was away no longer shows Home when the client comes back with a type that is not tracked, such as a wired client with only WiFi tracking on. It shows Away, and the next reload removes it. A client seen on two sites keeps its tracker when either site shows a tracked type. [#511](https://github.com/tinkerologie/ha-unifi-insights/issues/511)
+
 ## [2026.11.3] - 2026-11-18
 
 ### Added

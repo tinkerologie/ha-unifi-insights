@@ -2105,19 +2105,18 @@ class TestUnifiClientWakeButton:
             "clients": {"site1": {"c1": {"macAddress": mac, "name": "Workstation"}}},
         }
         btn_gw = UnifiClientWakeButton(coordinator, mac, site_id="site1")
-        for _, identifier in (
-            require_not_none(btn_gw.device_info).as_dict().get("identifiers", set())
-        ):
+        # Indexing, not .get(): a missing key must fail, not loop zero times.
+        identifiers = require_not_none(btn_gw.device_info).as_dict()["identifiers"]
+        assert identifiers
+        for _, identifier in identifiers:
             assert not identifier.startswith("client_")
 
         # Offline unseeded client
         coordinator.data = {"devices": {}, "clients": {}}
         btn_offline = UnifiClientWakeButton(coordinator, mac, site_id="site1")
-        for _, identifier in (
-            require_not_none(btn_offline.device_info)
-            .as_dict()
-            .get("identifiers", set())
-        ):
+        identifiers = require_not_none(btn_offline.device_info).as_dict()["identifiers"]
+        assert identifiers
+        for _, identifier in identifiers:
             assert not identifier.startswith("client_")
 
     def test_wake_button_translation_placeholders_live_history_and_mac_only(

@@ -108,6 +108,10 @@ def _partition_connected_clients(
                 wanted[mac.lower()] = site_id
             else:
                 untracked.add(mac.lower())
+    # A MAC can show up on more than one site. A record of a tracked type
+    # anywhere wins: only a MAC with no eligible record is definitively
+    # untracked, so the tracker and its device are never deleted for it.
+    untracked.difference_update(wanted)
     return wanted, untracked
 
 
@@ -141,6 +145,24 @@ def _client_tracker_entries(
         and reg_entry.platform == DOMAIN
         and not reg_entry.unique_id.startswith(MOBILITY_DEVICE_PREFIX)
     ]
+
+
+def _mac_has_tracker_row(registry: er.EntityRegistry, mac: str) -> bool:
+    """
+    Return True if any client tracker row of this platform is for this MAC.
+
+    Called only for a MAC this entry has no row for, so a row found belongs to
+    another config entry. Unique IDs are not scoped to a config entry: adding
+    a tracker for that MAC would move the other entry's row -- with its entity
+    ID, name and area -- to this one. Legacy bare-MAC rows keep the API's
+    spelling, so rows are matched by the MAC they identify.
+    """
+    return any(
+        reg_entry.domain == "device_tracker"
+        and reg_entry.platform == DOMAIN
+        and _mac_from_unique_id(reg_entry.unique_id) == mac
+        for reg_entry in registry.entities.values()
+    )
 
 
 def _mac_from_unique_id(unique_id: str) -> str:
@@ -357,6 +379,7 @@ async def async_setup_entry(
                 site_id=connected_macs.get(mac),
                 restored_name=_restored_name(hass, reg_entry, mac),
                 unique_id=reg_entry.unique_id,
+                track_types=(track_wifi, track_wired),
             )
         )
         tracked.add(mac)
@@ -365,10 +388,23 @@ async def async_setup_entry(
     # chosen from a saved value and gone before this reload -- still gets one,
     # so it reports `not_home` instead of nothing. A connected selected client
     # is left to `async_add_clients`, which applies the type options to it.
+    # A MAC whose row belongs to another entry is left alone: that row would
+    # otherwise be moved to this entry.
     for mac in sorted(tracked_clients):
         if mac in tracked or mac in connected_macs or mac in untracked_macs:
             continue
-        retained.append(UnifiClientTracker(coordinator=coordinator, mac=mac))
+        if _mac_has_tracker_row(registry, mac):
+            _LOGGER.debug(
+                "Not creating an offline tracker for %s: another entry owns it", mac
+            )
+            continue
+        retained.append(
+            UnifiClientTracker(
+                coordinator=coordinator,
+                mac=mac,
+                track_types=(track_wifi, track_wired),
+            )
+        )
         tracked.add(mac)
     if retained:
         _LOGGER.debug("Restoring %d client tracker(s) from the registry", len(retained))
@@ -418,6 +454,7 @@ class UnifiClientTracker(
         site_id: str | None = None,
         restored_name: str | None = None,
         unique_id: str | None = None,
+        track_types: tuple[bool, bool] | None = None,
     ) -> None:
         """
         Initialize the tracker.
@@ -427,6 +464,8 @@ class UnifiClientTracker(
         `restored_name` is the name the registry kept for such a tracker.
         `unique_id` overrides the default DOMAIN_mac id format, used when
         restoring legacy entries that could not be migrated due to collision.
+        `track_types` is the (Wi-Fi, wired) tracking options. They are kept
+        only when the client is absent now, see `_type_excluded`.
         """
         super().__init__(coordinator)
         self._site_id = site_id
@@ -442,6 +481,11 @@ class UnifiClientTracker(
 
         # Get initial client data
         client_data = self._get_client_data() or {}
+
+        # A client present now passed the type options before this tracker was
+        # made. An absent one has an unknown type, so the options are applied
+        # when it turns up; see `_type_excluded`.
+        self._track_types = None if client_data else track_types
 
         # Set unique ID based on MAC address for stability
         self._attr_unique_id = unique_id or f"{DOMAIN}_{self._mac}"
@@ -586,9 +630,44 @@ class UnifiClientTracker(
         connected-clients API lack a connected field and are considered
         connected by presence in the snapshot. An explicit connected=False
         overrides membership and reports disconnected. A missing client
-        record returns False.
+        record returns False, and so does a tracker set up offline whose
+        client turns up with an untracked type (see `_type_excluded`).
         """
+        if self._type_excluded():
+            return False
         return client_is_connected(self._get_client_data())
+
+    def _type_excluded(self) -> bool:
+        """
+        Return True if a tracker set up offline now shows an untracked type.
+
+        Only trackers whose client was absent at setup check this: their type
+        was unknown when they were created. Such a client that turns up with a
+        type the options exclude is not home, and the next setup removes its
+        tracker as it does for any present client of an untracked type. The
+        MAC can be on several sites; a tracked type on any of them counts.
+        With no record at all this also returns True, the same not-home answer
+        `is_connected` gives an absent client anyway.
+        """
+        if self._track_types is None:
+            return False
+        track_wifi, track_wired = self._track_types
+        all_clients = self.coordinator.data.get("clients", {})
+        records = (
+            [
+                record
+                for clients in all_clients.values()
+                if (record := self._find_in_site(clients)) is not None
+            ]
+            if isinstance(all_clients, dict)
+            else []
+        )
+        return not any(
+            _client_should_be_tracked(
+                record, track_wifi=track_wifi, track_wired=track_wired
+            )
+            for record in records
+        )
 
     @property
     def source_type(self) -> SourceType:
