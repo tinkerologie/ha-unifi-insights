@@ -555,7 +555,9 @@ async def test_client_only_camera_appears_once_under_its_switch(rows: Rows) -> N
                 "type": "WIRED",
                 "macAddress": CAM_MAC,
                 "uplinkDeviceId": "sw",
-            }
+            },
+            # VPN and Teleport clients have no MAC; they are skipped, not indexed.
+            "vpn": {"id": "vpn", "type": "VPN", "macAddress": None},
         },
         links={CAM_MAC: {"sw_mac": SW_MAC, "sw_port": 9}},
         cameras={"cam1": {"id": "cam1", "name": "Porch", "mac": CAM_MAC}},
