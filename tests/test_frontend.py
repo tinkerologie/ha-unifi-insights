@@ -14,8 +14,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.components.lovelace.const import LOVELACE_DATA
-from homeassistant.config_entries import ConfigEntryState
-from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.unifi_insights import async_setup, frontend
 from custom_components.unifi_insights.frontend import (
@@ -219,15 +217,6 @@ def panel_web(hass, tmp_path):
         yield tmp_path
 
 
-def _entry(hass, entry_id: str, *, grouping: bool, state=None):
-    """Add a UniFi Insights entry with runtime data carrying the applied option."""
-    entry = MockConfigEntry(domain=frontend.DOMAIN, entry_id=entry_id)
-    entry.add_to_hass(hass)
-    entry.mock_state(hass, state or ConfigEntryState.LOADED)
-    entry.runtime_data = SimpleNamespace(group_devices_by_uplink=grouping)
-    return entry
-
-
 @pytest.fixture
 def panel_calls():
     """Patch the panel register/remove calls."""
@@ -243,11 +232,9 @@ async def test_panel_registers_once_for_two_entries_and_follows_unloads(
 ) -> None:
     """Two enabled entries share one panel; it goes only with the last one."""
     register, remove = panel_calls
-    _entry(hass, "a", grouping=True)
-    _entry(hass, "b", grouping=True)
 
-    await frontend.async_reconcile_device_groups_panel(hass, include="a")
-    await frontend.async_reconcile_device_groups_panel(hass, include="b")
+    await frontend.async_reconcile_device_groups_panel(hass, "a", enabled=True)
+    await frontend.async_reconcile_device_groups_panel(hass, "b", enabled=True)
     register.assert_awaited_once()
     kwargs = register.await_args.kwargs
     digest = hashlib.sha256(b"// panel").hexdigest()[:8]
@@ -264,13 +251,10 @@ async def test_panel_registers_once_for_two_entries_and_follows_unloads(
     }
     assert frontend.PANEL_FILE not in CARD_FILES
 
-    await frontend.async_reconcile_device_groups_panel(hass, exclude="a")
+    await frontend.async_reconcile_device_groups_panel(hass, "a", enabled=False)
     remove.assert_not_called()
 
-    hass.config_entries.async_get_entry("a").mock_state(
-        hass, ConfigEntryState.NOT_LOADED
-    )
-    await frontend.async_reconcile_device_groups_panel(hass, exclude="b")
+    await frontend.async_reconcile_device_groups_panel(hass, "b", enabled=False)
     remove.assert_called_once_with(
         hass, "unifi-insights-devices", warn_if_unknown=False
     )
@@ -281,27 +265,24 @@ async def test_panel_concurrent_reconciles_register_once(
 ) -> None:
     """The lock serialises reconciles started together."""
     register, _remove = panel_calls
-    _entry(hass, "a", grouping=True)
 
     await asyncio.gather(
-        *(frontend.async_reconcile_device_groups_panel(hass) for _ in range(3))
+        *(
+            frontend.async_reconcile_device_groups_panel(hass, entry_id, enabled=True)
+            for entry_id in ("a", "b", "c")
+        )
     )
 
     register.assert_awaited_once()
 
 
-async def test_panel_ignores_disabled_unloaded_and_carrier_entries(
+async def test_panel_does_not_register_without_an_owner(
     hass, panel_web, panel_calls
 ) -> None:
-    """Off, not loaded, excluded or runtime without the option: no panel."""
+    """Setup of an entry with grouping off leaves the panel absent."""
     register, _remove = panel_calls
-    _entry(hass, "off", grouping=False)
-    _entry(hass, "setup", grouping=True, state=ConfigEntryState.SETUP_IN_PROGRESS)
-    _entry(hass, "leaving", grouping=True)
-    carrier = _entry(hass, "carrier", grouping=True)
-    carrier.runtime_data = SimpleNamespace()
 
-    await frontend.async_reconcile_device_groups_panel(hass, exclude="leaving")
+    await frontend.async_reconcile_device_groups_panel(hass, "off", enabled=False)
 
     register.assert_not_awaited()
 
@@ -312,10 +293,9 @@ async def test_panel_skips_without_web_server(hass, tmp_path, panel_calls) -> No
     hass.config.components.add("frontend")
     hass.data[frontend._STATIC_REGISTERED] = True
     (tmp_path / frontend.PANEL_FILE).write_text("// panel")
-    _entry(hass, "a", grouping=True)
 
     with patch.object(frontend, "FRONTEND_PATH", tmp_path):
-        await frontend.async_reconcile_device_groups_panel(hass)
+        await frontend.async_reconcile_device_groups_panel(hass, "a", enabled=True)
 
     register.assert_not_awaited()
     assert not hass.data.get(frontend._PANEL_REGISTERED)
@@ -325,9 +305,8 @@ async def test_panel_skips_without_static_path(hass, panel_web, panel_calls) -> 
     """When the bundles could not be served, the panel is not registered."""
     register, _remove = panel_calls
     hass.data.pop(frontend._STATIC_REGISTERED)
-    _entry(hass, "a", grouping=True)
 
-    await frontend.async_reconcile_device_groups_panel(hass)
+    await frontend.async_reconcile_device_groups_panel(hass, "a", enabled=True)
 
     register.assert_not_awaited()
 
@@ -336,10 +315,9 @@ async def test_panel_skips_missing_bundle(hass, panel_web, panel_calls, caplog) 
     """A tree without the bundle (a partial build) skips registration quietly."""
     register, _remove = panel_calls
     (panel_web / frontend.PANEL_FILE).unlink()
-    _entry(hass, "a", grouping=True)
 
     with caplog.at_level(logging.DEBUG, logger=frontend.__name__):
-        await frontend.async_reconcile_device_groups_panel(hass)
+        await frontend.async_reconcile_device_groups_panel(hass, "a", enabled=True)
 
     register.assert_not_awaited()
     assert "is missing" in caplog.text
@@ -351,11 +329,10 @@ async def test_panel_registration_error_is_logged_and_retried(
     """A failure never escapes into entry setup, and the next reconcile retries."""
     register, _remove = panel_calls
     register.side_effect = [ValueError("Overwriting panel"), None]
-    _entry(hass, "a", grouping=True)
 
-    await frontend.async_reconcile_device_groups_panel(hass)
+    await frontend.async_reconcile_device_groups_panel(hass, "a", enabled=True)
     assert "Unable to register the UniFi devices panel" in caplog.text
-    await frontend.async_reconcile_device_groups_panel(hass)
+    await frontend.async_reconcile_device_groups_panel(hass, "a", enabled=True)
 
     assert register.await_count == 2
     assert hass.data[frontend._PANEL_REGISTERED] is True

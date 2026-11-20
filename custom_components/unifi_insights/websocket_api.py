@@ -51,6 +51,7 @@ from .device_grouping import (
     STATUS_GROUPING_DISABLED,
     build_device_groups,
     build_terminal_device_groups,
+    safe_name,
 )
 from .device_tracker import _client_tracker_entries, _mac_from_unique_id
 from .entity import get_field
@@ -1242,6 +1243,7 @@ def _device_groups_payload(
     return build_device_groups(
         facade.data,
         entry_id=entry.entry_id,
+        node_key=async_get_node_key(hass, entry.entry_id),
         site_ids=runtime.config_coordinator.get_site_ids(),
         devices_available=facade.device_available,
         device_rows=dr.async_entries_for_config_entry(
@@ -1308,7 +1310,7 @@ def ws_device_groups_sources(
 ) -> None:
     """List the loaded Network/Protect entries with device grouping on."""
     entries = [
-        {"entry_id": entry.entry_id, "title": entry.title}
+        {"entry_id": entry.entry_id, "title": safe_name(entry.title, "UniFi Insights")}
         for entry in hass.config_entries.async_loaded_entries(DOMAIN)
         if getattr(
             getattr(entry, "runtime_data", None), "group_devices_by_uplink", False

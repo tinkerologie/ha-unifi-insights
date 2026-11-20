@@ -15,7 +15,6 @@ from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.lovelace.const import LOVELACE_DATA
 from homeassistant.components.lovelace.resources import ResourceStorageCollection
 from homeassistant.components.panel_custom import async_register_panel
-from homeassistant.config_entries import ConfigEntryState
 from homeassistant.loader import async_get_integration
 from homeassistant.util.hass_dict import HassKey
 
@@ -47,6 +46,7 @@ PANEL_URL_PATH: Final = "unifi-insights-devices"
 PANEL_COMPONENT: Final = "unifi-insights-devices-panel"
 PANEL_TITLE: Final = "UniFi devices"
 PANEL_ICON: Final = "mdi:lan"
+_PANEL_OWNERS: HassKey[set[str]] = HassKey(f"{DOMAIN}_device_groups_panel_owners")
 _PANEL_LOCK: HassKey[asyncio.Lock] = HassKey(f"{DOMAIN}_device_groups_panel_lock")
 _PANEL_REGISTERED: HassKey[bool] = HassKey(f"{DOMAIN}_device_groups_panel_registered")
 
@@ -122,28 +122,6 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
         hass.data[_REGISTERED] = True
 
 
-def _panel_wanted(
-    hass: HomeAssistant, include: str | None, exclude: str | None
-) -> bool:
-    """
-    Return whether any loaded entry has the device groups option on.
-
-    ``include`` counts an entry still being set up as loaded; ``exclude``
-    leaves out one still being unloaded. The option value read is the one the
-    entry applied (``group_devices_by_uplink`` on its runtime data), which
-    Carrier Fabric entries do not have.
-    """
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        if entry.entry_id == exclude:
-            continue
-        if entry.entry_id != include and entry.state is not ConfigEntryState.LOADED:
-            continue
-        runtime = getattr(entry, "runtime_data", None)
-        if getattr(runtime, "group_devices_by_uplink", False) is True:
-            return True
-    return False
-
-
 async def _async_register_panel(hass: HomeAssistant) -> bool:
     """Register the panel; return False when it cannot be served here."""
     if not {"http", "frontend"} <= hass.config.components or not hass.data.get(
@@ -173,21 +151,23 @@ async def _async_register_panel(hass: HomeAssistant) -> bool:
 
 
 async def async_reconcile_device_groups_panel(
-    hass: HomeAssistant, *, include: str | None = None, exclude: str | None = None
+    hass: HomeAssistant, entry_id: str, *, enabled: bool
 ) -> None:
     """
-    Register or remove the device groups panel to match the loaded entries.
+    Update one entry's panel ownership and reconcile the shared sidebar panel.
 
-    One panel serves the whole instance. It is wanted while at least one
-    loaded Network/Protect entry has the option on; see ``_panel_wanted`` for
-    ``include`` and ``exclude``. A lock serialises concurrent calls (two
-    entries set up at once), so the panel is registered once and removed
-    once. A headless instance, or a missing bundle, skips registration; a
-    failure is logged and never fails entry setup or unload.
+    Successful setup, unload and in-place changes update the owner set.
+    An entry keeps ownership while its unload is pending or fails. A lock
+    serialises registration so concurrent changes share a single panel.
     """
+    owners = hass.data.setdefault(_PANEL_OWNERS, set())
+    if enabled:
+        owners.add(entry_id)
+    else:
+        owners.discard(entry_id)
     lock = hass.data.setdefault(_PANEL_LOCK, asyncio.Lock())
     async with lock:
-        wanted = _panel_wanted(hass, include, exclude)
+        wanted = bool(owners)
         registered = hass.data.get(_PANEL_REGISTERED, False)
         if wanted == registered:
             return

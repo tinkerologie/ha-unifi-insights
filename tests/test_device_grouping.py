@@ -5,20 +5,23 @@ from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 import pytest
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant.common import MockConfigEntry
 
+from custom_components.unifi_insights import device_grouping
 from custom_components.unifi_insights.const import DOMAIN
 from custom_components.unifi_insights.device_grouping import (
     DEVICE_GROUPS_SCHEMA_VERSION,
+    _group_key,
     build_device_groups,
     build_terminal_device_groups,
     safe_name,
 )
-from tests.fixtures.facade_data import facade_data, with_device_fields
+from tests.fixtures.facade_data import facade_data, with_device_fields, with_sections
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -28,6 +31,7 @@ if TYPE_CHECKING:
         DeviceGroups,
     )
 
+NODE_KEY = b"test-key"
 SITE = "site-a"
 SITE_B = "site-b"
 GW_MAC = "02:00:00:00:00:01"
@@ -134,6 +138,7 @@ class Rows:
         return build_device_groups(
             data,
             entry_id=self.entry.entry_id,
+            node_key=NODE_KEY,
             site_ids=site_ids,
             devices_available=devices_available,
             device_rows=dr.async_entries_for_config_entry(
@@ -157,13 +162,15 @@ def _section(payload: DeviceGroups, key: str) -> list[DeviceGroupRow]:
     return section["rows"]
 
 
-def _by_key(payload: DeviceGroups, key: str = f"site:{SITE}") -> dict[str, Any]:
+def _by_key(
+    payload: DeviceGroups, key: str = _group_key("site", NODE_KEY, SITE)
+) -> dict[str, Any]:
     """Return a section's rows by key."""
     return {row["key"]: row for row in _section(payload, key)}
 
 
 def _net(device_id: str, site: str = SITE) -> str:
-    return f"net:{site}:{device_id}"
+    return _group_key("net", NODE_KEY, site, device_id)
 
 
 async def test_gateway_switch_ap_chain_with_camera_and_other_device(
@@ -194,11 +201,11 @@ async def test_gateway_switch_ap_chain_with_camera_and_other_device(
     assert payload["status"] == "ok"
     assert payload["stale"] is False
     assert [s["key"] for s in payload["sections"]] == [
-        f"site:{SITE}",
+        _group_key("site", NODE_KEY, SITE),
         "unassigned",
         "other",
     ]
-    assert _section(payload, f"site:{SITE}") == [
+    assert _section(payload, _group_key("site", NODE_KEY, SITE)) == [
         {
             "key": _net("gw"),
             "name": "UDM Pro",
@@ -209,7 +216,7 @@ async def test_gateway_switch_ap_chain_with_camera_and_other_device(
             "reason": None,
         },
         {
-            "key": "cam:cam1",
+            "key": _group_key("cam", NODE_KEY, "cam1"),
             "name": "Front door",
             "kind": "camera",
             "ha_device_id": camera_device.id,
@@ -264,12 +271,52 @@ async def test_payload_has_no_ip_or_mac(rows: Rows) -> None:
     assert names == {"Unknown device", "Box"}
 
 
+async def test_address_shaped_source_ids_and_labels_are_private(rows: Rows) -> None:
+    """Legacy MAC keys and literal site titles never reach the payload."""
+    chain = _chain()
+    rows.network(GW_MAC, "Gateway", GW_IP)
+    rows.network(SW_MAC, "Switch", GW_IP)
+    data = facade_data(
+        sites={GW_IP: {"id": GW_IP, "name": GW_IP}},
+        devices={
+            GW_IP: {
+                GW_MAC: {**chain["gw"], "id": GW_MAC},
+                SW_MAC: {
+                    **chain["sw"],
+                    "id": SW_MAC,
+                    "name": "Office switch [0200.0000.0002]",
+                },
+            },
+        },
+        protect={
+            "cameras": {
+                CAM_MAC: {"name": "Doorbell 0200000000a1", "mac": CAM_MAC},
+            },
+        },
+    )
+    payload = rows.build(data, site_ids=(GW_IP,))
+
+    text = json.dumps(payload).lower()
+    for address in (GW_IP, GW_MAC, SW_MAC, CAM_MAC, "0200.0000.0002", "0200000000a1"):
+        assert address not in text
+    site = payload["sections"][0]
+    assert site["title"] == "Unknown site"
+    gateway, switch = site["rows"]
+    assert gateway["name"] == "UDM Pro"
+    assert switch["name"] == "Office switch"
+    assert switch["parent_key"] == gateway["key"]
+    assert rows.build(data, site_ids=(GW_IP,)) == payload
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
         ("Switch (10.0.0.2)", "Switch"),
         ("Cam 02:00:00:00:00:a1", "Cam"),
         ("AP [2001:db8::1]", "AP"),
+        ("AP [::ffff:192.0.2.4]", "AP"),
+        ("AP [fe80::1%eth0]", "AP"),
+        ("Console_AABB.CCDD.EEFF", "Console_"),
         ("10.0.0.2", "fallback"),
         (None, "fallback"),
         ("  Plain name  ", "Plain name"),
@@ -433,7 +480,7 @@ async def test_parent_in_another_site_is_not_found(rows: Rows) -> None:
     # Sorted by title: "Barn" before "Home".
     assert [s["title"] for s in payload["sections"][:2]] == ["Barn", "Home"]
     assert _by_key(payload)[_net("ap")]["reason"] == "parent_not_found"
-    assert _net("gw", SITE_B) in _by_key(payload, f"site:{SITE_B}")
+    assert _net("gw", SITE_B) in _by_key(payload, _group_key("site", NODE_KEY, SITE_B))
 
 
 async def test_rows_of_other_entries_are_ignored(
@@ -450,6 +497,7 @@ async def test_rows_of_other_entries_are_ignored(
     payload = build_device_groups(
         data,
         entry_id=rows.entry.entry_id,
+        node_key=NODE_KEY,
         site_ids=(SITE,),
         devices_available=True,
         # Passing every row proves ownership is checked, not assumed.
@@ -487,7 +535,7 @@ async def test_unavailable_device_coordinator_marks_rows_stale(rows: Rows) -> No
 
     assert payload["stale"] is True
     assert site[_net("gw")]["reason"] is None
-    for key in (_net("sw"), _net("ap"), "cam:cam1"):
+    for key in (_net("sw"), _net("ap"), _group_key("cam", NODE_KEY, "cam1")):
         assert (site[key]["parent_key"], site[key]["reason"]) == (None, "stale")
 
 
@@ -517,7 +565,7 @@ async def test_client_only_camera_appears_once_under_its_switch(rows: Rows) -> N
     assert (cameras[0]["parent_key"], cameras[0]["port"]) == (_net("sw"), 9)
     all_ids = {row["ha_device_id"] for s in payload["sections"] for row in s["rows"]}
     assert client_device.id not in all_ids
-    assert "c1" not in json.dumps(payload)
+    assert '"c1"' not in json.dumps(payload)
 
 
 async def test_camera_without_classic_link_is_grouped_without_port(rows: Rows) -> None:
@@ -527,7 +575,7 @@ async def test_camera_without_classic_link_is_grouped_without_port(rows: Rows) -
         links={CAM_MAC: "garbage"},
         cameras={"cam1": {"id": "cam1", "name": "Cam", "macAddress": CAM_MAC}},
     )
-    row = _by_key(rows.build(data))["cam:cam1"]
+    row = _by_key(rows.build(data))[_group_key("cam", NODE_KEY, "cam1")]
 
     assert (row["parent_key"], row["port"], row["reason"]) == (_net("ap"), None, None)
 
@@ -548,7 +596,7 @@ async def test_wireless_camera_uses_the_access_point_link_and_no_port(
         links={CAM_MAC: {"ap_mac": AP_MAC, "sw_mac": SW_MAC, "sw_port": 4}},
         cameras={"cam1": {"id": "cam1", "name": "Cam", "mac": CAM_MAC}},
     )
-    row = _by_key(rows.build(data))["cam:cam1"]
+    row = _by_key(rows.build(data))[_group_key("cam", NODE_KEY, "cam1")]
 
     assert (row["parent_key"], row["port"], row["reason"]) == (_net("ap"), None, None)
 
@@ -569,7 +617,7 @@ async def test_classic_link_conflicting_with_v1_parent_is_ambiguous(
         links={CAM_MAC: {"sw_mac": SW_MAC, "sw_port": 4}},
         cameras={"cam1": {"id": "cam1", "name": "Cam", "mac": CAM_MAC}},
     )
-    row = _by_key(rows.build(data))["cam:cam1"]
+    row = _by_key(rows.build(data))[_group_key("cam", NODE_KEY, "cam1")]
 
     assert (row["parent_key"], row["port"], row["reason"]) == (None, None, "ambiguous")
 
@@ -593,7 +641,7 @@ async def test_camera_client_without_usable_uplink(
         clients={"c1": client},
         cameras={"cam1": {"id": "cam1", "name": "Cam", "mac": CAM_MAC}},
     )
-    row = _by_key(rows.build(data))["cam:cam1"]
+    row = _by_key(rows.build(data))[_group_key("cam", NODE_KEY, "cam1")]
 
     assert (row["parent_key"], row["reason"]) == (None, reason)
 
@@ -631,7 +679,7 @@ async def test_camera_without_a_unique_site_is_unassigned(
 
     (row,) = _section(payload, "unassigned")
     assert (row["key"], row["kind"], row["parent_key"], row["reason"]) == (
-        "cam:cam1",
+        _group_key("cam", NODE_KEY, "cam1"),
         "camera",
         None,
         reason,
@@ -646,19 +694,82 @@ async def test_camera_merged_with_network_device_is_listed_once(rows: Rows) -> N
         _data(cameras={"cam1": {"id": "cam1", "name": "Doorbell", "mac": CAM_MAC}})
     )
 
-    assert "cam:cam1" not in _by_key(payload)
+    assert _group_key("cam", NODE_KEY, "cam1") not in _by_key(payload)
     assert _section(payload, "unassigned") == []
     assert _by_key(payload)[_net("sw")]["ha_device_id"] == switch_row.id
 
 
-async def test_camera_with_network_device_mac_is_listed_once(rows: Rows) -> None:
-    """Without a camera entity, a MAC shared with a Network device still merges."""
+async def test_camera_without_owned_row_does_not_merge_by_mac(rows: Rows) -> None:
+    """A MAC match by itself does not prove that Network represents the camera."""
     payload = rows.build(
         _data(cameras={"cam1": {"id": "cam1", "name": "NVR cam", "mac": SW_MAC}})
     )
 
-    rows_all = [row["key"] for s in payload["sections"] for row in s["rows"]]
-    assert "cam:cam1" not in rows_all
+    (camera,) = _section(payload, "unassigned")
+    assert camera["kind"] == "camera"
+    assert camera["ha_device_id"] is None
+    assert _by_key(payload)[_net("sw")]["kind"] == "switch"
+
+
+async def test_camera_keeps_verified_uplink_with_same_network_mac_in_another_site(
+    rows: Rows,
+) -> None:
+    """A camera only merges if its entity points at a represented device row."""
+    network = rows.network("duplicate", "Network device", SITE_B)
+    camera = rows.device("protect_camera_cam1", "Doorbell")
+    rows.camera("cam1", camera)
+    data = _data(
+        clients={"c1": {"macAddress": CAM_MAC, "uplinkDeviceId": "sw"}},
+        cameras={"cam1": {"name": "Doorbell", "mac": CAM_MAC}},
+        extra_sites={SITE_B: {"duplicate": _device("Network device", CAM_MAC, "usw")}},
+    )
+
+    payload = rows.build(data, site_ids=(SITE, SITE_B))
+    site = next(s for s in payload["sections"] if s["title"] == "Home")
+    (camera_row,) = [row for row in site["rows"] if row["kind"] == "camera"]
+    switch = next(row for row in site["rows"] if row["kind"] == "switch")
+    assert (camera_row["ha_device_id"], camera_row["parent_key"]) == (
+        camera.id,
+        switch["key"],
+    )
+    barn = next(s for s in payload["sections"] if s["title"] == "Barn")
+    assert [row["ha_device_id"] for row in barn["rows"]] == [network.id]
+    assert not _section(payload, "other")
+
+
+async def test_camera_client_index_scans_each_sites_clients_once(rows: Rows) -> None:
+    """Normalization of each client is shared across all camera lookups."""
+    data = _data(
+        clients={"c1": {"macAddress": "0200000000A1", "uplinkDeviceId": "sw"}},
+        cameras={
+            "cam1": {"name": "Doorbell", "mac": CAM_MAC},
+            "cam2": {"name": "Garage camera", "mac": "02:00:00:00:00:a2"},
+        },
+        extra_sites={SITE_B: {"gw": _device("Barn gateway", GW_MAC, "udm")}},
+    )
+    data = with_sections(
+        data,
+        clients={
+            **data["clients"],
+            SITE_B: {"c2": {"mac": "02-00-00-00-00-A2", "uplinkDeviceId": "gw"}},
+        },
+    )
+    with patch.object(
+        device_grouping, "get_field", wraps=device_grouping.get_field
+    ) as get_field:
+        payload = rows.build(data, site_ids=(SITE, SITE_B))
+
+    by_title = {section["title"]: section["rows"] for section in payload["sections"]}
+    for title, name, parent in (
+        ("Home", "Doorbell", "Office switch"),
+        ("Barn", "Garage camera", "Barn gateway"),
+    ):
+        site = {row["name"]: row for row in by_title[title]}
+        assert site[name]["parent_key"] == site[parent]["key"]
+    assert (
+        sum(call.args[1:] == ("macAddress", "mac") for call in get_field.call_args_list)
+        == 2
+    )
 
 
 async def test_dual_camera_children_collapse_into_one_row(rows: Rows) -> None:
@@ -683,12 +794,14 @@ async def test_dual_camera_children_collapse_into_one_row(rows: Rows) -> None:
     )
     payload = rows.build(data)
     cameras = [
-        row for row in _section(payload, f"site:{SITE}") if row["kind"] == "camera"
+        row
+        for row in _section(payload, _group_key("site", NODE_KEY, SITE))
+        if row["kind"] == "camera"
     ]
 
     assert cameras == [
         {
-            "key": "cam:dual",
+            "key": _group_key("cam", NODE_KEY, "dual"),
             "name": "Doorbell",
             "kind": "camera",
             "ha_device_id": camera_device.id,
@@ -725,7 +838,9 @@ async def test_user_names_win_and_rows_sort_gateways_first(rows: Rows) -> None:
     )
     payload = rows.build(_data())
 
-    assert [row["name"] for row in _section(payload, f"site:{SITE}")] == [
+    assert [
+        row["name"] for row in _section(payload, _group_key("site", NODE_KEY, SITE))
+    ] == [
         "UDM Pro",
         "aardvark switch",
         "Garage AP",
@@ -766,7 +881,7 @@ async def test_missing_sections_build_empty_sections(rows: Rows) -> None:
     payload = rows.build(facade_data(), site_ids=(SITE,))
 
     assert [(s["key"], s["title"], s["rows"]) for s in payload["sections"]] == [
-        (f"site:{SITE}", SITE, []),
+        (_group_key("site", NODE_KEY, SITE), SITE, []),
         ("unassigned", None, []),
         ("other", None, []),
     ]

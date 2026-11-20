@@ -8,6 +8,7 @@ registry reconciliation never runs for it. Any other change still reloads.
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,9 +16,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from homeassistant.components.frontend import DATA_PANELS
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import CONF_VERIFY_SSL
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.setup import async_setup_component
 from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.unifi_insights import (
@@ -147,6 +151,135 @@ async def test_grouping_toggle_does_not_reload_and_keeps_registry_rows(
     assert init_integration.runtime_data is runtime
     assert init_integration.state is ConfigEntryState.LOADED
     assert _registry_state(hass, entry_id) == before
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [(CONF_ACCESS_WEBHOOK, True), ("future_option", {"value": 1})],
+    ids=["hidden_access_webhook", "unrendered_option"],
+)
+async def test_grouping_options_form_keeps_hidden_options_and_registry_rows(
+    hass: HomeAssistant, init_integration: MockConfigEntry, key: str, value: Any
+) -> None:
+    """A grouping-only form submission preserves options without a visible field."""
+    entry = init_integration
+    await _set_options(hass, entry, {key: value})
+    _customise(hass, entry)
+    before = _registry_state(hass, entry.entry_id)
+    runtime = entry.runtime_data
+
+    form = await hass.config_entries.options.async_init(entry.entry_id)
+    assert form["type"] is FlowResultType.FORM
+    assert key not in require_not_none(form["data_schema"]).schema
+
+    with patch.object(
+        hass.config_entries, "async_reload", wraps=hass.config_entries.async_reload
+    ) as reload:
+        result = await hass.config_entries.options.async_configure(
+            form["flow_id"], user_input={GROUPING: True}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert _registry_state(hass, entry.entry_id) == before
+    reload.assert_not_called()
+    assert entry.options[key] == value
+    assert entry.runtime_data is runtime
+    assert runtime.group_devices_by_uplink is True
+
+
+async def test_options_updated_during_setup_are_reconciled(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_network_client: MagicMock,
+    mock_protect_client: MagicMock,
+    mock_local_auth: MagicMock,
+    *,
+    enable_custom_integrations: None,
+) -> None:
+    """An option saved after platform setup must apply to the actual platforms."""
+    assert await async_setup_component(hass, DOMAIN, {})
+    entry = mock_config_entry
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry, options={CONF_TRACK_WIFI_CLIENTS: True}
+    )
+    _customise(hass, entry)
+    forward = hass.config_entries.async_forward_entry_setups
+
+    async def forward_and_disable_tracking(*args: Any) -> None:
+        await forward(*args)
+        if entry.options[CONF_TRACK_WIFI_CLIENTS]:
+            assert _registry_state(hass, entry.entry_id)["entities"]
+            hass.config_entries.async_update_entry(
+                entry, options={CONF_TRACK_WIFI_CLIENTS: False}
+            )
+
+    with (
+        patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            side_effect=forward_and_disable_tracking,
+        ),
+        patch.object(
+            hass.config_entries, "async_reload", wraps=hass.config_entries.async_reload
+        ) as reload,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert not er.async_get(hass).async_get_entity_id(
+        "device_tracker", DOMAIN, f"{DOMAIN}_aa:bb:cc:00:00:01"
+    )
+    reload.assert_awaited_once_with(entry.entry_id)
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data.applied_options == _applied_options(entry.options)
+
+
+async def test_entry_data_updated_during_setup_is_reconciled(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_network_client: MagicMock,
+    mock_protect_client: MagicMock,
+    *,
+    enable_custom_integrations: None,
+) -> None:
+    """A transport setting changed during startup is used by a fresh client."""
+    assert await async_setup_component(hass, DOMAIN, {})
+    entry = mock_config_entry
+    entry.add_to_hass(hass)
+    forward = hass.config_entries.async_forward_entry_setups
+
+    async def forward_and_change_tls(*args: Any) -> None:
+        await forward(*args)
+        if not entry.data[CONF_VERIFY_SSL]:
+            hass.config_entries.async_update_entry(
+                entry, data={**entry.data, CONF_VERIFY_SSL: True}
+            )
+
+    with (
+        patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            side_effect=forward_and_change_tls,
+        ),
+        patch.object(
+            hass.config_entries, "async_reload", wraps=hass.config_entries.async_reload
+        ) as reload,
+        patch(
+            "custom_components.unifi_insights.LocalAuth", autospec=True
+        ) as local_auth,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    reload.assert_awaited_once_with(entry.entry_id)
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data.applied_data == dict(entry.data)
+    assert [call.kwargs["verify_ssl"] for call in local_auth.call_args_list] == [
+        False,
+        True,
+    ]
 
 
 async def test_reload_would_have_changed_the_customised_rows(
@@ -386,3 +519,56 @@ async def test_failed_unload_keeps_the_panel(
         await hass.config_entries.async_unload(init_integration.entry_id)
 
     reconcile.assert_not_awaited()
+
+
+async def test_failed_unload_keeps_panel_when_another_entry_turns_grouping_off(
+    hass: HomeAssistant,
+    web: Path,
+    init_integration: MockConfigEntry,
+) -> None:
+    """A pending unload retains its panel ownership if the unload fails."""
+    first = init_integration
+    second = MockConfigEntry(
+        domain=DOMAIN,
+        title="Sibling",
+        data={**first.data, "host": "https://192.168.1.2"},
+        options={GROUPING: True},
+        unique_id="sibling",
+    )
+    second.add_to_hass(hass)
+    with patch.object(frontend, "FRONTEND_PATH", web):
+        assert await hass.config_entries.async_setup(second.entry_id)
+        await _set_options(hass, first, {GROUPING: True})
+        panel = hass.data[DATA_PANELS][frontend.PANEL_URL_PATH]
+        unloading = asyncio.Event()
+        finish = asyncio.Event()
+
+        async def fail_unload(*_args: Any) -> bool:
+            unloading.set()
+            await finish.wait()
+            return False
+
+        with patch.object(
+            hass.config_entries, "async_unload_platforms", side_effect=fail_unload
+        ):
+            task = asyncio.create_task(
+                hass.config_entries.async_unload(second.entry_id)
+            )
+            try:
+                await unloading.wait()
+                await _set_options(hass, first, {GROUPING: False})
+                panel_during_unload = hass.data[DATA_PANELS].get(
+                    frontend.PANEL_URL_PATH
+                )
+            finally:
+                finish.set()
+                assert not await task
+
+    assert second.state is ConfigEntryState.FAILED_UNLOAD
+    assert panel_during_unload is panel
+    assert hass.data[DATA_PANELS][frontend.PANEL_URL_PATH] is panel
+
+    assert await hass.config_entries.async_remove(second.entry_id) == {
+        "require_restart": True
+    }
+    assert frontend.PANEL_URL_PATH not in hass.data[DATA_PANELS]

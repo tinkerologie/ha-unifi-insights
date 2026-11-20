@@ -31,13 +31,14 @@ device row the entry owns is listed in the "other" section. No device is
 hidden.
 
 The payload is an allowlisted, versioned contract for the panel. It carries
-no IP or MAC address: row keys use record ids, and names are scrubbed of
-address-shaped text (registry names of Network devices end in their IP).
+no IP or MAC address: keys derived from records are opaque and address-shaped
+text is removed from display labels.
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import re
 from dataclasses import dataclass
@@ -47,6 +48,7 @@ from .const import DOMAIN, UPLINK_SOURCE_CURRENT
 from .data_transforms import (
     client_connection_type,
     get_field,
+    nested_dict,
     normalize_mac,
     protect_collection,
     site_device_facts,
@@ -93,13 +95,18 @@ _CAMERA_UNIQUE_ID_PREFIX: Final = f"{DOMAIN}_camera_"
 # Camera"; their shared device row carries the plain device name.
 _DUAL_CAMERA_SUFFIXES: Final = (" Main Camera", " Package Camera")
 
-# Address-shaped text scrubbed from every name: MACs (colon or dash), IPv6 and
-# IPv4 addresses, then any "()" left behind.
-_MAC_RE: Final = re.compile(r"\b[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}\b")
-_IPV6_RE: Final = re.compile(
-    r"(?<![0-9A-Za-z:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![0-9A-Za-z:])"
+# Strip address-shaped text from display labels.
+_MAC_RE: Final = re.compile(
+    r"(?<![0-9a-f])(?:[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}"
+    r"|[0-9a-f]{4}(?:\.[0-9a-f]{4}){2}|[0-9a-f]{12})(?![0-9a-f])",
+    re.IGNORECASE,
 )
-_IPV4_RE: Final = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+_IPV6_RE: Final = re.compile(
+    r"(?<![0-9a-f:])(?:[0-9a-f]{0,4}:){2,7}"
+    r"(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f]{0,4})(?:%[\w.-]+)?(?![0-9a-f:])",
+    re.IGNORECASE,
+)
+_IPV4_RE: Final = re.compile(r"(?<!\d)\d{1,3}(?:\.\d{1,3}){3}(?!\d)")
 _EMPTY_PARENS_RE: Final = re.compile(r"\(\s*\)|\[\s*\]")
 _SPACES_RE: Final = re.compile(r"\s+")
 
@@ -182,9 +189,11 @@ def safe_name(value: Any, fallback: str) -> str:
     return text or fallback
 
 
-def network_row_key(site_id: str, device_id: str) -> str:
-    """Return the row key of a Network device."""
-    return f"net:{site_id}:{device_id}"
+def _group_key(kind: str, node_key: bytes, *identifiers: str) -> str:
+    """Key a row or section with the entry's secret, including legacy IDs."""
+    message = json.dumps((kind, *identifiers)).encode()
+    digest = hmac.digest(node_key, message, "sha256").hex()[:16]
+    return f"{kind}:{digest}"
 
 
 def _network_kind(kind: str) -> RowKind:
@@ -259,6 +268,7 @@ def _build_sites(
     site_ids: Iterable[str],
     registry_row: Callable[[tuple[str, str]], DeviceEntry | None],
     *,
+    node_key: bytes,
     devices_available: bool,
 ) -> dict[str, _Site]:
     """Build every selected site's Network device rows and strict edges."""
@@ -287,13 +297,15 @@ def _build_sites(
                 mac_index,
                 devices_available=devices_available,
             )
-            key = network_row_key(site_id, device_id)
+            key = _group_key("net", node_key, site_id, device_id)
             rows[key] = _Row(
                 key=key,
                 name=safe_name(name, UNKNOWN_DEVICE),
                 kind=kind,
                 ha_device_id=row.id if row is not None else None,
-                parent_key=network_row_key(site_id, parent) if parent else None,
+                parent_key=_group_key("net", node_key, site_id, parent)
+                if parent
+                else None,
                 port=port,
                 reason=reason,
             )
@@ -337,9 +349,23 @@ def _camera_mac(members: list[tuple[str, dict[str, Any]]]) -> str | None:
     return None
 
 
+def _camera_client_index(
+    data: Mapping[str, Any], site_ids: Iterable[str]
+) -> dict[str, list[tuple[str, dict[str, Any]]]]:
+    """Index every selected site's clients by normalized MAC once per build."""
+    index: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for site_id in site_ids:
+        for client in (site_section(data, "clients", site_id) or {}).values():
+            mac = normalize_mac(get_field(client, "macAddress", "mac"))
+            if mac is not None:
+                index.setdefault(mac, []).append((site_id, client))
+    return index
+
+
 def _place_camera(
     data: Mapping[str, Any],
     sites: Mapping[str, _Site],
+    client_index: Mapping[str, list[tuple[str, dict[str, Any]]]],
     mac: str | None,
     *,
     devices_available: bool,
@@ -351,15 +377,7 @@ def _place_camera(
     exactly once. The parent is that client's v1 ``uplinkDeviceId`` in the
     same site; the classic client link only corroborates it.
     """
-    if mac is None:
-        return None, None, None, "no_uplink"
-    matches = [
-        (site_id, client)
-        for site_id in sites
-        for client in (site_section(data, "clients", site_id) or {}).values()
-        if normalize_mac(get_field(client, "macAddress", "mac")) == mac
-    ]
-    if not matches:
+    if mac is None or not (matches := client_index.get(mac)):
         return None, None, None, "no_uplink"
     if len(matches) > 1:
         return None, None, None, "ambiguous"
@@ -372,8 +390,7 @@ def _place_camera(
         return site_id, None, None, "no_uplink"
     if uplink not in site.devices:
         return site_id, None, None, "parent_not_found"
-    raw_link = (site_section(data, "client_links", site_id) or {}).get(mac)
-    link = raw_link if isinstance(raw_link, dict) else {}
+    link = nested_dict(data, "client_links", site_id, mac) or {}
     connection = client_connection_type(client)
     classic_key = client_link_parent_keys(connection)[0]
     classic_mac = normalize_mac(link.get(classic_key))
@@ -438,39 +455,45 @@ def _place_cameras(
     registry: _OwnedRows,
     represented: set[str],
     *,
+    node_key: bytes,
     devices_available: bool,
 ) -> list[_Row]:
     """
     Add a row per physical camera to its site; return the unplaced ones.
 
-    A camera whose device row is a Network device row, or whose MAC is a
-    Network device's, already appears once through that row and is skipped.
+    A camera whose device row is represented already appears once through
+    that row and is skipped.
     ``represented`` gains each camera's device row and the standalone client
     device of its MAC, so neither is listed again under "other devices".
     """
-    network_macs = {mac for site in sites.values() for mac in site.mac_index}
+    groups = _camera_groups(data)
+    if not groups:
+        return []
+    client_index = _camera_client_index(data, sites)
     unassigned: list[_Row] = []
-    for group_id, members in _camera_groups(data).items():
+    for group_id, members in groups.items():
         device_row = registry.camera_device(
             [group_id, *(cid for cid, _ in members if cid != group_id)]
         )
-        mac = _camera_mac(members)
-        if (device_row is not None and device_row.id in represented) or (
-            mac is not None and mac in network_macs
-        ):
+        if device_row is not None and device_row.id in represented:
             continue
+        mac = _camera_mac(members)
         site_id, parent, port, reason = _place_camera(
-            data, sites, mac, devices_available=devices_available
+            data,
+            sites,
+            client_index,
+            mac,
+            devices_available=devices_available,
         )
         camera = _Row(
-            key=f"cam:{group_id}",
+            key=_group_key("cam", node_key, group_id),
             name=safe_name(
                 _registry_name(device_row) or _camera_name(group_id, members),
                 UNKNOWN_CAMERA,
             ),
             kind="camera",
             ha_device_id=device_row.id if device_row is not None else None,
-            parent_key=network_row_key(site_id, parent)
+            parent_key=_group_key("net", node_key, site_id, parent)
             if site_id is not None and parent is not None
             else None,
             port=port,
@@ -522,6 +545,7 @@ def build_device_groups(
     data: Mapping[str, Any],
     *,
     entry_id: str,
+    node_key: bytes,
     site_ids: Iterable[str],
     devices_available: bool,
     device_rows: Iterable[DeviceEntry],
@@ -533,10 +557,15 @@ def build_device_groups(
     ``device_rows`` and ``entity_rows`` are the entry's registry rows (from
     ``async_entries_for_config_entry``); a row owned by another entry is
     ignored all the same. ``site_ids`` are the entry's selected sites.
+    ``node_key`` is the entry's persistent topology secret for opaque keys.
     """
     registry = _OwnedRows(entry_id, device_rows, entity_rows)
     sites = _build_sites(
-        data, site_ids, registry.device, devices_available=devices_available
+        data,
+        site_ids,
+        registry.device,
+        node_key=node_key,
+        devices_available=devices_available,
     )
     represented = {
         row.ha_device_id
@@ -545,7 +574,12 @@ def build_device_groups(
         if row.ha_device_id is not None
     }
     unassigned = _place_cameras(
-        data, sites, registry, represented, devices_available=devices_available
+        data,
+        sites,
+        registry,
+        represented,
+        node_key=node_key,
+        devices_available=devices_available,
     )
 
     other = [
@@ -561,9 +595,9 @@ def build_device_groups(
 
     site_sections: list[DeviceGroupSection] = [
         {
-            "key": f"site:{site_id}",
+            "key": _group_key("site", node_key, site_id),
             "kind": "site",
-            "title": site_display_name(data, site_id),
+            "title": safe_name(site_display_name(data, site_id), "Unknown site"),
             "rows": _sorted_rows(site.rows.values()),
         }
         for site_id, site in sites.items()

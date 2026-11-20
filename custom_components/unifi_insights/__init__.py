@@ -50,6 +50,9 @@ from .const import (
     CONF_ACCESS_PORT,
     CONF_ACCESS_TOKEN,
     CONF_ACCESS_WEBHOOK,
+    CONF_ACCESS_WEBHOOK_ENDPOINT_ID,
+    CONF_ACCESS_WEBHOOK_ID,
+    CONF_ACCESS_WEBHOOK_SECRET,
     CONF_CARRIER_ORG_ID,
     CONF_CLIENT_CONTROL,
     CONF_CONNECTION_TYPE,
@@ -458,6 +461,9 @@ async def async_setup_entry(
     if _is_carrier_fabric_entry(entry):
         return await _async_setup_carrier_fabric_entry(hass, entry)
 
+    applied_data = copy.deepcopy(dict(entry.data))
+    setup_options = entry.options
+    applied_options = copy.deepcopy(_applied_options(setup_options))
     is_local = connection_type == CONNECTION_TYPE_LOCAL
 
     # Get Home Assistant's aiohttp session for efficient connection pooling
@@ -716,10 +722,10 @@ async def async_setup_entry(
     updates: dict[str, Any] = {}
     new_data = dict(entry.data)
     if console_id and new_data.get(CONF_CONSOLE_ID) != console_id:
-        new_data[CONF_CONSOLE_ID] = console_id
+        new_data[CONF_CONSOLE_ID] = applied_data[CONF_CONSOLE_ID] = console_id
         updates["data"] = new_data
     if console_name and new_data.get(CONF_CONSOLE_NAME) != console_name:
-        new_data[CONF_CONSOLE_NAME] = console_name
+        new_data[CONF_CONSOLE_NAME] = applied_data[CONF_CONSOLE_NAME] = console_name
         updates["data"] = new_data
 
     target_unique_id = console_id or entry.unique_id
@@ -806,15 +812,24 @@ async def async_setup_entry(
         if access_coordinator:
             entry.async_on_unload(lambda: async_unload_access_webhook(hass, entry))
             await async_setup_access_webhook(hass, entry, access_coordinator)
+            # The webhook can persist receiver state during setup.
+            for key in (
+                CONF_ACCESS_WEBHOOK_ENDPOINT_ID,
+                CONF_ACCESS_WEBHOOK_ID,
+                CONF_ACCESS_WEBHOOK_SECRET,
+            ):
+                if key in entry.data:
+                    applied_data[key] = entry.data[key]
+                else:
+                    applied_data.pop(key, None)
 
         _LOGGER.debug("Setting up platforms: %s", PLATFORMS)
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         if access_coordinator:
             await access_coordinator.async_start_websocket()
-        entry.runtime_data.applied_data = copy.deepcopy(dict(entry.data))
-        entry.runtime_data.applied_options = _applied_options(entry.options)
+        entry.runtime_data.applied_data = applied_data
+        entry.runtime_data.applied_options = applied_options
         entry.runtime_data.group_devices_by_uplink = _grouping_option(entry.options)
-        entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     except BaseException:
         if site_manager_fingerprint:
             await async_release_site_manager(
@@ -822,7 +837,14 @@ async def async_setup_entry(
             )
         raise
 
-    await async_reconcile_device_groups_panel(hass, include=entry.entry_id)
+    await async_reconcile_device_groups_panel(
+        hass, entry.entry_id, enabled=entry.runtime_data.group_devices_by_uplink
+    )
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+    # Update listeners could not apply changes while platforms were being set up.
+    # Home Assistant queues the reload behind the current setup lock.
+    if entry.data != applied_data or entry.options is not setup_options:
+        hass.config_entries.async_schedule_reload(entry.entry_id)
     _LOGGER.info("UniFi Insights integration setup completed successfully")
     return True
 
@@ -981,7 +1003,7 @@ async def async_unload_entry(
             async_hand_over_mobility(hass, entry)
 
     if unload_ok:
-        await async_reconcile_device_groups_panel(hass, exclude=entry.entry_id)
+        await async_reconcile_device_groups_panel(hass, entry.entry_id, enabled=False)
     return unload_ok
 
 
@@ -1234,6 +1256,7 @@ async def async_remove_entry(
     """Forget per-entry setup state when an entry is deleted."""
     _clear_setup_probe_attempts(hass, entry.entry_id)
     await async_remove_node_key(hass, entry.entry_id)
+    await async_reconcile_device_groups_panel(hass, entry.entry_id, enabled=False)
     async_hand_over_mobility(hass, entry)
     if entry.data.get(CONF_ACCESS_TOKEN):
         await async_remove_access_webhook(hass, entry)
@@ -1318,7 +1341,9 @@ async def async_reload_entry(
     if not _is_carrier_fabric_entry(entry) and _async_apply_grouping_in_place(
         hass, entry
     ):
-        await async_reconcile_device_groups_panel(hass)
+        await async_reconcile_device_groups_panel(
+            hass, entry.entry_id, enabled=_grouping_option(entry.options)
+        )
         return
     await hass.config_entries.async_reload(entry.entry_id)
 

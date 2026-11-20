@@ -100,6 +100,25 @@ async def test_sources_list_only_enabled_loaded_entries(
     }
 
 
+async def test_sources_scrub_addresses_from_console_titles(
+    hass: HomeAssistant, init_integration: MockConfigEntry, hass_ws_client
+) -> None:
+    """The source picker also uses address-free labels."""
+    hass.config_entries.async_update_entry(
+        init_integration, title="Console (192.0.2.4) [AABB.CCDD.EEFF]"
+    )
+    await hass.async_block_till_done()
+    await _enable(hass, init_integration)
+
+    client = await hass_ws_client(hass)
+    await client.send_json({"id": 1, "type": SOURCES})
+    msg = await client.receive_json()
+
+    assert msg["result"]["entries"] == [
+        {"entry_id": init_integration.entry_id, "title": "Console"}
+    ]
+
+
 async def test_commands_require_admin(
     hass: HomeAssistant,
     init_integration: MockConfigEntry,
@@ -218,7 +237,9 @@ async def test_camera_entity_changes_rebuild(
     await hass.async_block_till_done()
     client = await hass_ws_client(hass)
     snapshot = await _subscribe(client, entry.entry_id)
-    assert _rows(snapshot)["cam:cam9"]["ha_device_id"] is None
+    (camera,) = [row for row in _rows(snapshot).values() if row["kind"] == "camera"]
+    camera_key = camera["key"]
+    assert camera["ha_device_id"] is None
 
     device = _own_device(hass, entry, "protect_camera_cam9", "Yard cam")
     await hass.async_block_till_done()
@@ -232,7 +253,7 @@ async def test_camera_entity_changes_rebuild(
     )
     await hass.async_block_till_done()
     linked = await _next_event(client)
-    assert _rows(linked)["cam:cam9"]["ha_device_id"] == device.id
+    assert _rows(linked)[camera_key]["ha_device_id"] == device.id
 
     # A rename (old_entity_id) of a tracked camera entity is relevant; the
     # resulting snapshot is unchanged, so nothing is sent.
@@ -245,7 +266,7 @@ async def test_camera_entity_changes_rebuild(
     er.async_get(hass).async_remove("camera.renamed_yard")
     await hass.async_block_till_done()
     unlinked = await _next_event(client)
-    assert _rows(unlinked)["cam:cam9"]["ha_device_id"] is None
+    assert _rows(unlinked)[camera_key]["ha_device_id"] is None
 
 
 async def test_coordinator_updates_push_only_changes(
@@ -278,7 +299,8 @@ async def test_coordinator_updates_push_only_changes(
     )
     facade.async_update_listeners()
     update = await _next_event(client)
-    assert _rows(update)[f"net:{site_id}:d1"]["name"] == "Renamed device"
+    (row,) = _rows(update).values()
+    assert row["name"] == "Renamed device"
 
 
 async def test_rebuild_failure_is_logged_and_stream_survives(

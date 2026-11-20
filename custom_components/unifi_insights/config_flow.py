@@ -1481,14 +1481,15 @@ class UnifiInsightsOptionsFlow(OptionsFlow):
         )
 
         if user_input is not None:
-            options = dict(user_input)
+            # The form only submits fields available for this entry.
+            options = {**self.config_entry.options, **user_input}
             if not show_site_picker:
                 # The picker was not shown (entry not loaded, or a single-site
                 # console), so keep whatever filter was saved before.
                 options.pop(CONF_SITE_IDS, None)
                 if current_site_ids:
                     options[CONF_SITE_IDS] = current_site_ids
-            elif not options.get(CONF_SITE_IDS):
+            elif not user_input.get(CONF_SITE_IDS):
                 # No selection means every site; don't store an empty filter.
                 options.pop(CONF_SITE_IDS, None)
             return self.async_create_entry(title="", data=options)
