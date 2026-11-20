@@ -5067,6 +5067,7 @@ class TestUnifiDeviceCoordinator:
         assert block == {
             "legacy_type": "usw",
             "uplink_mac": "28:70:4e:00:00:01",
+            "uplink_source": "current",
             "uplink_remote_port": 6,
             "uplink_port_idx": 8,
             "uplink_type": "wire",
@@ -5091,6 +5092,34 @@ class TestUnifiDeviceCoordinator:
         assert block["uplink_mac"] == "28:70:4e:00:00:01"
         assert block["uplink_remote_port"] == 20
         assert block["uplink_port_idx"] == 1
+        # The parent came from the historical overlay, not the current link.
+        assert block["uplink_source"] == "last"
+
+    def test_legacy_topology_block_current_uplink_wins_over_last_uplink(self):
+        """A current uplink is used, and marked current, even with a last_uplink."""
+        block = UnifiInsightsDeviceCoordinator._legacy_topology_block(
+            {
+                "type": "usw",
+                "uplink": {"uplink_mac": "28:70:4e:00:00:01", "uplink_remote_port": 4},
+                "last_uplink": {
+                    "uplink_mac": "28:70:4e:00:00:09",
+                    "uplink_remote_port": 20,
+                },
+            }
+        )
+
+        assert block["uplink_mac"] == "28:70:4e:00:00:01"
+        assert block["uplink_remote_port"] == 4
+        assert block["uplink_source"] == "current"
+
+    def test_legacy_topology_block_without_parent_has_no_uplink_source(self):
+        """No parent MAC from either link means no provenance marker."""
+        block = UnifiInsightsDeviceCoordinator._legacy_topology_block(
+            {"type": "usw", "uplink": {"type": "wire"}, "last_uplink": {"type": "wire"}}
+        )
+
+        assert "uplink_mac" not in block
+        assert "uplink_source" not in block
 
     def test_legacy_topology_block_gateway_and_garbage(self):
         """A gateway has a type but no parent; malformed values are dropped."""
@@ -5153,6 +5182,7 @@ class TestUnifiDeviceCoordinator:
         assert mapped["topology"] == {
             "legacy_type": "usw",
             "uplink_mac": "28:70:4e:00:00:01",
+            "uplink_source": "current",
             "uplink_port_idx": 8,
         }
 
@@ -5194,6 +5224,7 @@ class TestUnifiDeviceCoordinator:
         assert devices_dict["uuid-child"]["topology"] == {
             "legacy_type": "usw",
             "uplink_mac": "28:70:4e:00:00:01",
+            "uplink_source": "current",
             "uplink_remote_port": 6,
         }
 

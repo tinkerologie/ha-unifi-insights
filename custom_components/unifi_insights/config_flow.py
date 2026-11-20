@@ -68,6 +68,7 @@ from .const import (
     CONF_CONNECTION_TYPE,
     CONF_CONSOLE_ID,
     CONF_CONSOLE_NAME,
+    CONF_GROUP_DEVICES_BY_UPLINK,
     CONF_SITE_IDS,
     CONF_TRACK_CLIENTS,
     CONF_TRACK_SUBSCRIBERS,
@@ -81,6 +82,7 @@ from .const import (
     DEFAULT_API_HOST,
     DEFAULT_CARRIER_ACTIONS,
     DEFAULT_CLIENT_CONTROL,
+    DEFAULT_GROUP_DEVICES_BY_UPLINK,
     DEFAULT_TRACK_CLIENTS,
     DEFAULT_TRACK_SUBSCRIBERS,
     DOMAIN,
@@ -1517,6 +1519,12 @@ class UnifiInsightsOptionsFlow(OptionsFlow):
             vol.Optional(
                 CONF_CLIENT_CONTROL,
                 default=default_client_control,
+            ): bool,
+            vol.Optional(
+                CONF_GROUP_DEVICES_BY_UPLINK,
+                default=self.config_entry.options.get(
+                    CONF_GROUP_DEVICES_BY_UPLINK, DEFAULT_GROUP_DEVICES_BY_UPLINK
+                ),
             ): bool,
         }
         if self._access_webhook_available():

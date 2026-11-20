@@ -148,7 +148,8 @@
           "site_ids": "Sites",
           "track_subscribers": "Track individual subscribers as devices",
           "carrier_actions": "Enable service actions (suspend and resume subscribers)",
-          "access_webhook": "Receive Access door events (granted and denied)"
+          "access_webhook": "Receive Access door events (granted and denied)",
+          "group_devices_by_uplink": "Group devices by network uplink"
         },
         "data_description": {
           "track_wifi_clients": "Create device tracker entities for connected WiFi clients. This may create many entities.",
@@ -157,7 +158,8 @@
           "site_ids": "Only poll these sites. Leave empty to include every site on the console. Unselected sites are not queried, which reduces API traffic on multi-site consoles.",
           "track_subscribers": "Create device entries for each subscriber in your Carrier Fabric organisation.",
           "carrier_actions": "Allow suspending and resuming subscriber services from Home Assistant.",
-          "access_webhook": "Home Assistant must be reachable from the console for these events. Turn off to remove the Access webhook."
+          "access_webhook": "Home Assistant must be reachable from the console for these events. Turn off to remove the Access webhook.",
+          "group_devices_by_uplink": "Adds a \"UniFi devices\" sidebar panel for administrators that lists each device under the switch, access point or gateway it is directly connected to. Device names, IDs, areas and automations do not change, and the integration's own device list stays as it is."
         }
       }
     }

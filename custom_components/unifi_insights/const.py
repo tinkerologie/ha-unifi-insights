@@ -94,6 +94,15 @@ DEFAULT_TRACK_CLIENTS: Final = False
 DEFAULT_CLIENT_CONTROL: Final = True
 DEFAULT_TRACK_SUBSCRIBERS: Final = False
 DEFAULT_CARRIER_ACTIONS: Final = False
+# Network/Protect entries: list devices grouped by their verified uplink in an
+# admin panel. Presentation only, so toggling it alone never reloads the entry.
+CONF_GROUP_DEVICES_BY_UPLINK: Final = "group_devices_by_uplink"
+DEFAULT_GROUP_DEVICES_BY_UPLINK: Final = False
+
+# Provenance of a device's legacy parent link (``device["topology"]``):
+# ``uplink`` (current) or the ``last_uplink`` overlay (historical).
+UPLINK_SOURCE_CURRENT: Final = "current"
+UPLINK_SOURCE_LAST: Final = "last"
 
 DEFAULT_API_HOST = "https://192.168.10.1"
 

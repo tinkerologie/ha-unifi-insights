@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 from dataclasses import dataclass, field
 from http import HTTPStatus
@@ -11,8 +12,9 @@ from typing import TYPE_CHECKING, Any, Final, TypeAlias, TypeIs
 from urllib.parse import unquote
 
 import homeassistant.helpers.config_validation as cv
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL, Platform
+from homeassistant.core import callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC
@@ -47,14 +49,25 @@ from .const import (
     CARRIER_FABRIC_REQUEST_TIMEOUT,
     CONF_ACCESS_PORT,
     CONF_ACCESS_TOKEN,
+    CONF_ACCESS_WEBHOOK,
     CONF_CARRIER_ORG_ID,
+    CONF_CLIENT_CONTROL,
     CONF_CONNECTION_TYPE,
     CONF_CONSOLE_ID,
     CONF_CONSOLE_NAME,
+    CONF_GROUP_DEVICES_BY_UPLINK,
+    CONF_SITE_IDS,
+    CONF_TRACK_CLIENTS,
+    CONF_TRACK_WIFI_CLIENTS,
+    CONF_TRACK_WIRED_CLIENTS,
     CONNECTION_TYPE_CARRIER_FABRIC,
     CONNECTION_TYPE_LOCAL,
     DEFAULT_ACCESS_PORT,
+    DEFAULT_ACCESS_WEBHOOK,
     DEFAULT_API_HOST,
+    DEFAULT_CLIENT_CONTROL,
+    DEFAULT_GROUP_DEVICES_BY_UPLINK,
+    DEFAULT_TRACK_CLIENTS,
     DOMAIN,
     MOBILITY_DEVICE_PREFIX,
     MOBILITY_WORKSPACE_PREFIX,
@@ -85,7 +98,7 @@ from .coordinators.site_manager import (
 )
 from .data_transforms import nested_dict
 from .data_transforms import normalize_mac as canonical_mac
-from .frontend import async_register_frontend
+from .frontend import async_reconcile_device_groups_panel, async_register_frontend
 from .probe import (
     ProbeResult,
     ProbeStatus,
@@ -97,7 +110,10 @@ from .probe import (
 )
 from .services import async_setup_services
 from .topology import async_load_node_keys, async_remove_node_key
-from .websocket_api import async_register_websocket_commands
+from .websocket_api import (
+    async_end_device_group_streams,
+    async_register_websocket_commands,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -127,6 +143,11 @@ class UnifiInsightsData:
     access_coordinator: UnifiInsightsAccessCoordinator | None = None
     # Facade coordinator for backward compatibility with entity classes
     _facade_coordinator: UnifiInsightsFacadeCoordinator | None = None
+    # What the last successful setup applied (see _applied_options), so an
+    # option change that only toggles device grouping is applied in place.
+    applied_data: dict[str, Any] | None = None
+    applied_options: dict[str, Any] | None = None
+    group_devices_by_uplink: bool = False
 
     @property
     def coordinator(self) -> UnifiInsightsFacadeCoordinator:
@@ -790,6 +811,9 @@ async def async_setup_entry(
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         if access_coordinator:
             await access_coordinator.async_start_websocket()
+        entry.runtime_data.applied_data = copy.deepcopy(dict(entry.data))
+        entry.runtime_data.applied_options = _applied_options(entry.options)
+        entry.runtime_data.group_devices_by_uplink = _grouping_option(entry.options)
         entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     except BaseException:
         if site_manager_fingerprint:
@@ -798,6 +822,7 @@ async def async_setup_entry(
             )
         raise
 
+    await async_reconcile_device_groups_panel(hass, include=entry.entry_id)
     _LOGGER.info("UniFi Insights integration setup completed successfully")
     return True
 
@@ -955,6 +980,8 @@ async def async_unload_entry(
         if data.mobility_coordinator and entry.disabled_by is not None:
             async_hand_over_mobility(hass, entry)
 
+    if unload_ok:
+        await async_reconcile_device_groups_panel(hass, exclude=entry.entry_id)
     return unload_ok
 
 
@@ -1212,10 +1239,87 @@ async def async_remove_entry(
         await async_remove_access_webhook(hass, entry)
 
 
+def _grouping_option(options: Mapping[str, Any]) -> bool:
+    """Return the device grouping option, defaulting to off."""
+    return bool(
+        options.get(CONF_GROUP_DEVICES_BY_UPLINK, DEFAULT_GROUP_DEVICES_BY_UPLINK)
+    )
+
+
+def _applied_options(options: Mapping[str, Any]) -> dict[str, Any]:
+    """
+    Return the effective options except device grouping.
+
+    Each option setup reads is resolved to the value setup uses, so a missing
+    option and its explicit default compare equal: the two tracking options
+    fall back to the legacy ``track_clients`` (itself defaulting to off), an
+    empty or missing site filter means every site. Any other key is kept as
+    stored, so an unknown change still differs.
+    """
+    effective = {
+        key: value
+        for key, value in options.items()
+        if key not in (CONF_GROUP_DEVICES_BY_UPLINK, CONF_TRACK_CLIENTS)
+    }
+    legacy_tracking = options.get(CONF_TRACK_CLIENTS, DEFAULT_TRACK_CLIENTS)
+    effective[CONF_TRACK_WIFI_CLIENTS] = options.get(
+        CONF_TRACK_WIFI_CLIENTS, legacy_tracking
+    )
+    effective[CONF_TRACK_WIRED_CLIENTS] = options.get(
+        CONF_TRACK_WIRED_CLIENTS, legacy_tracking
+    )
+    effective[CONF_CLIENT_CONTROL] = options.get(
+        CONF_CLIENT_CONTROL, DEFAULT_CLIENT_CONTROL
+    )
+    effective[CONF_ACCESS_WEBHOOK] = bool(
+        options.get(CONF_ACCESS_WEBHOOK, DEFAULT_ACCESS_WEBHOOK)
+    )
+    effective[CONF_SITE_IDS] = list(options.get(CONF_SITE_IDS) or [])
+    return effective
+
+
+@callback
+def _async_apply_grouping_in_place(
+    hass: HomeAssistant, entry: UnifiInsightsConfigEntry
+) -> bool:
+    """
+    Apply a grouping-only option change without a reload; return whether done.
+
+    Setup reconciles entities and devices against the options (trackers,
+    client buttons, ports), so reloading for a presentation-only option risks
+    changing rows for nothing. The change is applied in place only when the
+    entry is loaded and both its data and every other effective option match
+    what setup applied; anything else returns False for a reload. Runs
+    synchronously, so overlapping update callbacks each see the entry as it
+    is now. Turning the option off ends the entry's open panel streams.
+    """
+    runtime = getattr(entry, "runtime_data", None)
+    if (
+        entry.state is not ConfigEntryState.LOADED
+        or not isinstance(runtime, UnifiInsightsData)
+        or runtime.applied_data is None
+        or runtime.applied_options is None
+        or dict(entry.data) != runtime.applied_data
+        or _applied_options(entry.options) != runtime.applied_options
+    ):
+        return False
+    enabled = _grouping_option(entry.options)
+    if enabled != runtime.group_devices_by_uplink:
+        runtime.group_devices_by_uplink = enabled
+        if not enabled:
+            async_end_device_group_streams(hass, entry.entry_id)
+    return True
+
+
 async def async_reload_entry(
     hass: HomeAssistant, entry: UnifiInsightsConfigEntry | CarrierFabricConfigEntry
 ) -> None:
-    """Reload config entry."""
+    """Apply an entry update: in place when only grouping changed, else reload."""
+    if not _is_carrier_fabric_entry(entry) and _async_apply_grouping_in_place(
+        hass, entry
+    ):
+        await async_reconcile_device_groups_panel(hass)
+        return
     await hass.config_entries.async_reload(entry.entry_id)
 
 
