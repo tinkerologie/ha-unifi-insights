@@ -664,4 +664,220 @@ describe("<unifi-insights-devices-panel>", () => {
     expect(spy).toHaveBeenCalledOnce();
     spy.mockRestore();
   });
+
+  it("keeps selected entry across transient empty sources on reconnect and resumes stream", async () => {
+    vi.useFakeTimers();
+    const fake = fakePanelHass();
+    const el = document.createElement(
+      "unifi-insights-devices-panel",
+    ) as UnifiInsightsDevicesPanel;
+    el.hass = fake.hass;
+    document.body.append(el);
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+    fake.push(sampleSnapshot());
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+
+    fake.emit("disconnected");
+    fake.setEntries([]);
+    fake.setSubscribeError({ code: "entry_not_loaded", message: "reloading" });
+    fake.emit("ready");
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+
+    expect(el.selectedEntryId).toBe("entry-1");
+    expect(el.shadowRoot!.textContent).not.toContain(
+      "No UniFi Insights entries have device grouping enabled.",
+    );
+    expect(el.shadowRoot!.textContent).toContain(
+      "Integration is reloading. Reconnecting…",
+    );
+    expect(el.shadowRoot!.textContent).toContain("UDM Pro");
+
+    // Entry comes back alongside a newly enabled sibling; retry resumes stream and refreshes sources.
+    fake.setEntries([
+      { entry_id: "entry-1", title: "Home UDM" },
+      { entry_id: "entry-2", title: "Office Gateway" },
+    ]);
+    fake.setSubscribeError(undefined);
+    await vi.advanceTimersByTimeAsync(3000);
+    await el.updateComplete;
+
+    expect(fake.subs.at(-1)!.message).toEqual({
+      type: "unifi_insights/device_groups/subscribe",
+      entry_id: "entry-1",
+    });
+
+    const resumed = sampleSnapshot({ revision: "rev-2" });
+    resumed.sections[0]!.rows[0]!.name = "UDM Pro Max";
+    fake.push(resumed);
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+
+    expect(el.shadowRoot!.textContent).toContain("UDM Pro Max");
+    const select = el.shadowRoot!.querySelector("select")!;
+    expect(select).not.toBeNull();
+    expect([...select.options].map((o) => o.textContent?.trim())).toEqual([
+      "Home UDM",
+      "Office Gateway",
+    ]);
+    expect(select.value).toBe("entry-1");
+  });
+
+  it("keeps retrying entry while absent from non-empty sources and switches only after entry_not_found", async () => {
+    vi.useFakeTimers();
+    const fake = fakePanelHass();
+    const el = document.createElement(
+      "unifi-insights-devices-panel",
+    ) as UnifiInsightsDevicesPanel;
+    el.hass = fake.hass;
+    document.body.append(el);
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+    fake.push(sampleSnapshot());
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+
+    // entry-1 reloads while entry-2 is available in sources.
+    fake.setEntries([{ entry_id: "entry-2", title: "Office Gateway" }]);
+    fake.setSubscribeError({ code: "entry_not_loaded", message: "reloading" });
+    fake.push({
+      schema_version: 1,
+      entry_id: "entry-1",
+      status: "entry_unloaded",
+      revision: "",
+      stale: false,
+      sections: [],
+    });
+    fake.emit("ready");
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+
+    expect(el.selectedEntryId).toBe("entry-1");
+
+    // Retry resolves to entry_not_found -> now switches to entry-2.
+    const origSubscribe = fake.connection.subscribeMessage;
+    fake.connection.subscribeMessage = vi.fn(
+      (callback: (m: unknown) => void, message: MessageBase) => {
+        if (message.entry_id === "entry-1") {
+          return Promise.reject({ code: "entry_not_found", message: "gone" });
+        }
+        fake.setSubscribeError(undefined);
+        return origSubscribe(callback, message);
+      },
+    );
+    await vi.advanceTimersByTimeAsync(3000);
+    await el.updateComplete;
+
+    expect(el.selectedEntryId).toBe("entry-2");
+    expect(fake.subs.at(-1)!.message).toEqual({
+      type: "unifi_insights/device_groups/subscribe",
+      entry_id: "entry-2",
+    });
+  });
+
+  it("refreshes source list when entry recovers or document becomes visible so new sibling entries appear in picker", async () => {
+    vi.useFakeTimers();
+    const fake = fakePanelHass();
+    const el = document.createElement(
+      "unifi-insights-devices-panel",
+    ) as UnifiInsightsDevicesPanel;
+    el.hass = fake.hass;
+    document.body.append(el);
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+    fake.push(sampleSnapshot());
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+    expect(el.shadowRoot!.querySelector("select")).toBeNull();
+
+    // Entry reloads and comes back while a second entry was enabled.
+    fake.setEntries([
+      { entry_id: "entry-1", title: "Home UDM" },
+      { entry_id: "entry-2", title: "Office Gateway" },
+    ]);
+    fake.push({
+      schema_version: 1,
+      entry_id: "entry-1",
+      status: "entry_unloaded",
+      revision: "",
+      stale: false,
+      sections: [],
+    });
+    await vi.advanceTimersByTimeAsync(3000);
+    fake.push(sampleSnapshot({ revision: "rev-2" }));
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+
+    const select = el.shadowRoot!.querySelector("select")!;
+    expect(select).not.toBeNull();
+    expect([...select.options].map((o) => o.textContent?.trim())).toEqual([
+      "Home UDM",
+      "Office Gateway",
+    ]);
+
+    // Returning to a visible tab also refreshes sources.
+    fake.setEntries([
+      { entry_id: "entry-1", title: "Home UDM" },
+      { entry_id: "entry-2", title: "Office Gateway" },
+      { entry_id: "entry-3", title: "Lab Gateway" },
+    ]);
+    const prevVisibility = Object.getOwnPropertyDescriptor(
+      document,
+      "visibilityState",
+    );
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
+    try {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(10);
+      await el.updateComplete;
+
+      const updatedSelect = el.shadowRoot!.querySelector("select")!;
+      expect(
+        [...updatedSelect.options].map((o) => o.textContent?.trim()),
+      ).toEqual(["Home UDM", "Office Gateway", "Lab Gateway"]);
+    } finally {
+      if (prevVisibility) {
+        Object.defineProperty(document, "visibilityState", prevVisibility);
+      } else {
+        delete (document as unknown as Record<string, unknown>).visibilityState;
+      }
+    }
+  });
+
+  it("drops selected entry on grouping_disabled even after transient empty sources on reconnect", async () => {
+    vi.useFakeTimers();
+    const fake = fakePanelHass();
+    const el = document.createElement(
+      "unifi-insights-devices-panel",
+    ) as UnifiInsightsDevicesPanel;
+    el.hass = fake.hass;
+    document.body.append(el);
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+    fake.push(sampleSnapshot());
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+
+    fake.emit("disconnected");
+    fake.setEntries([]);
+    fake.setSubscribeError({ code: "entry_not_loaded", message: "reloading" });
+    fake.emit("ready");
+    await vi.advanceTimersByTimeAsync(10);
+    await el.updateComplete;
+    expect(el.selectedEntryId).toBe("entry-1");
+
+    fake.setSubscribeError({ code: "grouping_disabled", message: "off" });
+    await vi.advanceTimersByTimeAsync(3000);
+    await el.updateComplete;
+
+    expect(el.selectedEntryId).toBeUndefined();
+    expect(el.shadowRoot!.textContent).toContain(
+      "Device grouping is turned off for this integration.",
+    );
+  });
 });

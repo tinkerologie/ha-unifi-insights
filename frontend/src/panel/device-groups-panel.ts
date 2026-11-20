@@ -137,9 +137,18 @@ export class UnifiInsightsDevicesPanel extends LitElement {
     onSnapshot: (snapshot) => this.applySnapshot(snapshot),
     onError: (error) => {
       this.error = error;
+      if (error.code === ERR_ENTRY_NOT_FOUND) {
+        this.entryNotFound = true;
+        this.retriedLiveSources = false;
+        if (this.hass) void this.loadSources(this.hass);
+      } else if (RETRYABLE_ERRORS.has(error.code)) {
+        this.needsSourcesRefresh = true;
+        this.retriedLiveSources = false;
+      }
     },
     onGroupingDisabled: (entryId) => {
       this.groupingDisabled = true;
+      this.entryNotFound = false;
       if (this.hass) void this.loadSources(this.hass, entryId);
     },
     onIncompatible: () => {
@@ -150,19 +159,36 @@ export class UnifiInsightsDevicesPanel extends LitElement {
     },
     onReconnected: () => {
       this.disconnected = false;
+      this.entryNotFound = false;
+      this.retriedLiveSources = false;
       if (this.hass) void this.loadSources(this.hass);
     },
   });
 
   private sourcesFor: Connection | undefined;
   private sourcesPending = false;
+  private sourcesRefreshQueued = false;
+  private queuedDisabledEntryId: string | undefined;
   private sourcesRetry: ReturnType<typeof setTimeout> | undefined;
   private sourcesAttempt = 0;
   private boundEntryId: string | undefined;
+  private entryNotFound = false;
+  private needsSourcesRefresh = false;
+  private retriedLiveSources = false;
   private localizeLang: string | undefined;
   private localizeFn: LocalizeFunc | undefined;
   private typeahead = "";
   private typeaheadTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly onVisibilityChange = (): void => {
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState === "visible" &&
+      this.isConnected &&
+      this.hass
+    ) {
+      void this.loadSources(this.hass);
+    }
+  };
 
   constructor() {
     super();
@@ -176,13 +202,21 @@ export class UnifiInsightsDevicesPanel extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", this.onVisibilityChange);
+    }
     this.sync();
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this.onVisibilityChange);
+    }
     this.subscription.stop();
     this.sourcesFor = undefined;
+    this.sourcesRefreshQueued = false;
+    this.queuedDisabledEntryId = undefined;
     this.clearSourcesRetry();
     if (this.typeaheadTimer !== undefined) clearTimeout(this.typeaheadTimer);
     this.typeaheadTimer = undefined;
@@ -223,6 +257,9 @@ export class UnifiInsightsDevicesPanel extends LitElement {
       this.disconnected = false;
       this.incompatible = false;
       this.groupingDisabled = false;
+      this.entryNotFound = false;
+      this.needsSourcesRefresh = false;
+      this.retriedLiveSources = false;
       this.sourcesError = undefined;
       this.clearSourcesRetry();
       this.sourcesAttempt = 0;
@@ -234,6 +271,9 @@ export class UnifiInsightsDevicesPanel extends LitElement {
       this.lastGood = undefined;
       this.error = undefined;
       this.incompatible = false;
+      this.entryNotFound = false;
+      this.needsSourcesRefresh = false;
+      this.retriedLiveSources = false;
       if (this.selectedEntryId !== undefined) this.groupingDisabled = false;
     }
     this.subscription.update(
@@ -246,8 +286,16 @@ export class UnifiInsightsDevicesPanel extends LitElement {
     hass: HomeAssistant,
     disabledEntryId?: string,
   ): Promise<void> {
-    if (this.sourcesPending) return;
+    if (this.sourcesPending) {
+      this.sourcesRefreshQueued = true;
+      if (disabledEntryId !== undefined) {
+        this.queuedDisabledEntryId = disabledEntryId;
+      }
+      return;
+    }
     this.sourcesPending = true;
+    this.sourcesRefreshQueued = false;
+    this.queuedDisabledEntryId = undefined;
     this.clearSourcesRetry();
     const connection = hass.connection;
     try {
@@ -272,16 +320,26 @@ export class UnifiInsightsDevicesPanel extends LitElement {
       }
       const wsError = toWsError(err);
       this.sourcesError = wsError;
-      if (RETRYABLE_ERRORS.has(wsError.code)) this.scheduleSourcesRetry();
+      if (RETRYABLE_ERRORS.has(wsError.code)) {
+        this.needsSourcesRefresh = true;
+        this.scheduleSourcesRetry();
+      }
     } finally {
       this.sourcesPending = false;
       if (
         this.isConnected &&
         this.sourcesFor !== undefined &&
-        this.sourcesFor !== connection &&
-        this.hass
-      )
-        void this.loadSources(this.hass);
+        this.hass &&
+        (this.sourcesFor !== connection || this.sourcesRefreshQueued)
+      ) {
+        const queuedDisabled =
+          this.sourcesFor === connection
+            ? this.queuedDisabledEntryId
+            : undefined;
+        this.sourcesRefreshQueued = false;
+        this.queuedDisabledEntryId = undefined;
+        void this.loadSources(this.hass, queuedDisabled);
+      }
     }
   }
 
@@ -290,9 +348,18 @@ export class UnifiInsightsDevicesPanel extends LitElement {
     disabledEntryId?: string,
   ): void {
     if (disabledEntryId !== undefined) {
+      if (
+        this.selectedEntryId !== undefined &&
+        this.selectedEntryId !== disabledEntryId &&
+        entries.some((e) => e.entry_id === this.selectedEntryId)
+      ) {
+        this.groupingDisabled = false;
+        return;
+      }
       const replacement = entries.find((e) => e.entry_id !== disabledEntryId);
       if (replacement) {
         this.groupingDisabled = false;
+        this.entryNotFound = false;
         this.selectedEntryId = replacement.entry_id;
         return;
       }
@@ -301,13 +368,38 @@ export class UnifiInsightsDevicesPanel extends LitElement {
       }
       return;
     }
-    if (
-      this.selectedEntryId !== undefined &&
-      entries.some((e) => e.entry_id === this.selectedEntryId)
-    ) {
+
+    if (this.selectedEntryId === undefined) {
+      this.selectedEntryId = entries[0]?.entry_id;
       return;
     }
-    this.selectedEntryId = entries[0]?.entry_id;
+
+    if (entries.some((e) => e.entry_id === this.selectedEntryId)) {
+      if (this.groupingDisabled) this.groupingDisabled = false;
+      this.needsSourcesRefresh = false;
+      return;
+    }
+
+    if (this.groupingDisabled) {
+      this.selectedEntryId = entries[0]?.entry_id;
+      if (this.selectedEntryId !== undefined) this.groupingDisabled = false;
+      return;
+    }
+
+    if (this.entryNotFound && entries.length > 0) {
+      this.entryNotFound = false;
+      this.needsSourcesRefresh = false;
+      this.selectedEntryId = entries[0]!.entry_id;
+      return;
+    }
+
+    // Keep selectedEntryId across transient empty/missing source lists while
+    // its subscription is connecting or retrying; refresh once the stream recovers.
+    this.needsSourcesRefresh = true;
+    if (this.subscription.live && !this.retriedLiveSources) {
+      this.retriedLiveSources = true;
+      this.sourcesRefreshQueued = true;
+    }
   }
 
   private scheduleSourcesRetry(): void {
@@ -327,10 +419,20 @@ export class UnifiInsightsDevicesPanel extends LitElement {
     this.snapshot = snapshot;
     this.incompatible = false;
     this.disconnected = false;
+    if (snapshot.status === "entry_unloaded") {
+      this.needsSourcesRefresh = true;
+      this.retriedLiveSources = false;
+      return;
+    }
     if (snapshot.status === "ok") {
       this.lastGood = snapshot;
       this.error = undefined;
       this.groupingDisabled = false;
+      this.entryNotFound = false;
+      if (this.needsSourcesRefresh) {
+        this.needsSourcesRefresh = false;
+        if (this.hass) void this.loadSources(this.hass);
+      }
     }
   }
 
@@ -601,7 +703,7 @@ export class UnifiInsightsDevicesPanel extends LitElement {
       return html`<p class="state-card">${localize("panel.loading")}</p>`;
     }
 
-    if (this.entries.length === 0) {
+    if (this.entries.length === 0 && this.selectedEntryId === undefined) {
       return html`<p class="state-card">${localize("panel.empty_entries")}</p>`;
     }
 
