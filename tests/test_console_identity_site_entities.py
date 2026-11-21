@@ -964,7 +964,10 @@ async def test_two_consoles_all_families_real_registry(
             )
             row = _row(entity_registry, entry, domain, entity.unique_id, key)
             assert row.config_entry_id == entry.entry_id
-            assert (DOMAIN, "site_site_shared") in entity.device_info["identifiers"]
+            assert entity.device_info is not None
+            assert (DOMAIN, "site_site_shared") in entity.device_info.as_dict().get(
+                "identifiers", set()
+            )
         activity_ids = _resolve_entity_ids(
             entity_registry,
             entry_id=entry.entry_id,

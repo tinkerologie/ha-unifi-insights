@@ -12,6 +12,7 @@ import type { TopologyNode } from "./contract";
 
 export {
   mdiAccessPoint,
+  mdiCctv,
   mdiChevronDown,
   mdiChevronRight,
   mdiClose,
@@ -20,6 +21,7 @@ export {
   mdiDotsVertical,
   mdiFitToScreenOutline,
   mdiInformationOutline,
+  mdiLan,
   mdiLanConnect,
   mdiMagnifyMinusOutline,
   mdiMagnifyPlusOutline,

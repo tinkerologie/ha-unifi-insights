@@ -3765,7 +3765,7 @@ class TestUnifiSiteClientSensor:
         # device2 is a UDM-Pro gateway, so the sensor should attach to it
         device_info = sensor.device_info
         assert device_info is not None
-        idents = device_info.get("identifiers")
+        idents = device_info.as_dict().get("identifiers")
         assert idents is not None
         assert ("unifi_insights", "site1_device2") in idents
 
@@ -3803,7 +3803,7 @@ class TestUnifiSiteClientSensor:
         )
         device_info = sensor.device_info
         assert device_info is not None
-        idents = device_info.get("identifiers")
+        idents = device_info.as_dict().get("identifiers")
         assert ("unifi_insights", "site_site1") in require_not_none(idents)
 
     async def test_native_value_no_clients_data(

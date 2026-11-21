@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from homeassistant.components.event import EventDeviceClass
 from homeassistant.const import CONF_API_KEY, EVENT_STATE_CHANGED, EntityCategory
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.util import dt as dt_util
@@ -455,9 +456,9 @@ class TestUnifiProtectDoorbellEventEntity:
         )
 
         device_info = entity._attr_device_info
-        assert device_info is not None
-        assert "manufacturer" in device_info
-        assert device_info["manufacturer"] == "Ubiquiti Inc."
+        assert isinstance(device_info, dr.DeviceInfo)
+        assert "manufacturer" in device_info.as_dict()
+        assert device_info.manufacturer == "Ubiquiti Inc."
 
 
 class TestUnifiProtectSmartDetectEventEntity:
@@ -598,9 +599,9 @@ class TestUnifiProtectSmartDetectEventEntity:
         )
 
         device_info = entity._attr_device_info
-        assert device_info is not None
-        assert "manufacturer" in device_info
-        assert device_info["manufacturer"] == "Ubiquiti Inc."
+        assert isinstance(device_info, dr.DeviceInfo)
+        assert "manufacturer" in device_info.as_dict()
+        assert device_info.manufacturer == "Ubiquiti Inc."
 
 
 class TestUnifiProtectSensorEventEntity:
@@ -737,9 +738,9 @@ class TestUnifiProtectSensorEventEntity:
         )
 
         device_info = entity._attr_device_info
-        assert device_info is not None
-        assert "manufacturer" in device_info
-        assert device_info["manufacturer"] == "Ubiquiti Inc."
+        assert isinstance(device_info, dr.DeviceInfo)
+        assert "manufacturer" in device_info.as_dict()
+        assert device_info.manufacturer == "Ubiquiti Inc."
 
 
 class TestDoorbellCoordinatorUpdate:
@@ -1972,10 +1973,11 @@ async def test_registry_rows_are_restored_including_absent_and_disabled(
     )
     # The absent camera is not evidence that the entity was deleted.
     assert entities[_digital_unique_id("camera2", "AlarmIn_1")].available is False
-    assert (
-        entities[_digital_unique_id("camera2", "AlarmIn_1")].device_info["name"]
-        == "Camera camera2"
-    )
+    absent_device_info = entities[
+        _digital_unique_id("camera2", "AlarmIn_1")
+    ].device_info
+    assert absent_device_info is not None
+    assert absent_device_info.name == "Camera camera2"
     # A disabled row is rebuilt; Home Assistant keeps its disabled_by value.
     assert entities[_digital_unique_id("camera3", "2")].unique_id == disabled.unique_id
     disabled_row = er.async_get(hass).async_get(disabled.entity_id)
@@ -2113,11 +2115,11 @@ def test_digital_input_identity_and_availability(hass: Any) -> None:
     assert entity.translation_placeholders == {"channel": "AlarmIn_0"}
     assert entity.event_types == list(CAMERA_DIGITAL_INPUT_EVENT_TYPES)
     device_info = entity.device_info
-    assert device_info is not None
-    assert "model" in device_info
-    assert device_info["identifiers"] == {(DOMAIN, "protect_camera_camera1")}
-    assert device_info["name"] == "Gate"
-    assert device_info["model"] == "G4-Pro"
+    assert isinstance(device_info, dr.DeviceInfo)
+    assert "model" in device_info.as_dict()
+    assert device_info.identifiers == {(DOMAIN, "protect_camera_camera1")}
+    assert device_info.name == "Gate"
+    assert device_info.model == "G4-Pro"
     assert entity.available is True
 
     set_availability(facade, protect=False)
@@ -2199,7 +2201,8 @@ def test_identity_and_metadata(rule_audit_coordinator: MagicMock) -> None:
     assert entity.has_entity_name is True
     assert entity.entity_category is EntityCategory.DIAGNOSTIC
     assert entity.event_types == ["added", "modified", "deleted"]
-    assert entity.device_info == {
+    assert entity.device_info is not None
+    assert entity.device_info.as_dict() == {
         "identifiers": {(DOMAIN, "site_site1")},
         "name": "UniFi Site (Default)",
         "manufacturer": "Ubiquiti Inc.",

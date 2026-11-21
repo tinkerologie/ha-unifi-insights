@@ -29,7 +29,11 @@ from .const import (
     MOBILITY_DEVICE_PREFIX,
 )
 from .coordinators import UnifiInsightsFacadeCoordinator
-from .data_transforms import client_is_connected, section_by_site
+from .data_transforms import (
+    client_is_connected,
+    section_by_site,
+    tracked_client_macs,
+)
 from .entity import (
     UnifiMobilityRouterEntity,
     async_add_mobility_router_entities,
@@ -56,15 +60,27 @@ def _client_should_be_tracked(
     *,
     track_wifi: bool,
     track_wired: bool,
+    tracked_clients: frozenset[str] = frozenset(),
 ) -> bool:
-    """Return True if a connected client should be tracked per the options."""
+    """
+    Return True if a connected client should be tracked per the options.
+
+    The Wi-Fi and wired options decide first. With an empty Tracked clients
+    filter that result is final; otherwise the client's MAC must also be in
+    the filter.
+    """
     client_type = _get_client_type(client_data)
     if client_type == "WIRELESS":
-        return track_wifi
-    if client_type == "WIRED":
-        return track_wired
-    # Unknown type: track only if any tracking is enabled.
-    return track_wifi or track_wired
+        type_tracked = track_wifi
+    elif client_type == "WIRED":
+        type_tracked = track_wired
+    else:
+        # Unknown type: track only if any tracking is enabled.
+        type_tracked = track_wifi or track_wired
+    if not type_tracked or not tracked_clients:
+        return type_tracked
+    mac = get_field(client_data, "macAddress", "mac_address", "mac", default="")
+    return bool(mac) and mac.lower() in tracked_clients
 
 
 def _partition_connected_clients(
@@ -72,6 +88,7 @@ def _partition_connected_clients(
     *,
     track_wifi: bool,
     track_wired: bool,
+    tracked_clients: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, str], set[str]]:
     """Split connected clients into tracked (MAC -> site_id) and untracked MACs."""
     wanted: dict[str, str] = {}
@@ -83,11 +100,18 @@ def _partition_connected_clients(
             if not mac:
                 continue
             if _client_should_be_tracked(
-                client_data, track_wifi=track_wifi, track_wired=track_wired
+                client_data,
+                track_wifi=track_wifi,
+                track_wired=track_wired,
+                tracked_clients=tracked_clients,
             ):
                 wanted[mac.lower()] = site_id
             else:
                 untracked.add(mac.lower())
+    # A MAC can show up on more than one site. A record of a tracked type
+    # anywhere wins: only a MAC with no eligible record is definitively
+    # untracked, so the tracker and its device are never deleted for it.
+    untracked.difference_update(wanted)
     return wanted, untracked
 
 
@@ -96,10 +120,14 @@ def _connected_clients_to_track(
     *,
     track_wifi: bool,
     track_wired: bool,
+    tracked_clients: frozenset[str] = frozenset(),
 ) -> dict[str, str]:
     """Map MAC (lowercase) -> site_id for connected clients that should track."""
     wanted, _ = _partition_connected_clients(
-        coordinator, track_wifi=track_wifi, track_wired=track_wired
+        coordinator,
+        track_wifi=track_wifi,
+        track_wired=track_wired,
+        tracked_clients=tracked_clients,
     )
     return wanted
 
@@ -119,6 +147,24 @@ def _client_tracker_entries(
     ]
 
 
+def _tracker_row_macs(registry: er.EntityRegistry) -> set[str]:
+    """
+    Return the MAC of every client tracker row of this platform, in any entry.
+
+    Checked only for MACs this entry has no row for, so a match belongs to
+    another config entry. Unique IDs are not scoped to a config entry: adding
+    a tracker for that MAC would move the other entry's row -- with its entity
+    ID, name and area -- to this one. Legacy bare-MAC rows keep the API's
+    spelling, so rows are matched by the MAC they identify. Built once per
+    setup, so the registry is walked once however many MACs are checked.
+    """
+    return {
+        _mac_from_unique_id(reg_entry.unique_id)
+        for reg_entry in registry.entities.values()
+        if reg_entry.domain == "device_tracker" and reg_entry.platform == DOMAIN
+    }
+
+
 def _mac_from_unique_id(unique_id: str) -> str:
     """
     Return the lowercase MAC a client tracker's unique_id identifies.
@@ -130,6 +176,37 @@ def _mac_from_unique_id(unique_id: str) -> str:
     if unique_id.startswith(prefix):
         return unique_id[len(prefix) :].lower()
     return unique_id.lower()
+
+
+@callback
+def _async_remove_client_tracker(
+    hass: HomeAssistant,
+    registry: er.EntityRegistry,
+    reg_entry: er.RegistryEntry,
+    entry_id: str,
+) -> None:
+    """
+    Remove a client tracker row, then its standalone device if now empty.
+
+    The device is looked up by the tracker's own `client_<mac>` identifier,
+    scoped to this entry, never through the row's `device_id`: a grouped
+    tracker sits on its uplink switch or access point, which must survive.
+    The device goes only when no entity -- disabled ones included -- is left
+    on it, because Home Assistant keeps an entry's empty devices.
+    """
+    registry.async_remove(reg_entry.entity_id)
+    device_registry = dr.async_get(hass)
+    device = async_get_device_entry(
+        device_registry,
+        (DOMAIN, f"client_{_mac_from_unique_id(reg_entry.unique_id)}"),
+        entry_id,
+    )
+    if device is None or er.async_entries_for_device(
+        registry, device.id, include_disabled_entities=True
+    ):
+        return
+    _LOGGER.debug("Removing empty client device %s", device.id)
+    device_registry.async_remove_device(device.id)
 
 
 def _migrate_tracker_unique_ids(
@@ -215,14 +292,23 @@ async def async_setup_entry(
     track_wifi = entry.options.get(CONF_TRACK_WIFI_CLIENTS, old_track_clients)
     track_wired = entry.options.get(CONF_TRACK_WIRED_CLIENTS, old_track_clients)
 
-    _LOGGER.debug("Client tracking - WiFi: %s, Wired: %s", track_wifi, track_wired)
+    tracked_clients = tracked_client_macs(entry.options)
+    track_types = (track_wifi, track_wired) if tracked_clients else None
+
+    _LOGGER.debug(
+        "Client tracking - WiFi: %s, Wired: %s, selected clients: %d",
+        track_wifi,
+        track_wired,
+        len(tracked_clients),
+    )
 
     # Reconcile the entity registry with the current options. This runs on every
     # setup, including option-change reloads.
     #
     # Only remove a tracker when the configuration says it is unwanted: either
-    # tracking is off entirely, or the client is currently connected with a type
-    # that is no longer tracked.
+    # tracking is off entirely, the client is currently connected with a type
+    # that is no longer tracked, or a Tracked clients filter is saved and does
+    # not list the client's MAC.
     #
     # A client merely missing from the connected-client snapshot is NOT evidence
     # that its tracker should go -- it may be powered off or roaming, or the poll
@@ -239,7 +325,7 @@ async def async_setup_entry(
                 "Removing client tracker %s (client tracking disabled)",
                 reg_entry.entity_id,
             )
-            registry.async_remove(reg_entry.entity_id)
+            _async_remove_client_tracker(hass, registry, reg_entry, entry.entry_id)
         _LOGGER.debug("Client tracking disabled - no client trackers created")
         return
 
@@ -251,18 +337,27 @@ async def async_setup_entry(
     client_trackers = _client_tracker_entries(registry, entry.entry_id)
 
     connected_macs, untracked_macs = _partition_connected_clients(
-        coordinator, track_wifi=track_wifi, track_wired=track_wired
+        coordinator,
+        track_wifi=track_wifi,
+        track_wired=track_wired,
+        tracked_clients=tracked_clients,
     )
     surviving: list[er.RegistryEntry] = []
     for reg_entry in client_trackers:
-        if _mac_from_unique_id(reg_entry.unique_id) in untracked_macs:
-            _LOGGER.debug(
-                "Removing client tracker %s (client type no longer tracked)",
-                reg_entry.entity_id,
-            )
-            registry.async_remove(reg_entry.entity_id)
+        mac = _mac_from_unique_id(reg_entry.unique_id)
+        if mac in untracked_macs:
+            # Connected, and its type or the Tracked clients filter rules it out.
+            reason = "client no longer tracked"
+        elif tracked_clients and mac not in tracked_clients:
+            # Absent (a connected client here is selected), but the saved
+            # filter alone settles it: whatever type the client turns out to
+            # be, its MAC is not selected.
+            reason = "client not in the tracked clients filter"
+        else:
+            surviving.append(reg_entry)
             continue
-        surviving.append(reg_entry)
+        _LOGGER.debug("Removing client tracker %s (%s)", reg_entry.entity_id, reason)
+        _async_remove_client_tracker(hass, registry, reg_entry, entry.entry_id)
 
     # Per-setup dedup set (recreated on every reload so re-enabling re-adds
     # entities); MAC is globally unique so it is used as the key.
@@ -285,6 +380,36 @@ async def async_setup_entry(
                 site_id=connected_macs.get(mac),
                 restored_name=_restored_name(hass, reg_entry, mac),
                 unique_id=reg_entry.unique_id,
+                track_types=track_types,
+            )
+        )
+        tracked.add(mac)
+
+    # A selected client that is offline and has no tracker yet -- typically
+    # chosen from a saved value and gone before this reload -- still gets one,
+    # so it reports `not_home` instead of nothing. A connected selected client
+    # is left to `async_add_clients`, which applies the type options to it.
+    # A MAC whose row belongs to another entry is left alone: that row would
+    # otherwise be moved to this entry.
+    offline = [
+        mac
+        for mac in sorted(tracked_clients)
+        if mac not in tracked
+        and mac not in connected_macs
+        and mac not in untracked_macs
+    ]
+    owned_elsewhere = _tracker_row_macs(registry) if offline else set()
+    for mac in offline:
+        if mac in owned_elsewhere:
+            _LOGGER.debug(
+                "Not creating an offline tracker for %s: another entry owns it", mac
+            )
+            continue
+        retained.append(
+            UnifiClientTracker(
+                coordinator=coordinator,
+                mac=mac,
+                track_types=track_types,
             )
         )
         tracked.add(mac)
@@ -296,10 +421,18 @@ async def async_setup_entry(
     def async_add_clients() -> None:
         """Add trackers for currently connected clients of the enabled types."""
         current = _connected_clients_to_track(
-            coordinator, track_wifi=track_wifi, track_wired=track_wired
+            coordinator,
+            track_wifi=track_wifi,
+            track_wired=track_wired,
+            tracked_clients=tracked_clients,
         )
         entities = [
-            UnifiClientTracker(coordinator=coordinator, mac=mac, site_id=site_id)
+            UnifiClientTracker(
+                coordinator=coordinator,
+                mac=mac,
+                site_id=site_id,
+                track_types=track_types,
+            )
             for mac, site_id in current.items()
             if mac not in tracked
         ]
@@ -333,6 +466,8 @@ class UnifiClientTracker(
         site_id: str | None = None,
         restored_name: str | None = None,
         unique_id: str | None = None,
+        *,
+        track_types: tuple[bool, bool] | None = None,
     ) -> None:
         """
         Initialize the tracker.
@@ -342,6 +477,8 @@ class UnifiClientTracker(
         `restored_name` is the name the registry kept for such a tracker.
         `unique_id` overrides the default DOMAIN_mac id format, used when
         restoring legacy entries that could not be migrated due to collision.
+        `track_types` is set for selected clients and applies until the first
+        connected record of an enabled type.
         """
         super().__init__(coordinator)
         self._site_id = site_id
@@ -355,8 +492,11 @@ class UnifiClientTracker(
         # MAC registration `ScannerEntity.add_to_platform_start` performs.
         self._attr_mac_address = self._mac
 
-        # Get initial client data
-        client_data = self._get_client_data() or {}
+        client_data = self._get_client_data(track_types)
+        self._track_types = track_types if client_data is None else None
+        if client_data is None and track_types is not None:
+            client_data = self._get_client_data()
+        client_data = client_data or {}
 
         # Set unique ID based on MAC address for stability
         self._attr_unique_id = unique_id or f"{DOMAIN}_{self._mac}"
@@ -455,7 +595,9 @@ class UnifiClientTracker(
         """Return device info."""
         return self._device_info
 
-    def _find_in_site(self, clients: Any) -> dict[str, Any] | None:
+    def _find_in_site(
+        self, clients: Any, track_types: tuple[bool, bool] | None
+    ) -> dict[str, Any] | None:
         """Return this MAC's entry within one site's client snapshot."""
         if not isinstance(clients, dict):
             return None
@@ -463,11 +605,20 @@ class UnifiClientTracker(
             if not isinstance(client_data, dict):
                 continue
             mac = get_field(client_data, "macAddress", "mac_address", "mac", default="")
-            if mac and mac.lower() == self._mac:
+            if not mac or mac.lower() != self._mac:
+                continue
+            if track_types is None or (
+                client_is_connected(client_data)
+                and _client_should_be_tracked(
+                    client_data, track_wifi=track_types[0], track_wired=track_types[1]
+                )
+            ):
                 return client_data
         return None
 
-    def _get_client_data(self) -> dict[str, Any] | None:
+    def _get_client_data(
+        self, track_types: tuple[bool, bool] | None = None
+    ) -> dict[str, Any] | None:
         """
         Get connected-client data for this MAC, if currently connected.
 
@@ -475,18 +626,21 @@ class UnifiClientTracker(
         hint: check it first (the common case), then fall back to scanning every
         site so a roamed client -- or one restored from the registry with no hint
         at all -- is still found. Remember where it turned up for next time.
+        With `track_types`, only connected records of an enabled type qualify.
         """
         all_clients = self.coordinator.data.get("clients", {})
         if not isinstance(all_clients, dict):
             return None
         if self._site_id is not None:
-            client_data = self._find_in_site(all_clients.get(self._site_id, {}))
+            client_data = self._find_in_site(
+                all_clients.get(self._site_id, {}), track_types
+            )
             if client_data is not None:
                 return client_data
         for site_id, clients in all_clients.items():
             if site_id == self._site_id:
                 continue
-            client_data = self._find_in_site(clients)
+            client_data = self._find_in_site(clients, track_types)
             if client_data is not None:
                 self._site_id = site_id
                 return client_data
@@ -501,9 +655,15 @@ class UnifiClientTracker(
         connected-clients API lack a connected field and are considered
         connected by presence in the snapshot. An explicit connected=False
         overrides membership and reports disconnected. A missing client
-        record returns False.
+        record returns False. A provisional tracker also requires an enabled
+        type on the connected record before it starts tracking presence normally.
         """
-        return client_is_connected(self._get_client_data())
+        if self._track_types is None:
+            return client_is_connected(self._get_client_data())
+        if self._get_client_data(self._track_types) is None:
+            return False
+        self._track_types = None
+        return True
 
     @property
     def source_type(self) -> SourceType:

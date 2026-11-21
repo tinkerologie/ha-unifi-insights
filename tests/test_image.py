@@ -198,7 +198,7 @@ class TestUnifiWifiQrCodeImage:
         assert entity.has_entity_name is True
         assert getattr(entity, "_attr_name", None) is None
         assert entity._attr_content_type == "image/png"
-        assert require_not_none(entity._attr_device_info)["name"] == "WiFi: TestNet"
+        assert require_not_none(entity._attr_device_info).name == "WiFi: TestNet"
 
     def test_available_with_payload(
         self, hass: HomeAssistant, mock_coordinator: MagicMock
@@ -392,12 +392,11 @@ class TestUnifiFloorPlanImage:
         assert entity.has_entity_name is True
         assert entity.translation_key == "floor_plan"
         assert entity.content_type == "image/png"
-        assert require_not_none(entity.device_info)["name"] == "Ground Floor"
-        assert require_not_none(entity.device_info)["identifiers"] == {
-            (DOMAIN, "innerspace_floor_plan_fp-1")
-        }
-        assert "model" in require_not_none(entity.device_info)
-        assert dict(require_not_none(entity.device_info))["model"] == "Floor Plan"
+        device_info = require_instance(entity.device_info, dr.DeviceInfo)
+        assert device_info.name == "Ground Floor"
+        assert device_info.identifiers == {(DOMAIN, "innerspace_floor_plan_fp-1")}
+        assert "model" in device_info.as_dict()
+        assert device_info.model == "Floor Plan"
 
         attrs = entity.extra_state_attributes
         assert attrs["floor_plan_id"] == "fp-1"
@@ -1090,7 +1089,7 @@ class TestUnifiVoucherQrCodeImage:
         assert entity.available is True
         assert ("unifi_insights", "site_default") in require_not_none(
             entity.device_info
-        ).get("identifiers", set())
+        ).as_dict().get("identifiers", set())
 
     @pytest.mark.asyncio
     async def test_image_rendering_and_caching(

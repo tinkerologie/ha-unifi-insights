@@ -20,6 +20,7 @@ export default defineConfig({
         "performance-card": "src/performance-card.ts",
         "protect-status-card": "src/protect-status-card.ts",
         "timeline-card": "src/timeline-card.ts",
+        "device-groups-panel": "src/panel/device-groups-panel.ts",
       },
       output: {
         format: "es",

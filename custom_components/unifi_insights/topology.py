@@ -270,6 +270,45 @@ def uplink_port_index(device: Mapping[str, Any]) -> int | None:
     return None
 
 
+def device_mac(device: Mapping[str, Any], device_id: str) -> str | None:
+    """
+    Return a device's canonical MAC: its record MAC, else a MAC-shaped id.
+
+    Shared by the topology graph and the device groups model, so both index
+    a site's devices by the same key.
+    """
+    return normalize_mac(first_present(device, "macAddress", "mac")) or normalize_mac(
+        device_id
+    )
+
+
+def uplink_parent_port(block: Mapping[str, Any]) -> int | None:
+    """Return the parent's port index from a device's ``topology`` block."""
+    return as_int(block.get("uplink_remote_port"))
+
+
+def uplink_child_port(
+    device: Mapping[str, Any], block: Mapping[str, Any]
+) -> int | None:
+    """Return the device's own uplink port: the block's, else the flagged port."""
+    child_port = as_int(block.get("uplink_port_idx"))
+    if child_port is None:
+        child_port = uplink_port_index(device)
+    return child_port
+
+
+def client_link_parent_keys(
+    connection: ClientConnection | None,
+) -> tuple[str, str]:
+    """
+    Return the classic client-link parent MAC keys, most relevant first.
+
+    A wireless client hangs off its access point (``ap_mac``); any other
+    client off its switch (``sw_mac``).
+    """
+    return ("ap_mac", "sw_mac") if connection == "wireless" else ("sw_mac", "ap_mac")
+
+
 def port_poe_watts(device: Mapping[str, Any], port_idx: int) -> float | None:
     """Return the PoE draw on one port, or None when PoE is off or unknown."""
     for port_facts in device_ports(device):
@@ -514,9 +553,7 @@ def _client_edge(
 ) -> TopologyEdge | UnresolvedReason:
     """Return a client's edge to its AP/switch, or why it has none."""
     connection = client_connection(client)
-    link_parent_keys = (
-        ("ap_mac", "sw_mac") if connection == "wireless" else ("sw_mac", "ap_mac")
-    )
+    link_parent_keys = client_link_parent_keys(connection)
     link_parent: str | None = None
     link_macs = [normalize_mac(link.get(key)) for key in link_parent_keys]
     for mac in link_macs:
@@ -584,15 +621,13 @@ def _device_edge(
     speed = as_int(block.get("uplink_speed"))
     if speed is not None:
         edge["speed_mbps"] = speed
-    parent_port = as_int(block.get("uplink_remote_port"))
+    parent_port = uplink_parent_port(block)
     if parent_port is not None:
         edge["parent_port"] = parent_port
         poe_watts = port_poe_watts(devices_by_node[parent_id], parent_port)
         if poe_watts is not None:
             edge["poe_power_w"] = poe_watts
-    child_port = as_int(block.get("uplink_port_idx"))
-    if child_port is None:
-        child_port = uplink_port_index(device)
+    child_port = uplink_child_port(device, block)
     if child_port is not None:
         edge["child_port"] = child_port
     return edge
@@ -703,9 +738,7 @@ def build_site_topology(
         ):
             node["port_inventory"] = _port_inventory(port_details)
         nodes.append(node)
-        mac = normalize_mac(
-            first_present(device, "macAddress", "mac")
-        ) or normalize_mac(device_id)
+        mac = device_mac(device, device_id)
         if mac is not None:
             mac_index[mac] = node_id
 

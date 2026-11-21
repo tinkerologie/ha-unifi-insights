@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -200,3 +202,137 @@ def test_manifest_loads_after_web_components() -> None:
 def test_bundle_is_shipped() -> None:
     """The Marketplace and HACS install the repository tree, so commit the bundle."""
     assert (FRONTEND_PATH / CARD_FILES[0]).is_file()
+
+
+# --- Device groups panel (issue #519) ----------------------------------------
+
+
+@pytest.fixture
+def panel_web(hass, tmp_path):
+    """Web components loaded, static path served, and a panel bundle on disk."""
+    hass.config.components.update({"http", "frontend"})
+    hass.data[frontend._STATIC_REGISTERED] = True
+    (tmp_path / frontend.PANEL_FILE).write_text("// panel")
+    with patch.object(frontend, "FRONTEND_PATH", tmp_path):
+        yield tmp_path
+
+
+@pytest.fixture
+def panel_calls():
+    """Patch the panel register/remove calls."""
+    with (
+        patch.object(frontend, "async_register_panel", new_callable=AsyncMock) as reg,
+        patch.object(frontend, "async_remove_panel") as remove,
+    ):
+        yield reg, remove
+
+
+async def test_panel_registers_once_for_two_entries_and_follows_unloads(
+    hass, panel_web, panel_calls, enable_custom_integrations
+) -> None:
+    """Two enabled entries share one panel; it goes only with the last one."""
+    register, remove = panel_calls
+
+    await frontend.async_reconcile_device_groups_panel(hass, "a", enabled=True)
+    await frontend.async_reconcile_device_groups_panel(hass, "b", enabled=True)
+    register.assert_awaited_once()
+    kwargs = register.await_args.kwargs
+    digest = hashlib.sha256(b"// panel").hexdigest()[:8]
+    version = json.loads(MANIFEST.read_text(encoding="utf-8"))["version"]
+    assert kwargs == {
+        "frontend_url_path": "unifi-insights-devices",
+        "webcomponent_name": "unifi-insights-devices-panel",
+        "sidebar_title": "UniFi devices",
+        "sidebar_icon": "mdi:lan",
+        "module_url": f"/unifi_insights/device-groups-panel.js?v={version}-{digest}",
+        "embed_iframe": False,
+        "require_admin": True,
+        "config": {},
+    }
+    assert frontend.PANEL_FILE not in CARD_FILES
+
+    await frontend.async_reconcile_device_groups_panel(hass, "a", enabled=False)
+    remove.assert_not_called()
+
+    await frontend.async_reconcile_device_groups_panel(hass, "b", enabled=False)
+    remove.assert_called_once_with(
+        hass, "unifi-insights-devices", warn_if_unknown=False
+    )
+
+
+async def test_panel_concurrent_reconciles_register_once(
+    hass, panel_web, panel_calls, enable_custom_integrations
+) -> None:
+    """The lock serialises reconciles started together."""
+    register, _remove = panel_calls
+
+    await asyncio.gather(
+        *(
+            frontend.async_reconcile_device_groups_panel(hass, entry_id, enabled=True)
+            for entry_id in ("a", "b", "c")
+        )
+    )
+
+    register.assert_awaited_once()
+
+
+async def test_panel_does_not_register_without_an_owner(
+    hass, panel_web, panel_calls
+) -> None:
+    """Setup of an entry with grouping off leaves the panel absent."""
+    register, _remove = panel_calls
+
+    await frontend.async_reconcile_device_groups_panel(hass, "off", enabled=False)
+
+    register.assert_not_awaited()
+
+
+async def test_panel_skips_without_web_server(hass, tmp_path, panel_calls) -> None:
+    """Headless (no http component): nothing is registered."""
+    register, _remove = panel_calls
+    hass.config.components.add("frontend")
+    hass.data[frontend._STATIC_REGISTERED] = True
+    (tmp_path / frontend.PANEL_FILE).write_text("// panel")
+
+    with patch.object(frontend, "FRONTEND_PATH", tmp_path):
+        await frontend.async_reconcile_device_groups_panel(hass, "a", enabled=True)
+
+    register.assert_not_awaited()
+    assert not hass.data.get(frontend._PANEL_REGISTERED)
+
+
+async def test_panel_skips_without_static_path(hass, panel_web, panel_calls) -> None:
+    """When the bundles could not be served, the panel is not registered."""
+    register, _remove = panel_calls
+    hass.data.pop(frontend._STATIC_REGISTERED)
+
+    await frontend.async_reconcile_device_groups_panel(hass, "a", enabled=True)
+
+    register.assert_not_awaited()
+
+
+async def test_panel_skips_missing_bundle(hass, panel_web, panel_calls, caplog) -> None:
+    """A tree without the bundle (a partial build) skips registration quietly."""
+    register, _remove = panel_calls
+    (panel_web / frontend.PANEL_FILE).unlink()
+
+    with caplog.at_level(logging.DEBUG, logger=frontend.__name__):
+        await frontend.async_reconcile_device_groups_panel(hass, "a", enabled=True)
+
+    register.assert_not_awaited()
+    assert "is missing" in caplog.text
+
+
+async def test_panel_registration_error_is_logged_and_retried(
+    hass, panel_web, panel_calls, caplog, enable_custom_integrations
+) -> None:
+    """A failure never escapes into entry setup, and the next reconcile retries."""
+    register, _remove = panel_calls
+    register.side_effect = [ValueError("Overwriting panel"), None]
+
+    await frontend.async_reconcile_device_groups_panel(hass, "a", enabled=True)
+    assert "Unable to register the UniFi devices panel" in caplog.text
+    await frontend.async_reconcile_device_groups_panel(hass, "a", enabled=True)
+
+    assert register.await_count == 2
+    assert hass.data[frontend._PANEL_REGISTERED] is True

@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import logging
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal
 
 from homeassistant.config_entries import (
@@ -17,6 +18,7 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import AbortFlow
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     SelectOptionDict,
@@ -68,11 +70,13 @@ from .const import (
     CONF_CONNECTION_TYPE,
     CONF_CONSOLE_ID,
     CONF_CONSOLE_NAME,
+    CONF_GROUP_DEVICES_BY_UPLINK,
     CONF_SITE_IDS,
     CONF_TRACK_CLIENTS,
     CONF_TRACK_SUBSCRIBERS,
     CONF_TRACK_WIFI_CLIENTS,
     CONF_TRACK_WIRED_CLIENTS,
+    CONF_TRACKED_CLIENTS,
     CONNECTION_TYPE_CARRIER_FABRIC,
     CONNECTION_TYPE_LOCAL,
     CONNECTION_TYPE_REMOTE,
@@ -81,10 +85,22 @@ from .const import (
     DEFAULT_API_HOST,
     DEFAULT_CARRIER_ACTIONS,
     DEFAULT_CLIENT_CONTROL,
+    DEFAULT_GROUP_DEVICES_BY_UPLINK,
     DEFAULT_TRACK_CLIENTS,
     DEFAULT_TRACK_SUBSCRIBERS,
     DOMAIN,
 )
+from .data_transforms import (
+    client_is_connected,
+    section_by_site,
+    tracked_client_macs,
+)
+from .device_tracker import (
+    _client_tracker_entries,
+    _mac_from_unique_id,
+    _restored_name,
+)
+from .entity import get_field
 from .probe import (
     ProbeResult,
     ProbeStatus,
@@ -117,6 +133,15 @@ _ACCESS_WEBHOOK_STATE_KEYS = (
     CONF_ACCESS_WEBHOOK_ENDPOINT_ID,
     CONF_ACCESS_WEBHOOK_SECRET,
 )
+
+
+def _client_label_name(client: Mapping[str, Any]) -> str:
+    """Return a client's name, else its hostname; blank values count as missing."""
+    for key in ("name", "hostname"):
+        value = client.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
 
 
 def _host_key(host: object) -> str | None:
@@ -1434,6 +1459,12 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
 class UnifiInsightsOptionsFlow(OptionsFlow):
     """Handle options for UniFi Insights integration."""
 
+    # Whether the form last shown had the Tracked clients selector. The
+    # submitted form is that one, so this -- not the choices at submit time,
+    # which another flow's save can change -- decides what an omitted field
+    # means.
+    _tracked_clients_shown = False
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -1477,18 +1508,32 @@ class UnifiInsightsOptionsFlow(OptionsFlow):
         show_site_picker = bool(available_sites) and (
             len(available_sites) > 1 or bool(current_site_ids)
         )
-
         if user_input is not None:
-            options = dict(user_input)
+            # The form only submits fields available for this entry.
+            options = {**self.config_entry.options, **user_input}
             if not show_site_picker:
                 # The picker was not shown (entry not loaded, or a single-site
                 # console), so keep whatever filter was saved before.
                 options.pop(CONF_SITE_IDS, None)
                 if current_site_ids:
                     options[CONF_SITE_IDS] = current_site_ids
-            elif not options.get(CONF_SITE_IDS):
+            elif not user_input.get(CONF_SITE_IDS):
                 # No selection means every site; don't store an empty filter.
                 options.pop(CONF_SITE_IDS, None)
+            # A form shown without the selector says nothing about the filter,
+            # so the merge above keeps whatever is saved now -- possibly by
+            # another options flow saved while this form was open.
+            if self._tracked_clients_shown:
+                selected_clients = user_input.get(CONF_TRACKED_CLIENTS)
+                if not selected_clients:
+                    # Shown and left empty: every client of the enabled types.
+                    options.pop(CONF_TRACKED_CLIENTS, None)
+                else:
+                    # Every choice is keyed by lowercase MAC, and the selector
+                    # accepts only its choices, so values are already lowercase.
+                    options[CONF_TRACKED_CLIENTS] = list(
+                        dict.fromkeys(selected_clients)
+                    )
             return self.async_create_entry(title="", data=options)
 
         # Get current values, migrating from old CONF_TRACK_CLIENTS if needed
@@ -1517,6 +1562,12 @@ class UnifiInsightsOptionsFlow(OptionsFlow):
             vol.Optional(
                 CONF_CLIENT_CONTROL,
                 default=default_client_control,
+            ): bool,
+            vol.Optional(
+                CONF_GROUP_DEVICES_BY_UPLINK,
+                default=self.config_entry.options.get(
+                    CONF_GROUP_DEVICES_BY_UPLINK, DEFAULT_GROUP_DEVICES_BY_UPLINK
+                ),
             ): bool,
         }
         if self._access_webhook_available():
@@ -1551,12 +1602,70 @@ class UnifiInsightsOptionsFlow(OptionsFlow):
                 )
             )
 
+        current_tracked_clients = sorted(tracked_client_macs(self.config_entry.options))
+        # Saved MACs are always among the choices, so a saved filter always
+        # shows the picker and can be cleared.
+        tracked_client_choices = self._tracked_client_choices(current_tracked_clients)
+        self._tracked_clients_shown = bool(tracked_client_choices)
+        if tracked_client_choices:
+            schema[vol.Optional(CONF_TRACKED_CLIENTS)] = SelectSelector(
+                SelectSelectorConfig(
+                    options=tracked_client_choices,
+                    multiple=True,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            )
+
         return self.async_show_form(
             step_id="init",
             data_schema=self.add_suggested_values_to_schema(
-                vol.Schema(schema), {CONF_SITE_IDS: current_site_ids}
+                vol.Schema(schema),
+                {
+                    CONF_SITE_IDS: current_site_ids,
+                    CONF_TRACKED_CLIENTS: current_tracked_clients,
+                },
             ),
         )
+
+    def _tracked_client_choices(self, saved: list[str]) -> list[SelectOptionDict]:
+        """
+        Return the Tracked clients choices, keyed by lowercase MAC.
+
+        Connected clients come from the loaded entry's snapshot, then this
+        entry's existing client trackers, so a client that is away can still
+        be picked or kept. Saved MACs found in neither are appended with the
+        MAC as label, so they can be deselected.
+        """
+        labels: dict[str, str] = {}
+        runtime_data = getattr(self.config_entry, "runtime_data", None)
+        data = getattr(getattr(runtime_data, "coordinator", None), "data", None)
+        clients_by_site = (
+            section_by_site(data, "clients") if isinstance(data, Mapping) else None
+        )
+        for clients in (clients_by_site or {}).values():
+            for client in clients.values():
+                mac = get_field(client, "macAddress", "mac_address", "mac")
+                if not mac or not client_is_connected(client):
+                    continue
+                labels.setdefault(mac.lower(), _client_label_name(client))
+        registry = er.async_get(self.hass)
+        for reg_entry in _client_tracker_entries(registry, self.config_entry.entry_id):
+            mac = _mac_from_unique_id(reg_entry.unique_id)
+            if mac not in labels:
+                labels[mac] = (
+                    reg_entry.name or _restored_name(self.hass, reg_entry, mac) or ""
+                )
+        choices = sorted(
+            (
+                SelectOptionDict(value=mac, label=f"{name} ({mac})" if name else mac)
+                for mac, name in labels.items()
+            ),
+            key=lambda choice: (choice["label"].casefold(), choice["value"]),
+        )
+        choices.extend(
+            SelectOptionDict(value=mac, label=mac) for mac in saved if mac not in labels
+        )
+        return choices
 
     def _access_webhook_available(self) -> bool:
         """Offer the Access webhook toggle only for local entries with a token."""

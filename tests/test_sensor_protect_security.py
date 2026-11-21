@@ -257,9 +257,10 @@ class TestAlarmHubTamper:
             f"{DOMAIN}_alarm_hub_alarm_hub_1_alarm_hub_device_tamper"
         )
         assert entity.device_info is not None
-        assert (DOMAIN, "protect_alarm_hub_alarm_hub_1") in entity.device_info[
-            "identifiers"
-        ]
+        assert (
+            DOMAIN,
+            "protect_alarm_hub_alarm_hub_1",
+        ) in entity.device_info.as_dict().get("identifiers", set())
         assert entity.available is True
 
     def test_attributes_from_last_event(self, hass: HomeAssistant) -> None:

@@ -796,6 +796,9 @@ _DYNAMIC_ICON_PROPERTIES: Final = {
     # A policy-based route that sends traffic over a VPN shows the VPN icon.
     ("switch.py", "UnifiInsightsNetworkRuleSwitch"),
 }
+# Non-entity icons with no icon-translation home: the "UniFi devices" sidebar
+# panel's icon is an argument of panel_custom.async_register_panel.
+_ALLOWED_STATIC_ICONS: Final = {("frontend.py", "mdi:lan")}
 
 
 def _static_icon_violations(source: str, filename: str) -> list[str]:
@@ -847,6 +850,7 @@ def _static_icon_violations(source: str, filename: str) -> list[str]:
             and isinstance(node, ast.Constant)
             and isinstance(node.value, str)
             and node.value.startswith("mdi:")
+            and (filename, node.value) not in _ALLOWED_STATIC_ICONS
         ):
             violations.append(f"{filename}:{node.lineno}: static {node.value}")
     return violations
@@ -862,6 +866,13 @@ def test_no_static_mdi_strings_in_python_code() -> None:
         )
     ]
     assert not violations, f"Found static icon overrides in Python: {violations}"
+
+
+def test_static_icon_allowlist_is_scoped_to_file_and_icon() -> None:
+    """Only the panel icon in frontend.py is allowed; nothing else rides along."""
+    assert not _static_icon_violations('ICON = "mdi:lan"', "frontend.py")
+    assert _static_icon_violations('ICON = "mdi:lan"', "sensor.py")
+    assert _static_icon_violations('ICON = "mdi:power"', "frontend.py")
 
 
 @pytest.mark.parametrize(

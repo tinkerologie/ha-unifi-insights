@@ -44,6 +44,7 @@ from .const import (
     CAMERA_TYPE_DOORBELL_MAIN,
     CAMERA_TYPE_DOORBELL_PACKAGE,
     CAMERA_TYPE_DOORBELL_WITH_PACKAGE_DETECTION,
+    CONF_TRACKED_CLIENTS,
     DEVICE_TYPE_ALARM_HUB,
     DEVICE_TYPE_LINK_STATION,
     GATEWAY_MODEL_PREFIXES,
@@ -593,6 +594,21 @@ def uplink_rate_bps(
                 return bytes_to_bits_per_second(value)
             return as_bits_per_second(value)
     return None
+
+
+def tracked_client_macs(options: Mapping[str, Any]) -> frozenset[str]:
+    """
+    Return the saved Tracked clients filter as lowercase MACs.
+
+    An absent or empty option is an empty filter: every client of the enabled
+    types is tracked. Lowercase is the MAC spelling of the tracker unique_id
+    and of the `client_<mac>` device, so saved values compare against both.
+    """
+    return frozenset(
+        mac.lower()
+        for mac in options.get(CONF_TRACKED_CLIENTS) or ()
+        if isinstance(mac, str) and mac
+    )
 
 
 def client_connection_type(client: Mapping[str, Any]) -> ClientConnectionType | None:

@@ -244,16 +244,18 @@ async def test_innerspace_placement_sensor_discovery_and_device_correlation(
     ap_sensor = placement_sensors["innerspace_is-ap-1_placement"]
     assert ap_sensor.native_value == "placed"
     assert ap_sensor.available is True
-    assert ap_sensor.device_info["identifiers"] == {(DOMAIN, "site-1_net-ap-1")}
-    assert "suggested_area" not in ap_sensor.device_info
+    assert ap_sensor.device_info is not None
+    assert ap_sensor.device_info.identifiers == {(DOMAIN, "site-1_net-ap-1")}
+    assert "suggested_area" not in ap_sensor.device_info.as_dict()
     assert ap_sensor.extra_state_attributes["floor_plan_name"] == "Lobby"
     assert ap_sensor.extra_state_attributes["x"] == 12.5
 
     inv_sensor = placement_sensors["innerspace_is-inv-1_placement"]
     assert inv_sensor.native_value == "unplaced"
-    assert inv_sensor.device_info["identifiers"] == {(DOMAIN, "innerspace_is-inv-1")}
-    assert "connections" not in inv_sensor.device_info
-    assert "suggested_area" not in inv_sensor.device_info
+    assert inv_sensor.device_info is not None
+    assert inv_sensor.device_info.identifiers == {(DOMAIN, "innerspace_is-inv-1")}
+    assert "connections" not in inv_sensor.device_info.as_dict()
+    assert "suggested_area" not in inv_sensor.device_info.as_dict()
 
     # Gated on innerspace_available
     set_availability(mock_coordinator, innerspace=False)
@@ -311,7 +313,8 @@ async def test_innerspace_placement_sensor_discovery_and_device_correlation(
     inv_sensor._handle_coordinator_update()
     inv_sensor.async_write_ha_state.assert_called_once()
     assert inv_sensor.native_value == "unknown"
-    assert inv_sensor.device_info["identifiers"] == {(DOMAIN, "protect_camera_cam-1")}
+    assert inv_sensor.device_info is not None
+    assert inv_sensor.device_info.identifiers == {(DOMAIN, "protect_camera_cam-1")}
     updated_entry = ent_reg.async_get(reg_entry.entity_id)
     assert updated_entry is not None
     protect_dev = dev_reg.async_get_or_create(
@@ -333,7 +336,8 @@ async def test_innerspace_placement_sensor_discovery_and_device_correlation(
     )
     inv_sensor._handle_coordinator_update()
     assert inv_sensor.native_value == "unknown"
-    assert inv_sensor.device_info["identifiers"] == {(DOMAIN, "innerspace_is-inv-1")}
+    assert inv_sensor.device_info is not None
+    assert inv_sensor.device_info.identifiers == {(DOMAIN, "innerspace_is-inv-1")}
     reverted_entry = ent_reg.async_get(reg_entry.entity_id)
     assert reverted_entry is not None
     assert reverted_entry.device_id == initial_dev.id
@@ -843,7 +847,8 @@ def test_innerspace_entity_matched_protect_device_missing_from_protect_section(
     sensor = UnifiInsightsInnerSpacePlacementSensor(
         mock_coordinator, INNERSPACE_PLACEMENT_DESCRIPTION, "is-inv-1"
     )
-    assert sensor.device_info["identifiers"] == {(DOMAIN, "innerspace_is-inv-1")}
+    assert sensor.device_info is not None
+    assert sensor.device_info.identifiers == {(DOMAIN, "innerspace_is-inv-1")}
 
 
 # --- InnerSpace view (ADR-013) ----------------------------------------------
@@ -1014,4 +1019,5 @@ def test_innerspace_device_info_needs_the_matched_record(
         coordinator, INNERSPACE_PLACEMENT_DESCRIPTION, "rec-1"
     )
 
-    assert entity.device_info["identifiers"] == {(DOMAIN, expected)}
+    assert entity.device_info is not None
+    assert entity.device_info.identifiers == {(DOMAIN, expected)}

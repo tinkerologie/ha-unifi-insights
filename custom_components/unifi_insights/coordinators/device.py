@@ -41,6 +41,8 @@ from custom_components.unifi_insights.const import (
     DOMAIN,
     SCAN_INTERVAL_DEVICE,
     SCAN_INTERVAL_DEVICE_DETAILS,
+    UPLINK_SOURCE_CURRENT,
+    UPLINK_SOURCE_LAST,
 )
 from custom_components.unifi_insights.data_transforms import (
     CPU_STAT_KEYS,
@@ -1247,6 +1249,12 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
         the classic ``/stat/device`` record is the only source of which device
         (and port) this one hangs off. ``last_uplink`` keeps the same keys when
         the device is offline and ``uplink`` has been emptied.
+
+        ``uplink_source`` records which of the two named the parent:
+        ``current`` for ``uplink`` and ``last`` for the ``last_uplink``
+        overlay. The topology graph ignores it; the device groups panel only
+        trusts a current link. It is an internal marker: the topology
+        snapshot serialises an allowlist and never emits it.
         """
         block: dict[str, Any] = {}
 
@@ -1256,16 +1264,19 @@ class UnifiInsightsDeviceCoordinator(UnifiInsightsBaseCoordinator):
 
         uplink = legacy.get("uplink")
         link = uplink if isinstance(uplink, dict) else {}
+        uplink_source = UPLINK_SOURCE_CURRENT
         if cls._normalize_mac(link.get("uplink_mac")) is None:
             last_uplink = legacy.get("last_uplink")
             if isinstance(last_uplink, dict) and cls._normalize_mac(
                 last_uplink.get("uplink_mac")
             ):
                 link = {**link, **last_uplink}
+                uplink_source = UPLINK_SOURCE_LAST
 
         uplink_mac = cls._normalize_mac(link.get("uplink_mac"))
         if uplink_mac is not None:
             block["uplink_mac"] = uplink_mac
+            block["uplink_source"] = uplink_source
         for source_key, block_key in (
             ("uplink_remote_port", "uplink_remote_port"),
             ("port_idx", "uplink_port_idx"),
