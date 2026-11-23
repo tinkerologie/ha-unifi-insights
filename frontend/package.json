@@ -26,14 +26,14 @@
     "@types/d3-selection": "3.0.12",
     "@types/d3-transition": "3.0.9",
     "@types/d3-zoom": "3.0.9",
-    "@vitest/coverage-v8": "5.1.0",
+    "@vitest/coverage-v8": "5.1.1",
     "axe-core": "4.14.0",
     "eslint": "10.14.0",
     "jsdom": "31.0.1",
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "typescript-eslint": "8.72.2",
     "vite": "8.3.8",
-    "vitest": "5.1.0",
+    "vitest": "5.1.1",
     "@typescript/native": "npm:typescript@7.0.2"
   },
   "overrides": {
